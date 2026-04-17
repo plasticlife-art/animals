@@ -64,8 +64,8 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
 	var lod_counts: Dictionary = world.get_lod_counts()
-	var grass_biomass_by_biome := world.resource_system.get_biomass_totals_by_biome()
-	var snapshot := {
+	var grass_biomass_by_biome: Dictionary = world.resource_system.get_biomass_totals_by_biome()
+	var snapshot: Dictionary = {
 		"tick": tick,
 		"time_seconds": time_seconds,
 		"herbivore_population": herbivore_count,

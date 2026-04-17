@@ -231,7 +231,7 @@ func clear_navigation() -> void:
 
 func move_to_target(world, target: Vector2, desired_speed: float, delta: float, force_repath: bool = false) -> void:
 	target_position = target
-	var waypoint := world.get_next_waypoint(position, target, id, force_repath)
+	var waypoint: Vector2 = world.get_next_waypoint(position, target, id, force_repath)
 	move_with_vector(world, waypoint - position, desired_speed, delta)
 
 

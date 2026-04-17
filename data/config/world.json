@@ -1,17 +1,17 @@
 {
-  "seed": 1337,
-  "tick_rate": 20.0,
+  "seed": 821374,
+  "tick_rate": 18.0,
   "world_size": {
     "x": 4800.0,
     "y": 2700.0
   },
-  "spatial_cell_size": 96.0,
+  "spatial_cell_size": 128.0,
   "grass": {
     "cell_size": 32.0,
     "max_biomass": 100.0,
-    "regrowth_rate": 5.5,
-    "initial_density_min": 0.45,
-    "initial_density_max": 0.95
+    "regrowth_rate": 6.0,
+    "initial_density_min": 0.5,
+    "initial_density_max": 1.0
   },
   "terrain": {
     "cell_size": 32.0,
@@ -51,22 +51,22 @@
       "swamp_water_radius": 240.0
     },
     "obstacles": {
-      "dense_forest_cluster_count": 8,
+      "dense_forest_cluster_count": 6,
       "dense_forest_radius_min_cells": 2.0,
-      "dense_forest_radius_max_cells": 4.5,
-      "cliff_count": 8,
+      "dense_forest_radius_max_cells": 4.0,
+      "cliff_count": 6,
       "cliff_thickness_min_cells": 1.1,
-      "cliff_thickness_max_cells": 2.2,
+      "cliff_thickness_max_cells": 2.0,
       "cliff_gap_radius_cells": 1.6,
       "border_clearance_cells": 1
     }
   },
   "navigation": {
     "allow_diagonal": true,
-    "repath_interval_ticks": 8,
+    "repath_interval_ticks": 12,
     "goal_reached_radius_cells": 1,
-    "max_search_cells": 5600,
-    "grass_candidate_limit": 12
+    "max_search_cells": 2400,
+    "grass_candidate_limit": 8
   },
   "water_sources": [
     { "x": 420.0, "y": 340.0, "radius": 52.0 },
@@ -77,7 +77,7 @@
     { "x": 4180.0, "y": 700.0, "radius": 56.0 },
     { "x": 760.0, "y": 1260.0, "radius": 56.0 },
     { "x": 1540.0, "y": 1520.0, "radius": 58.0 },
-    { "x": 2320.0, "y": 1180.0, "radius": 54.0 },
+    { "x": 2320.0, "y": 1180.0, "radius": 72.0 },
     { "x": 3120.0, "y": 1480.0, "radius": 56.0 },
     { "x": 3900.0, "y": 1220.0, "radius": 54.0 },
     { "x": 4500.0, "y": 1540.0, "radius": 58.0 },
@@ -89,8 +89,8 @@
     { "x": 4560.0, "y": 2460.0, "radius": 58.0 }
   ],
   "spawns": {
-    "herbivore_count": 480,
-    "predator_count": 48,
-    "herbivore_group_count": 18
+    "herbivore_count": 220,
+    "predator_count": 18,
+    "herbivore_group_count": 10
   }
 }

@@ -9,16 +9,16 @@ signal focus_mode_selected(mode: String)
 signal overlay_flag_changed(flag_name: String, enabled: bool)
 signal lod_enabled_toggled(enabled: bool)
 
-@onready var pause_button: Button = %PauseButton
-@onready var step_button: Button = %StepButton
-@onready var speed_option: OptionButton = %SpeedOption
-@onready var export_button: Button = %ExportButton
-@onready var focus_mode_option: OptionButton = %FocusModeOption
-@onready var lod_enabled_check: CheckBox = %LodEnabledCheck
-@onready var summary_label: RichTextLabel = %SummaryLabel
-@onready var inspector_text: RichTextLabel = %InspectorText
-@onready var event_log_text: RichTextLabel = %EventLogText
-@onready var status_label: RichTextLabel = %StatusLabel
+@onready var pause_button: Button = get_node_or_null("%PauseButton")
+@onready var step_button: Button = get_node_or_null("%StepButton")
+@onready var speed_option: OptionButton = get_node_or_null("%SpeedOption")
+@onready var export_button: Button = get_node_or_null("%ExportButton")
+@onready var focus_mode_option: OptionButton = get_node_or_null("%FocusModeOption")
+@onready var lod_enabled_check: CheckBox = get_node_or_null("%LodEnabledCheck")
+@onready var summary_label: RichTextLabel = get_node_or_null("%SummaryLabel")
+@onready var inspector_text: RichTextLabel = get_node_or_null("%InspectorText")
+@onready var event_log_text: RichTextLabel = get_node_or_null("%EventLogText")
+@onready var status_label: RichTextLabel = get_node_or_null("%StatusLabel")
 
 var simulation_manager: SimulationManager
 var is_paused: bool = false
@@ -29,30 +29,36 @@ var event_log_visible_limit: int = 12
 
 
 func _ready() -> void:
-	pause_button.pressed.connect(_on_pause_button_pressed)
-	step_button.pressed.connect(_on_step_button_pressed)
-	export_button.pressed.connect(_on_export_button_pressed)
-	speed_option.item_selected.connect(_on_speed_selected)
-	focus_mode_option.item_selected.connect(_on_focus_mode_selected)
-	lod_enabled_check.toggled.connect(_on_lod_enabled_check_toggled)
-	focus_mode_option.add_item("Off", 0)
-	focus_mode_option.add_item("Agent", 1)
-	focus_mode_option.add_item("Flock", 2)
+	if pause_button != null:
+		pause_button.pressed.connect(_on_pause_button_pressed)
+	if step_button != null:
+		step_button.pressed.connect(_on_step_button_pressed)
+	if export_button != null:
+		export_button.pressed.connect(_on_export_button_pressed)
+	if speed_option != null:
+		speed_option.item_selected.connect(_on_speed_selected)
+	if focus_mode_option != null:
+		focus_mode_option.item_selected.connect(_on_focus_mode_selected)
+		focus_mode_option.clear()
+		focus_mode_option.add_item("Off", 0)
+		focus_mode_option.add_item("Agent", 1)
+		focus_mode_option.add_item("Flock", 2)
+	if lod_enabled_check != null:
+		lod_enabled_check.toggled.connect(_on_lod_enabled_check_toggled)
 
-	overlay_checkboxes = {
-		"show_biomes": %BiomesCheck,
-		"show_obstacles": %ObstaclesCheck,
-		"show_state_labels": %StateLabelsCheck,
-		"show_target_lines": %TargetLinesCheck,
-		"show_vision_radius": %VisionRadiusCheck,
-		"show_herd_relations": %HerdRelationsCheck,
-		"show_chase_lines": %ChaseLinesCheck,
-		"show_grass_density": %GrassDensityCheck,
-		"show_population_density": %PopulationDensityCheck,
-		"show_water_overlay": %WaterOverlayCheck,
-		"show_selected_path": %SelectedPathCheck,
-		"show_lod_overlay": %LodOverlayCheck,
-	}
+	overlay_checkboxes.clear()
+	_try_register_overlay_checkbox("show_biomes", "%BiomesCheck")
+	_try_register_overlay_checkbox("show_obstacles", "%ObstaclesCheck")
+	_try_register_overlay_checkbox("show_state_labels", "%StateLabelsCheck")
+	_try_register_overlay_checkbox("show_target_lines", "%TargetLinesCheck")
+	_try_register_overlay_checkbox("show_vision_radius", "%VisionRadiusCheck")
+	_try_register_overlay_checkbox("show_herd_relations", "%HerdRelationsCheck")
+	_try_register_overlay_checkbox("show_chase_lines", "%ChaseLinesCheck")
+	_try_register_overlay_checkbox("show_grass_density", "%GrassDensityCheck")
+	_try_register_overlay_checkbox("show_population_density", "%PopulationDensityCheck")
+	_try_register_overlay_checkbox("show_water_overlay", "%WaterOverlayCheck")
+	_try_register_overlay_checkbox("show_selected_path", "%SelectedPathCheck")
+	_try_register_overlay_checkbox("show_lod_overlay", "%LodOverlayCheck")
 	for flag_name in overlay_checkboxes.keys():
 		var checkbox: CheckBox = overlay_checkboxes[flag_name]
 		checkbox.toggled.connect(_on_overlay_toggled.bind(flag_name))
@@ -73,12 +79,14 @@ func apply_debug_settings(debug_config: Dictionary, flags: Dictionary, is_lod_en
 	event_log_visible_limit = max(1, int(debug_config.get("event_log_visible_limit", 12)))
 	if speed_steps.is_empty():
 		speed_steps = [1.0]
-	speed_option.clear()
-	for index in range(speed_steps.size()):
-		speed_option.add_item("x%s" % str(speed_steps[index]).trim_suffix(".0"), index)
-	var default_index := clampi(int(debug_config.get("default_speed_index", 0)), 0, max(0, speed_steps.size() - 1))
-	speed_option.select(default_index)
-	lod_enabled_check.set_pressed_no_signal(is_lod_enabled)
+	if speed_option != null:
+		speed_option.clear()
+		for index in range(speed_steps.size()):
+			speed_option.add_item("x%s" % str(speed_steps[index]).trim_suffix(".0"), index)
+		var default_index := clampi(int(debug_config.get("default_speed_index", 0)), 0, max(0, speed_steps.size() - 1))
+		speed_option.select(default_index)
+	if lod_enabled_check != null:
+		lod_enabled_check.set_pressed_no_signal(is_lod_enabled)
 
 	for flag_name in overlay_checkboxes.keys():
 		var checkbox: CheckBox = overlay_checkboxes[flag_name]
@@ -86,6 +94,8 @@ func apply_debug_settings(debug_config: Dictionary, flags: Dictionary, is_lod_en
 
 
 func set_status_text(text: String) -> void:
+	if status_label == null:
+		return
 	status_label.text = text
 
 
@@ -102,10 +112,13 @@ func refresh_from_manager() -> void:
 
 func set_paused_state(value: bool) -> void:
 	is_paused = value
-	pause_button.text = "Resume" if is_paused else "Pause"
+	if pause_button != null:
+		pause_button.text = "Resume" if is_paused else "Pause"
 
 
 func set_focus_mode_state(mode: String) -> void:
+	if focus_mode_option == null:
+		return
 	var option_index := 0
 	match mode:
 		"agent":
@@ -116,7 +129,8 @@ func set_focus_mode_state(mode: String) -> void:
 
 
 func set_lod_enabled_state(value: bool) -> void:
-	lod_enabled_check.set_pressed_no_signal(value)
+	if lod_enabled_check != null:
+		lod_enabled_check.set_pressed_no_signal(value)
 
 
 func _on_pause_button_pressed() -> void:
@@ -180,6 +194,8 @@ func _on_export_completed(paths: Dictionary) -> void:
 
 
 func _refresh_summary(snapshot: Dictionary) -> void:
+	if summary_label == null:
+		return
 	if snapshot.is_empty():
 		summary_label.text = "No simulation data yet."
 		return
@@ -225,6 +241,8 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 
 
 func _refresh_inspector(agent_summary: Dictionary) -> void:
+	if inspector_text == null:
+		return
 	if agent_summary.is_empty():
 		inspector_text.text = "No agent selected."
 		return
@@ -250,6 +268,8 @@ func _refresh_inspector(agent_summary: Dictionary) -> void:
 
 
 func _refresh_event_log() -> void:
+	if event_log_text == null:
+		return
 	if simulation_manager == null or simulation_manager.event_bus == null:
 		event_log_text.text = "No events yet."
 		return
@@ -268,3 +288,9 @@ func _refresh_event_log() -> void:
 			]
 		)
 	event_log_text.text = "\n".join(lines)
+
+
+func _try_register_overlay_checkbox(flag_name: String, node_path: String) -> void:
+	var checkbox: CheckBox = get_node_or_null(node_path)
+	if checkbox != null:
+		overlay_checkboxes[flag_name] = checkbox

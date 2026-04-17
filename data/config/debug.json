@@ -8,10 +8,10 @@
   "export_directory": "user://exports",
   "lod": {
     "enabled": true,
-    "near_margin": 192.0,
-    "mid_margin": 768.0,
-    "mid_update_interval_ticks": 2,
-    "far_update_interval_ticks": 5,
+    "near_margin": 144.0,
+    "mid_margin": 560.0,
+    "mid_update_interval_ticks": 3,
+    "far_update_interval_ticks": 8,
     "show_lod_overlay": false
   },
   "overlays": {
@@ -24,7 +24,7 @@
     "show_chase_lines": false,
     "show_grass_density": false,
     "show_population_density": false,
-    "show_water_overlay": true,
+    "show_water_overlay": false,
     "show_selected_path": false,
     "show_lod_overlay": false
   }

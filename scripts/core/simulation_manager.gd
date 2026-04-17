@@ -12,7 +12,7 @@ const WorldStateScript = preload("res://scripts/world/world_state.gd")
 const StatsSystemScript = preload("res://scripts/stats/stats_system.gd")
 const TelemetryLoggerScript = preload("res://scripts/stats/telemetry_logger.gd")
 
-const MAX_SIMULATION_STEPS_PER_FRAME := 4
+const MAX_SIMULATION_STEPS_PER_FRAME := 2
 
 var config_bundle: Dictionary = {}
 var event_bus
@@ -187,7 +187,7 @@ func get_selected_agent_summary() -> Dictionary:
 	var agent = get_selected_agent()
 	if agent == null:
 		return {}
-	var summary := agent.get_debug_summary()
+	var summary: Dictionary = agent.get_debug_summary()
 	summary["biome"] = "meadow" if world_state == null else world_state.get_biome_at_position(agent.position)
 	summary["path_nodes"] = agent.path_cells.size()
 	return summary

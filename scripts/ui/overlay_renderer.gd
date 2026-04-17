@@ -66,16 +66,16 @@ func _draw_grass_density(world, visible_rect: Rect2) -> void:
 func _draw_biomes(world, visible_rect: Rect2) -> void:
 	if world.terrain_system == null:
 		return
-	var terrain := world.terrain_system
+	var terrain: TerrainSystem = world.terrain_system
 	var cell_size: float = terrain.cell_size
-	var min_cell_x := maxi(0, int(floor(visible_rect.position.x / cell_size)))
-	var min_cell_y := maxi(0, int(floor(visible_rect.position.y / cell_size)))
-	var max_cell_x := mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
-	var max_cell_y := mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
+	var min_cell_x: int = maxi(0, int(floor(visible_rect.position.x / cell_size)))
+	var min_cell_y: int = maxi(0, int(floor(visible_rect.position.y / cell_size)))
+	var max_cell_x: int = mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
+	var max_cell_y: int = mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
 	for x in range(min_cell_x, max_cell_x + 1):
 		for y in range(min_cell_y, max_cell_y + 1):
-			var index := y * terrain.cols + x
-			var biome_color := terrain.get_biome_color_at_index(index)
+			var index: int = y * terrain.cols + x
+			var biome_color: Color = terrain.get_biome_color_at_index(index)
 			biome_color.a = 0.32
 			draw_rect(terrain.get_cell_rect(index), biome_color, true)
 
@@ -83,20 +83,20 @@ func _draw_biomes(world, visible_rect: Rect2) -> void:
 func _draw_obstacles(world, visible_rect: Rect2) -> void:
 	if world.terrain_system == null:
 		return
-	var terrain := world.terrain_system
+	var terrain: TerrainSystem = world.terrain_system
 	var cell_size: float = terrain.cell_size
-	var min_cell_x := maxi(0, int(floor(visible_rect.position.x / cell_size)))
-	var min_cell_y := maxi(0, int(floor(visible_rect.position.y / cell_size)))
-	var max_cell_x := mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
-	var max_cell_y := mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
+	var min_cell_x: int = maxi(0, int(floor(visible_rect.position.x / cell_size)))
+	var min_cell_y: int = maxi(0, int(floor(visible_rect.position.y / cell_size)))
+	var max_cell_x: int = mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
+	var max_cell_y: int = mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
 	for x in range(min_cell_x, max_cell_x + 1):
 		for y in range(min_cell_y, max_cell_y + 1):
-			var index := y * terrain.cols + x
-			var obstacle_id := terrain.get_obstacle_at_index(index)
+			var index: int = y * terrain.cols + x
+			var obstacle_id: String = terrain.get_obstacle_at_index(index)
 			if obstacle_id == "":
 				continue
-			var rect := terrain.get_cell_rect(index)
-			var obstacle_color := terrain.get_obstacle_color(obstacle_id)
+			var rect: Rect2 = terrain.get_cell_rect(index)
+			var obstacle_color: Color = terrain.get_obstacle_color(obstacle_id)
 			obstacle_color.a = 0.72
 			draw_rect(rect, obstacle_color, true)
 			draw_rect(rect, Color(0.9, 0.9, 0.9, 0.12), false, 1.0)
