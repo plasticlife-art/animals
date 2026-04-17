@@ -31,6 +31,7 @@ var seed: int = 0
 var selected_agent_id: int = -1
 var focus_mode: String = "off"
 var debug_flags: Dictionary = {}
+var ui_refresh_interval_ticks: int = 5
 var _single_step_requested: bool = false
 var lod_enabled: bool = false
 var lod_settings: Dictionary = {}
@@ -68,6 +69,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 
 	var debug_config: Dictionary = config_bundle.get("debug", {})
 	debug_flags = debug_config.get("overlays", {}).duplicate(true)
+	ui_refresh_interval_ticks = max(1, int(debug_config.get("ui_refresh_interval_ticks", 5)))
 	lod_settings = _build_lod_settings(debug_config)
 	lod_enabled = false
 	lod_focus_rect = Rect2()
@@ -140,6 +142,10 @@ func set_speed_multiplier(value: float) -> void:
 
 func set_debug_flag(flag_name: String, enabled: bool) -> void:
 	debug_flags[flag_name] = enabled
+
+
+func should_refresh_ui_on_tick(tick: int) -> bool:
+	return tick <= 0 or tick % ui_refresh_interval_ticks == 0
 
 
 func set_lod_enabled(value: bool) -> void:

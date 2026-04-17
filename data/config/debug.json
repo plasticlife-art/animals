@@ -15,8 +15,8 @@
     "show_lod_overlay": false
   },
   "overlays": {
-    "show_biomes": false,
-    "show_obstacles": false,
+    "show_biomes": true,
+    "show_obstacles": true,
     "show_state_labels": false,
     "show_target_lines": false,
     "show_vision_radius": false,

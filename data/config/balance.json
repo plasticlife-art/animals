@@ -1,8 +1,8 @@
 {
   "need_max": 100.0,
   "state_thresholds": {
-    "critical_hunger": 66.0,
-    "critical_thirst": 62.0,
+    "critical_hunger": 60.0,
+    "critical_thirst": 50.0,
     "rest_energy": 26.0,
     "rest_energy_resume": 34.0,
     "rejoin_distance": 135.0,
@@ -23,8 +23,8 @@
     "age_stage": 0.35
   },
   "hunt_rules": {
-    "max_chase_duration": 14.0,
-    "kin_chase_break_radius": 220.0,
+    "max_chase_duration": 10.0,
+    "kin_chase_break_radius": 500.0,
     "critical_hunger_kin_break_multiplier": 1.75
   },
   "attack": {
@@ -34,9 +34,9 @@
     "prey_escape_penalty": 0.16
   },
   "carcass": {
-    "ttl_seconds": 90.0,
-    "meat_total": 84.0,
-    "max_feeders": 3,
+    "ttl_seconds": 30.0,
+    "meat_total": 150.0,
+    "max_feeders": 5,
     "search_radius": 420.0,
     "scavenging_hunger": 38.0
   },

@@ -80,7 +80,7 @@ func _on_overlay_flag_changed(flag_name: String, enabled: bool) -> void:
 func _on_lod_enabled_toggled(enabled: bool) -> void:
 	simulation_manager.set_lod_enabled(enabled)
 	debug_panel.set_lod_enabled_state(enabled)
-	world_view.queue_redraw()
+	world_view.request_refresh()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -155,6 +155,8 @@ func set_hud_visible(value: bool) -> void:
 	hud_visible = value
 	debug_panel.visible = value
 	charts_panel.visible = value
+	if value:
+		charts_panel.request_refresh()
 
 
 func _apply_debug_configuration() -> void:
@@ -183,7 +185,7 @@ func _sync_lod_focus_rect() -> void:
 		return
 	simulation_manager.set_lod_focus_rect(focus_rect)
 	if bool(simulation_manager.debug_flags.get("show_lod_overlay", false)):
-		world_view.queue_redraw()
+		world_view.request_refresh()
 
 
 func _exit_game() -> void:

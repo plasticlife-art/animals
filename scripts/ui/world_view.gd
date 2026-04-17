@@ -22,6 +22,11 @@ func set_input_enabled(value: bool) -> void:
 	input_enabled = value
 
 
+func request_refresh() -> void:
+	if is_visible_in_tree():
+		queue_redraw()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if simulation_manager == null or not input_enabled:
 		return
@@ -92,11 +97,11 @@ func _draw_terrain_background(world, visible_rect: Rect2) -> void:
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
-	queue_redraw()
+	request_refresh()
 
 
 func _on_selection_changed(_agent_id: int) -> void:
-	queue_redraw()
+	request_refresh()
 
 
 func _get_visible_world_rect(_world_bounds: Rect2) -> Rect2:

@@ -24,7 +24,6 @@ var simulation_manager: SimulationManager
 var is_paused: bool = false
 var overlay_checkboxes: Dictionary = {}
 var speed_steps: Array = []
-var ui_refresh_interval_ticks: int = 5
 var event_log_visible_limit: int = 12
 
 
@@ -76,7 +75,6 @@ func bind_manager(manager: SimulationManager) -> void:
 
 func apply_debug_settings(debug_config: Dictionary, flags: Dictionary, is_lod_enabled: bool) -> void:
 	speed_steps = debug_config.get("speed_steps", [1.0])
-	ui_refresh_interval_ticks = max(1, int(debug_config.get("ui_refresh_interval_ticks", 5)))
 	event_log_visible_limit = max(1, int(debug_config.get("event_log_visible_limit", 12)))
 	if speed_steps.is_empty():
 		speed_steps = [1.0]
@@ -171,7 +169,7 @@ func _on_overlay_toggled(enabled: bool, flag_name: String) -> void:
 
 
 func _on_tick_completed(tick: int, snapshot: Dictionary) -> void:
-	if tick != 0 and tick % ui_refresh_interval_ticks != 0:
+	if simulation_manager != null and not simulation_manager.should_refresh_ui_on_tick(tick):
 		return
 	_refresh_summary(snapshot)
 	_refresh_inspector(simulation_manager.get_selected_agent_summary())

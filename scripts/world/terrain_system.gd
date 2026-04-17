@@ -48,6 +48,12 @@ var _walkable: PackedByteArray = PackedByteArray()
 var _forage_init_multipliers: PackedFloat32Array = PackedFloat32Array()
 var _forage_regrowth_multipliers: PackedFloat32Array = PackedFloat32Array()
 var _blocked_cell_count: int = 0
+var _cell_centers: PackedVector2Array = PackedVector2Array()
+var _cached_walkable_neighbors: Array = []
+var _cached_walkable_neighbor_costs: Array = []
+var _path_cache: Dictionary = {}
+var _path_cache_order: Array = []
+var _path_cache_limit: int = 768
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
@@ -74,12 +80,19 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_walkable.resize(cell_count)
 	_forage_init_multipliers.resize(cell_count)
 	_forage_regrowth_multipliers.resize(cell_count)
+	_cell_centers = PackedVector2Array()
+	_cached_walkable_neighbors.clear()
+	_cached_walkable_neighbor_costs.clear()
+	_path_cache.clear()
+	_path_cache_order.clear()
+	_path_cache_limit = maxi(32, int(world_config.get("navigation", {}).get("path_cache_limit", 768)))
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
 	_apply_obstacles(terrain_config.get("obstacles", {}), rng)
 	_connect_walkable_regions()
 	_refresh_cached_values()
 	_ensure_biome_presence(rng)
+	_refresh_navigation_cache()
 
 
 func get_cell_count() -> int:
@@ -92,6 +105,10 @@ func get_cell_coords(index: int) -> Vector2i:
 
 func get_cell_center(index: int) -> Vector2:
 	var coords: Vector2i = get_cell_coords(index)
+	if index >= 0 and index < _cell_centers.size():
+		var cached_center: Vector2 = _cell_centers[index]
+		if not cached_center.is_zero_approx():
+			return cached_center
 	return Vector2((coords.x + 0.5) * cell_size, (coords.y + 0.5) * cell_size)
 
 
@@ -203,39 +220,11 @@ func get_biome_counts() -> Dictionary:
 
 
 func get_walkable_neighbors(index: int) -> Array:
-	if not is_walkable_index(index):
+	if index < 0 or index >= get_cell_count():
 		return []
-	var coords: Vector2i = get_cell_coords(index)
-	var allow_diagonal: bool = bool(navigation_config.get("allow_diagonal", true))
-	var offsets: Array = [
-		Vector2i(1, 0),
-		Vector2i(-1, 0),
-		Vector2i(0, 1),
-		Vector2i(0, -1),
-	]
-	if allow_diagonal:
-		offsets.append_array([
-			Vector2i(1, 1),
-			Vector2i(1, -1),
-			Vector2i(-1, 1),
-			Vector2i(-1, -1),
-		])
-
-	var neighbors: Array = []
-	for offset in offsets:
-		var neighbor: Vector2i = coords + offset
-		if neighbor.x < 0 or neighbor.y < 0 or neighbor.x >= cols or neighbor.y >= rows:
-			continue
-		var neighbor_index: int = neighbor.y * cols + neighbor.x
-		if not is_walkable_index(neighbor_index):
-			continue
-		if allow_diagonal and abs(offset.x) == 1 and abs(offset.y) == 1:
-			var horizontal: Vector2i = Vector2i(coords.x + offset.x, coords.y)
-			var vertical: Vector2i = Vector2i(coords.x, coords.y + offset.y)
-			if not is_walkable_index(horizontal.y * cols + horizontal.x) and not is_walkable_index(vertical.y * cols + vertical.x):
-				continue
-		neighbors.append(neighbor_index)
-	return neighbors
+	if _cached_walkable_neighbors.size() == get_cell_count():
+		return _cached_walkable_neighbors[index]
+	return _compute_walkable_neighbors(index)
 
 
 func find_nearest_walkable_index(start_index: int) -> int:
@@ -282,10 +271,12 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 			"goal_index": goal_index,
 		}
 
+	var cache_key := Vector2i(start_index, goal_index)
+	if _path_cache.has(cache_key):
+		return _duplicate_path_result(_path_cache[cache_key])
+
 	var max_search_cells: int = maxi(64, int(navigation_config.get("max_search_cells", 2800)))
-	var open: Array = [start_index]
-	var open_lookup: Dictionary = {}
-	open_lookup[start_index] = true
+	var open_heap: Array = []
 	var came_from: Dictionary = {}
 	var g_score: Dictionary = {}
 	g_score[start_index] = 0.0
@@ -294,10 +285,18 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 	var best_index: int = start_index
 	var best_heuristic: float = _heuristic_cost(start_index, goal_index)
 	var visited: int = 0
+	_heap_push(open_heap, {
+		"index": start_index,
+		"priority": float(f_score[start_index]),
+	})
 
-	while not open.is_empty() and visited < max_search_cells:
-		var current_index: int = _extract_lowest_cost_index(open, f_score)
-		open_lookup.erase(current_index)
+	while not open_heap.is_empty() and visited < max_search_cells:
+		var current_node: Dictionary = _heap_pop(open_heap)
+		var current_index: int = int(current_node.get("index", -1))
+		var queued_priority: float = float(current_node.get("priority", INF))
+		var current_priority: float = float(f_score.get(current_index, INF))
+		if current_index == -1 or queued_priority > current_priority:
+			continue
 		visited += 1
 
 		var current_heuristic: float = _heuristic_cost(current_index, goal_index)
@@ -306,40 +305,51 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 			best_index = current_index
 
 		if current_index == goal_index:
-			return {
+			var result := {
 				"cells": _reconstruct_path(current_index, came_from),
 				"cost": float(g_score.get(current_index, 0.0)),
 				"reachable": true,
 				"start_index": start_index,
 				"goal_index": goal_index,
 			}
+			_store_path_cache_entry(cache_key, result)
+			return _duplicate_path_result(result)
 
-		for neighbor_index in get_walkable_neighbors(current_index):
-			var tentative_cost: float = float(g_score.get(current_index, INF)) + _step_cost(current_index, neighbor_index)
+		var neighbor_indices: Array = get_walkable_neighbors(current_index)
+		var neighbor_costs: Array = _get_walkable_neighbor_costs(current_index)
+		for neighbor_offset in range(neighbor_indices.size()):
+			var neighbor_index: int = int(neighbor_indices[neighbor_offset])
+			var tentative_cost: float = float(g_score.get(current_index, INF)) + float(neighbor_costs[neighbor_offset])
 			if tentative_cost >= float(g_score.get(neighbor_index, INF)):
 				continue
 			came_from[neighbor_index] = current_index
 			g_score[neighbor_index] = tentative_cost
-			f_score[neighbor_index] = tentative_cost + _heuristic_cost(neighbor_index, goal_index)
-			if not open_lookup.has(neighbor_index):
-				open.append(neighbor_index)
-				open_lookup[neighbor_index] = true
+			var total_cost: float = tentative_cost + _heuristic_cost(neighbor_index, goal_index)
+			f_score[neighbor_index] = total_cost
+			_heap_push(open_heap, {
+				"index": neighbor_index,
+				"priority": total_cost,
+			})
 
 	if best_index == start_index:
-		return {
+		var failed_result := {
 			"cells": [start_index],
 			"cost": INF,
 			"reachable": false,
 			"start_index": start_index,
 			"goal_index": goal_index,
 		}
-	return {
+		_store_path_cache_entry(cache_key, failed_result)
+		return _duplicate_path_result(failed_result)
+	var partial_result := {
 		"cells": _reconstruct_path(best_index, came_from),
 		"cost": float(g_score.get(best_index, INF)),
 		"reachable": false,
 		"start_index": start_index,
 		"goal_index": goal_index,
 	}
+	_store_path_cache_entry(cache_key, partial_result)
+	return _duplicate_path_result(partial_result)
 
 
 func _build_biome_definitions(config_biomes: Dictionary) -> Dictionary:
@@ -584,6 +594,91 @@ func _refresh_cached_values() -> void:
 			_blocked_cell_count += 1
 
 
+func _refresh_navigation_cache() -> void:
+	var cell_count := get_cell_count()
+	_cell_centers.resize(cell_count)
+	_cached_walkable_neighbors.resize(cell_count)
+	_cached_walkable_neighbor_costs.resize(cell_count)
+	for index in range(cell_count):
+		var coords: Vector2i = get_cell_coords(index)
+		_cell_centers[index] = Vector2((coords.x + 0.5) * cell_size, (coords.y + 0.5) * cell_size)
+	for index in range(cell_count):
+		if not is_walkable_index(index):
+			_cached_walkable_neighbors[index] = []
+			_cached_walkable_neighbor_costs[index] = []
+			continue
+		var neighbors: Array = _compute_walkable_neighbors(index)
+		var costs: Array = []
+		costs.resize(neighbors.size())
+		for neighbor_offset in range(neighbors.size()):
+			var neighbor_index: int = int(neighbors[neighbor_offset])
+			costs[neighbor_offset] = _step_cost(index, neighbor_index)
+		_cached_walkable_neighbors[index] = neighbors
+		_cached_walkable_neighbor_costs[index] = costs
+
+
+func _compute_walkable_neighbors(index: int) -> Array:
+	if not is_walkable_index(index):
+		return []
+	var coords: Vector2i = get_cell_coords(index)
+	var allow_diagonal: bool = bool(navigation_config.get("allow_diagonal", true))
+	var neighbors: Array = []
+	var orthogonal_offsets := [
+		Vector2i(1, 0),
+		Vector2i(-1, 0),
+		Vector2i(0, 1),
+		Vector2i(0, -1),
+	]
+	for offset in orthogonal_offsets:
+		var neighbor_index := _offset_to_walkable_index(coords, offset)
+		if neighbor_index != -1:
+			neighbors.append(neighbor_index)
+	if not allow_diagonal:
+		return neighbors
+	var diagonal_offsets := [
+		Vector2i(1, 1),
+		Vector2i(1, -1),
+		Vector2i(-1, 1),
+		Vector2i(-1, -1),
+	]
+	for offset in diagonal_offsets:
+		var neighbor: Vector2i = coords + offset
+		if neighbor.x < 0 or neighbor.y < 0 or neighbor.x >= cols or neighbor.y >= rows:
+			continue
+		var neighbor_index: int = neighbor.y * cols + neighbor.x
+		if not is_walkable_index(neighbor_index):
+			continue
+		var horizontal := Vector2i(coords.x + offset.x, coords.y)
+		var vertical := Vector2i(coords.x, coords.y + offset.y)
+		if not is_walkable_index(horizontal.y * cols + horizontal.x) and not is_walkable_index(vertical.y * cols + vertical.x):
+			continue
+		neighbors.append(neighbor_index)
+	return neighbors
+
+
+func _offset_to_walkable_index(coords: Vector2i, offset: Vector2i) -> int:
+	var neighbor: Vector2i = coords + offset
+	if neighbor.x < 0 or neighbor.y < 0 or neighbor.x >= cols or neighbor.y >= rows:
+		return -1
+	var neighbor_index: int = neighbor.y * cols + neighbor.x
+	if not is_walkable_index(neighbor_index):
+		return -1
+	return neighbor_index
+
+
+func _get_walkable_neighbor_costs(index: int) -> Array:
+	if index < 0 or index >= get_cell_count():
+		return []
+	if _cached_walkable_neighbor_costs.size() == get_cell_count():
+		return _cached_walkable_neighbor_costs[index]
+	var neighbors := _compute_walkable_neighbors(index)
+	var costs: Array = []
+	costs.resize(neighbors.size())
+	for neighbor_offset in range(neighbors.size()):
+		costs[neighbor_offset] = _step_cost(index, int(neighbors[neighbor_offset]))
+	return costs
+
+
 func _get_water_influence(position: Vector2, water_sources: Array, radius: float) -> float:
 	if water_sources.is_empty() or radius <= 0.0:
 		return 0.0
@@ -599,16 +694,41 @@ func _get_water_influence(position: Vector2, water_sources: Array, radius: float
 	return best
 
 
-func _extract_lowest_cost_index(open: Array, f_score: Dictionary) -> int:
-	var best_index: int = 0
-	var best_cost: float = float(f_score.get(open[0], INF))
-	for index in range(1, open.size()):
-		var node = open[index]
-		var node_cost: float = float(f_score.get(node, INF))
-		if node_cost < best_cost:
-			best_cost = node_cost
-			best_index = index
-	return int(open.pop_at(best_index))
+func _heap_push(heap: Array, value: Dictionary) -> void:
+	heap.append(value)
+	var index := heap.size() - 1
+	while index > 0:
+		var parent := int((index - 1) / 2)
+		if float(heap[parent].get("priority", INF)) <= float(value.get("priority", INF)):
+			break
+		heap[index] = heap[parent]
+		index = parent
+	heap[index] = value
+
+
+func _heap_pop(heap: Array) -> Dictionary:
+	if heap.is_empty():
+		return {}
+	var result: Dictionary = heap[0]
+	var tail: Dictionary = heap.pop_back()
+	if heap.is_empty():
+		return result
+	var index := 0
+	var heap_size := heap.size()
+	while true:
+		var left := index * 2 + 1
+		if left >= heap_size:
+			break
+		var right := left + 1
+		var best_child := left
+		if right < heap_size and float(heap[right].get("priority", INF)) < float(heap[left].get("priority", INF)):
+			best_child = right
+		if float(heap[best_child].get("priority", INF)) >= float(tail.get("priority", INF)):
+			break
+		heap[index] = heap[best_child]
+		index = best_child
+	heap[index] = tail
+	return result
 
 
 func _heuristic_cost(from_index: int, to_index: int) -> float:
@@ -635,3 +755,23 @@ func _closest_point_on_segment(point: Vector2, segment_start: Vector2, segment_e
 		return segment_start
 	var t: float = clampf((point - segment_start).dot(segment) / segment_length_sq, 0.0, 1.0)
 	return segment_start + segment * t
+
+
+func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary) -> void:
+	if _path_cache.has(cache_key):
+		return
+	_path_cache[cache_key] = _duplicate_path_result(result)
+	_path_cache_order.append(cache_key)
+	if _path_cache_order.size() > _path_cache_limit:
+		var oldest_key: Vector2i = _path_cache_order.pop_front()
+		_path_cache.erase(oldest_key)
+
+
+func _duplicate_path_result(result: Dictionary) -> Dictionary:
+	return {
+		"cells": result.get("cells", []).duplicate(),
+		"cost": float(result.get("cost", INF)),
+		"reachable": bool(result.get("reachable", false)),
+		"start_index": int(result.get("start_index", -1)),
+		"goal_index": int(result.get("goal_index", -1)),
+	}

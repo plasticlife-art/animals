@@ -245,12 +245,14 @@ func remember_water(source: Dictionary, time_seconds: float) -> void:
 		return
 
 	var previous_herbivore_seen_time := -1.0
+	var previous_investigated_time := -1.0
 	var existing_index := -1
 	for index in range(recent_water_sources.size()):
 		var existing: Dictionary = recent_water_sources[index]
 		if existing.get("position", null) == position_value:
 			existing_index = index
 			previous_herbivore_seen_time = float(existing.get("last_herbivore_seen_time", -1.0))
+			previous_investigated_time = float(existing.get("last_investigated_time", -1.0))
 			break
 
 	var updated_entry := {
@@ -258,11 +260,14 @@ func remember_water(source: Dictionary, time_seconds: float) -> void:
 		"radius": float(source.get("radius", 0.0)),
 		"last_seen_time": time_seconds,
 		"last_herbivore_seen_time": previous_herbivore_seen_time,
+		"last_investigated_time": previous_investigated_time,
 	}
 	if source.has("last_herbivore_seen_time"):
 		updated_entry["last_herbivore_seen_time"] = float(source.get("last_herbivore_seen_time", previous_herbivore_seen_time))
 	elif bool(source.get("herbivore_seen", false)):
 		updated_entry["last_herbivore_seen_time"] = time_seconds
+	if source.has("last_investigated_time"):
+		updated_entry["last_investigated_time"] = float(source.get("last_investigated_time", previous_investigated_time))
 
 	if existing_index != -1:
 		recent_water_sources.remove_at(existing_index)
@@ -299,6 +304,13 @@ func get_recent_water_sources(time_seconds: float, max_age_seconds: float) -> Ar
 	recent_water_sources = valid_sources.duplicate(true)
 	recent_water_sources.sort_custom(Callable(self, "_sort_water_memory_entry"))
 	return recent_water_sources.duplicate(true)
+
+
+func mark_water_source_investigated(source_position: Vector2, time_seconds: float) -> void:
+	remember_water({
+		"position": source_position,
+		"last_investigated_time": time_seconds,
+	}, time_seconds)
 
 
 func add_kin_id(agent_id: int) -> void:

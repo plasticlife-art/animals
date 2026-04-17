@@ -10,6 +10,11 @@ func bind_manager(manager: SimulationManager) -> void:
 	queue_redraw()
 
 
+func request_refresh() -> void:
+	if is_visible_in_tree():
+		queue_redraw()
+
+
 func _draw() -> void:
 	var font = ThemeDB.fallback_font
 	var font_size := ThemeDB.fallback_font_size
@@ -110,4 +115,6 @@ func _draw_combined_line(series: Array, rect: Rect2, keys: Array, color: Color) 
 func _on_tick_completed(tick: int, snapshot: Dictionary) -> void:
 	if int(snapshot.get("tick", -1)) != tick:
 		return
-	queue_redraw()
+	if simulation_manager == null or not simulation_manager.should_refresh_ui_on_tick(tick):
+		return
+	request_refresh()

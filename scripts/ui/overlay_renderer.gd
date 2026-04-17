@@ -14,7 +14,12 @@ func bind_manager(manager: SimulationManager) -> void:
 
 func set_debug_flag(flag_name: String, enabled: bool) -> void:
 	debug_flags[flag_name] = enabled
-	queue_redraw()
+	request_refresh()
+
+
+func request_refresh() -> void:
+	if is_visible_in_tree():
+		queue_redraw()
 
 
 func _draw() -> void:
@@ -235,11 +240,13 @@ func _draw_selected_group_relation(world, visible_rect: Rect2) -> void:
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
-	queue_redraw()
+	if simulation_manager == null or not simulation_manager.should_refresh_ui_on_tick(_tick):
+		return
+	request_refresh()
 
 
 func _on_selection_changed(_agent_id: int) -> void:
-	queue_redraw()
+	request_refresh()
 
 
 func _get_visible_world_rect(_world_bounds: Rect2) -> Rect2:

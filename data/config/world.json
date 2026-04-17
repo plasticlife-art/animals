@@ -1,5 +1,5 @@
 {
-  "seed": 821374,
+  "seed": 3,
   "tick_rate": 18.0,
   "world_size": {
     "x": 4800.0,
@@ -91,6 +91,6 @@
   "spawns": {
     "herbivore_count": 220,
     "predator_count": 18,
-    "herbivore_group_count": 10
+    "herbivore_group_count": 12
   }
 }

@@ -1,6 +1,8 @@
 class_name Predator
 extends AgentBase
 
+const WATER_INVESTIGATION_COOLDOWN_SECONDS := 12.0
+
 var hunt: Dictionary = {}
 var preferred_mate_id: int = -1
 var target_carcass_id: int = -1
@@ -438,10 +440,9 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 				"source_position": water["position"],
 				"restored": drink_restore,
 			})
-		else:
-			set_state("seek_water", world.current_tick)
-			stop_motion(delta)
-		return true
+			return true
+		target_position = null
+		return false
 
 	set_state("seek_water", world.current_tick)
 	var water_waypoint: Vector2 = world.get_next_waypoint(position, water["position"], id)
@@ -573,13 +574,30 @@ func _should_rest(thresholds: Dictionary) -> bool:
 
 
 func _investigate_recent_water(world, delta: float) -> bool:
-	var remembered_sources := get_recent_water_sources(
-		world.current_time,
-		float(perception.get("water_memory_duration_seconds", 0.0))
-	)
-	if remembered_sources.is_empty():
+	var source: Dictionary = _get_recent_investigation_water_source(world)
+	if source.is_empty():
 		return false
-	return _seek_or_drink(world, delta, remembered_sources.front())
+	release_carcass_target(world)
+	target_agent_id = -1
+	target_position = source["position"]
+
+	var investigate_distance := float(feeding.get("drink_distance", 28.0)) + float(source.get("radius", 0.0))
+	if position.distance_squared_to(source["position"]) > investigate_distance * investigate_distance:
+		set_state("investigate_water", world.current_tick)
+		var waypoint: Vector2 = world.get_next_waypoint(position, source["position"], id)
+		move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("max_speed", 84.0)), delta)
+		return true
+
+	clear_navigation()
+	if thirst > 4.0 and _seek_or_drink(world, delta, source):
+		return true
+	if _scavenge_or_feed(world, delta):
+		return true
+	if _hunt(world, delta):
+		return true
+	mark_water_source_investigated(source["position"], world.current_time)
+	target_position = null
+	return false
 
 
 func _remember_water_source(world, source: Dictionary) -> void:
@@ -589,6 +607,21 @@ func _remember_water_source(world, source: Dictionary) -> void:
 	if _water_source_has_herbivore(world, updated_source):
 		updated_source["last_herbivore_seen_time"] = world.current_time
 	remember_water(updated_source, world.current_time)
+
+
+func _get_recent_investigation_water_source(world) -> Dictionary:
+	var remembered_sources := get_recent_water_sources(
+		world.current_time,
+		float(perception.get("water_memory_duration_seconds", 0.0))
+	)
+	for source in remembered_sources:
+		if float(source.get("last_herbivore_seen_time", -1.0)) < 0.0:
+			continue
+		var last_investigated_time := float(source.get("last_investigated_time", -1.0))
+		if last_investigated_time >= 0.0 and world.current_time - last_investigated_time < WATER_INVESTIGATION_COOLDOWN_SECONDS:
+			continue
+		return source
+	return {}
 
 
 func _water_source_has_herbivore(world, source: Dictionary) -> bool:

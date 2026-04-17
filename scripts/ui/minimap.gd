@@ -60,6 +60,11 @@ func set_input_enabled(value: bool) -> void:
 		_dragging = false
 
 
+func request_refresh() -> void:
+	if is_visible_in_tree():
+		queue_redraw()
+
+
 func _process(_delta: float) -> void:
 	if _dragging and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_dragging = false
@@ -70,7 +75,7 @@ func _process(_delta: float) -> void:
 
 	if _rect_changed(_last_camera_rect, current_camera_rect):
 		_last_camera_rect = current_camera_rect
-		queue_redraw()
+		request_refresh()
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -121,7 +126,7 @@ func _draw() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_rebuild_static_cache()
-		queue_redraw()
+		request_refresh()
 
 
 func _connect_manager() -> void:
@@ -179,7 +184,7 @@ func _move_camera_from_local_position(local_position: Vector2) -> void:
 	var world_position := _map_to_world_position(local_position, _get_map_rect())
 	world_camera.move_to_world_position(world_position)
 	_last_camera_rect = world_camera.get_visible_world_rect()
-	queue_redraw()
+	request_refresh()
 
 
 func _get_map_rect() -> Rect2:
@@ -389,8 +394,8 @@ func _rect_changed(previous: Rect2, current: Rect2, epsilon: float = 0.1) -> boo
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
-	queue_redraw()
+	request_refresh()
 
 
 func _on_selection_changed(_agent_id: int) -> void:
-	queue_redraw()
+	request_refresh()

@@ -10,6 +10,7 @@ var max_biomass: float = 100.0
 var regrowth_rate: float = 5.0
 var total_biomass: float = 0.0
 var _cells: PackedFloat32Array = PackedFloat32Array()
+var _biomass_totals_by_biome: Dictionary = {}
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrain_system: TerrainSystem = null) -> void:
@@ -29,13 +30,16 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 	rows = maxi(1, int(ceil(world_size.y / cell_size)))
 	_cells.resize(cols * rows)
 	total_biomass = 0.0
+	_biomass_totals_by_biome.clear()
 
 	var density_min := float(grass_config.get("initial_density_min", 0.45))
 	var density_max := float(grass_config.get("initial_density_max", 0.95))
 	for index in range(_cells.size()):
 		var forage_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_init_multiplier(index)
-		_cells[index] = rng.randf_range(density_min, density_max) * max_biomass * forage_multiplier
-		total_biomass += _cells[index]
+		var biomass := rng.randf_range(density_min, density_max) * max_biomass * forage_multiplier
+		_cells[index] = biomass
+		total_biomass += biomass
+		_add_biomass_to_biome(index, biomass)
 
 
 func step(delta: float) -> void:
@@ -44,7 +48,11 @@ func step(delta: float) -> void:
 		var regrowth_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_regrowth_multiplier(index)
 		var updated := minf(_get_cell_max_biomass(index), previous + regrowth_rate * regrowth_multiplier * delta)
 		_cells[index] = updated
-		total_biomass += updated - previous
+		var delta_biomass := updated - previous
+		if is_zero_approx(delta_biomass):
+			continue
+		total_biomass += delta_biomass
+		_add_biomass_to_biome(index, delta_biomass)
 
 
 func get_total_biomass() -> float:
@@ -108,8 +116,6 @@ func query_cells(position: Vector2, radius: float) -> Array:
 				"biomass": _cells[index],
 				"density": _cells[index] / _get_cell_max_biomass(index),
 			})
-
-	result.sort_custom(func(a, b): return a["biomass"] > b["biomass"])
 	return result
 
 
@@ -161,17 +167,12 @@ func consume_at_position(position: Vector2, amount: float) -> float:
 	var consumed := minf(_cells[index], amount)
 	_cells[index] -= consumed
 	total_biomass -= consumed
+	_add_biomass_to_biome(index, -consumed)
 	return consumed
 
 
 func get_biomass_totals_by_biome() -> Dictionary:
-	var totals := {}
-	for index in range(_cells.size()):
-		var biome_id := "meadow"
-		if terrain_system != null:
-			biome_id = terrain_system.get_biome_at_index(index)
-		totals[biome_id] = float(totals.get(biome_id, 0.0)) + _cells[index]
-	return totals
+	return _biomass_totals_by_biome.duplicate(true)
 
 
 func _position_to_index(position: Vector2) -> int:
@@ -187,3 +188,10 @@ func _position_to_index(position: Vector2) -> int:
 func _get_cell_max_biomass(index: int) -> float:
 	var local_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_init_multiplier(index)
 	return maxf(1.0, max_biomass * maxf(0.1, local_multiplier))
+
+
+func _add_biomass_to_biome(index: int, delta_biomass: float) -> void:
+	if is_zero_approx(delta_biomass):
+		return
+	var biome_id := "meadow" if terrain_system == null else terrain_system.get_biome_at_index(index)
+	_biomass_totals_by_biome[biome_id] = float(_biomass_totals_by_biome.get(biome_id, 0.0)) + delta_biomass

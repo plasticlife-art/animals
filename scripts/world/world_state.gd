@@ -402,16 +402,21 @@ func find_reachable_grass(position: Vector2, radius: float, min_biomass: float =
 	var candidates: Array = resource_system.query_cells(position, radius)
 	var shortlisted: Array = []
 	for candidate in candidates:
-		if float(candidate.get("biomass", 0.0)) < min_biomass:
+		var candidate_biomass: float = float(candidate.get("biomass", 0.0))
+		if candidate_biomass < min_biomass:
 			continue
 		var candidate_index: int = int(candidate.get("index", -1))
 		if candidate_index == -1 or not terrain_system.is_walkable_index(candidate_index):
 			continue
 		var candidate_center: Vector2 = candidate.get("center", position)
-		var heuristic_score: float = float(candidate.get("biomass", 0.0)) - position.distance_to(candidate_center) * 0.14
-		var shortlisted_candidate: Dictionary = candidate.duplicate(true)
-		shortlisted_candidate["heuristic_score"] = heuristic_score
-		shortlisted.append(shortlisted_candidate)
+		shortlisted.append({
+			"index": candidate_index,
+			"coords": candidate.get("coords", Vector2i.ZERO),
+			"center": candidate_center,
+			"biomass": candidate_biomass,
+			"density": float(candidate.get("density", 0.0)),
+			"heuristic_score": candidate_biomass - position.distance_to(candidate_center) * 0.14,
+		})
 	shortlisted.sort_custom(func(a, b): return a["heuristic_score"] > b["heuristic_score"])
 
 	var best: Dictionary = {}
@@ -435,10 +440,16 @@ func find_reachable_grass(position: Vector2, radius: float, min_biomass: float =
 			score -= 20.0
 
 		if score > best_score or (is_equal_approx(score, best_score) and path_cost < best_cost):
-			best = candidate.duplicate(true)
+			best = {
+				"index": candidate["index"],
+				"coords": candidate["coords"],
+				"center": candidate["center"],
+				"biomass": candidate["biomass"],
+				"density": candidate["density"],
+			}
 			best["path_cost"] = path_cost
 			best["reachable"] = bool(path_result.get("reachable", false))
-			best["path_cells"] = path_cells
+			best["path_cells"] = path_cells.duplicate()
 			best["score"] = score
 			best_score = score
 			best_cost = path_cost

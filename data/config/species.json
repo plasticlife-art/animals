@@ -1,9 +1,9 @@
 {
   "herbivore": {
     "movement": {
-      "max_speed": 68.0,
+      "max_speed": 70.0,
       "sprint_speed": 112.0,
-      "acceleration": 180.0,
+      "acceleration": 170.0,
       "drag": 3.5,
       "wander_jitter": 0.85
     },
@@ -12,7 +12,7 @@
       "danger_radius": 120.0,
       "water_search_radius": 640.0,
       "water_memory_duration_seconds": 120.0,
-      "grass_search_radius": 180.0,
+      "grass_search_radius": 280.0,
       "neighbor_radius": 95.0,
       "separation_radius": 28.0,
       "mate_search_radius": 64.0
@@ -21,17 +21,17 @@
       "max_energy": 100.0,
       "energy_decay": 2.4,
       "rest_recovery": 9.0,
-      "hunger_rate": 3.3,
-      "thirst_rate": 2.8,
+      "hunger_rate": 2.0,
+      "thirst_rate": 1.5,
       "dehydration_energy_penalty": 4.8
     },
     "feeding": {
-      "eat_distance": 18.0,
+      "eat_distance": 36.0,
       "bite_amount": 18.0,
       "nutrition_gain": 0.8,
-      "drink_distance": 28.0,
+      "drink_distance": 50.0,
       "drink_restore": 52.0,
-      "eat_duration": 0.55,
+      "eat_duration": 0.5,
       "drink_duration": 0.6
     },
     "reproduction": {
@@ -50,16 +50,16 @@
   },
   "predator": {
     "movement": {
-      "max_speed": 84.0,
+      "max_speed": 95.0,
       "sprint_speed": 128.0,
       "acceleration": 210.0,
       "drag": 3.1,
       "wander_jitter": 0.75
     },
     "perception": {
-      "vision_radius": 340.0,
-      "water_search_radius": 640.0,
-      "water_memory_duration_seconds": 120.0,
+      "vision_radius": 480.0,
+      "water_search_radius": 840.0,
+      "water_memory_duration_seconds": 180.0,
       "attack_radius": 24.0,
       "chase_break_radius": 360.0,
       "mate_search_radius": 360.0
@@ -82,8 +82,8 @@
       "carcass_consume_rate": 24.0,
       "carcass_nutrition_gain": 1.0,
       "carcass_energy_gain": 0.5,
-      "drink_distance": 28.0,
-      "drink_restore": 28.0
+      "drink_distance": 70.0,
+      "drink_restore": 50.0
     },
     "hunt": {
       "engage_hunger": 38.0,
