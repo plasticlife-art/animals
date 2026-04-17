@@ -23,10 +23,16 @@ func _draw() -> void:
 
 	var world = simulation_manager.world_state
 	var visible_rect := _get_visible_world_rect(world.bounds)
+	if bool(debug_flags.get("show_biomes", false)):
+		_draw_biomes(world, visible_rect)
+	if bool(debug_flags.get("show_obstacles", false)):
+		_draw_obstacles(world, visible_rect)
 	if bool(debug_flags.get("show_grass_density", false)):
 		_draw_grass_density(world, visible_rect)
 	if bool(debug_flags.get("show_water_overlay", true)):
 		_draw_water(world, visible_rect)
+	if bool(debug_flags.get("show_selected_path", false)):
+		_draw_selected_path(world, visible_rect)
 	if bool(debug_flags.get("show_population_density", false)):
 		_draw_population_density(world, visible_rect)
 	if bool(debug_flags.get("show_target_lines", false)):
@@ -57,6 +63,45 @@ func _draw_grass_density(world, visible_rect: Rect2) -> void:
 			draw_rect(world.resource_system.get_cell_rect(index), Color(0.18, 0.44, 0.2, density * 0.42), true)
 
 
+func _draw_biomes(world, visible_rect: Rect2) -> void:
+	if world.terrain_system == null:
+		return
+	var terrain := world.terrain_system
+	var cell_size: float = terrain.cell_size
+	var min_cell_x := maxi(0, int(floor(visible_rect.position.x / cell_size)))
+	var min_cell_y := maxi(0, int(floor(visible_rect.position.y / cell_size)))
+	var max_cell_x := mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
+	var max_cell_y := mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
+	for x in range(min_cell_x, max_cell_x + 1):
+		for y in range(min_cell_y, max_cell_y + 1):
+			var index := y * terrain.cols + x
+			var biome_color := terrain.get_biome_color_at_index(index)
+			biome_color.a = 0.32
+			draw_rect(terrain.get_cell_rect(index), biome_color, true)
+
+
+func _draw_obstacles(world, visible_rect: Rect2) -> void:
+	if world.terrain_system == null:
+		return
+	var terrain := world.terrain_system
+	var cell_size: float = terrain.cell_size
+	var min_cell_x := maxi(0, int(floor(visible_rect.position.x / cell_size)))
+	var min_cell_y := maxi(0, int(floor(visible_rect.position.y / cell_size)))
+	var max_cell_x := mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
+	var max_cell_y := mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
+	for x in range(min_cell_x, max_cell_x + 1):
+		for y in range(min_cell_y, max_cell_y + 1):
+			var index := y * terrain.cols + x
+			var obstacle_id := terrain.get_obstacle_at_index(index)
+			if obstacle_id == "":
+				continue
+			var rect := terrain.get_cell_rect(index)
+			var obstacle_color := terrain.get_obstacle_color(obstacle_id)
+			obstacle_color.a = 0.72
+			draw_rect(rect, obstacle_color, true)
+			draw_rect(rect, Color(0.9, 0.9, 0.9, 0.12), false, 1.0)
+
+
 func _draw_water(world, visible_rect: Rect2) -> void:
 	for source in world.water_sources:
 		var position: Vector2 = source["position"]
@@ -66,6 +111,28 @@ func _draw_water(world, visible_rect: Rect2) -> void:
 			continue
 		draw_circle(position, radius, Color(0.2, 0.42, 0.82, 0.22))
 		draw_arc(position, radius, 0.0, TAU, 32, Color(0.52, 0.75, 1.0, 0.65), 2.0)
+
+
+func _draw_selected_path(world, visible_rect: Rect2) -> void:
+	var agent = simulation_manager.get_selected_agent()
+	if agent == null or world.terrain_system == null or agent.path_cells.is_empty():
+		return
+	var path_points: PackedVector2Array = PackedVector2Array()
+	path_points.append(agent.position)
+	for path_index in range(agent.path_index, agent.path_cells.size()):
+		var cell_index := int(agent.path_cells[path_index])
+		path_points.append(world.terrain_system.get_cell_center(cell_index))
+	if agent.target_position != null:
+		path_points.append(agent.target_position)
+	if path_points.size() < 2:
+		return
+	for index in range(path_points.size() - 1):
+		var from_point: Vector2 = path_points[index]
+		var to_point: Vector2 = path_points[index + 1]
+		if not _line_is_visible(from_point, to_point, visible_rect.grow(12.0)):
+			continue
+		draw_line(from_point, to_point, Color(0.98, 0.94, 0.62, 0.92), 2.6)
+		draw_circle(to_point, 3.5, Color(0.98, 0.94, 0.62, 0.92))
 
 
 func _draw_population_density(world, visible_rect: Rect2) -> void:

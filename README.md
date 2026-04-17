@@ -49,17 +49,19 @@ The shipped config in `data/config/` currently starts with:
 
 - seed `1337`
 - tick rate `20` ticks per second
-- world size `3200 x 1800`
-- `240` herbivores in `12` groups
-- `24` predators
-- `6` water sources
-- grass biomass cells with regrowth
+- world size `4800 x 2700`
+- `480` herbivores in `18` groups
+- `48` predators
+- `18` water sources
+- terrain grid with biomes, obstacles, and grass biomass regrowth
 
 ## Implemented Systems
 
 - Fixed-step simulation manager with deterministic seeded RNG
 - JSON-driven configuration loading for world, species, balance, and debug settings
-- Renewable grass resource grid and queryable water sources
+- Procedural terrain grid with meadow, forest, drought, and swamp biomes
+- Obstacle generation, chokepoints, and A*-based waypoint navigation on the terrain grid
+- Renewable grass resource grid with biome-scaled carrying capacity and regrowth
 - Spatial grid acceleration for neighborhood and density queries
 - Herbivore behavior for wandering, regrouping, grazing, drinking, fleeing, resting, and reproduction
 - Predator behavior for patrol, prey selection, chase, attack, feeding, drinking, resting, mate following, and reproduction
@@ -92,6 +94,7 @@ scripts/core/
 scripts/world/
   resource_system.gd
   spatial_grid.gd
+  terrain_system.gd
   world_state.gd
 scripts/agents/
   agent_base.gd
@@ -118,7 +121,7 @@ data/config/
 
 ## Config Files
 
-- `data/config/world.json`: seed, tick rate, world bounds, spatial partitioning, grass settings, water sources, spawn counts
+- `data/config/world.json`: seed, tick rate, world bounds, spatial partitioning, grass settings, terrain generation, navigation, water sources, spawn counts
 - `data/config/species.json`: per-species movement, perception, metabolism, feeding, reproduction, and aging values
 - `data/config/balance.json`: shared thresholds, herd and hunt weights, attack tuning, lifecycle thresholds, stats sampling
 - `data/config/debug.json`: HUD speeds, selection radius, chart history, visible event count, export directory, overlay defaults
@@ -127,5 +130,5 @@ data/config/
 
 - The prototype models one herbivore species and one predator species.
 - Rendering is debug-oriented rather than art-driven.
-- There is no obstacle navigation, terrain cost system, shelter logic, genetics, seasons, or save/load flow.
+- There is no shelter logic, genetics, seasons, or save/load flow.
 - Runtime verification was limited to static inspection here because no local Godot CLI was available in this workspace.

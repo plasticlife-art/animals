@@ -6,6 +6,7 @@ const PredatorScript = preload("res://scripts/agents/predator.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
+const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
 
 const LOD_TIER_0 := 0
 const LOD_TIER_1 := 1
@@ -29,8 +30,10 @@ var next_agent_id: int = 1
 var config_bundle: Dictionary = {}
 var event_bus
 var rng: RandomNumberGenerator
+var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
 var spatial_grid: SpatialGrid
+var navigation_config: Dictionary = {}
 var current_tick: int = 0
 var current_time: float = 0.0
 var living_agents: Array = []
@@ -59,11 +62,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 		float(world_size_config.get("y", 900.0))
 	)
 
-	resource_system = ResourceSystemScript.new()
-	resource_system.initialize(world_config, rng)
-
-	spatial_grid = SpatialGridScript.new()
-	spatial_grid.configure(float(world_config.get("spatial_cell_size", 96.0)))
+	navigation_config = world_config.get("navigation", {}).duplicate(true)
 
 	water_sources.clear()
 	for source in world_config.get("water_sources", []):
@@ -71,6 +70,15 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 			"position": Vector2(float(source.get("x", 0.0)), float(source.get("y", 0.0))),
 			"radius": float(source.get("radius", 48.0)),
 		})
+
+	terrain_system = TerrainSystemScript.new()
+	terrain_system.initialize(world_config, rng, water_sources)
+
+	resource_system = ResourceSystemScript.new()
+	resource_system.initialize(world_config, rng, terrain_system)
+
+	spatial_grid = SpatialGridScript.new()
+	spatial_grid.configure(float(world_config.get("spatial_cell_size", 96.0)))
 
 	living_agents.clear()
 	_spawn_initial_agents()
@@ -109,10 +117,11 @@ func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, se
 
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_type, {})
 	var sex := sex_override if sex_override != "" else _random_sex()
+	var spawn_position := get_nearest_walkable_position(clamp_position(position))
 	agent.configure(
 		next_agent_id,
 		species_type,
-		clamp_position(position),
+		spawn_position,
 		sex,
 		species_config,
 		config_bundle.get("balance", {}),
@@ -177,7 +186,7 @@ func query_agents(position: Vector2, radius: float, species_filter: String = "",
 
 
 func query_grass_cells(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
-	return resource_system.find_best_cell(position, radius, min_biomass)
+	return find_reachable_grass(position, radius, min_biomass)
 
 
 func query_water_sources(position: Vector2, radius: float) -> Array:
@@ -204,6 +213,24 @@ func get_group_center(group_id: int, species_type: String, exclude_id: int = -1)
 	return center / count
 
 
+func get_biome_at_position(position: Vector2) -> String:
+	if terrain_system == null:
+		return "meadow"
+	return terrain_system.get_biome_at_position(position)
+
+
+func get_move_cost_at_position(position: Vector2) -> float:
+	if terrain_system == null:
+		return 1.0
+	return terrain_system.get_move_cost_at_position(position)
+
+
+func is_walkable_position(position: Vector2) -> bool:
+	if terrain_system == null:
+		return bounds.has_point(position)
+	return terrain_system.is_walkable_position(position)
+
+
 func clamp_position(position: Vector2) -> Vector2:
 	return Vector2(
 		clampf(position.x, bounds.position.x + 4.0, bounds.end.x - 4.0),
@@ -211,15 +238,202 @@ func clamp_position(position: Vector2) -> Vector2:
 	)
 
 
+func get_nearest_walkable_position(position: Vector2) -> Vector2:
+	var clamped := clamp_position(position)
+	if terrain_system == null:
+		return clamped
+	if terrain_system.is_walkable_position(clamped):
+		return clamped
+	var nearest_index := terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(clamped))
+	if nearest_index == -1:
+		return clamped
+	return terrain_system.get_cell_center(nearest_index)
+
+
+func resolve_movement_position(from_position: Vector2, to_position: Vector2) -> Vector2:
+	var clamped_target := clamp_position(to_position)
+	if terrain_system == null or terrain_system.is_walkable_position(clamped_target):
+		return clamped_target
+
+	var slide_x := clamp_position(Vector2(clamped_target.x, from_position.y))
+	if terrain_system.is_walkable_position(slide_x):
+		return slide_x
+
+	var slide_y := clamp_position(Vector2(from_position.x, clamped_target.y))
+	if terrain_system.is_walkable_position(slide_y):
+		return slide_y
+
+	return get_nearest_walkable_position(from_position)
+
+
 func random_point() -> Vector2:
-	return Vector2(
+	return get_nearest_walkable_position(Vector2(
 		rng.randf_range(bounds.position.x, bounds.end.x),
 		rng.randf_range(bounds.position.y, bounds.end.y)
-	)
+	))
 
 
 func random_unit_vector() -> Vector2:
 	return Vector2.RIGHT.rotated(rng.randf_range(0.0, TAU))
+
+
+func find_path(from_position: Vector2, to_position: Vector2) -> Dictionary:
+	if terrain_system == null:
+		return {
+			"cells": [],
+			"cost": 0.0,
+			"reachable": true,
+			"start_index": -1,
+			"goal_index": -1,
+		}
+	return terrain_system.find_path(from_position, to_position)
+
+
+func find_reachable_grass(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
+	if terrain_system == null:
+		return resource_system.find_best_cell(position, radius, min_biomass)
+
+	var start_index := terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(position))
+	if start_index == -1:
+		return {}
+
+	var candidate_limit := maxi(4, int(navigation_config.get("grass_candidate_limit", 12)))
+	var candidates: Array = resource_system.query_cells(position, radius)
+	var shortlisted: Array = []
+	for candidate in candidates:
+		if float(candidate.get("biomass", 0.0)) < min_biomass:
+			continue
+		var candidate_index := int(candidate.get("index", -1))
+		if candidate_index == -1 or not terrain_system.is_walkable_index(candidate_index):
+			continue
+		var candidate_center: Vector2 = candidate.get("center", position)
+		var heuristic_score := float(candidate.get("biomass", 0.0)) - position.distance_to(candidate_center) * 0.14
+		var shortlisted_candidate := candidate.duplicate(true)
+		shortlisted_candidate["heuristic_score"] = heuristic_score
+		shortlisted.append(shortlisted_candidate)
+	shortlisted.sort_custom(func(a, b): return a["heuristic_score"] > b["heuristic_score"])
+
+	var best := {}
+	var best_score := -INF
+	var best_cost := INF
+	var evaluated := 0
+	for candidate in shortlisted:
+		if evaluated >= candidate_limit:
+			break
+		var candidate_index := int(candidate.get("index", -1))
+		evaluated += 1
+
+		var path_result := terrain_system.find_path_between_indices(start_index, candidate_index)
+		var path_cells: Array = path_result.get("cells", [])
+		if path_cells.is_empty():
+			continue
+
+		var path_cost := float(path_result.get("cost", INF))
+		var score := float(candidate.get("biomass", 0.0)) - path_cost * 0.12
+		if not bool(path_result.get("reachable", false)):
+			score -= 20.0
+
+		if score > best_score or (is_equal_approx(score, best_score) and path_cost < best_cost):
+			best = candidate.duplicate(true)
+			best["path_cost"] = path_cost
+			best["reachable"] = bool(path_result.get("reachable", false))
+			best["path_cells"] = path_cells
+			best["score"] = score
+			best_score = score
+			best_cost = path_cost
+	return best
+
+
+func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false) -> Vector2:
+	var agent: AgentBase = get_agent(agent_id)
+	if agent == null:
+		return clamp_position(to_position)
+	if terrain_system == null:
+		return clamp_position(to_position)
+
+	var target := get_nearest_walkable_position(clamp_position(to_position))
+	var start_index := terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(from_position))
+	var goal_index := terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(target))
+	if start_index == -1 or goal_index == -1:
+		return from_position
+
+	var goal_radius_cells := maxi(0, int(navigation_config.get("goal_reached_radius_cells", 1)))
+	if _cell_distance(start_index, goal_index) <= float(goal_radius_cells):
+		agent.path_cells = []
+		agent.path_index = 0
+		agent.path_goal_cell = goal_index
+		return target
+
+	var repath_interval := maxi(1, int(navigation_config.get("repath_interval_ticks", 8)))
+	var needs_repath := force_repath
+	needs_repath = needs_repath or agent.path_cells.is_empty()
+	needs_repath = needs_repath or agent.path_goal_cell != goal_index
+	needs_repath = needs_repath or current_tick - agent.last_repath_tick >= repath_interval
+	needs_repath = needs_repath or agent.stuck_timer >= float(repath_interval) * 0.08
+	needs_repath = needs_repath or agent.path_index >= agent.path_cells.size()
+	if not needs_repath and not agent.path_cells.is_empty():
+		var previous_index := int(agent.path_cells[maxi(0, agent.path_index - 1)])
+		var current_path_index := int(agent.path_cells[mini(agent.path_index, agent.path_cells.size() - 1)])
+		if start_index != previous_index and start_index != current_path_index:
+			needs_repath = true
+		elif not terrain_system.is_walkable_index(current_path_index):
+			needs_repath = true
+
+	if needs_repath:
+		var path_result := terrain_system.find_path_between_indices(start_index, goal_index)
+		var path_cells: Array = path_result.get("cells", [])
+		agent.path_cells = path_cells.duplicate()
+		agent.path_goal_cell = goal_index
+		agent.last_repath_tick = current_tick
+		agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
+		if agent.path_cells.is_empty():
+			return from_position
+
+	var waypoint_radius_sq := pow(terrain_system.cell_size * 0.42, 2.0)
+	while agent.path_index < agent.path_cells.size():
+		var waypoint_index := int(agent.path_cells[agent.path_index])
+		var waypoint_center := terrain_system.get_cell_center(waypoint_index)
+		if from_position.distance_squared_to(waypoint_center) > waypoint_radius_sq:
+			return waypoint_center
+		agent.path_index += 1
+
+	return target
+
+
+func choose_escape_destination(position: Vector2, flee_vector: Vector2, base_distance: float) -> Vector2:
+	if terrain_system == null or flee_vector.length_squared() <= 0.0001:
+		return clamp_position(position + flee_vector * base_distance)
+
+	var direction := flee_vector.normalized()
+	var start_index := terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(position))
+	if start_index == -1:
+		return clamp_position(position + direction * base_distance)
+
+	var angles := [0.0, 0.45, -0.45, 0.9, -0.9]
+	var distance_scales := [1.0, 1.35]
+	var best_target := clamp_position(position + direction * base_distance)
+	var best_score := -INF
+	for scale in distance_scales:
+		for angle in angles:
+			var candidate_position := get_nearest_walkable_position(clamp_position(position + direction.rotated(angle) * base_distance * scale))
+			var candidate_index := terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(candidate_position))
+			if candidate_index == -1:
+				continue
+			var path_result := terrain_system.find_path_between_indices(start_index, candidate_index)
+			var path_cells: Array = path_result.get("cells", [])
+			if path_cells.is_empty():
+				continue
+			var candidate_direction := candidate_position - position
+			if candidate_direction.length_squared() <= 0.001:
+				continue
+			var alignment := direction.dot(candidate_direction.normalized())
+			var score := alignment * 220.0 - float(path_result.get("cost", INF))
+			if not bool(path_result.get("reachable", false)):
+				score -= 24.0
+			if score > best_score:
+				best_score = score
+				best_target = candidate_position
+	return best_target
 
 
 func emit_event(event_type: String, agent, other_agent_id: int = -1, data: Dictionary = {}) -> void:
@@ -252,7 +466,7 @@ func _spawn_initial_agents() -> void:
 
 	for index in range(herbivore_count):
 		var center: Vector2 = herd_centers[index % group_count]
-		var spawn_position := clamp_position(center + Vector2(rng.randf_range(-60.0, 60.0), rng.randf_range(-60.0, 60.0)))
+		var spawn_position := get_nearest_walkable_position(clamp_position(center + Vector2(rng.randf_range(-60.0, 60.0), rng.randf_range(-60.0, 60.0))))
 		spawn_agent(AgentBaseScript.SPECIES_HERBIVORE, spawn_position, index % group_count, "", {"reason": "initial"})
 
 	var predator_pair_count := maxi(1, int(ceil(float(predator_count) / 2.0)))
@@ -271,7 +485,7 @@ func _spawn_initial_agents() -> void:
 		if male_index < predator_count:
 			male_predator = spawn_agent(
 				AgentBaseScript.SPECIES_PREDATOR,
-				clamp_position(pair_center + male_offset),
+				get_nearest_walkable_position(clamp_position(pair_center + male_offset)),
 				-1,
 				AgentBaseScript.SEX_MALE,
 				{"reason": "initial"}
@@ -281,7 +495,7 @@ func _spawn_initial_agents() -> void:
 		if female_index < predator_count:
 			female_predator = spawn_agent(
 				AgentBaseScript.SPECIES_PREDATOR,
-				clamp_position(pair_center + female_offset),
+				get_nearest_walkable_position(clamp_position(pair_center + female_offset)),
 				-1,
 				AgentBaseScript.SEX_FEMALE,
 				{"reason": "initial"}
@@ -410,6 +624,8 @@ func _sanitize_variant(value):
 	match typeof(value):
 		TYPE_VECTOR2:
 			return {"x": value.x, "y": value.y}
+		TYPE_VECTOR2I:
+			return {"x": value.x, "y": value.y}
 		TYPE_DICTIONARY:
 			var sanitized := {}
 			for key in value.keys():
@@ -430,3 +646,13 @@ func _rebuild_living_agents_cache() -> void:
 		if agent != null and agent.is_alive:
 			next_living_agents.append(agent)
 	living_agents = next_living_agents
+
+
+func _cell_distance(from_index: int, to_index: int) -> float:
+	if terrain_system == null:
+		return 0.0
+	var from_coords := terrain_system.get_cell_coords(from_index)
+	var to_coords := terrain_system.get_cell_coords(to_index)
+	return Vector2(float(from_coords.x), float(from_coords.y)).distance_to(
+		Vector2(float(to_coords.x), float(to_coords.y))
+	)

@@ -96,7 +96,8 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		return _attack(world, prey)
 
 	set_state("chase", world.current_tick)
-	move_with_vector(world, Steering.seek(position, prey.position), float(movement.get("sprint_speed", 128.0)), delta)
+	var chase_waypoint := world.get_next_waypoint(position, prey.position, id)
+	move_with_vector(world, Steering.seek(position, chase_waypoint), float(movement.get("sprint_speed", 128.0)), delta)
 	return true
 
 
@@ -107,7 +108,8 @@ func _hunt(world, delta: float) -> bool:
 	target_agent_id = prey.id
 	target_position = prey.position
 	set_state("seek_prey", world.current_tick)
-	move_with_vector(world, Steering.seek(position, prey.position), float(movement.get("max_speed", 84.0)), delta)
+	var prey_waypoint := world.get_next_waypoint(position, prey.position, id)
+	move_with_vector(world, Steering.seek(position, prey_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	chase_timer = maxf(chase_timer, delta)
 	return true
 
@@ -140,6 +142,7 @@ func _attack(world, prey) -> bool:
 		reduce_hunger(float(feeding.get("food_restore", 42.0)))
 		restore_energy(float(feeding.get("energy_restore", 32.0)))
 		set_state("eat", world.current_tick)
+		clear_navigation()
 		interaction_timer = float(feeding.get("eat_duration", 1.1))
 		clear_targets()
 	else:
@@ -153,8 +156,7 @@ func _attack(world, prey) -> bool:
 
 func _rest(world, delta: float) -> void:
 	set_state("rest", world.current_tick)
-	target_agent_id = -1
-	target_position = null
+	clear_targets()
 	move_with_vector(world, Vector2.ZERO, 0.0, delta)
 
 
@@ -176,7 +178,8 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	target_position = chosen_mate.position
 	if position.distance_squared_to(chosen_mate.position) > 18.0 * 18.0:
 		set_state("reproduce", world.current_tick)
-		move_with_vector(world, Steering.seek(position, chosen_mate.position), float(movement.get("max_speed", 84.0)), delta)
+		var mate_waypoint := world.get_next_waypoint(position, chosen_mate.position, id)
+		move_with_vector(world, Steering.seek(position, mate_waypoint), float(movement.get("max_speed", 84.0)), delta)
 		return true
 
 	if id > chosen_mate.id:
@@ -203,9 +206,8 @@ func _attempt_reproduce(world, delta: float) -> bool:
 
 func _patrol(world, delta: float) -> void:
 	set_state("patrol", world.current_tick)
-	target_agent_id = -1
+	clear_targets()
 	_update_water_memory(world)
-	target_position = null
 	move_with_vector(world, Steering.wander(self, world.rng), float(movement.get("max_speed", 84.0)) * 0.85, delta)
 
 
@@ -221,6 +223,7 @@ func _maybe_drink(world) -> void:
 		return
 	var drink_restore: float = float(feeding.get("drink_restore", 14.0))
 	reduce_thirst(drink_restore)
+	clear_navigation()
 	clear_water_memory()
 	world.emit_event("WaterConsumed", self, -1, {
 		"source_position": nearby_water["position"],
@@ -285,8 +288,9 @@ func _maintain_pair_cohesion(world, delta: float) -> bool:
 	target_agent_id = mate.id
 	target_position = mate.position
 	set_state("pair_cohesion", world.current_tick)
+	var mate_waypoint := world.get_next_waypoint(position, mate.position, id)
 	var vectors := []
-	vectors.append({"vector": Steering.seek(position, mate.position), "weight": float(reproduction.get("preferred_mate_seek_weight", 0.75))})
+	vectors.append({"vector": Steering.seek(position, mate_waypoint), "weight": float(reproduction.get("preferred_mate_seek_weight", 0.75))})
 	vectors.append({"vector": Steering.wander(self, world.rng), "weight": 0.45})
 	move_with_vector(world, Steering.combine(vectors), float(movement.get("max_speed", 84.0)) * 0.8, delta)
 	return true
@@ -363,6 +367,7 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 	var drink_distance := float(feeding.get("drink_distance", 28.0)) + float(water.get("radius", 0.0))
 	if position.distance_squared_to(water["position"]) <= drink_distance * drink_distance:
 		set_state("drink", world.current_tick)
+		clear_navigation()
 		var drink_restore: float = float(feeding.get("drink_restore", 14.0))
 		reduce_thirst(drink_restore)
 		clear_water_memory()
@@ -373,7 +378,8 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 		return true
 
 	set_state("seek_water", world.current_tick)
-	move_with_vector(world, Steering.seek(position, water["position"]), float(movement.get("max_speed", 84.0)), delta)
+	var water_waypoint := world.get_next_waypoint(position, water["position"], id)
+	move_with_vector(world, Steering.seek(position, water_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	return true
 
 

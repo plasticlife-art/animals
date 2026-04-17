@@ -35,13 +35,14 @@ func _draw() -> void:
 		return
 
 	var world = simulation_manager.world_state
-	draw_rect(world.bounds, Color(0.09, 0.11, 0.1), true)
-	draw_rect(world.bounds, Color(0.25, 0.3, 0.28), false, 2.0)
+	draw_rect(world.bounds, Color(0.08, 0.1, 0.09), true)
 
 	var font = ThemeDB.fallback_font
 	var font_size := ThemeDB.fallback_font_size
 	var selected_id := simulation_manager.selected_agent_id
 	var visible_rect := _get_visible_world_rect(world.bounds).grow(24.0)
+	_draw_terrain_background(world, visible_rect)
+	draw_rect(world.bounds, Color(0.25, 0.3, 0.28), false, 2.0)
 	for agent in world.get_living_agents():
 		if not visible_rect.has_point(agent.position):
 			continue
@@ -60,6 +61,33 @@ func _draw() -> void:
 				font_size,
 				Color(0.95, 0.95, 0.95, 0.9)
 			)
+
+
+func _draw_terrain_background(world, visible_rect: Rect2) -> void:
+	if world.terrain_system == null:
+		return
+	var terrain := world.terrain_system
+	var cell_size := terrain.cell_size
+	var min_cell_x := maxi(0, int(floor(visible_rect.position.x / cell_size)))
+	var min_cell_y := maxi(0, int(floor(visible_rect.position.y / cell_size)))
+	var max_cell_x := mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
+	var max_cell_y := mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
+
+	for x in range(min_cell_x, max_cell_x + 1):
+		for y in range(min_cell_y, max_cell_y + 1):
+			var index := y * terrain.cols + x
+			var biome_color: Color = terrain.get_biome_color_at_index(index)
+			var tint_strength := 0.4
+			if bool(debug_flags.get("show_biomes", false)):
+				tint_strength = 0.72
+			var fill_color := biome_color.darkened(0.08)
+			fill_color.a = tint_strength
+			draw_rect(terrain.get_cell_rect(index), fill_color, true)
+			if terrain.get_obstacle_at_index(index) != "":
+				var obstacle_alpha := 0.78 if bool(debug_flags.get("show_obstacles", false)) else 0.52
+				var obstacle_color := terrain.get_obstacle_color(terrain.get_obstacle_at_index(index))
+				obstacle_color.a = obstacle_alpha
+				draw_rect(terrain.get_cell_rect(index), obstacle_color, true)
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:

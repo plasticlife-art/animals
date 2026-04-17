@@ -40,6 +40,8 @@ func _ready() -> void:
 	focus_mode_option.add_item("Flock", 2)
 
 	overlay_checkboxes = {
+		"show_biomes": %BiomesCheck,
+		"show_obstacles": %ObstaclesCheck,
 		"show_state_labels": %StateLabelsCheck,
 		"show_target_lines": %TargetLinesCheck,
 		"show_vision_radius": %VisionRadiusCheck,
@@ -48,6 +50,7 @@ func _ready() -> void:
 		"show_grass_density": %GrassDensityCheck,
 		"show_population_density": %PopulationDensityCheck,
 		"show_water_overlay": %WaterOverlayCheck,
+		"show_selected_path": %SelectedPathCheck,
 		"show_lod_overlay": %LodOverlayCheck,
 	}
 	for flag_name in overlay_checkboxes.keys():
@@ -213,7 +216,8 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 			int(snapshot.get("lod1_agents", 0)),
 			int(snapshot.get("lod2_agents", 0)),
 		],
-		"[b]Step avg[/b] %.2f ms    [b]Step max[/b] %.2f ms" % [
+		"[b]Blocked[/b] %.1f%%    [b]Step avg[/b] %.2f ms    [b]Step max[/b] %.2f ms" % [
+			float(snapshot.get("blocked_cell_ratio", 0.0)) * 100.0,
 			float(snapshot.get("sim_step_ms_avg", 0.0)),
 			float(snapshot.get("sim_step_ms_max", 0.0)),
 		],
@@ -236,6 +240,10 @@ func _refresh_inspector(agent_summary: Dictionary) -> void:
 		"[b]Age[/b] %.1f    [b]Speed[/b] %.1f" % [
 			float(agent_summary.get("age", 0.0)),
 			float(agent_summary.get("speed", 0.0)),
+		],
+		"[b]Biome[/b] %s    [b]Path nodes[/b] %d" % [
+			str(agent_summary.get("biome", "-")),
+			int(agent_summary.get("path_nodes", 0)),
 		],
 		"[b]Target[/b] %s" % str(agent_summary.get("target", "-")),
 	])

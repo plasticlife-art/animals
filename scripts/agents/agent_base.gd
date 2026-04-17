@@ -32,6 +32,11 @@ var remembered_water_position = null
 var remembered_water_radius: float = 0.0
 var remembered_water_time_seconds: float = -1.0
 var lod_tier: int = 0
+var path_cells: Array = []
+var path_index: int = 0
+var path_goal_cell: int = -1
+var last_repath_tick: int = -9999
+var stuck_timer: float = 0.0
 
 var movement: Dictionary = {}
 var perception: Dictionary = {}
@@ -71,6 +76,7 @@ func configure(
 	target_agent_id = -1
 	target_position = null
 	clear_water_memory()
+	clear_navigation()
 	lod_tier = 0
 	debug_color = Color(0.9, 0.9, 0.9)
 
@@ -138,21 +144,34 @@ func apply_survival_checks(world, delta: float) -> bool:
 
 func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: float) -> void:
 	var desired_velocity := Vector2.ZERO
+	var effective_speed := desired_speed
 	if move_vector.length_squared() > 0.0001:
-		desired_velocity = move_vector.normalized() * desired_speed
+		var local_move_cost := maxf(1.0, world.get_move_cost_at_position(position))
+		effective_speed = desired_speed / local_move_cost
+		desired_velocity = move_vector.normalized() * effective_speed
 	var acceleration := float(movement.get("acceleration", 140.0))
+	var previous_position := position
 	velocity = velocity.move_toward(desired_velocity, acceleration * delta)
 	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
-	if desired_speed > 0.0 and velocity.length() > desired_speed:
-		velocity = velocity.normalized() * desired_speed
-	position = world.clamp_position(position + velocity * delta)
+	if effective_speed > 0.0 and velocity.length() > effective_speed:
+		velocity = velocity.normalized() * effective_speed
+	position = world.resolve_movement_position(position, position + velocity * delta)
+	if position.distance_squared_to(previous_position) <= 0.04 and desired_velocity.length_squared() > 0.001:
+		stuck_timer += delta
+	else:
+		stuck_timer = maxf(0.0, stuck_timer - delta * 0.5)
+		if position.distance_squared_to(previous_position) <= 0.04:
+			velocity = velocity.move_toward(Vector2.ZERO, acceleration * delta)
 	if velocity.length_squared() > 0.001:
 		direction = velocity.normalized()
 
 
 func advance_inertia(world, delta: float) -> void:
+	var previous_position := position
 	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
-	position = world.clamp_position(position + velocity * delta)
+	position = world.resolve_movement_position(position, position + velocity * delta)
+	if position.distance_squared_to(previous_position) <= 0.04:
+		stuck_timer = maxf(0.0, stuck_timer - delta)
 	if velocity.length_squared() > 0.001:
 		direction = velocity.normalized()
 
@@ -199,6 +218,21 @@ func clear_targets() -> void:
 	target_agent_id = -1
 	target_position = null
 	chase_timer = 0.0
+	clear_navigation()
+
+
+func clear_navigation() -> void:
+	path_cells.clear()
+	path_index = 0
+	path_goal_cell = -1
+	last_repath_tick = -9999
+	stuck_timer = 0.0
+
+
+func move_to_target(world, target: Vector2, desired_speed: float, delta: float, force_repath: bool = false) -> void:
+	target_position = target
+	var waypoint := world.get_next_waypoint(position, target, id, force_repath)
+	move_with_vector(world, waypoint - position, desired_speed, delta)
 
 
 func remember_water(source: Dictionary, time_seconds: float) -> void:
@@ -247,6 +281,8 @@ func get_debug_summary() -> Dictionary:
 		"age": snappedf(age, 0.1),
 		"target": target_text,
 		"speed": snappedf(velocity.length(), 0.1),
+		"biome": "-",
+		"path_nodes": path_cells.size(),
 		"alive": is_alive,
 		"sex": sex,
 	}

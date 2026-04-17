@@ -1,6 +1,7 @@
 class_name ResourceSystem
 extends RefCounted
 
+var terrain_system: TerrainSystem
 var world_size: Vector2 = Vector2.ZERO
 var cell_size: float = 32.0
 var cols: int = 0
@@ -11,9 +12,10 @@ var total_biomass: float = 0.0
 var _cells: PackedFloat32Array = PackedFloat32Array()
 
 
-func initialize(world_config: Dictionary, rng: RandomNumberGenerator) -> void:
+func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrain_system: TerrainSystem = null) -> void:
 	var grass_config: Dictionary = world_config.get("grass", {})
 	var world_size_config: Dictionary = world_config.get("world_size", {})
+	terrain_system = new_terrain_system
 
 	world_size = Vector2(
 		float(world_size_config.get("x", 1600.0)),
@@ -31,14 +33,16 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator) -> void:
 	var density_min := float(grass_config.get("initial_density_min", 0.45))
 	var density_max := float(grass_config.get("initial_density_max", 0.95))
 	for index in range(_cells.size()):
-		_cells[index] = rng.randf_range(density_min, density_max) * max_biomass
+		var forage_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_init_multiplier(index)
+		_cells[index] = rng.randf_range(density_min, density_max) * max_biomass * forage_multiplier
 		total_biomass += _cells[index]
 
 
 func step(delta: float) -> void:
 	for index in range(_cells.size()):
 		var previous := _cells[index]
-		var updated := minf(max_biomass, previous + regrowth_rate * delta)
+		var regrowth_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_regrowth_multiplier(index)
+		var updated := minf(_get_cell_max_biomass(index), previous + regrowth_rate * regrowth_multiplier * delta)
 		_cells[index] = updated
 		total_biomass += updated - previous
 
@@ -75,7 +79,7 @@ func get_density_at_position(position: Vector2) -> float:
 	var index := _position_to_index(position)
 	if index == -1:
 		return 0.0
-	return _cells[index] / maxf(1.0, max_biomass)
+	return _cells[index] / _get_cell_max_biomass(index)
 
 
 func query_cells(position: Vector2, radius: float) -> Array:
@@ -102,7 +106,7 @@ func query_cells(position: Vector2, radius: float) -> Array:
 				"coords": Vector2i(x, y),
 				"center": center,
 				"biomass": _cells[index],
-				"density": _cells[index] / maxf(1.0, max_biomass),
+				"density": _cells[index] / _get_cell_max_biomass(index),
 			})
 
 	result.sort_custom(func(a, b): return a["biomass"] > b["biomass"])
@@ -142,7 +146,7 @@ func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) 
 					"coords": Vector2i(x, y),
 					"center": center,
 					"biomass": biomass,
-					"density": biomass / maxf(1.0, max_biomass),
+					"density": biomass / _get_cell_max_biomass(index),
 				}
 				best_distance = distance_sq
 				best_biomass = biomass
@@ -160,6 +164,16 @@ func consume_at_position(position: Vector2, amount: float) -> float:
 	return consumed
 
 
+func get_biomass_totals_by_biome() -> Dictionary:
+	var totals := {}
+	for index in range(_cells.size()):
+		var biome_id := "meadow"
+		if terrain_system != null:
+			biome_id = terrain_system.get_biome_at_index(index)
+		totals[biome_id] = float(totals.get(biome_id, 0.0)) + _cells[index]
+	return totals
+
+
 func _position_to_index(position: Vector2) -> int:
 	var cell := Vector2i(
 		int(floor(position.x / cell_size)),
@@ -168,3 +182,8 @@ func _position_to_index(position: Vector2) -> int:
 	if cell.x < 0 or cell.y < 0 or cell.x >= cols or cell.y >= rows:
 		return -1
 	return cell.y * cols + cell.x
+
+
+func _get_cell_max_biomass(index: int) -> float:
+	var local_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_init_multiplier(index)
+	return maxf(1.0, max_biomass * maxf(0.1, local_multiplier))

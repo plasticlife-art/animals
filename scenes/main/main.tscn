@@ -119,6 +119,16 @@ text = "Overlays"
 layout_mode = 2
 columns = 2
 
+[node name="BiomesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1953019121]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Biomes"
+
+[node name="ObstaclesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=847103551]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Obstacles"
+
 [node name="StateLabelsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=441133833]
 unique_name_in_owner = true
 layout_mode = 2
@@ -158,6 +168,11 @@ text = "Population density"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Water overlay"
+
+[node name="SelectedPathCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1063190875]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Selected path"
 
 [node name="LodOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=399522519]
 unique_name_in_owner = true

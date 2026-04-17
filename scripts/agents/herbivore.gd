@@ -66,6 +66,7 @@ func _seek_or_drink(world, delta: float, neighbors: Array) -> bool:
 	var drink_distance: float = float(feeding.get("drink_distance", 28.0)) + float(water.get("radius", 0.0))
 	if position.distance_squared_to(water["position"]) <= drink_distance * drink_distance:
 		set_state("drink", world.current_tick)
+		clear_navigation()
 		interaction_timer = float(feeding.get("drink_duration", 0.6))
 		reduce_thirst(float(feeding.get("drink_restore", 35.0)))
 		world.emit_event("WaterConsumed", self, -1, {
@@ -76,8 +77,9 @@ func _seek_or_drink(world, delta: float, neighbors: Array) -> bool:
 
 	set_state("seek_water", world.current_tick)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, false)
+	var waypoint := world.get_next_waypoint(position, water["position"], id)
 	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, water["position"]), "weight": 1.4},
+		{"vector": Steering.seek(position, waypoint), "weight": 1.4},
 		{"vector": herd_vector, "weight": 0.5},
 	])
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
@@ -100,6 +102,7 @@ func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
 		var consumed: float = world.resource_system.consume_at_position(position, float(feeding.get("bite_amount", 18.0)))
 		if consumed > 0.0:
 			set_state("eat", world.current_tick)
+			clear_navigation()
 			interaction_timer = float(feeding.get("eat_duration", 0.55))
 			reduce_hunger(consumed * float(feeding.get("nutrition_gain", 0.8)))
 			restore_energy(consumed * 0.18)
@@ -111,8 +114,9 @@ func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
 
 	set_state("seek_food", world.current_tick)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
+	var waypoint := world.get_next_waypoint(position, grass["center"], id)
 	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, grass["center"]), "weight": 1.3},
+		{"vector": Steering.seek(position, waypoint), "weight": 1.3},
 		{"vector": herd_vector, "weight": 0.7},
 	])
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
@@ -129,8 +133,11 @@ func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 	flee_vector = flee_vector.normalized()
 
 	var herd_weights: Dictionary = balance.get("herd_weights", {})
+	var escape_target := world.choose_escape_destination(position, flee_vector, 168.0)
+	target_position = escape_target
+	var waypoint := world.get_next_waypoint(position, escape_target, id, true)
 	var move_vector: Vector2 = Steering.combine([
-		{"vector": flee_vector, "weight": float(herd_weights.get("flee", 2.4))},
+		{"vector": Steering.seek(position, waypoint), "weight": float(herd_weights.get("flee", 2.4))},
 		{"vector": _herd_vector(world, neighbors, false), "weight": 0.35},
 	])
 	move_with_vector(world, move_vector, float(movement.get("sprint_speed", 115.0)), delta)
@@ -155,8 +162,9 @@ func _regroup(world, delta: float, neighbors: Array) -> void:
 	set_state("regroup", world.current_tick)
 	target_position = center
 	var weights: Dictionary = balance.get("herd_weights", {})
+	var waypoint := world.get_next_waypoint(position, center, id)
 	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, center), "weight": float(weights.get("regroup", 1.1))},
+		{"vector": Steering.seek(position, waypoint), "weight": float(weights.get("regroup", 1.1))},
 		{"vector": _herd_vector(world, neighbors, true), "weight": 0.85},
 	])
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
@@ -190,8 +198,9 @@ func _attempt_reproduce(world, delta: float, neighbors: Array) -> bool:
 	target_position = chosen_mate.position
 	if position.distance_squared_to(chosen_mate.position) > 16.0 * 16.0:
 		set_state("reproduce", world.current_tick)
+		var waypoint := world.get_next_waypoint(position, chosen_mate.position, id)
 		var move_vector: Vector2 = Steering.combine([
-			{"vector": Steering.seek(position, chosen_mate.position), "weight": 1.2},
+			{"vector": Steering.seek(position, waypoint), "weight": 1.2},
 			{"vector": _herd_vector(world, neighbors, true), "weight": 0.5},
 		])
 		move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
@@ -228,14 +237,16 @@ func _wander_or_graze(world, delta: float, neighbors: Array) -> void:
 		set_state("seek_food", world.current_tick)
 		var local_grass: Dictionary = Perception.find_best_grass(world, position, 64.0, 4.0)
 		if not local_grass.is_empty():
+			var waypoint := world.get_next_waypoint(position, local_grass["center"], id)
 			var move_vector: Vector2 = Steering.combine([
-				{"vector": Steering.seek(position, local_grass["center"]), "weight": 1.1},
+				{"vector": Steering.seek(position, waypoint), "weight": 1.1},
 				{"vector": herd_vector, "weight": 0.8},
 			])
 			move_with_vector(world, move_vector, base_speed * 0.85, delta)
 			return
 
 	set_state("wander", world.current_tick)
+	clear_targets()
 	var combined: Vector2 = Steering.combine([
 		{"vector": wander_vector, "weight": float(weights.get("wander", 0.45))},
 		{"vector": herd_vector, "weight": 1.0},

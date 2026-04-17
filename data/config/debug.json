@@ -15,6 +15,8 @@
     "show_lod_overlay": false
   },
   "overlays": {
+    "show_biomes": false,
+    "show_obstacles": false,
     "show_state_labels": false,
     "show_target_lines": false,
     "show_vision_radius": false,
@@ -23,6 +25,7 @@
     "show_grass_density": false,
     "show_population_density": false,
     "show_water_overlay": true,
+    "show_selected_path": false,
     "show_lod_overlay": false
   }
 }

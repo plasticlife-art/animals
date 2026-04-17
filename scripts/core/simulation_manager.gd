@@ -185,7 +185,12 @@ func get_selected_agent():
 
 func get_selected_agent_summary() -> Dictionary:
 	var agent = get_selected_agent()
-	return {} if agent == null else agent.get_debug_summary()
+	if agent == null:
+		return {}
+	var summary := agent.get_debug_summary()
+	summary["biome"] = "meadow" if world_state == null else world_state.get_biome_at_position(agent.position)
+	summary["path_nodes"] = agent.path_cells.size()
+	return summary
 
 
 func set_focus_mode(mode: String) -> void:

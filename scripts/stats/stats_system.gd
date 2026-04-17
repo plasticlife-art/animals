@@ -64,6 +64,7 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
 	var lod_counts: Dictionary = world.get_lod_counts()
+	var grass_biomass_by_biome := world.resource_system.get_biomass_totals_by_biome()
 	var snapshot := {
 		"tick": tick,
 		"time_seconds": time_seconds,
@@ -81,6 +82,8 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"average_energy": 0.0 if living_count == 0 else energy_sum / living_count,
 		"hunt_success_rate": 0.0 if hunt_total == 0 else float(counters["hunt_success"]) / hunt_total,
 		"grass_total_biomass": world.resource_system.get_total_biomass(),
+		"grass_biomass_by_biome": grass_biomass_by_biome,
+		"blocked_cell_ratio": 0.0 if world.terrain_system == null else world.terrain_system.get_blocked_cell_ratio(),
 		"sim_step_ms_avg": 0.0 if _step_duration_samples == 0 else _step_duration_total_ms / _step_duration_samples,
 		"sim_step_ms_max": _step_duration_max_ms,
 		"lod0_agents": int(lod_counts.get("lod0_agents", living_count)),
