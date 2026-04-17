@@ -87,12 +87,23 @@ func _seek_or_drink(world, delta: float, neighbors: Array) -> bool:
 
 
 func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
-	var grass: Dictionary = Perception.find_best_grass(
-		world,
-		position,
-		float(perception.get("grass_search_radius", 180.0)),
-		4.0
-	)
+	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	var critical_hunger := float(thresholds.get("critical_hunger", 65.0))
+	var base_search_radius := float(perception.get("grass_search_radius", 180.0))
+	var urgency_ratio := 0.0
+	if hunger > critical_hunger:
+		urgency_ratio = clampf((hunger - critical_hunger) / maxf(1.0, need_max - critical_hunger), 0.0, 1.0)
+	var search_radius := lerpf(base_search_radius, maxf(base_search_radius * 3.0, 540.0), urgency_ratio)
+	var min_biomass := 4.0 if urgency_ratio < 0.45 else 2.0
+
+	var grass: Dictionary = Perception.find_best_grass(world, position, search_radius, min_biomass)
+	if grass.is_empty() and hunger >= critical_hunger:
+		grass = Perception.find_best_grass(
+			world,
+			position,
+			maxf(search_radius * 1.5, 720.0),
+			1.0
+		)
 	if grass.is_empty():
 		return false
 
@@ -145,6 +156,8 @@ func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 
 func _should_regroup(world) -> bool:
 	if group_id == -1:
+		return false
+	if hunger >= float(balance.get("state_thresholds", {}).get("critical_hunger", 65.0)):
 		return false
 	var center: Variant = world.get_group_center(group_id, species_type, id)
 	if center == null:

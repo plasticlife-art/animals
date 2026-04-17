@@ -31,6 +31,13 @@
     "prey_isolation_bonus": 0.2,
     "prey_escape_penalty": 0.16
   },
+  "carcass": {
+    "ttl_seconds": 90.0,
+    "meat_total": 84.0,
+    "max_feeders": 3,
+    "search_radius": 420.0,
+    "scavenging_hunger": 38.0
+  },
   "lifecycle": {
     "starvation_death_threshold": 100.0,
     "thirst_death_threshold": 100.0

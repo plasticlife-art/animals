@@ -110,7 +110,7 @@ func update_needs(delta: float) -> void:
 	var max_energy := float(metabolism.get("max_energy", 100.0))
 	var rest_recovery := float(metabolism.get("rest_recovery", 6.0))
 	var energy_decay := float(metabolism.get("energy_decay", 2.0))
-	if state in ["rest", "eat", "drink", "reproduce"]:
+	if state in ["rest", "eat", "drink", "reproduce", "feed_carcass"]:
 		energy = minf(max_energy, energy + rest_recovery * delta)
 	else:
 		energy = maxf(0.0, energy - energy_decay * delta)
@@ -265,12 +265,6 @@ func get_remembered_water(time_seconds: float, max_age_seconds: float) -> Dictio
 
 
 func get_debug_summary() -> Dictionary:
-	var target_text := "-"
-	if target_agent_id != -1:
-		target_text = "agent:%d" % target_agent_id
-	elif target_position != null:
-		target_text = str(target_position)
-
 	return {
 		"id": id,
 		"species": species_type,
@@ -279,10 +273,18 @@ func get_debug_summary() -> Dictionary:
 		"hunger": snappedf(hunger, 0.1),
 		"thirst": snappedf(thirst, 0.1),
 		"age": snappedf(age, 0.1),
-		"target": target_text,
+		"target": _get_debug_target_text(),
 		"speed": snappedf(velocity.length(), 0.1),
 		"biome": "-",
 		"path_nodes": path_cells.size(),
 		"alive": is_alive,
 		"sex": sex,
 	}
+
+
+func _get_debug_target_text() -> String:
+	if target_agent_id != -1:
+		return "agent:%d" % target_agent_id
+	if target_position != null:
+		return str(target_position)
+	return "-"

@@ -31,6 +31,8 @@ func _draw() -> void:
 		_draw_grass_density(world, visible_rect)
 	if bool(debug_flags.get("show_water_overlay", true)):
 		_draw_water(world, visible_rect)
+	if bool(debug_flags.get("show_carcasses", false)):
+		_draw_carcasses(world, visible_rect)
 	if bool(debug_flags.get("show_selected_path", false)):
 		_draw_selected_path(world, visible_rect)
 	if bool(debug_flags.get("show_population_density", false)):
@@ -111,6 +113,39 @@ func _draw_water(world, visible_rect: Rect2) -> void:
 			continue
 		draw_circle(position, radius, Color(0.2, 0.42, 0.82, 0.22))
 		draw_arc(position, radius, 0.0, TAU, 32, Color(0.52, 0.75, 1.0, 0.65), 2.0)
+
+
+func _draw_carcasses(world, visible_rect: Rect2) -> void:
+	var font = ThemeDB.fallback_font
+	var font_size: int = max(10, ThemeDB.fallback_font_size - 1)
+	var query_radius: float = visible_rect.size.length() * 0.5 + 48.0
+	var carcasses: Array = world.query_carcasses(visible_rect.get_center(), query_radius)
+	for carcass in carcasses:
+		var position: Vector2 = carcass["position"]
+		var meat_remaining: float = float(carcass.get("meat_remaining", 0.0))
+		var meat_total: float = maxf(1.0, float(carcass.get("meat_total", 1.0)))
+		var carcass_radius := lerpf(6.0, 11.0, clampf(meat_remaining / meat_total, 0.0, 1.0))
+		var carcass_rect := Rect2(position - Vector2.ONE * (carcass_radius + 14.0), Vector2.ONE * (carcass_radius + 14.0) * 2.0)
+		if not visible_rect.intersects(carcass_rect):
+			continue
+
+		draw_circle(position, carcass_radius + 3.0, Color(0.18, 0.08, 0.06, 0.5))
+		draw_circle(position, carcass_radius, Color(0.42, 0.14, 0.1, 0.86))
+		draw_arc(position, carcass_radius + 1.5, 0.0, TAU, 24, Color(0.93, 0.78, 0.66, 0.9), 1.4)
+		draw_line(position + Vector2(-4.0, -4.0), position + Vector2(4.0, 4.0), Color(0.97, 0.88, 0.8, 0.72), 1.4)
+		draw_line(position + Vector2(-4.0, 4.0), position + Vector2(4.0, -4.0), Color(0.97, 0.88, 0.8, 0.72), 1.4)
+
+		if font != null:
+			var label: String = "%.0f" % meat_remaining
+			draw_string(
+				font,
+				position + Vector2(carcass_radius + 6.0, -carcass_radius - 2.0),
+				label,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				font_size,
+				Color(1.0, 0.92, 0.82, 0.96)
+			)
 
 
 func _draw_selected_path(world, visible_rect: Rect2) -> void:

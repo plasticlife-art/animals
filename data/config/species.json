@@ -78,6 +78,10 @@
       "energy_restore": 42.0,
       "eat_duration": 1.1,
       "attack_cooldown": 1.0,
+      "feed_distance": 22.0,
+      "carcass_consume_rate": 24.0,
+      "carcass_nutrition_gain": 1.0,
+      "carcass_energy_gain": 0.5,
       "drink_distance": 28.0,
       "drink_restore": 28.0
     },

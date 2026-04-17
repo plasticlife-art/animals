@@ -19,14 +19,19 @@ const LOD_PRIORITY_STATES := {
 	"reproduce": true,
 	"eat": true,
 	"drink": true,
+	"seek_carcass": true,
+	"feed_carcass": true,
 }
 
 var bounds: Rect2 = Rect2(0.0, 0.0, 1600.0, 900.0)
 var agents: Dictionary = {}
+var carcasses: Dictionary = {}
 var pending_spawns: Array = []
 var pending_removals: Array = []
+var pending_carcass_removals: Array = []
 var water_sources: Array = []
 var next_agent_id: int = 1
+var next_carcass_id: int = 1
 var config_bundle: Dictionary = {}
 var event_bus
 var rng: RandomNumberGenerator
@@ -49,9 +54,12 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	event_bus = new_event_bus
 	rng = new_rng
 	agents.clear()
+	carcasses.clear()
 	pending_spawns.clear()
 	pending_removals.clear()
+	pending_carcass_removals.clear()
 	next_agent_id = 1
+	next_carcass_id = 1
 
 	var world_config: Dictionary = config_bundle.get("world", {})
 	var world_size_config: Dictionary = world_config.get("world_size", {})
@@ -105,6 +113,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 
 	_flush_removals()
 	_flush_spawns()
+	_step_carcasses(delta)
+	_flush_carcass_removals()
 	_rebuild_living_agents_cache()
 	spatial_grid.rebuild(living_agents)
 	_update_lod_assignments(active_lod_context)
@@ -154,8 +164,11 @@ func queue_spawn_agent(species_type: String, position: Vector2, group_id: int, p
 func kill_agent(agent, cause: String, other_agent_id: int = -1) -> void:
 	if agent == null or not agent.is_alive:
 		return
+	if agent.has_method("release_carcass_target"):
+		agent.call("release_carcass_target", self)
 	agent.is_alive = false
 	pending_removals.append(agent.id)
+	_maybe_spawn_carcass(agent, cause)
 
 	if cause == "starvation":
 		emit_event("AgentStarved", agent, other_agent_id, {"cause": cause})
@@ -177,6 +190,17 @@ func get_lod_counts() -> Dictionary:
 	return lod_counts.duplicate(true)
 
 
+func get_active_carcass_count() -> int:
+	return carcasses.size()
+
+
+func get_total_carcass_meat_remaining() -> float:
+	var total := 0.0
+	for carcass in carcasses.values():
+		total += float(carcass.get("meat_remaining", 0.0))
+	return total
+
+
 func refresh_lod_assignments(lod_context: Dictionary = {}) -> void:
 	_update_lod_assignments(_normalize_lod_context(lod_context))
 
@@ -196,6 +220,83 @@ func query_water_sources(position: Vector2, radius: float) -> Array:
 		if position.distance_squared_to(source["position"]) <= combined_radius * combined_radius:
 			matches.append(source)
 	return matches
+
+
+func query_carcasses(position: Vector2, radius: float) -> Array:
+	var matches: Array = []
+	var radius_sq := radius * radius
+	for carcass in carcasses.values():
+		if not _is_carcass_available(carcass):
+			continue
+		if position.distance_squared_to(carcass["position"]) > radius_sq:
+			continue
+		matches.append(carcass.duplicate(true))
+	return matches
+
+
+func get_carcass(carcass_id: int) -> Dictionary:
+	var carcass: Dictionary = carcasses.get(carcass_id, {})
+	if carcass.is_empty() or not _is_carcass_available(carcass):
+		return {}
+	return carcass.duplicate(true)
+
+
+func reserve_carcass_feeder(carcass_id: int, predator_id: int) -> bool:
+	var carcass: Dictionary = carcasses.get(carcass_id, {})
+	if carcass.is_empty() or not _is_carcass_available(carcass):
+		return false
+	var active_feeders: Array = carcass.get("active_feeder_ids", [])
+	if active_feeders.has(predator_id):
+		return true
+	if active_feeders.size() >= int(carcass.get("max_feeders", 1)):
+		return false
+	active_feeders.append(predator_id)
+	carcass["active_feeder_ids"] = active_feeders
+	carcasses[carcass_id] = carcass
+	return true
+
+
+func release_carcass_feeder(carcass_id: int, predator_id: int) -> void:
+	var carcass: Dictionary = carcasses.get(carcass_id, {})
+	if carcass.is_empty():
+		return
+	var active_feeders: Array = carcass.get("active_feeder_ids", [])
+	if not active_feeders.has(predator_id):
+		return
+	active_feeders.erase(predator_id)
+	carcass["active_feeder_ids"] = active_feeders
+	carcasses[carcass_id] = carcass
+
+
+func consume_carcass(carcass_id: int, amount: float, predator_id: int = -1) -> float:
+	var carcass: Dictionary = carcasses.get(carcass_id, {})
+	if carcass.is_empty() or not _is_carcass_available(carcass):
+		return 0.0
+	var consumed := minf(maxf(amount, 0.0), float(carcass.get("meat_remaining", 0.0)))
+	if consumed <= 0.0:
+		return 0.0
+	carcass["meat_remaining"] = maxf(0.0, float(carcass.get("meat_remaining", 0.0)) - consumed)
+	carcasses[carcass_id] = carcass
+	emit_event("CarcassConsumed", null, predator_id, {
+		"carcass_id": carcass_id,
+		"predator_id": predator_id,
+		"consumed": consumed,
+		"meat_remaining": float(carcass.get("meat_remaining", 0.0)),
+		"position": {
+			"x": float(carcass["position"].x),
+			"y": float(carcass["position"].y),
+		},
+	})
+	if float(carcass.get("meat_remaining", 0.0)) <= 0.0:
+		_queue_carcass_removal(carcass_id)
+	return consumed
+
+
+func find_carcass_by_source_agent(source_agent_id: int) -> Dictionary:
+	for carcass in carcasses.values():
+		if int(carcass.get("source_agent_id", -1)) == source_agent_id and _is_carcass_available(carcass):
+			return carcass.duplicate(true)
+	return {}
 
 
 func get_group_center(group_id: int, species_type: String, exclude_id: int = -1):
@@ -451,6 +552,96 @@ func emit_event(event_type: String, agent, other_agent_id: int = -1, data: Dicti
 		"data": _sanitize_variant(data),
 	}
 	event_bus.emit_event(payload)
+
+
+func _maybe_spawn_carcass(agent, cause: String) -> void:
+	if agent == null or agent.species_type != AgentBaseScript.SPECIES_HERBIVORE:
+		return
+	if cause not in ["predation", "old_age", "starvation", "thirst"]:
+		return
+	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
+	var meat_total := maxf(0.0, float(carcass_config.get("meat_total", 84.0)))
+	if meat_total <= 0.0:
+		return
+	var carcass_id := next_carcass_id
+	next_carcass_id += 1
+	var carcass := {
+		"id": carcass_id,
+		"position": agent.position,
+		"created_at": current_time,
+		"ttl_seconds": maxf(0.0, float(carcass_config.get("ttl_seconds", 90.0))),
+		"source_species": agent.species_type,
+		"death_cause": cause,
+		"meat_total": meat_total,
+		"meat_remaining": meat_total,
+		"max_feeders": maxi(1, int(carcass_config.get("max_feeders", 2))),
+		"active_feeder_ids": [],
+		"source_agent_id": int(agent.id),
+	}
+	carcasses[carcass_id] = carcass
+	emit_event("CarcassSpawned", agent, -1, {
+		"carcass_id": carcass_id,
+		"cause": cause,
+		"meat_total": meat_total,
+		"source_agent_id": int(agent.id),
+		"position": {
+			"x": agent.position.x,
+			"y": agent.position.y,
+		},
+	})
+
+
+func _step_carcasses(_delta: float) -> void:
+	for carcass_id in carcasses.keys():
+		var carcass: Dictionary = carcasses.get(carcass_id, {})
+		if carcass.is_empty():
+			continue
+		var ttl_seconds := float(carcass.get("ttl_seconds", 0.0))
+		if ttl_seconds > 0.0 and current_time - float(carcass.get("created_at", current_time)) >= ttl_seconds:
+			emit_event("CarcassExpired", null, -1, {
+				"carcass_id": int(carcass_id),
+				"meat_remaining": float(carcass.get("meat_remaining", 0.0)),
+				"lifetime_seconds": current_time - float(carcass.get("created_at", current_time)),
+				"position": {
+					"x": float(carcass["position"].x),
+					"y": float(carcass["position"].y),
+				},
+			})
+			_queue_carcass_removal(int(carcass_id))
+
+
+func _flush_carcass_removals() -> void:
+	if pending_carcass_removals.is_empty():
+		return
+	for carcass_id in pending_carcass_removals:
+		carcasses.erase(carcass_id)
+	pending_carcass_removals.clear()
+
+
+func _queue_carcass_removal(carcass_id: int) -> void:
+	if pending_carcass_removals.has(carcass_id):
+		return
+	var carcass: Dictionary = carcasses.get(carcass_id, {})
+	if carcass.is_empty():
+		return
+	for feeder_id in carcass.get("active_feeder_ids", []):
+		var feeder = get_agent(int(feeder_id))
+		if feeder != null and feeder.has_method("on_carcass_removed"):
+			feeder.call("on_carcass_removed", carcass_id)
+	carcass["active_feeder_ids"] = []
+	carcasses[carcass_id] = carcass
+	pending_carcass_removals.append(carcass_id)
+
+
+func _is_carcass_available(carcass: Dictionary) -> bool:
+	if carcass.is_empty():
+		return false
+	if float(carcass.get("meat_remaining", 0.0)) <= 0.0:
+		return false
+	var ttl_seconds := float(carcass.get("ttl_seconds", 0.0))
+	if ttl_seconds <= 0.0:
+		return false
+	return current_time - float(carcass.get("created_at", current_time)) < ttl_seconds
 
 
 func _spawn_initial_agents() -> void:

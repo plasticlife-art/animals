@@ -57,6 +57,7 @@ func _ready() -> void:
 	_try_register_overlay_checkbox("show_grass_density", "%GrassDensityCheck")
 	_try_register_overlay_checkbox("show_population_density", "%PopulationDensityCheck")
 	_try_register_overlay_checkbox("show_water_overlay", "%WaterOverlayCheck")
+	_try_register_overlay_checkbox("show_carcasses", "%CarcassesCheck")
 	_try_register_overlay_checkbox("show_selected_path", "%SelectedPathCheck")
 	_try_register_overlay_checkbox("show_lod_overlay", "%LodOverlayCheck")
 	for flag_name in overlay_checkboxes.keys():

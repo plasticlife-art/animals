@@ -25,6 +25,7 @@
     "show_grass_density": false,
     "show_population_density": false,
     "show_water_overlay": false,
+    "show_carcasses": true,
     "show_selected_path": false,
     "show_lod_overlay": false
   }

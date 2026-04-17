@@ -17,6 +17,9 @@ var counters := {
 	"grass_events": 0,
 	"hunt_success": 0,
 	"hunt_fail": 0,
+	"carcasses_spawned": 0,
+	"carcasses_expired": 0,
+	"carcass_consumption_events": 0,
 }
 var time_series: Array = []
 var latest_snapshot: Dictionary = {}
@@ -83,6 +86,11 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"hunt_success_rate": 0.0 if hunt_total == 0 else float(counters["hunt_success"]) / hunt_total,
 		"grass_total_biomass": world.resource_system.get_total_biomass(),
 		"grass_biomass_by_biome": grass_biomass_by_biome,
+		"active_carcasses": world.get_active_carcass_count(),
+		"carcass_meat_remaining_total": world.get_total_carcass_meat_remaining(),
+		"carcasses_spawned": counters["carcasses_spawned"],
+		"carcasses_expired": counters["carcasses_expired"],
+		"carcass_consumption_events": counters["carcass_consumption_events"],
 		"blocked_cell_ratio": 0.0 if world.terrain_system == null else world.terrain_system.get_blocked_cell_ratio(),
 		"sim_step_ms_avg": 0.0 if _step_duration_samples == 0 else _step_duration_total_ms / _step_duration_samples,
 		"sim_step_ms_max": _step_duration_max_ms,
@@ -139,3 +147,9 @@ func _on_event_emitted(event: Dictionary) -> void:
 			counters["water_events"] += 1
 		"GrassConsumed":
 			counters["grass_events"] += 1
+		"CarcassSpawned":
+			counters["carcasses_spawned"] += 1
+		"CarcassExpired":
+			counters["carcasses_expired"] += 1
+		"CarcassConsumed":
+			counters["carcass_consumption_events"] += 1

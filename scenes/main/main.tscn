@@ -169,6 +169,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Water overlay"
 
+[node name="CarcassesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=115483721]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Carcasses"
+
 [node name="SelectedPathCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1063190875]
 unique_name_in_owner = true
 layout_mode = 2

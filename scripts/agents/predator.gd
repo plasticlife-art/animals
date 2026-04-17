@@ -3,6 +3,7 @@ extends AgentBase
 
 var hunt: Dictionary = {}
 var preferred_mate_id: int = -1
+var target_carcass_id: int = -1
 
 
 func configure(
@@ -18,6 +19,7 @@ func configure(
 	super.configure(agent_id, new_species_type, spawn_position, new_sex, species_config, balance_config, rng, new_group_id)
 	hunt = species_config.get("hunt", {})
 	preferred_mate_id = -1
+	target_carcass_id = -1
 	debug_color = Color(0.93, 0.47, 0.32)
 
 
@@ -46,6 +48,10 @@ func tick(world, delta: float) -> void:
 	if can_reproduce() and _attempt_reproduce(world, delta):
 		return
 
+	var carcass_config: Dictionary = balance.get("carcass", {})
+	if (target_carcass_id != -1 or hunger >= float(carcass_config.get("scavenging_hunger", hunt.get("engage_hunger", 42.0)))) and _scavenge_or_feed(world, delta):
+		return
+
 	if hunger >= float(hunt.get("engage_hunger", 42.0)) and _hunt(world, delta):
 		return
 
@@ -53,6 +59,35 @@ func tick(world, delta: float) -> void:
 		return
 
 	_patrol(world, delta)
+
+
+func clear_targets(world = null) -> void:
+	if world != null:
+		release_carcass_target(world)
+	else:
+		target_carcass_id = -1
+	super.clear_targets()
+
+
+func release_carcass_target(world) -> void:
+	if world != null and target_carcass_id != -1:
+		world.release_carcass_feeder(target_carcass_id, id)
+	target_carcass_id = -1
+
+
+func on_carcass_removed(carcass_id: int) -> void:
+	if carcass_id != target_carcass_id:
+		return
+	target_carcass_id = -1
+	if state == "feed_carcass" or state == "seek_carcass":
+		target_position = null
+		clear_navigation()
+
+
+func _get_debug_target_text() -> String:
+	if target_carcass_id != -1:
+		return "carcass:%d" % target_carcass_id
+	return super._get_debug_target_text()
 
 
 func _continue_or_finish_chase(world, delta: float) -> bool:
@@ -63,7 +98,7 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 
 	var prey: AgentBase = world.get_agent(target_agent_id)
 	if prey == null or not prey.is_alive or prey.species_type != SPECIES_HERBIVORE:
-		clear_targets()
+		clear_targets(world)
 		return false
 
 	var break_radius: float = float(perception.get("chase_break_radius", 260.0))
@@ -86,7 +121,7 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 			"chase_time": chase_timer,
 			"energy": energy,
 		})
-		clear_targets()
+		clear_targets(world)
 		return false
 
 	chase_timer += delta
@@ -105,6 +140,7 @@ func _hunt(world, delta: float) -> bool:
 	var prey: AgentBase = _choose_prey(world)
 	if prey == null:
 		return false
+	release_carcass_target(world)
 	target_agent_id = prey.id
 	target_position = prey.position
 	set_state("seek_prey", world.current_tick)
@@ -139,12 +175,16 @@ func _attack(world, prey) -> bool:
 			"isolation": isolation,
 		})
 		world.kill_agent(prey, "predation", id)
-		reduce_hunger(float(feeding.get("food_restore", 42.0)))
-		restore_energy(float(feeding.get("energy_restore", 32.0)))
-		set_state("eat", world.current_tick)
+		var carcass: Dictionary = world.find_carcass_by_source_agent(prey.id)
+		target_agent_id = -1
+		if not carcass.is_empty():
+			target_carcass_id = int(carcass.get("id", -1))
+			target_position = carcass["position"]
+		else:
+			target_carcass_id = -1
+			target_position = prey.position
+		set_state("seek_carcass", world.current_tick)
 		clear_navigation()
-		interaction_timer = float(feeding.get("eat_duration", 1.1))
-		clear_targets()
 	else:
 		world.emit_event("PredationFailed", self, prey.id, {
 			"reason": "miss",
@@ -156,7 +196,7 @@ func _attack(world, prey) -> bool:
 
 func _rest(world, delta: float) -> void:
 	set_state("rest", world.current_tick)
-	clear_targets()
+	clear_targets(world)
 	move_with_vector(world, Vector2.ZERO, 0.0, delta)
 
 
@@ -173,6 +213,7 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	if chosen_mate == null:
 		return false
 
+	release_carcass_target(world)
 	_set_mutual_preferred_mate(chosen_mate)
 	target_agent_id = chosen_mate.id
 	target_position = chosen_mate.position
@@ -198,15 +239,15 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	chosen_mate.reproduction_cooldown = float(chosen_mate.reproduction.get("cooldown", 52.0))
 	spend_energy(float(reproduction.get("birth_energy_cost", 22.0)))
 	chosen_mate.spend_energy(float(chosen_mate.reproduction.get("birth_energy_cost", 22.0)))
-	clear_targets()
+	clear_targets(world)
 	if chosen_mate.has_method("clear_targets"):
-		chosen_mate.call("clear_targets")
+		chosen_mate.call("clear_targets", world)
 	return true
 
 
 func _patrol(world, delta: float) -> void:
 	set_state("patrol", world.current_tick)
-	clear_targets()
+	clear_targets(world)
 	_update_water_memory(world)
 	move_with_vector(world, Steering.wander(self, world.rng), float(movement.get("max_speed", 84.0)) * 0.85, delta)
 
@@ -285,6 +326,7 @@ func _maintain_pair_cohesion(world, delta: float) -> bool:
 	if distance_sq <= follow_radius * follow_radius:
 		return false
 
+	release_carcass_target(world)
 	target_agent_id = mate.id
 	target_position = mate.position
 	set_state("pair_cohesion", world.current_tick)
@@ -361,6 +403,7 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 	if water.is_empty():
 		return false
 
+	release_carcass_target(world)
 	remember_water(water, world.current_time)
 	target_agent_id = -1
 	target_position = water["position"]
@@ -381,6 +424,84 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 	var water_waypoint: Vector2 = world.get_next_waypoint(position, water["position"], id)
 	move_with_vector(world, Steering.seek(position, water_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	return true
+
+
+func _scavenge_or_feed(world, delta: float) -> bool:
+	var carcass: Dictionary = _resolve_carcass_target(world)
+	if carcass.is_empty():
+		return false
+
+	target_agent_id = -1
+	target_position = carcass["position"]
+	var feed_distance := float(feeding.get("feed_distance", feeding.get("eat_distance", 18.0)))
+	if position.distance_squared_to(carcass["position"]) <= feed_distance * feed_distance:
+		if not world.reserve_carcass_feeder(target_carcass_id, id):
+			var alternate: Dictionary = _choose_carcass(world)
+			if alternate.is_empty() or int(alternate.get("id", -1)) == target_carcass_id:
+				return false
+			target_carcass_id = int(alternate.get("id", -1))
+			target_position = alternate["position"]
+			set_state("seek_carcass", world.current_tick)
+			var alternate_waypoint: Vector2 = world.get_next_waypoint(position, alternate["position"], id)
+			move_with_vector(world, Steering.seek(position, alternate_waypoint), float(movement.get("max_speed", 84.0)), delta)
+			return true
+
+		set_state("feed_carcass", world.current_tick)
+		clear_navigation()
+		stop_motion(delta)
+		var consumed: float = world.consume_carcass(
+			target_carcass_id,
+			float(feeding.get("carcass_consume_rate", 24.0)) * delta,
+			id
+		)
+		if consumed <= 0.0:
+			release_carcass_target(world)
+			target_position = null
+			return false
+		reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)))
+		restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
+		var updated: Dictionary = world.get_carcass(target_carcass_id)
+		if updated.is_empty() or float(updated.get("meat_remaining", 0.0)) <= 0.0:
+			release_carcass_target(world)
+		return true
+
+	set_state("seek_carcass", world.current_tick)
+	var carcass_waypoint: Vector2 = world.get_next_waypoint(position, carcass["position"], id)
+	move_with_vector(world, Steering.seek(position, carcass_waypoint), float(movement.get("max_speed", 84.0)), delta)
+	return true
+
+
+func _resolve_carcass_target(world) -> Dictionary:
+	if target_carcass_id != -1:
+		var current_target: Dictionary = world.get_carcass(target_carcass_id)
+		if not current_target.is_empty():
+			return current_target
+		release_carcass_target(world)
+		target_position = null
+
+	var carcass: Dictionary = _choose_carcass(world)
+	if carcass.is_empty():
+		return {}
+	target_carcass_id = int(carcass.get("id", -1))
+	return carcass
+
+
+func _choose_carcass(world) -> Dictionary:
+	var search_radius := float(balance.get("carcass", {}).get("search_radius", perception.get("vision_radius", 240.0)))
+	var best_carcass := {}
+	var best_distance_sq := INF
+	var best_meat := -INF
+	for carcass in world.query_carcasses(position, search_radius):
+		var active_feeders: Array = carcass.get("active_feeder_ids", [])
+		if not active_feeders.has(id) and active_feeders.size() >= int(carcass.get("max_feeders", 1)):
+			continue
+		var distance_sq := position.distance_squared_to(carcass["position"])
+		var meat_remaining := float(carcass.get("meat_remaining", 0.0))
+		if distance_sq < best_distance_sq or (is_equal_approx(distance_sq, best_distance_sq) and meat_remaining > best_meat):
+			best_distance_sq = distance_sq
+			best_meat = meat_remaining
+			best_carcass = carcass
+	return best_carcass
 
 
 func _resolve_water_target(world, thresholds: Dictionary = {}) -> Dictionary:
