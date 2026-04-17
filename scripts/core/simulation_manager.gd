@@ -3,6 +3,7 @@ extends Node
 
 signal tick_completed(tick: int, snapshot: Dictionary)
 signal selection_changed(agent_id: int)
+signal focus_mode_changed(mode: String)
 signal export_completed(paths: Dictionary)
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
@@ -28,6 +29,7 @@ var speed_multiplier: float = 1.0
 var accumulator: float = 0.0
 var seed: int = 0
 var selected_agent_id: int = -1
+var focus_mode: String = "off"
 var debug_flags: Dictionary = {}
 var _single_step_requested: bool = false
 var lod_enabled: bool = false
@@ -61,6 +63,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	accumulator = 0.0
 	paused = false
 	selected_agent_id = -1
+	focus_mode = "off"
 	_single_step_requested = false
 
 	var debug_config: Dictionary = config_bundle.get("debug", {})
@@ -113,6 +116,7 @@ func step_once() -> void:
 	if selected_agent_id != -1 and world_state.get_agent(selected_agent_id) == null:
 		selected_agent_id = -1
 		selection_changed.emit(selected_agent_id)
+		clear_focus()
 	stats_system.record_sample(world_state, current_tick, simulation_time)
 	tick_completed.emit(current_tick, stats_system.get_snapshot())
 
@@ -158,6 +162,7 @@ func select_agent_at_position(position: Vector2, radius: float) -> void:
 	var nearby := world_state.query_agents(position, radius, "", -1)
 	if nearby.is_empty():
 		selected_agent_id = -1
+		clear_focus()
 	else:
 		var nearest = nearby[0]
 		var nearest_distance_sq: float = nearest.position.distance_squared_to(position)
@@ -167,6 +172,7 @@ func select_agent_at_position(position: Vector2, radius: float) -> void:
 				nearest = candidate
 				nearest_distance_sq = distance_sq
 		selected_agent_id = nearest.id
+		set_focus_mode("agent")
 	_refresh_lod_assignments()
 	selection_changed.emit(selected_agent_id)
 
@@ -180,6 +186,35 @@ func get_selected_agent():
 func get_selected_agent_summary() -> Dictionary:
 	var agent = get_selected_agent()
 	return {} if agent == null else agent.get_debug_summary()
+
+
+func set_focus_mode(mode: String) -> void:
+	var next_mode := mode
+	if next_mode not in ["off", "agent", "flock"]:
+		next_mode = "off"
+	if next_mode != "off" and get_selected_agent() == null:
+		next_mode = "off"
+	if focus_mode == next_mode:
+		return
+	focus_mode = next_mode
+	focus_mode_changed.emit(focus_mode)
+
+
+func clear_focus() -> void:
+	set_focus_mode("off")
+
+
+func get_focus_position():
+	if focus_mode == "off":
+		return null
+	var agent = get_selected_agent()
+	if agent == null:
+		return null
+	if focus_mode == "flock":
+		var group_center = world_state.get_group_center(agent.group_id, agent.species_type, agent.id)
+		if group_center != null:
+			return group_center
+	return agent.position
 
 
 func export_telemetry() -> Dictionary:

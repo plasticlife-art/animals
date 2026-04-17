@@ -5,6 +5,7 @@ signal pause_toggled(is_paused: bool)
 signal single_step_requested
 signal speed_selected(multiplier: float)
 signal export_requested
+signal focus_mode_selected(mode: String)
 signal overlay_flag_changed(flag_name: String, enabled: bool)
 signal lod_enabled_toggled(enabled: bool)
 
@@ -12,6 +13,7 @@ signal lod_enabled_toggled(enabled: bool)
 @onready var step_button: Button = %StepButton
 @onready var speed_option: OptionButton = %SpeedOption
 @onready var export_button: Button = %ExportButton
+@onready var focus_mode_option: OptionButton = %FocusModeOption
 @onready var lod_enabled_check: CheckBox = %LodEnabledCheck
 @onready var summary_label: RichTextLabel = %SummaryLabel
 @onready var inspector_text: RichTextLabel = %InspectorText
@@ -31,7 +33,11 @@ func _ready() -> void:
 	step_button.pressed.connect(_on_step_button_pressed)
 	export_button.pressed.connect(_on_export_button_pressed)
 	speed_option.item_selected.connect(_on_speed_selected)
+	focus_mode_option.item_selected.connect(_on_focus_mode_selected)
 	lod_enabled_check.toggled.connect(_on_lod_enabled_check_toggled)
+	focus_mode_option.add_item("Off", 0)
+	focus_mode_option.add_item("Agent", 1)
+	focus_mode_option.add_item("Flock", 2)
 
 	overlay_checkboxes = {
 		"show_state_labels": %StateLabelsCheck,
@@ -53,11 +59,9 @@ func bind_manager(manager: SimulationManager) -> void:
 	simulation_manager = manager
 	simulation_manager.tick_completed.connect(_on_tick_completed)
 	simulation_manager.selection_changed.connect(_on_selection_changed)
+	simulation_manager.focus_mode_changed.connect(_on_focus_mode_changed)
 	simulation_manager.export_completed.connect(_on_export_completed)
-	set_paused_state(simulation_manager.paused)
-	_refresh_summary(simulation_manager.stats_system.get_snapshot())
-	_refresh_inspector(simulation_manager.get_selected_agent_summary())
-	_refresh_event_log()
+	refresh_from_manager()
 
 
 func apply_debug_settings(debug_config: Dictionary, flags: Dictionary, is_lod_enabled: bool) -> void:
@@ -82,9 +86,30 @@ func set_status_text(text: String) -> void:
 	status_label.text = text
 
 
+func refresh_from_manager() -> void:
+	if simulation_manager == null:
+		return
+	set_paused_state(simulation_manager.paused)
+	set_focus_mode_state(simulation_manager.focus_mode)
+	set_lod_enabled_state(simulation_manager.lod_enabled)
+	_refresh_summary(simulation_manager.stats_system.get_snapshot())
+	_refresh_inspector(simulation_manager.get_selected_agent_summary())
+	_refresh_event_log()
+
+
 func set_paused_state(value: bool) -> void:
 	is_paused = value
 	pause_button.text = "Resume" if is_paused else "Pause"
+
+
+func set_focus_mode_state(mode: String) -> void:
+	var option_index := 0
+	match mode:
+		"agent":
+			option_index = 1
+		"flock":
+			option_index = 2
+	focus_mode_option.select(option_index)
 
 
 func set_lod_enabled_state(value: bool) -> void:
@@ -110,6 +135,15 @@ func _on_speed_selected(index: int) -> void:
 	speed_selected.emit(float(speed_steps[index]))
 
 
+func _on_focus_mode_selected(index: int) -> void:
+	var mode := "off"
+	if index == 1:
+		mode = "agent"
+	elif index == 2:
+		mode = "flock"
+	focus_mode_selected.emit(mode)
+
+
 func _on_lod_enabled_check_toggled(enabled: bool) -> void:
 	lod_enabled_toggled.emit(enabled)
 
@@ -128,6 +162,10 @@ func _on_tick_completed(tick: int, snapshot: Dictionary) -> void:
 
 func _on_selection_changed(_agent_id: int) -> void:
 	_refresh_inspector(simulation_manager.get_selected_agent_summary())
+
+
+func _on_focus_mode_changed(mode: String) -> void:
+	set_focus_mode_state(mode)
 
 
 func _on_export_completed(paths: Dictionary) -> void:

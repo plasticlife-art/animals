@@ -70,12 +70,11 @@ func _on_selection_changed(_agent_id: int) -> void:
 	queue_redraw()
 
 
-func _get_visible_world_rect(world_bounds: Rect2) -> Rect2:
-	var viewport_rect := get_viewport_rect()
-	var inverse_canvas := get_canvas_transform().affine_inverse()
-	var top_left: Vector2 = inverse_canvas * viewport_rect.position
-	var bottom_right: Vector2 = inverse_canvas * viewport_rect.end
-	return Rect2(top_left, bottom_right - top_left).intersection(world_bounds)
+func _get_visible_world_rect(_world_bounds: Rect2) -> Rect2:
+	var camera := _get_game_camera()
+	if camera != null:
+		return camera.get_visible_world_rect()
+	return _world_bounds
 
 
 func _get_agent_draw_color(agent) -> Color:
@@ -90,3 +89,8 @@ func _get_agent_draw_color(agent) -> Color:
 		2:
 			lod_color = Color(0.95, 0.45, 0.45)
 	return base_color.lerp(lod_color, 0.68)
+
+
+func _get_game_camera() -> GameCamera:
+	var camera = get_viewport().get_camera_2d()
+	return camera if camera is GameCamera else null

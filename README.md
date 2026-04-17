@@ -29,13 +29,15 @@ The current build simulates a continuous 2D world with grass regrowth, fixed wat
 - `W`, `A`, `S`, `D`: pan camera
 - Mouse wheel: zoom
 - Middle mouse drag: pan camera
-- Left click: select the nearest agent under the cursor
+- Left click: select the nearest agent under the cursor and start following it
+- Any manual pan input: exit follow mode and return camera control to the player
 
 From the HUD you can:
 
 - pause or resume the simulation
 - single-step one tick
 - switch speed between `1x`, `2x`, `4x`, and `10x`
+- switch follow mode between `Off`, `Agent`, and `Flock` (`Flock` follows the selected herd center)
 - inspect the selected agent
 - review recent events
 - toggle debug overlays

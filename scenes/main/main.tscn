@@ -85,6 +85,19 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Export"
 
+[node name="FocusRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=113504811]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="FocusLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/FocusRow" unique_id=166006314]
+layout_mode = 2
+text = "Follow"
+
+[node name="FocusModeOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/FocusRow" unique_id=210001313]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
 [node name="SummaryLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1266242578]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 156)

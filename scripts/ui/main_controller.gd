@@ -26,6 +26,7 @@ func _ready() -> void:
 	overlay_renderer.bind_manager(simulation_manager)
 	debug_panel.bind_manager(simulation_manager)
 	charts_panel.bind_manager(simulation_manager)
+	world_camera.bind_manager(simulation_manager)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
 
 	_apply_debug_configuration()
@@ -38,6 +39,7 @@ func _ready() -> void:
 	debug_panel.single_step_requested.connect(simulation_manager.request_single_step)
 	debug_panel.speed_selected.connect(simulation_manager.set_speed_multiplier)
 	debug_panel.export_requested.connect(_on_export_requested)
+	debug_panel.focus_mode_selected.connect(_on_focus_mode_selected)
 	debug_panel.overlay_flag_changed.connect(_on_overlay_flag_changed)
 	debug_panel.lod_enabled_toggled.connect(_on_lod_enabled_toggled)
 	resume_button.pressed.connect(resume_game)
@@ -58,6 +60,11 @@ func _on_pause_toggled(is_paused: bool) -> void:
 func _on_export_requested() -> void:
 	var paths := simulation_manager.export_telemetry()
 	debug_panel.set_status_text("Exported telemetry to:\n%s\n%s" % [paths.get("metrics_csv", ""), paths.get("events_json", "")])
+
+
+func _on_focus_mode_selected(mode: String) -> void:
+	simulation_manager.set_focus_mode(mode)
+	debug_panel.set_focus_mode_state(simulation_manager.focus_mode)
 
 
 func _on_overlay_flag_changed(flag_name: String, enabled: bool) -> void:
@@ -130,6 +137,7 @@ func restart_game() -> void:
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
+	debug_panel.refresh_from_manager()
 	_sync_lod_focus_rect()
 	_set_pause_menu_visible(false)
 
