@@ -87,26 +87,40 @@ func _seek_or_drink(world, delta: float, neighbors: Array) -> bool:
 
 
 func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
+	var grass: Dictionary = _find_grass_target(world)
+	if grass.is_empty():
+		return false
+	return _move_to_grass_target(world, delta, neighbors, grass)
+
+
+func _find_grass_target(world) -> Dictionary:
 	var thresholds: Dictionary = balance.get("state_thresholds", {})
 	var critical_hunger := float(thresholds.get("critical_hunger", 65.0))
 	var base_search_radius := float(perception.get("grass_search_radius", 180.0))
 	var urgency_ratio := 0.0
 	if hunger > critical_hunger:
 		urgency_ratio = clampf((hunger - critical_hunger) / maxf(1.0, need_max - critical_hunger), 0.0, 1.0)
-	var search_radius := lerpf(base_search_radius, maxf(base_search_radius * 3.0, 540.0), urgency_ratio)
 	var min_biomass := 4.0 if urgency_ratio < 0.45 else 2.0
 
-	var grass: Dictionary = Perception.find_best_grass(world, position, search_radius, min_biomass)
-	if grass.is_empty() and hunger >= critical_hunger:
-		grass = Perception.find_best_grass(
-			world,
-			position,
-			maxf(search_radius * 1.5, 720.0),
-			1.0
-		)
-	if grass.is_empty():
-		return false
+	var local_grass: Dictionary = Perception.find_best_grass(world, position, base_search_radius, min_biomass)
+	if not local_grass.is_empty():
+		return local_grass
 
+	var expanded_search_radius := _get_expanded_grass_search_radius(critical_hunger)
+	if expanded_search_radius <= base_search_radius:
+		return {}
+	return Perception.find_best_grass(world, position, expanded_search_radius, min_biomass)
+
+
+func _get_expanded_grass_search_radius(critical_hunger: float) -> float:
+	var base_search_radius := float(perception.get("grass_search_radius", 180.0))
+	var urgency_ratio := 0.0
+	if hunger > critical_hunger:
+		urgency_ratio = clampf((hunger - critical_hunger) / maxf(1.0, need_max - critical_hunger), 0.0, 1.0)
+	return lerpf(base_search_radius, maxf(base_search_radius * 3.0, 540.0), urgency_ratio)
+
+
+func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Dictionary) -> bool:
 	target_position = grass["center"]
 	var eat_distance := float(feeding.get("eat_distance", 18.0))
 	if position.distance_squared_to(grass["center"]) <= eat_distance * eat_distance:
@@ -240,22 +254,16 @@ func _attempt_reproduce(world, delta: float, neighbors: Array) -> bool:
 
 
 func _wander_or_graze(world, delta: float, neighbors: Array) -> void:
-	var grass_here: float = world.resource_system.get_density_at_position(position)
 	var weights: Dictionary = balance.get("herd_weights", {})
 	var wander_vector: Vector2 = Steering.wander(self, world.rng)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
 	var base_speed: float = float(movement.get("max_speed", 70.0))
+	var graze_hunger_floor := float(balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0))
 
-	if grass_here >= 0.28 and hunger >= float(balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0)):
-		set_state("seek_food", world.current_tick)
-		var local_grass: Dictionary = Perception.find_best_grass(world, position, 64.0, 4.0)
-		if not local_grass.is_empty():
-			var waypoint: Vector2 = world.get_next_waypoint(position, local_grass["center"], id)
-			var move_vector: Vector2 = Steering.combine([
-				{"vector": Steering.seek(position, waypoint), "weight": 1.1},
-				{"vector": herd_vector, "weight": 0.8},
-			])
-			move_with_vector(world, move_vector, base_speed * 0.85, delta)
+	if hunger >= graze_hunger_floor:
+		var grass: Dictionary = _find_grass_target(world)
+		if not grass.is_empty():
+			_move_to_grass_target(world, delta, neighbors, grass)
 			return
 
 	set_state("wander", world.current_tick)

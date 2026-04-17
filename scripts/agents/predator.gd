@@ -28,6 +28,7 @@ func tick(world, delta: float) -> void:
 	_maybe_drink(world)
 	if apply_survival_checks(world, delta):
 		return
+	_update_kin_state(world)
 
 	if interaction_timer > 0.0:
 		stop_motion(delta)
@@ -41,13 +42,6 @@ func tick(world, delta: float) -> void:
 	if _should_seek_water(thresholds, water_target) and _seek_or_drink(world, delta, water_target):
 		return
 
-	if _should_rest(thresholds):
-		_rest(world, delta)
-		return
-
-	if can_reproduce() and _attempt_reproduce(world, delta):
-		return
-
 	var carcass_config: Dictionary = balance.get("carcass", {})
 	if (target_carcass_id != -1 or hunger >= float(carcass_config.get("scavenging_hunger", hunt.get("engage_hunger", 42.0)))) and _scavenge_or_feed(world, delta):
 		return
@@ -55,7 +49,17 @@ func tick(world, delta: float) -> void:
 	if hunger >= float(hunt.get("engage_hunger", 42.0)) and _hunt(world, delta):
 		return
 
-	if _maintain_pair_cohesion(world, delta):
+	if hunger >= float(hunt.get("engage_hunger", 42.0)) and _investigate_recent_water(world, delta):
+		return
+
+	if _should_rest(thresholds):
+		_rest(world, delta)
+		return
+
+	if can_reproduce() and _attempt_reproduce(world, delta):
+		return
+
+	if _regroup_with_kin(world, delta):
 		return
 
 	_patrol(world, delta)
@@ -103,8 +107,11 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 
 	var break_radius: float = float(perception.get("chase_break_radius", 260.0))
 	var max_chase_duration: float = float(balance.get("hunt_rules", {}).get("max_chase_duration", 9.0))
+	var kin_break_radius: float = float(balance.get("hunt_rules", {}).get("kin_chase_break_radius", 220.0))
+	var critical_hunger_multiplier: float = float(balance.get("hunt_rules", {}).get("critical_hunger_kin_break_multiplier", 1.75))
 	var attack_radius: float = float(perception.get("attack_radius", 18.0))
 	var min_chase_energy: float = float(hunt.get("min_chase_energy", 4.0))
+	var critical_hunger: float = float(balance.get("state_thresholds", {}).get("critical_hunger", 65.0))
 	var distance_sq: float = position.distance_squared_to(prey.position)
 	var distance: float = sqrt(distance_sq)
 	var fail_reason := ""
@@ -114,13 +121,22 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		fail_reason = "timeout"
 	elif energy <= min_chase_energy and distance > attack_radius * 1.5:
 		fail_reason = "low_energy"
+	elif last_known_kin_center != null:
+		var allowed_kin_gap := kin_break_radius
+		if hunger >= critical_hunger:
+			allowed_kin_gap *= critical_hunger_multiplier
+		if position.distance_to(last_known_kin_center) > allowed_kin_gap:
+			fail_reason = "kin_gap"
 	if fail_reason != "":
-		world.emit_event("PredationFailed", self, prey.id, {
+		var failure_data := {
 			"reason": fail_reason,
 			"distance": distance,
 			"chase_time": chase_timer,
 			"energy": energy,
-		})
+		}
+		if fail_reason == "kin_gap" and last_known_kin_center != null:
+			failure_data["kin_distance"] = position.distance_to(last_known_kin_center)
+		world.emit_event("PredationFailed", self, prey.id, failure_data)
 		clear_targets(world)
 		return false
 
@@ -201,10 +217,16 @@ func _rest(world, delta: float) -> void:
 
 
 func set_preferred_mate_id(agent_id: int) -> void:
+	if preferred_mate_id != -1 and preferred_mate_id != agent_id:
+		remove_kin_id(preferred_mate_id)
 	preferred_mate_id = agent_id
+	if agent_id != -1:
+		add_kin_id(agent_id)
 
 
 func clear_preferred_mate() -> void:
+	if preferred_mate_id != -1:
+		remove_kin_id(preferred_mate_id)
 	preferred_mate_id = -1
 
 
@@ -256,7 +278,7 @@ func _maybe_drink(world) -> void:
 	var nearby_water: Dictionary = Perception.find_nearest_water(world, position, 32.0)
 	if nearby_water.is_empty():
 		return
-	remember_water(nearby_water, world.current_time)
+	_remember_water_source(world, nearby_water)
 	var drink_distance := float(feeding.get("drink_distance", 28.0)) + float(nearby_water.get("radius", 0.0))
 	if position.distance_squared_to(nearby_water["position"]) > drink_distance * drink_distance:
 		return
@@ -265,7 +287,6 @@ func _maybe_drink(world) -> void:
 	var drink_restore: float = float(feeding.get("drink_restore", 14.0))
 	reduce_thirst(drink_restore)
 	clear_navigation()
-	clear_water_memory()
 	world.emit_event("WaterConsumed", self, -1, {
 		"source_position": nearby_water["position"],
 		"restored": drink_restore,
@@ -316,21 +337,20 @@ func _prey_isolation(world, prey) -> float:
 	return clampf(1.0 - (float(neighbors.size()) / 6.0), 0.0, 1.0)
 
 
-func _maintain_pair_cohesion(world, delta: float) -> bool:
-	var mate: AgentBase = _find_viable_mate(world, false)
-	if mate == null:
+func _regroup_with_kin(world, delta: float) -> bool:
+	if last_known_kin_center == null:
 		return false
 
 	var follow_radius: float = float(reproduction.get("preferred_mate_follow_radius", 180.0))
-	var distance_sq: float = position.distance_squared_to(mate.position)
+	var distance_sq: float = position.distance_squared_to(last_known_kin_center)
 	if distance_sq <= follow_radius * follow_radius:
 		return false
 
 	release_carcass_target(world)
-	target_agent_id = mate.id
-	target_position = mate.position
+	target_agent_id = -1
+	target_position = last_known_kin_center
 	set_state("pair_cohesion", world.current_tick)
-	var mate_waypoint: Vector2 = world.get_next_waypoint(position, mate.position, id)
+	var mate_waypoint: Vector2 = world.get_next_waypoint(position, last_known_kin_center, id)
 	var vectors := []
 	vectors.append({"vector": Steering.seek(position, mate_waypoint), "weight": float(reproduction.get("preferred_mate_seek_weight", 0.75))})
 	vectors.append({"vector": Steering.wander(self, world.rng), "weight": 0.45})
@@ -392,7 +412,7 @@ func _is_valid_mate_candidate(candidate, require_reproduction_ready: bool) -> bo
 func _set_mutual_preferred_mate(mate: AgentBase) -> void:
 	if mate == null:
 		return
-	preferred_mate_id = mate.id
+	set_preferred_mate_id(mate.id)
 	if mate.has_method("set_preferred_mate_id"):
 		mate.call("set_preferred_mate_id", id)
 
@@ -404,20 +424,23 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 		return false
 
 	release_carcass_target(world)
-	remember_water(water, world.current_time)
+	_remember_water_source(world, water)
 	target_agent_id = -1
 	target_position = water["position"]
 	var drink_distance := float(feeding.get("drink_distance", 28.0)) + float(water.get("radius", 0.0))
 	if position.distance_squared_to(water["position"]) <= drink_distance * drink_distance:
-		set_state("drink", world.current_tick)
 		clear_navigation()
-		var drink_restore: float = float(feeding.get("drink_restore", 14.0))
-		reduce_thirst(drink_restore)
-		clear_water_memory()
-		world.emit_event("WaterConsumed", self, -1, {
-			"source_position": water["position"],
-			"restored": drink_restore,
-		})
+		if thirst > 4.0:
+			set_state("drink", world.current_tick)
+			var drink_restore: float = float(feeding.get("drink_restore", 14.0))
+			reduce_thirst(drink_restore)
+			world.emit_event("WaterConsumed", self, -1, {
+				"source_position": water["position"],
+				"restored": drink_restore,
+			})
+		else:
+			set_state("seek_water", world.current_tick)
+			stop_motion(delta)
 		return true
 
 	set_state("seek_water", world.current_tick)
@@ -516,13 +539,13 @@ func _resolve_water_target(world, thresholds: Dictionary = {}) -> Dictionary:
 		search_radius
 	)
 	if not visible_water.is_empty():
-		remember_water(visible_water, world.current_time)
+		_remember_water_source(world, visible_water)
 		return visible_water
 
-	return get_remembered_water(
-		world.current_time,
-		float(perception.get("water_memory_duration_seconds", 0.0))
-	)
+	var remembered_sources := get_recent_water_sources(world.current_time, float(perception.get("water_memory_duration_seconds", 0.0)))
+	if remembered_sources.is_empty():
+		return {}
+	return remembered_sources.front()
 
 
 func _update_water_memory(world) -> void:
@@ -532,7 +555,7 @@ func _update_water_memory(world) -> void:
 		float(perception.get("water_search_radius", perception.get("vision_radius", 240.0)))
 	)
 	if not visible_water.is_empty():
-		remember_water(visible_water, world.current_time)
+		_remember_water_source(world, visible_water)
 
 
 func _should_seek_water(thresholds: Dictionary, water_target: Dictionary) -> bool:
@@ -547,3 +570,52 @@ func _should_rest(thresholds: Dictionary) -> bool:
 	if state == "rest":
 		return energy <= rest_energy_resume
 	return energy <= rest_energy
+
+
+func _investigate_recent_water(world, delta: float) -> bool:
+	var remembered_sources := get_recent_water_sources(
+		world.current_time,
+		float(perception.get("water_memory_duration_seconds", 0.0))
+	)
+	if remembered_sources.is_empty():
+		return false
+	return _seek_or_drink(world, delta, remembered_sources.front())
+
+
+func _remember_water_source(world, source: Dictionary) -> void:
+	if source.is_empty():
+		return
+	var updated_source: Dictionary = source.duplicate(true)
+	if _water_source_has_herbivore(world, updated_source):
+		updated_source["last_herbivore_seen_time"] = world.current_time
+	remember_water(updated_source, world.current_time)
+
+
+func _water_source_has_herbivore(world, source: Dictionary) -> bool:
+	var source_position: Variant = source.get("position", null)
+	if source_position == null:
+		return false
+	var herbivores: Array = Perception.get_nearby_agents(
+		world,
+		source_position,
+		float(perception.get("vision_radius", 240.0)),
+		SPECIES_HERBIVORE,
+		-1
+	)
+	return not herbivores.is_empty()
+
+
+func _update_kin_state(world) -> void:
+	var live_kin: Array = []
+	var kin_center := Vector2.ZERO
+	for kin_id in kin_ids:
+		var kin_agent: AgentBase = world.get_agent(int(kin_id))
+		if kin_agent == null or not kin_agent.is_alive or kin_agent.species_type != SPECIES_PREDATOR:
+			continue
+		live_kin.append(kin_agent.id)
+		kin_center += kin_agent.position
+	kin_ids = live_kin
+	if kin_ids.is_empty():
+		last_known_kin_center = null
+		return
+	last_known_kin_center = kin_center / float(kin_ids.size())

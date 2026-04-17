@@ -28,9 +28,9 @@ var attack_cooldown: float = 0.0
 var chase_timer: float = 0.0
 var wander_angle: float = 0.0
 var debug_color: Color = Color.WHITE
-var remembered_water_position = null
-var remembered_water_radius: float = 0.0
-var remembered_water_time_seconds: float = -1.0
+var recent_water_sources: Array = []
+var kin_ids: Array = []
+var last_known_kin_center = null
 var lod_tier: int = 0
 var path_cells: Array = []
 var path_index: int = 0
@@ -76,6 +76,8 @@ func configure(
 	target_agent_id = -1
 	target_position = null
 	clear_water_memory()
+	kin_ids.clear()
+	last_known_kin_center = null
 	clear_navigation()
 	lod_tier = 0
 	debug_color = Color(0.9, 0.9, 0.9)
@@ -238,30 +240,89 @@ func move_to_target(world, target: Vector2, desired_speed: float, delta: float, 
 func remember_water(source: Dictionary, time_seconds: float) -> void:
 	if source.is_empty():
 		return
-	remembered_water_position = source.get("position", null)
-	remembered_water_radius = float(source.get("radius", 0.0))
-	remembered_water_time_seconds = time_seconds
+	var position_value = source.get("position", null)
+	if position_value == null:
+		return
+
+	var previous_herbivore_seen_time := -1.0
+	var existing_index := -1
+	for index in range(recent_water_sources.size()):
+		var existing: Dictionary = recent_water_sources[index]
+		if existing.get("position", null) == position_value:
+			existing_index = index
+			previous_herbivore_seen_time = float(existing.get("last_herbivore_seen_time", -1.0))
+			break
+
+	var updated_entry := {
+		"position": position_value,
+		"radius": float(source.get("radius", 0.0)),
+		"last_seen_time": time_seconds,
+		"last_herbivore_seen_time": previous_herbivore_seen_time,
+	}
+	if source.has("last_herbivore_seen_time"):
+		updated_entry["last_herbivore_seen_time"] = float(source.get("last_herbivore_seen_time", previous_herbivore_seen_time))
+	elif bool(source.get("herbivore_seen", false)):
+		updated_entry["last_herbivore_seen_time"] = time_seconds
+
+	if existing_index != -1:
+		recent_water_sources.remove_at(existing_index)
+	recent_water_sources.push_front(updated_entry)
+	while recent_water_sources.size() > 4:
+		recent_water_sources.pop_back()
 
 
 func clear_water_memory() -> void:
-	remembered_water_position = null
-	remembered_water_radius = 0.0
-	remembered_water_time_seconds = -1.0
+	recent_water_sources.clear()
 
 
 func get_remembered_water(time_seconds: float, max_age_seconds: float) -> Dictionary:
-	if remembered_water_position == null or remembered_water_time_seconds < 0.0:
+	var remembered_sources := get_recent_water_sources(time_seconds, max_age_seconds)
+	if remembered_sources.is_empty():
 		return {}
+	return remembered_sources.front().duplicate(true)
+
+
+func get_recent_water_sources(time_seconds: float, max_age_seconds: float) -> Array:
 	if max_age_seconds <= 0.0:
 		clear_water_memory()
-		return {}
-	if time_seconds - remembered_water_time_seconds > max_age_seconds:
-		clear_water_memory()
-		return {}
-	return {
-		"position": remembered_water_position,
-		"radius": remembered_water_radius,
-	}
+		return []
+
+	var valid_sources: Array = []
+	for entry in recent_water_sources:
+		var last_seen_time := float(entry.get("last_seen_time", -1.0))
+		if last_seen_time < 0.0:
+			continue
+		if time_seconds - last_seen_time > max_age_seconds:
+			continue
+		valid_sources.append(entry.duplicate(true))
+
+	recent_water_sources = valid_sources.duplicate(true)
+	recent_water_sources.sort_custom(Callable(self, "_sort_water_memory_entry"))
+	return recent_water_sources.duplicate(true)
+
+
+func add_kin_id(agent_id: int) -> void:
+	if agent_id == -1 or agent_id == id or kin_ids.has(agent_id):
+		return
+	kin_ids.append(agent_id)
+
+
+func remove_kin_id(agent_id: int) -> void:
+	if not kin_ids.has(agent_id):
+		return
+	kin_ids.erase(agent_id)
+
+
+func _sort_water_memory_entry(a: Dictionary, b: Dictionary) -> bool:
+	var a_herbivore_time := float(a.get("last_herbivore_seen_time", -1.0))
+	var b_herbivore_time := float(b.get("last_herbivore_seen_time", -1.0))
+	var a_has_herbivore := a_herbivore_time >= 0.0
+	var b_has_herbivore := b_herbivore_time >= 0.0
+	if a_has_herbivore != b_has_herbivore:
+		return a_has_herbivore
+	if a_has_herbivore and not is_equal_approx(a_herbivore_time, b_herbivore_time):
+		return a_herbivore_time > b_herbivore_time
+	return float(a.get("last_seen_time", -1.0)) > float(b.get("last_seen_time", -1.0))
 
 
 func get_debug_summary() -> Dictionary:

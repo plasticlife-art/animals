@@ -7,6 +7,7 @@ extends Node2D
 @onready var world_camera = $GameCamera
 @onready var debug_panel = $CanvasLayer/HUD/DebugPanel
 @onready var charts_panel = $CanvasLayer/HUD/ChartsPanel
+@onready var minimap = $CanvasLayer/MiniMap
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
 @onready var resume_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/ResumeButton
@@ -28,12 +29,15 @@ func _ready() -> void:
 	charts_panel.bind_manager(simulation_manager)
 	world_camera.bind_manager(simulation_manager)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
+	minimap.bind_manager(simulation_manager)
+	minimap.bind_camera(world_camera)
 
 	_apply_debug_configuration()
 	set_hud_visible(false)
 	_set_pause_menu_visible(false)
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
+	minimap.set_input_enabled(true)
 
 	debug_panel.pause_toggled.connect(_on_pause_toggled)
 	debug_panel.single_step_requested.connect(simulation_manager.request_single_step)
@@ -108,6 +112,7 @@ func toggle_pause_menu() -> void:
 	set_hud_visible(false)
 	world_view.set_input_enabled(false)
 	world_camera.set_input_enabled(false)
+	minimap.set_input_enabled(false)
 	_set_pause_menu_visible(true)
 	resume_button.grab_focus()
 
@@ -122,6 +127,7 @@ func resume_game() -> void:
 	set_hud_visible(_hud_visible_before_pause)
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
+	minimap.set_input_enabled(true)
 	_set_pause_menu_visible(false)
 
 
@@ -137,6 +143,9 @@ func restart_game() -> void:
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
+	minimap.bind_manager(simulation_manager)
+	minimap.bind_camera(world_camera)
+	minimap.set_input_enabled(true)
 	debug_panel.refresh_from_manager()
 	_sync_lod_focus_rect()
 	_set_pause_menu_visible(false)

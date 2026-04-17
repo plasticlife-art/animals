@@ -23,7 +23,9 @@
     "age_stage": 0.35
   },
   "hunt_rules": {
-    "max_chase_duration": 14.0
+    "max_chase_duration": 14.0,
+    "kin_chase_break_radius": 220.0,
+    "critical_hunger_kin_break_multiplier": 1.75
   },
   "attack": {
     "base_success_chance": 0.38,

@@ -54,6 +54,15 @@ func get_visible_world_rect() -> Rect2:
 	return _get_camera_view_rect().intersection(world_bounds)
 
 
+func move_to_world_position(position: Vector2, clear_focus: bool = true) -> void:
+	if world_bounds.size.is_zero_approx():
+		return
+	if clear_focus:
+		_clear_focus_if_active()
+	global_position = position
+	_clamp_to_bounds()
+
+
 func _process(delta: float) -> void:
 	if not input_enabled or world_bounds.size.is_zero_approx():
 		return

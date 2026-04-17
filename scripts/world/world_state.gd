@@ -804,6 +804,16 @@ func _flush_spawns() -> void:
 		)
 		if child == null:
 			continue
+		if child.species_type == AgentBaseScript.SPECIES_PREDATOR:
+			for parent_key in ["parent_a_id", "parent_b_id"]:
+				var parent_id := int(request[parent_key])
+				var parent = get_agent(parent_id)
+				if parent == null or not parent.is_alive or parent.species_type != AgentBaseScript.SPECIES_PREDATOR:
+					continue
+				if child.has_method("add_kin_id"):
+					child.call("add_kin_id", parent_id)
+				if parent.has_method("add_kin_id"):
+					parent.call("add_kin_id", child.id)
 		emit_event("AgentReproduced", child, int(request["parent_a_id"]), {
 			"parent_a_id": int(request["parent_a_id"]),
 			"parent_b_id": int(request["parent_b_id"]),
