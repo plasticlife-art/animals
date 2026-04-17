@@ -45,8 +45,9 @@ func _draw() -> void:
 	for agent in world.get_living_agents():
 		if not visible_rect.has_point(agent.position):
 			continue
-		draw_circle(agent.position, 7.0 if agent.species_type == "herbivore" else 9.0, agent.debug_color)
-		draw_line(agent.position, agent.position + agent.direction * 14.0, agent.debug_color.lightened(0.25), 2.0)
+		var agent_color := _get_agent_draw_color(agent)
+		draw_circle(agent.position, 7.0 if agent.species_type == "herbivore" else 9.0, agent_color)
+		draw_line(agent.position, agent.position + agent.direction * 14.0, agent_color.lightened(0.25), 2.0)
 		if selected_id == agent.id:
 			draw_arc(agent.position, 14.0, 0.0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.0)
 		if bool(debug_flags.get("show_state_labels", false)) and font != null:
@@ -75,3 +76,17 @@ func _get_visible_world_rect(world_bounds: Rect2) -> Rect2:
 	var top_left: Vector2 = inverse_canvas * viewport_rect.position
 	var bottom_right: Vector2 = inverse_canvas * viewport_rect.end
 	return Rect2(top_left, bottom_right - top_left).intersection(world_bounds)
+
+
+func _get_agent_draw_color(agent) -> Color:
+	var base_color: Color = agent.debug_color
+	if not bool(debug_flags.get("show_lod_overlay", false)):
+		return base_color
+
+	var lod_color := Color(0.74, 0.93, 0.78)
+	match int(agent.lod_tier):
+		1:
+			lod_color = Color(0.98, 0.8, 0.28)
+		2:
+			lod_color = Color(0.95, 0.45, 0.45)
+	return base_color.lerp(lod_color, 0.68)

@@ -31,6 +31,7 @@ var debug_color: Color = Color.WHITE
 var remembered_water_position = null
 var remembered_water_radius: float = 0.0
 var remembered_water_time_seconds: float = -1.0
+var lod_tier: int = 0
 
 var movement: Dictionary = {}
 var perception: Dictionary = {}
@@ -70,11 +71,19 @@ func configure(
 	target_agent_id = -1
 	target_position = null
 	clear_water_memory()
+	lod_tier = 0
 	debug_color = Color(0.9, 0.9, 0.9)
 
 
 func tick(_world, _delta: float) -> void:
 	pass
+
+
+func tick_maintenance(world, delta: float) -> void:
+	update_needs(delta)
+	if apply_survival_checks(world, delta):
+		return
+	advance_inertia(world, delta)
 
 
 func set_state(new_state: String, current_tick: int) -> void:
@@ -136,6 +145,13 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
 	if desired_speed > 0.0 and velocity.length() > desired_speed:
 		velocity = velocity.normalized() * desired_speed
+	position = world.clamp_position(position + velocity * delta)
+	if velocity.length_squared() > 0.001:
+		direction = velocity.normalized()
+
+
+func advance_inertia(world, delta: float) -> void:
+	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
 	position = world.clamp_position(position + velocity * delta)
 	if velocity.length_squared() > 0.001:
 		direction = velocity.normalized()

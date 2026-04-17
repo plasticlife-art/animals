@@ -11,6 +11,8 @@ const WorldStateScript = preload("res://scripts/world/world_state.gd")
 const StatsSystemScript = preload("res://scripts/stats/stats_system.gd")
 const TelemetryLoggerScript = preload("res://scripts/stats/telemetry_logger.gd")
 
+const MAX_SIMULATION_STEPS_PER_FRAME := 4
+
 var config_bundle: Dictionary = {}
 var event_bus
 var world_state: WorldState
@@ -28,6 +30,9 @@ var seed: int = 0
 var selected_agent_id: int = -1
 var debug_flags: Dictionary = {}
 var _single_step_requested: bool = false
+var lod_enabled: bool = false
+var lod_settings: Dictionary = {}
+var lod_focus_rect: Rect2 = Rect2()
 
 
 func _ready() -> void:
@@ -60,6 +65,10 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 
 	var debug_config: Dictionary = config_bundle.get("debug", {})
 	debug_flags = debug_config.get("overlays", {}).duplicate(true)
+	lod_settings = _build_lod_settings(debug_config)
+	lod_enabled = false
+	lod_focus_rect = Rect2()
+	debug_flags["show_lod_overlay"] = bool(debug_flags.get("show_lod_overlay", lod_settings.get("show_lod_overlay", false)))
 	var speeds: Array = debug_config.get("speed_steps", [1.0])
 	if speeds.is_empty():
 		speeds = [1.0]
@@ -78,9 +87,15 @@ func _process(delta: float) -> void:
 		return
 
 	accumulator += delta * speed_multiplier
-	while accumulator >= tick_duration:
+	var max_accumulator := tick_duration * float(MAX_SIMULATION_STEPS_PER_FRAME)
+	if accumulator > max_accumulator:
+		accumulator = max_accumulator
+
+	var steps_this_frame := 0
+	while accumulator >= tick_duration and steps_this_frame < MAX_SIMULATION_STEPS_PER_FRAME:
 		accumulator -= tick_duration
 		step_once()
+		steps_this_frame += 1
 		if _single_step_requested:
 			_single_step_requested = false
 			paused = true
@@ -91,7 +106,7 @@ func step_once() -> void:
 	if world_state == null:
 		return
 	var started_at_usec := Time.get_ticks_usec()
-	world_state.step(tick_duration, current_tick, simulation_time)
+	world_state.step(tick_duration, current_tick, simulation_time, _build_lod_context())
 	stats_system.record_step_duration(float(Time.get_ticks_usec() - started_at_usec) / 1000.0)
 	current_tick += 1
 	simulation_time += tick_duration
@@ -123,6 +138,20 @@ func set_debug_flag(flag_name: String, enabled: bool) -> void:
 	debug_flags[flag_name] = enabled
 
 
+func set_lod_enabled(value: bool) -> void:
+	if lod_enabled == value:
+		return
+	lod_enabled = value
+	_refresh_lod_assignments()
+
+
+func set_lod_focus_rect(rect: Rect2) -> void:
+	if lod_focus_rect == rect:
+		return
+	lod_focus_rect = rect
+	_refresh_lod_assignments()
+
+
 func select_agent_at_position(position: Vector2, radius: float) -> void:
 	if world_state == null:
 		return
@@ -138,6 +167,7 @@ func select_agent_at_position(position: Vector2, radius: float) -> void:
 				nearest = candidate
 				nearest_distance_sq = distance_sq
 		selected_agent_id = nearest.id
+	_refresh_lod_assignments()
 	selection_changed.emit(selected_agent_id)
 
 
@@ -173,3 +203,34 @@ func run_headless(total_ticks: int, export_on_finish: bool = true) -> Dictionary
 		"snapshot": stats_system.get_snapshot(),
 		"exports": export_paths,
 	}
+
+
+func _build_lod_settings(debug_config: Dictionary) -> Dictionary:
+	var lod_config: Dictionary = debug_config.get("lod", {})
+	var near_margin := maxf(0.0, float(lod_config.get("near_margin", 192.0)))
+	return {
+		"enabled": bool(lod_config.get("enabled", false)),
+		"near_margin": near_margin,
+		"mid_margin": maxf(near_margin, float(lod_config.get("mid_margin", 768.0))),
+		"mid_update_interval_ticks": maxi(1, int(lod_config.get("mid_update_interval_ticks", 2))),
+		"far_update_interval_ticks": maxi(1, int(lod_config.get("far_update_interval_ticks", 5))),
+		"show_lod_overlay": bool(lod_config.get("show_lod_overlay", false)),
+	}
+
+
+func _build_lod_context() -> Dictionary:
+	return {
+		"enabled": lod_enabled and not lod_focus_rect.size.is_zero_approx(),
+		"focus_rect": lod_focus_rect,
+		"selected_agent_id": selected_agent_id,
+		"near_margin": float(lod_settings.get("near_margin", 192.0)),
+		"mid_margin": float(lod_settings.get("mid_margin", 768.0)),
+		"mid_update_interval_ticks": int(lod_settings.get("mid_update_interval_ticks", 2)),
+		"far_update_interval_ticks": int(lod_settings.get("far_update_interval_ticks", 5)),
+	}
+
+
+func _refresh_lod_assignments() -> void:
+	if world_state == null:
+		return
+	world_state.refresh_lod_assignments(_build_lod_context())

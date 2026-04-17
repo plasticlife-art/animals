@@ -39,9 +39,15 @@ func _ready() -> void:
 	debug_panel.speed_selected.connect(simulation_manager.set_speed_multiplier)
 	debug_panel.export_requested.connect(_on_export_requested)
 	debug_panel.overlay_flag_changed.connect(_on_overlay_flag_changed)
+	debug_panel.lod_enabled_toggled.connect(_on_lod_enabled_toggled)
 	resume_button.pressed.connect(resume_game)
 	restart_button.pressed.connect(restart_game)
 	exit_button.pressed.connect(_exit_game)
+	_sync_lod_focus_rect()
+
+
+func _process(_delta: float) -> void:
+	_sync_lod_focus_rect()
 
 
 func _on_pause_toggled(is_paused: bool) -> void:
@@ -58,6 +64,12 @@ func _on_overlay_flag_changed(flag_name: String, enabled: bool) -> void:
 	simulation_manager.set_debug_flag(flag_name, enabled)
 	world_view.set_debug_flag(flag_name, enabled)
 	overlay_renderer.set_debug_flag(flag_name, enabled)
+
+
+func _on_lod_enabled_toggled(enabled: bool) -> void:
+	simulation_manager.set_lod_enabled(enabled)
+	debug_panel.set_lod_enabled_state(enabled)
+	world_view.queue_redraw()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -118,6 +130,7 @@ func restart_game() -> void:
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
+	_sync_lod_focus_rect()
 	_set_pause_menu_visible(false)
 
 
@@ -129,16 +142,31 @@ func set_hud_visible(value: bool) -> void:
 
 func _apply_debug_configuration() -> void:
 	var debug_config: Dictionary = simulation_manager.config_bundle.get("debug", {})
-	debug_panel.apply_debug_settings(debug_config, simulation_manager.debug_flags)
+	var lod_config: Dictionary = debug_config.get("lod", {})
+	var lod_enabled := bool(lod_config.get("enabled", false))
+	simulation_manager.set_lod_enabled(lod_enabled)
+	debug_panel.apply_debug_settings(debug_config, simulation_manager.debug_flags, lod_enabled)
 	for flag_name in simulation_manager.debug_flags.keys():
 		var enabled := bool(simulation_manager.debug_flags[flag_name])
 		world_view.set_debug_flag(flag_name, enabled)
 		overlay_renderer.set_debug_flag(flag_name, enabled)
+	_sync_lod_focus_rect()
 
 
 func _set_pause_menu_visible(value: bool) -> void:
 	pause_blur.visible = value
 	pause_menu.visible = value
+
+
+func _sync_lod_focus_rect() -> void:
+	if simulation_manager == null or world_camera == null:
+		return
+	var focus_rect: Rect2 = world_camera.get_visible_world_rect()
+	if simulation_manager.lod_focus_rect == focus_rect:
+		return
+	simulation_manager.set_lod_focus_rect(focus_rect)
+	if bool(simulation_manager.debug_flags.get("show_lod_overlay", false)):
+		world_view.queue_redraw()
 
 
 func _exit_game() -> void:

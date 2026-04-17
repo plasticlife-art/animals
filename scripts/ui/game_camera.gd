@@ -39,6 +39,13 @@ func reset_to_world(bounds: Rect2) -> void:
 	_clamp_to_bounds()
 
 
+func get_visible_world_rect() -> Rect2:
+	if world_bounds.size.is_zero_approx():
+		return Rect2()
+	var visible_size := get_viewport_rect().size * zoom
+	return Rect2(global_position - visible_size * 0.5, visible_size).intersection(world_bounds)
+
+
 func _process(delta: float) -> void:
 	if not input_enabled or world_bounds.size.is_zero_approx():
 		return

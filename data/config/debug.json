@@ -6,6 +6,14 @@
   "ui_refresh_interval_ticks": 5,
   "event_log_visible_limit": 12,
   "export_directory": "user://exports",
+  "lod": {
+    "enabled": true,
+    "near_margin": 192.0,
+    "mid_margin": 768.0,
+    "mid_update_interval_ticks": 2,
+    "far_update_interval_ticks": 5,
+    "show_lod_overlay": false
+  },
   "overlays": {
     "show_state_labels": false,
     "show_target_lines": false,
@@ -14,6 +22,7 @@
     "show_chase_lines": false,
     "show_grass_density": false,
     "show_population_density": false,
-    "show_water_overlay": true
+    "show_water_overlay": true,
+    "show_lod_overlay": false
   }
 }

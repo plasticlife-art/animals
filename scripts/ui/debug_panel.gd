@@ -6,11 +6,13 @@ signal single_step_requested
 signal speed_selected(multiplier: float)
 signal export_requested
 signal overlay_flag_changed(flag_name: String, enabled: bool)
+signal lod_enabled_toggled(enabled: bool)
 
 @onready var pause_button: Button = %PauseButton
 @onready var step_button: Button = %StepButton
 @onready var speed_option: OptionButton = %SpeedOption
 @onready var export_button: Button = %ExportButton
+@onready var lod_enabled_check: CheckBox = %LodEnabledCheck
 @onready var summary_label: RichTextLabel = %SummaryLabel
 @onready var inspector_text: RichTextLabel = %InspectorText
 @onready var event_log_text: RichTextLabel = %EventLogText
@@ -29,6 +31,7 @@ func _ready() -> void:
 	step_button.pressed.connect(_on_step_button_pressed)
 	export_button.pressed.connect(_on_export_button_pressed)
 	speed_option.item_selected.connect(_on_speed_selected)
+	lod_enabled_check.toggled.connect(_on_lod_enabled_check_toggled)
 
 	overlay_checkboxes = {
 		"show_state_labels": %StateLabelsCheck,
@@ -39,6 +42,7 @@ func _ready() -> void:
 		"show_grass_density": %GrassDensityCheck,
 		"show_population_density": %PopulationDensityCheck,
 		"show_water_overlay": %WaterOverlayCheck,
+		"show_lod_overlay": %LodOverlayCheck,
 	}
 	for flag_name in overlay_checkboxes.keys():
 		var checkbox: CheckBox = overlay_checkboxes[flag_name]
@@ -56,7 +60,7 @@ func bind_manager(manager: SimulationManager) -> void:
 	_refresh_event_log()
 
 
-func apply_debug_settings(debug_config: Dictionary, flags: Dictionary) -> void:
+func apply_debug_settings(debug_config: Dictionary, flags: Dictionary, is_lod_enabled: bool) -> void:
 	speed_steps = debug_config.get("speed_steps", [1.0])
 	ui_refresh_interval_ticks = max(1, int(debug_config.get("ui_refresh_interval_ticks", 5)))
 	event_log_visible_limit = max(1, int(debug_config.get("event_log_visible_limit", 12)))
@@ -67,6 +71,7 @@ func apply_debug_settings(debug_config: Dictionary, flags: Dictionary) -> void:
 		speed_option.add_item("x%s" % str(speed_steps[index]).trim_suffix(".0"), index)
 	var default_index := clampi(int(debug_config.get("default_speed_index", 0)), 0, max(0, speed_steps.size() - 1))
 	speed_option.select(default_index)
+	lod_enabled_check.set_pressed_no_signal(is_lod_enabled)
 
 	for flag_name in overlay_checkboxes.keys():
 		var checkbox: CheckBox = overlay_checkboxes[flag_name]
@@ -80,6 +85,10 @@ func set_status_text(text: String) -> void:
 func set_paused_state(value: bool) -> void:
 	is_paused = value
 	pause_button.text = "Resume" if is_paused else "Pause"
+
+
+func set_lod_enabled_state(value: bool) -> void:
+	lod_enabled_check.set_pressed_no_signal(value)
 
 
 func _on_pause_button_pressed() -> void:
@@ -99,6 +108,10 @@ func _on_speed_selected(index: int) -> void:
 	if index < 0 or index >= speed_steps.size():
 		return
 	speed_selected.emit(float(speed_steps[index]))
+
+
+func _on_lod_enabled_check_toggled(enabled: bool) -> void:
+	lod_enabled_toggled.emit(enabled)
 
 
 func _on_overlay_toggled(enabled: bool, flag_name: String) -> void:
@@ -155,6 +168,12 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 			float(snapshot.get("average_hunger", 0.0)),
 			float(snapshot.get("average_energy", 0.0)),
 			float(snapshot.get("hunt_success_rate", 0.0)),
+		],
+		"[b]LOD[/b] %s    [b]LOD0[/b] %d    [b]LOD1[/b] %d    [b]LOD2[/b] %d" % [
+			"On" if simulation_manager.lod_enabled else "Off",
+			int(snapshot.get("lod0_agents", 0)),
+			int(snapshot.get("lod1_agents", 0)),
+			int(snapshot.get("lod2_agents", 0)),
 		],
 		"[b]Step avg[/b] %.2f ms    [b]Step max[/b] %.2f ms" % [
 			float(snapshot.get("sim_step_ms_avg", 0.0)),

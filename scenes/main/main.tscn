@@ -87,11 +87,16 @@ text = "Export"
 
 [node name="SummaryLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1266242578]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 132)
+custom_minimum_size = Vector2(0, 156)
 layout_mode = 2
 bbcode_enabled = true
 fit_content = true
 scroll_active = false
+
+[node name="LodEnabledCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1800317812]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Enable LOD"
 
 [node name="OverlayLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=901544959]
 layout_mode = 2
@@ -140,6 +145,11 @@ text = "Population density"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Water overlay"
+
+[node name="LodOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=399522519]
+unique_name_in_owner = true
+layout_mode = 2
+text = "LOD tiers"
 
 [node name="InspectorLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=156126296]
 layout_mode = 2

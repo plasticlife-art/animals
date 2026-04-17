@@ -63,6 +63,7 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 			predator_count += 1
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
+	var lod_counts: Dictionary = world.get_lod_counts()
 	var snapshot := {
 		"tick": tick,
 		"time_seconds": time_seconds,
@@ -82,6 +83,9 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"grass_total_biomass": world.resource_system.get_total_biomass(),
 		"sim_step_ms_avg": 0.0 if _step_duration_samples == 0 else _step_duration_total_ms / _step_duration_samples,
 		"sim_step_ms_max": _step_duration_max_ms,
+		"lod0_agents": int(lod_counts.get("lod0_agents", living_count)),
+		"lod1_agents": int(lod_counts.get("lod1_agents", 0)),
+		"lod2_agents": int(lod_counts.get("lod2_agents", 0)),
 	}
 	latest_snapshot = snapshot
 	time_series.append(snapshot)

@@ -7,6 +7,19 @@ const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 
+const LOD_TIER_0 := 0
+const LOD_TIER_1 := 1
+const LOD_TIER_2 := 2
+const LOD_PRIORITY_STATES := {
+	"flee": true,
+	"seek_prey": true,
+	"chase": true,
+	"attack": true,
+	"reproduce": true,
+	"eat": true,
+	"drink": true,
+}
+
 var bounds: Rect2 = Rect2(0.0, 0.0, 1600.0, 900.0)
 var agents: Dictionary = {}
 var pending_spawns: Array = []
@@ -21,6 +34,11 @@ var spatial_grid: SpatialGrid
 var current_tick: int = 0
 var current_time: float = 0.0
 var living_agents: Array = []
+var lod_counts := {
+	"lod0_agents": 0,
+	"lod1_agents": 0,
+	"lod2_agents": 0,
+}
 
 
 func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNumberGenerator) -> void:
@@ -58,22 +76,30 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_spawn_initial_agents()
 	_rebuild_living_agents_cache()
 	spatial_grid.rebuild(living_agents)
+	_update_lod_assignments({"enabled": false})
 
 
-func step(delta: float, tick: int, time_seconds: float) -> void:
+func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary = {}) -> void:
 	current_tick = tick
 	current_time = time_seconds
 	resource_system.step(delta)
+	var active_lod_context := _normalize_lod_context(lod_context)
 
 	for agent in living_agents:
 		if agent == null or not agent.is_alive:
 			continue
-		agent.tick(self, delta)
+		var lod_tier := _resolve_lod_tier(agent, active_lod_context)
+		agent.lod_tier = lod_tier
+		if _should_run_full_tick(agent, lod_tier, active_lod_context):
+			agent.tick(self, delta)
+		else:
+			agent.tick_maintenance(self, delta)
 
 	_flush_removals()
 	_flush_spawns()
 	_rebuild_living_agents_cache()
 	spatial_grid.rebuild(living_agents)
+	_update_lod_assignments(active_lod_context)
 
 
 func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, sex_override: String = "", metadata: Dictionary = {}) -> AgentBase:
@@ -93,6 +119,7 @@ func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, se
 		rng,
 		group_id
 	)
+	agent.lod_tier = LOD_TIER_0
 	agents[next_agent_id] = agent
 	living_agents.append(agent)
 	next_agent_id += 1
@@ -135,6 +162,14 @@ func get_agent(agent_id: int):
 
 func get_living_agents() -> Array:
 	return living_agents
+
+
+func get_lod_counts() -> Dictionary:
+	return lod_counts.duplicate(true)
+
+
+func refresh_lod_assignments(lod_context: Dictionary = {}) -> void:
+	_update_lod_assignments(_normalize_lod_context(lod_context))
 
 
 func query_agents(position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1) -> Array:
@@ -257,6 +292,74 @@ func _spawn_initial_agents() -> void:
 				male_predator.call("set_preferred_mate_id", female_predator.id)
 			if female_predator.has_method("set_preferred_mate_id"):
 				female_predator.call("set_preferred_mate_id", male_predator.id)
+
+
+func _normalize_lod_context(lod_context: Dictionary) -> Dictionary:
+	var context := lod_context.duplicate(true)
+	context["enabled"] = bool(context.get("enabled", false))
+	context["selected_agent_id"] = int(context.get("selected_agent_id", -1))
+	context["near_margin"] = maxf(0.0, float(context.get("near_margin", 0.0)))
+	context["mid_margin"] = maxf(float(context.get("near_margin", 0.0)), float(context.get("mid_margin", 0.0)))
+	context["mid_update_interval_ticks"] = maxi(1, int(context.get("mid_update_interval_ticks", 2)))
+	context["far_update_interval_ticks"] = maxi(1, int(context.get("far_update_interval_ticks", 5)))
+	return context
+
+
+func _resolve_lod_tier(agent: AgentBase, lod_context: Dictionary) -> int:
+	if not bool(lod_context.get("enabled", false)):
+		return LOD_TIER_0
+	if agent.id == int(lod_context.get("selected_agent_id", -1)):
+		return LOD_TIER_0
+	if _is_priority_lod_agent(agent):
+		return LOD_TIER_0
+
+	var focus_rect: Rect2 = lod_context.get("focus_rect", Rect2())
+	if focus_rect.size.is_zero_approx():
+		return LOD_TIER_0
+
+	if focus_rect.grow(float(lod_context.get("near_margin", 0.0))).has_point(agent.position):
+		return LOD_TIER_0
+	if focus_rect.grow(float(lod_context.get("mid_margin", 0.0))).has_point(agent.position):
+		return LOD_TIER_1
+	return LOD_TIER_2
+
+
+func _is_priority_lod_agent(agent: AgentBase) -> bool:
+	return agent.target_agent_id != -1 \
+		or agent.interaction_timer > 0.0 \
+		or LOD_PRIORITY_STATES.has(agent.state)
+
+
+func _should_run_full_tick(agent: AgentBase, lod_tier: int, lod_context: Dictionary) -> bool:
+	if lod_tier == LOD_TIER_0:
+		return true
+
+	var interval_key := "mid_update_interval_ticks" if lod_tier == LOD_TIER_1 else "far_update_interval_ticks"
+	var default_interval := 2 if lod_tier == LOD_TIER_1 else 5
+	var interval := int(lod_context.get(interval_key, default_interval))
+	if interval <= 1:
+		return true
+	return current_tick % interval == agent.id % interval
+
+
+func _update_lod_assignments(lod_context: Dictionary) -> void:
+	lod_counts = {
+		"lod0_agents": 0,
+		"lod1_agents": 0,
+		"lod2_agents": 0,
+	}
+	for agent in living_agents:
+		if agent == null or not agent.is_alive:
+			continue
+		var lod_tier := _resolve_lod_tier(agent, lod_context)
+		agent.lod_tier = lod_tier
+		match lod_tier:
+			LOD_TIER_1:
+				lod_counts["lod1_agents"] += 1
+			LOD_TIER_2:
+				lod_counts["lod2_agents"] += 1
+			_:
+				lod_counts["lod0_agents"] += 1
 
 
 func _create_agent(species_type: String):
