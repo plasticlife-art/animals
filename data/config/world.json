@@ -1,0 +1,29 @@
+{
+  "seed": 1337,
+  "tick_rate": 20.0,
+  "world_size": {
+    "x": 3200.0,
+    "y": 1800.0
+  },
+  "spatial_cell_size": 96.0,
+  "grass": {
+    "cell_size": 32.0,
+    "max_biomass": 100.0,
+    "regrowth_rate": 5.5,
+    "initial_density_min": 0.45,
+    "initial_density_max": 0.95
+  },
+  "water_sources": [
+    { "x": 420.0, "y": 320.0, "radius": 52.0 },
+    { "x": 980.0, "y": 980.0, "radius": 56.0 },
+    { "x": 1260.0, "y": 1520.0, "radius": 58.0 },
+    { "x": 1820.0, "y": 360.0, "radius": 50.0 },
+    { "x": 2280.0, "y": 1080.0, "radius": 54.0 },
+    { "x": 2860.0, "y": 1460.0, "radius": 54.0 }
+  ],
+  "spawns": {
+    "herbivore_count": 240,
+    "predator_count": 24,
+    "herbivore_group_count": 12
+  }
+}

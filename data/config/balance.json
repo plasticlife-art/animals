@@ -1,0 +1,42 @@
+{
+  "need_max": 100.0,
+  "state_thresholds": {
+    "critical_hunger": 66.0,
+    "critical_thirst": 62.0,
+    "rest_energy": 26.0,
+    "rest_energy_resume": 34.0,
+    "rejoin_distance": 135.0,
+    "graze_hunger_floor": 20.0
+  },
+  "herd_weights": {
+    "cohesion": 0.75,
+    "alignment": 0.55,
+    "separation": 1.2,
+    "wander": 0.45,
+    "regroup": 1.1,
+    "flee": 2.4
+  },
+  "hunt_weights": {
+    "distance": 2.4,
+    "isolation": 0.75,
+    "energy": 0.35,
+    "age_stage": 0.35
+  },
+  "hunt_rules": {
+    "max_chase_duration": 14.0
+  },
+  "attack": {
+    "base_success_chance": 0.38,
+    "predator_energy_bonus": 0.18,
+    "prey_isolation_bonus": 0.2,
+    "prey_escape_penalty": 0.16
+  },
+  "lifecycle": {
+    "starvation_death_threshold": 100.0,
+    "thirst_death_threshold": 100.0
+  },
+  "stats": {
+    "sample_interval_ticks": 5,
+    "history_limit": 720
+  }
+}

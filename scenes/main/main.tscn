@@ -1,0 +1,241 @@
+[gd_scene format=3 uid="uid://digui538kihh"]
+
+[ext_resource type="Script" uid="uid://c1jx310gtfnrk" path="res://scripts/ui/main_controller.gd" id="1"]
+[ext_resource type="Script" uid="uid://cr56vp4e6acqj" path="res://scripts/core/simulation_manager.gd" id="2"]
+[ext_resource type="Script" uid="uid://do61u0ke03hyt" path="res://scripts/ui/world_view.gd" id="3"]
+[ext_resource type="Script" uid="uid://bkoqxw1rodrk6" path="res://scripts/ui/overlay_renderer.gd" id="4"]
+[ext_resource type="Script" uid="uid://bqa2deacq4bsa" path="res://scripts/ui/debug_panel.gd" id="5"]
+[ext_resource type="Script" uid="uid://co4hbwlitgbki" path="res://scripts/ui/charts_panel.gd" id="6"]
+[ext_resource type="Script" uid="uid://y0br3yquilra" path="res://scripts/ui/game_camera.gd" id="7"]
+[ext_resource type="Shader" uid="uid://cnyx3tmvqw4h" path="res://shaders/pause_blur.gdshader" id="8"]
+
+[sub_resource type="ShaderMaterial" id="1"]
+shader = ExtResource("8")
+shader_parameter/blur_radius = 1.6
+shader_parameter/overlay_color = Color(0.08, 0.09, 0.1, 0.34)
+
+[node name="Main" type="Node2D" unique_id=2066527732]
+script = ExtResource("1")
+
+[node name="SimulationManager" type="Node" parent="." unique_id=813251]
+script = ExtResource("2")
+
+[node name="WorldView" type="Node2D" parent="." unique_id=77276432]
+script = ExtResource("3")
+
+[node name="OverlayRenderer" type="Node2D" parent="." unique_id=479781249]
+z_index = 2
+script = ExtResource("4")
+
+[node name="GameCamera" type="Camera2D" parent="." unique_id=1704104411]
+script = ExtResource("7")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=401245854]
+
+[node name="HUD" type="Control" parent="CanvasLayer" unique_id=588591017]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="DebugPanel" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=1059450527]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 392.0
+offset_bottom = 888.0
+script = ExtResource("5")
+
+[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/HUD/DebugPanel" unique_id=239327197]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer" unique_id=166485953]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ControlsRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=742677137]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PauseButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=420614205]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Pause"
+
+[node name="StepButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=1106000441]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Step"
+
+[node name="SpeedOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=2143489183]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ExportButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=1239879424]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Export"
+
+[node name="SummaryLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1266242578]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 132)
+layout_mode = 2
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+
+[node name="OverlayLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=901544959]
+layout_mode = 2
+text = "Overlays"
+
+[node name="OverlayGrid" type="GridContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=106828282]
+layout_mode = 2
+columns = 2
+
+[node name="StateLabelsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=441133833]
+unique_name_in_owner = true
+layout_mode = 2
+text = "State labels"
+
+[node name="TargetLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=894795768]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Target lines"
+
+[node name="VisionRadiusCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1679789139]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Vision radius"
+
+[node name="HerdRelationsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=432432603]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Herd relation"
+
+[node name="ChaseLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=859592048]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Chase lines"
+
+[node name="GrassDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=2030533667]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Grass density"
+
+[node name="PopulationDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=579245789]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Population density"
+
+[node name="WaterOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1487088393]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Water overlay"
+
+[node name="InspectorLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=156126296]
+layout_mode = 2
+text = "Selected Agent"
+
+[node name="InspectorText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1410902342]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 150)
+layout_mode = 2
+bbcode_enabled = true
+fit_content = true
+
+[node name="EventLogLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=923282622]
+layout_mode = 2
+text = "Event Log"
+
+[node name="EventLogText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1067215429]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 240)
+layout_mode = 2
+
+[node name="StatusLabelTitle" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1614298046]
+layout_mode = 2
+text = "Status"
+
+[node name="StatusLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1419031012]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 90)
+layout_mode = 2
+fit_content = true
+
+[node name="ChartsPanel" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=1094959041]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -520.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 290.0
+grow_horizontal = 0
+script = ExtResource("6")
+
+[node name="PauseBlur" type="ColorRect" parent="CanvasLayer" unique_id=204192314]
+visible = false
+material = SubResource("1")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PauseMenu" type="CenterContainer" parent="CanvasLayer" unique_id=107021192]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PausePanel" type="PanelContainer" parent="CanvasLayer/PauseMenu" unique_id=175524443]
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/PauseMenu/PausePanel" unique_id=193102477]
+layout_mode = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 20
+
+[node name="PauseVBox" type="VBoxContainer" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer" unique_id=120408282]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="PauseTitle" type="Label" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=187343211]
+layout_mode = 2
+text = "Paused"
+horizontal_alignment = 1
+
+[node name="PauseHint" type="Label" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=803512267]
+layout_mode = 2
+text = "Esc or Resume to continue"
+horizontal_alignment = 1
+
+[node name="ResumeButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=146870122]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Resume"
+
+[node name="RestartButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=640338193]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Restart"
+
+[node name="ExitButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=147199452]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Exit"

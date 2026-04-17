@@ -1,0 +1,105 @@
+{
+  "herbivore": {
+    "movement": {
+      "max_speed": 70.0,
+      "sprint_speed": 115.0,
+      "acceleration": 180.0,
+      "drag": 3.5,
+      "wander_jitter": 0.85
+    },
+    "perception": {
+      "vision_radius": 180.0,
+      "danger_radius": 120.0,
+      "water_search_radius": 520.0,
+      "water_memory_duration_seconds": 10.0,
+      "grass_search_radius": 180.0,
+      "neighbor_radius": 95.0,
+      "separation_radius": 28.0,
+      "mate_search_radius": 70.0
+    },
+    "metabolism": {
+      "max_energy": 100.0,
+      "energy_decay": 2.4,
+      "rest_recovery": 9.0,
+      "hunger_rate": 3.3,
+      "thirst_rate": 2.8,
+      "dehydration_energy_penalty": 4.8
+    },
+    "feeding": {
+      "eat_distance": 18.0,
+      "bite_amount": 18.0,
+      "nutrition_gain": 0.8,
+      "drink_distance": 28.0,
+      "drink_restore": 52.0,
+      "eat_duration": 0.55,
+      "drink_duration": 0.6
+    },
+    "reproduction": {
+      "maturity_age": 24.0,
+      "energy_threshold": 62.0,
+      "cooldown": 35.0,
+      "birth_energy_cost": 18.0,
+      "safe_radius": 120.0,
+      "offspring_spawn_radius": 18.0
+    },
+    "aging": {
+      "max_age": 220.0,
+      "old_age_start": 180.0,
+      "old_age_death_chance_per_second": 0.02
+    }
+  },
+  "predator": {
+    "movement": {
+      "max_speed": 84.0,
+      "sprint_speed": 128.0,
+      "acceleration": 210.0,
+      "drag": 3.1,
+      "wander_jitter": 0.75
+    },
+    "perception": {
+      "vision_radius": 320.0,
+      "water_search_radius": 420.0,
+      "water_memory_duration_seconds": 12.0,
+      "attack_radius": 24.0,
+      "chase_break_radius": 360.0,
+      "mate_search_radius": 320.0
+    },
+    "metabolism": {
+      "max_energy": 110.0,
+      "energy_decay": 2.2,
+      "rest_recovery": 8.5,
+      "hunger_rate": 1.6,
+      "thirst_rate": 1.2,
+      "dehydration_energy_penalty": 3.5,
+      "chase_energy_cost": 2.8
+    },
+    "feeding": {
+      "food_restore": 72.0,
+      "energy_restore": 32.0,
+      "eat_duration": 1.1,
+      "attack_cooldown": 1.0,
+      "drink_distance": 28.0,
+      "drink_restore": 28.0
+    },
+    "hunt": {
+      "engage_hunger": 42.0,
+      "min_chase_energy": 4.0
+    },
+    "reproduction": {
+      "maturity_age": 20.0,
+      "energy_threshold": 64.0,
+      "cooldown": 40.0,
+      "birth_energy_cost": 16.0,
+      "preferred_mate_follow_radius": 180.0,
+      "preferred_mate_break_radius": 640.0,
+      "preferred_mate_seek_weight": 0.75,
+      "safe_radius": 80.0,
+      "offspring_spawn_radius": 20.0
+    },
+    "aging": {
+      "max_age": 260.0,
+      "old_age_start": 215.0,
+      "old_age_death_chance_per_second": 0.018
+    }
+  }
+}

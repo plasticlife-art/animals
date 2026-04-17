@@ -1,0 +1,19 @@
+{
+  "default_speed_index": 0,
+  "speed_steps": [1.0, 2.0, 4.0, 10.0],
+  "selection_radius": 18.0,
+  "chart_history_limit": 720,
+  "ui_refresh_interval_ticks": 5,
+  "event_log_visible_limit": 12,
+  "export_directory": "user://exports",
+  "overlays": {
+    "show_state_labels": false,
+    "show_target_lines": false,
+    "show_vision_radius": false,
+    "show_herd_relations": false,
+    "show_chase_lines": false,
+    "show_grass_density": false,
+    "show_population_density": false,
+    "show_water_overlay": true
+  }
+}
