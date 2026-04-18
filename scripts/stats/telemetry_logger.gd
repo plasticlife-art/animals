@@ -87,3 +87,7 @@ func _write_events_csv(path: String, rows: Array) -> void:
 
 func _escape_csv(value: String) -> String:
 	return "\"%s\"" % value.replace("\"", "\"\"")
+
+
+func shutdown() -> void:
+	export_directory = "user://exports"

@@ -70,6 +70,19 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 		{"x": 192.0, "y": 192.0, "radius": 18.0},
 	]
 	bundle["world"]["navigation"]["grass_candidate_limit"] = 8
+	bundle["world"]["navigation"]["path_budget_per_tick"] = 32
+	bundle["world"]["navigation"]["max_new_paths_per_tick"] = 16
+	bundle["world"]["navigation"]["goal_bucket_size"] = 2
+	bundle["world"]["navigation"]["sector_grass_refresh_ticks"] = 1
+	bundle["world"]["simulation_lod"] = {
+		"sector_size": 64.0,
+		"near_sector_margin": 0.0,
+		"mid_sector_margin": 64.0,
+		"mid_decision_interval": 2,
+		"far_decision_interval": 4,
+		"very_far_sector_step_seconds": 0.5,
+		"headless_active_radius": 96.0,
+	}
 	bundle["world"]["spawns"] = {
 		"herbivore_count": 0,
 		"predator_count": 0,
@@ -84,9 +97,29 @@ static func create_manager(seed: int = 17):
 	return manager
 
 
+static func create_benchmark_manager(seed: int = 17, herbivore_count: int = 220, predator_count: int = 18, herbivore_group_count: int = 12):
+	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle().duplicate(true)
+	bundle["world"]["seed"] = seed
+	bundle["world"]["spawns"] = {
+		"herbivore_count": herbivore_count,
+		"predator_count": predator_count,
+		"herbivore_group_count": herbivore_group_count,
+	}
+	var manager = SimulationManagerScript.new()
+	manager.initialize(bundle, seed)
+	return manager
+
+
 static func run_ticks(manager, ticks: int) -> void:
 	for _index in range(ticks):
 		manager.step_once()
+
+
+static func destroy_manager(manager) -> void:
+	if manager == null:
+		return
+	manager.shutdown()
+	manager.free()
 
 
 static func spawn_herbivore(world, position: Vector2, group_id: int = 0):

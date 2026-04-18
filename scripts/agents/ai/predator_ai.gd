@@ -62,13 +62,15 @@ func _init(balance_config: Dictionary = {}) -> void:
 	}
 
 
-func build_context(agent, world):
+func build_context(agent, world, snapshot = null):
+	if snapshot == null:
+		snapshot = world.build_predator_snapshot(agent)
 	var thresholds: Dictionary = agent.balance.get("state_thresholds", {})
-	var water_target: Dictionary = agent._resolve_water_target(world, thresholds)
-	var prey = agent._choose_prey(world)
-	var carcass: Dictionary = agent._choose_carcass(world)
-	var investigation_source: Dictionary = agent._get_recent_investigation_water_source(world)
-	var mate = agent._find_viable_mate(world, false)
+	var water_target: Dictionary = snapshot.water_target
+	var prey = snapshot.prey_target
+	var carcass: Dictionary = snapshot.carcass_target
+	var investigation_source: Dictionary = snapshot.investigation_source
+	var mate = snapshot.mate_target
 	var max_energy := float(agent.metabolism.get("max_energy", 100.0))
 	var hunger := UtilityContextFactory.need_ratio(agent.hunger, agent.need_max)
 	var thirst := UtilityContextFactory.need_ratio(agent.thirst, agent.need_max)
@@ -101,9 +103,9 @@ func build_context(agent, world):
 		)
 
 	var kin_separation := 0.0
-	if agent.last_known_kin_center != null:
+	if snapshot.kin_center != null:
 		kin_separation = clampf(
-			agent.position.distance_to(agent.last_known_kin_center) / maxf(1.0, float(agent.reproduction.get("preferred_mate_follow_radius", 180.0)) * 1.4),
+			agent.position.distance_to(snapshot.kin_center) / maxf(1.0, float(agent.reproduction.get("preferred_mate_follow_radius", 180.0)) * 1.4),
 			0.0,
 			1.0
 		)
@@ -146,7 +148,7 @@ func build_context(agent, world):
 		AgentAction.SCAVENGE_CARCASS: carcass,
 		AgentAction.DRINK: water_target,
 		AgentAction.INVESTIGATE_WATER: investigation_source,
-		AgentAction.PAIR_COHESION: {} if agent.last_known_kin_center == null else {"position": agent.last_known_kin_center},
+		AgentAction.PAIR_COHESION: {} if snapshot.kin_center == null else {"position": snapshot.kin_center},
 	}
 	return context
 

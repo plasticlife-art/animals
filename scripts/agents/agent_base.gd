@@ -45,6 +45,9 @@ var path_index: int = 0
 var path_goal_cell: int = -1
 var last_repath_tick: int = -9999
 var stuck_timer: float = 0.0
+var last_decision_tick: int = -9999
+var cached_snapshot = null
+var cached_context = null
 
 var movement: Dictionary = {}
 var perception: Dictionary = {}
@@ -96,6 +99,9 @@ func configure(
 	action_target_failure_ticks = 0
 	clear_navigation()
 	lod_tier = 0
+	last_decision_tick = -9999
+	cached_snapshot = null
+	cached_context = null
 	debug_color = Color(0.9, 0.9, 0.9)
 
 
@@ -108,6 +114,18 @@ func tick_maintenance(world, delta: float) -> void:
 	if apply_survival_checks(world, delta):
 		return
 	advance_inertia(world, delta)
+
+
+func cache_decision_state(snapshot, context, current_tick: int) -> void:
+	cached_snapshot = snapshot
+	cached_context = context
+	last_decision_tick = current_tick
+
+
+func clear_decision_cache() -> void:
+	cached_snapshot = null
+	cached_context = null
+	last_decision_tick = -9999
 
 
 func set_state(new_state: String, current_tick: int) -> void:
@@ -417,6 +435,81 @@ func get_debug_summary(current_tick: int = 0) -> Dictionary:
 		"alive": is_alive,
 		"sex": sex,
 	}
+
+
+func export_runtime_state() -> Dictionary:
+	return {
+		"id": id,
+		"species_type": species_type,
+		"position": position,
+		"velocity": velocity,
+		"direction": direction,
+		"energy": energy,
+		"hunger": hunger,
+		"thirst": thirst,
+		"age": age,
+		"state": state,
+		"ai_state": String(ai_state),
+		"current_action": String(current_action),
+		"is_alive": is_alive,
+		"sex": sex,
+		"reproduction_cooldown": reproduction_cooldown,
+		"target_agent_id": target_agent_id,
+		"target_position": target_position,
+		"group_id": group_id,
+		"last_state_change_tick": last_state_change_tick,
+		"last_action_change_tick": last_action_change_tick,
+		"interaction_timer": interaction_timer,
+		"attack_cooldown": attack_cooldown,
+		"chase_timer": chase_timer,
+		"wander_angle": wander_angle,
+		"recent_water_sources": recent_water_sources.duplicate(true),
+		"kin_ids": kin_ids.duplicate(),
+		"last_known_kin_center": last_known_kin_center,
+		"action_target_failure_ticks": action_target_failure_ticks,
+		"lod_tier": lod_tier,
+		"path_cells": path_cells.duplicate(),
+		"path_index": path_index,
+		"path_goal_cell": path_goal_cell,
+		"last_repath_tick": last_repath_tick,
+		"stuck_timer": stuck_timer,
+	}
+
+
+func apply_runtime_state(state_data: Dictionary) -> void:
+	position = state_data.get("position", position)
+	velocity = state_data.get("velocity", velocity)
+	direction = state_data.get("direction", direction)
+	energy = float(state_data.get("energy", energy))
+	hunger = float(state_data.get("hunger", hunger))
+	thirst = float(state_data.get("thirst", thirst))
+	age = float(state_data.get("age", age))
+	state = str(state_data.get("state", state))
+	ai_state = StringName(state_data.get("ai_state", String(ai_state)))
+	current_action = StringName(state_data.get("current_action", String(current_action)))
+	is_alive = bool(state_data.get("is_alive", is_alive))
+	sex = str(state_data.get("sex", sex))
+	reproduction_cooldown = float(state_data.get("reproduction_cooldown", reproduction_cooldown))
+	target_agent_id = int(state_data.get("target_agent_id", target_agent_id))
+	target_position = state_data.get("target_position", target_position)
+	group_id = int(state_data.get("group_id", group_id))
+	last_state_change_tick = int(state_data.get("last_state_change_tick", last_state_change_tick))
+	last_action_change_tick = int(state_data.get("last_action_change_tick", last_action_change_tick))
+	interaction_timer = float(state_data.get("interaction_timer", interaction_timer))
+	attack_cooldown = float(state_data.get("attack_cooldown", attack_cooldown))
+	chase_timer = float(state_data.get("chase_timer", chase_timer))
+	wander_angle = float(state_data.get("wander_angle", wander_angle))
+	recent_water_sources = state_data.get("recent_water_sources", []).duplicate(true)
+	kin_ids = state_data.get("kin_ids", []).duplicate()
+	last_known_kin_center = state_data.get("last_known_kin_center", last_known_kin_center)
+	action_target_failure_ticks = int(state_data.get("action_target_failure_ticks", action_target_failure_ticks))
+	lod_tier = int(state_data.get("lod_tier", lod_tier))
+	path_cells = state_data.get("path_cells", []).duplicate()
+	path_index = int(state_data.get("path_index", path_index))
+	path_goal_cell = int(state_data.get("path_goal_cell", path_goal_cell))
+	last_repath_tick = int(state_data.get("last_repath_tick", last_repath_tick))
+	stuck_timer = float(state_data.get("stuck_timer", stuck_timer))
+	clear_decision_cache()
 
 
 func _get_debug_target_text() -> String:

@@ -48,25 +48,16 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 	if tick % max(1, sample_interval_ticks) != 0 and tick != 0:
 		return
 
-	var herbivore_count := 0
-	var predator_count := 0
-	var hunger_sum := 0.0
-	var energy_sum := 0.0
-	var living_count := 0
-
-	for agent in world.get_living_agents():
-		if agent == null or not agent.is_alive:
-			continue
-		living_count += 1
-		hunger_sum += agent.hunger
-		energy_sum += agent.energy
-		if agent.species_type == "herbivore":
-			herbivore_count += 1
-		elif agent.species_type == "predator":
-			predator_count += 1
+	var population_metrics: Dictionary = world.get_population_metrics()
+	var herbivore_count := int(population_metrics.get("herbivore_count", 0))
+	var predator_count := int(population_metrics.get("predator_count", 0))
+	var hunger_sum := float(population_metrics.get("hunger_sum", 0.0))
+	var energy_sum := float(population_metrics.get("energy_sum", 0.0))
+	var living_count := int(population_metrics.get("living_count", 0))
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
 	var lod_counts: Dictionary = world.get_lod_counts()
+	var perf: Dictionary = world.get_performance_counters()
 	var grass_biomass_by_biome: Dictionary = world.resource_system.get_biomass_totals_by_biome()
 	var snapshot: Dictionary = {
 		"tick": tick,
@@ -97,6 +88,18 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"lod0_agents": int(lod_counts.get("lod0_agents", living_count)),
 		"lod1_agents": int(lod_counts.get("lod1_agents", 0)),
 		"lod2_agents": int(lod_counts.get("lod2_agents", 0)),
+		"agents_full_tick": int(perf.get("agents_full_tick", 0)),
+		"agents_maintenance_tick": int(perf.get("agents_maintenance_tick", 0)),
+		"ai_context_build_ms": float(perf.get("ai_context_build_ms", 0.0)),
+		"action_select_ms": float(perf.get("action_select_ms", 0.0)),
+		"pathfind_calls": int(perf.get("pathfind_calls", 0)),
+		"path_cache_hits": int(perf.get("path_cache_hits", 0)),
+		"grass_query_calls": int(perf.get("grass_query_calls", 0)),
+		"spatial_update_ms": float(perf.get("spatial_update_ms", 0.0)),
+		"group_center_lookups": int(perf.get("group_center_lookups", 0)),
+		"sector_wakeups": int(perf.get("sector_wakeups", 0)),
+		"dormant_sectors": world.get_dormant_sector_count(),
+		"dormant_agents": world.get_dormant_agent_count(),
 	}
 	latest_snapshot = snapshot
 	time_series.append(snapshot)
@@ -110,6 +113,14 @@ func get_snapshot() -> Dictionary:
 
 func get_series() -> Array:
 	return time_series.duplicate(false)
+
+
+func shutdown() -> void:
+	if event_bus != null and event_bus.event_emitted.is_connected(_on_event_emitted):
+		event_bus.event_emitted.disconnect(_on_event_emitted)
+	event_bus = null
+	time_series.clear()
+	latest_snapshot.clear()
 
 
 func _on_event_emitted(event: Dictionary) -> void:

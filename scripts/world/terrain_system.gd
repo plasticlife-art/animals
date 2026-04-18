@@ -54,6 +54,8 @@ var _cached_walkable_neighbor_costs: Array = []
 var _path_cache: Dictionary = {}
 var _path_cache_order: Array = []
 var _path_cache_limit: int = 768
+var _path_query_count: int = 0
+var _path_cache_hit_count: int = 0
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
@@ -86,6 +88,8 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_path_cache.clear()
 	_path_cache_order.clear()
 	_path_cache_limit = maxi(32, int(world_config.get("navigation", {}).get("path_cache_limit", 768)))
+	_path_query_count = 0
+	_path_cache_hit_count = 0
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
 	_apply_obstacles(terrain_config.get("obstacles", {}), rng)
@@ -272,7 +276,9 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 		}
 
 	var cache_key := Vector2i(start_index, goal_index)
+	_path_query_count += 1
 	if _path_cache.has(cache_key):
+		_path_cache_hit_count += 1
 		return _duplicate_path_result(_path_cache[cache_key])
 
 	var max_search_cells: int = maxi(64, int(navigation_config.get("max_search_cells", 2800)))
@@ -350,6 +356,20 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 	}
 	_store_path_cache_entry(cache_key, partial_result)
 	return _duplicate_path_result(partial_result)
+
+
+func has_cached_path_between_indices(start_index: int, goal_index: int) -> bool:
+	return _path_cache.has(Vector2i(start_index, goal_index))
+
+
+func consume_path_query_stats() -> Dictionary:
+	var stats := {
+		"queries": _path_query_count,
+		"cache_hits": _path_cache_hit_count,
+	}
+	_path_query_count = 0
+	_path_cache_hit_count = 0
+	return stats
 
 
 func _build_biome_definitions(config_biomes: Dictionary) -> Dictionary:

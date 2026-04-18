@@ -11,6 +11,10 @@ const SUITES := [
 
 
 func _ready() -> void:
+	call_deferred("_run_suites")
+
+
+func _run_suites() -> void:
 	var total_checks := 0
 	var total_failures := 0
 	for suite_entry in SUITES:
@@ -25,6 +29,10 @@ func _ready() -> void:
 				print("  - %s" % str(failure))
 		else:
 			print("PASS %s (%d checks)" % [suite_entry["name"], asserts.check_count])
+		suite = null
+		asserts = null
 
 	print("Test summary: %d checks, %d failures" % [total_checks, total_failures])
+	queue_free()
+	await get_tree().process_frame
 	get_tree().quit(1 if total_failures > 0 else 0)

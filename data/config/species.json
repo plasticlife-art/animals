@@ -27,8 +27,8 @@
     },
     "feeding": {
       "eat_distance": 36.0,
-      "bite_amount": 18.0,
-      "nutrition_gain": 0.8,
+      "bite_amount": 33.0,
+      "nutrition_gain": 1.0,
       "drink_distance": 50.0,
       "drink_restore": 52.0,
       "eat_duration": 0.5,

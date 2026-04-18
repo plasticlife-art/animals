@@ -54,19 +54,15 @@ func _init(balance_config: Dictionary = {}) -> void:
 	}
 
 
-func build_context(agent, world):
-	var neighbors: Array = agent._get_group_neighbors(world)
+func build_context(agent, world, snapshot = null):
+	if snapshot == null:
+		snapshot = world.build_herbivore_snapshot(agent)
+	var neighbors: Array = snapshot.group_neighbors
 	var danger_radius := float(agent.perception.get("danger_radius", 120.0))
-	var predators: Array = Perception.get_nearby_agents(
-		world,
-		agent.position,
-		danger_radius,
-		agent.SPECIES_PREDATOR,
-		agent.id
-	)
-	var water_target := _resolve_water_target(agent, world)
-	var grass_target: Dictionary = agent._find_grass_target(world)
-	var group_center = world.get_group_center(agent.group_id, agent.species_type, agent.id)
+	var predators: Array = snapshot.predators
+	var water_target: Dictionary = snapshot.water_target
+	var grass_target: Dictionary = snapshot.grass_target
+	var group_center = snapshot.group_center
 	var biome_id: String = str(world.get_biome_at_position(agent.position))
 	var max_energy := float(agent.metabolism.get("max_energy", 100.0))
 	var hunger := UtilityContextFactory.need_ratio(agent.hunger, agent.need_max)

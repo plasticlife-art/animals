@@ -28,3 +28,7 @@ func get_recent_events(limit: int) -> Array:
 
 func clear() -> void:
 	_events.clear()
+
+
+func shutdown() -> void:
+	clear()

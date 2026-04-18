@@ -54,7 +54,7 @@
       "dense_forest_cluster_count": 6,
       "dense_forest_radius_min_cells": 2.0,
       "dense_forest_radius_max_cells": 4.0,
-      "cliff_count": 6,
+      "cliff_count": 8,
       "cliff_thickness_min_cells": 1.1,
       "cliff_thickness_max_cells": 2.0,
       "cliff_gap_radius_cells": 1.6,
@@ -66,7 +66,20 @@
     "repath_interval_ticks": 12,
     "goal_reached_radius_cells": 1,
     "max_search_cells": 2400,
-    "grass_candidate_limit": 24
+    "grass_candidate_limit": 24,
+    "path_budget_per_tick": 96,
+    "max_new_paths_per_tick": 28,
+    "goal_bucket_size": 4,
+    "sector_grass_refresh_ticks": 18
+  },
+  "simulation_lod": {
+    "sector_size": 512.0,
+    "near_sector_margin": 192.0,
+    "mid_sector_margin": 960.0,
+    "mid_decision_interval": 3,
+    "far_decision_interval": 8,
+    "very_far_sector_step_seconds": 0.75,
+    "headless_active_radius": 960.0
   },
   "water_sources": [
     { "x": 420.0, "y": 340.0, "radius": 52.0 },
@@ -89,8 +102,8 @@
     { "x": 4560.0, "y": 2460.0, "radius": 58.0 }
   ],
   "spawns": {
-    "herbivore_count": 220,
-    "predator_count": 18,
+    "herbivore_count": 440,
+    "predator_count": 36,
     "herbivore_group_count": 12
   }
 }

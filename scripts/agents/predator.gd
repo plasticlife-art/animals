@@ -42,26 +42,44 @@ func tick(world, delta: float) -> void:
 		stop_motion(delta)
 		return
 
-	var context = _ai_controller.build_context(self, world)
-	var next_ai_state: StringName = _ai_controller.resolve_state(self, context)
-	set_ai_state(next_ai_state)
-	if next_ai_state == AgentAIState.ENGAGED:
+	var should_decide: bool = world.should_run_decision_tick(self)
+	var snapshot = cached_snapshot
+	var context = cached_context
+	if should_decide or snapshot == null or context == null:
+		var context_started_at_usec := Time.get_ticks_usec()
+		snapshot = world.build_predator_snapshot(self)
+		context = _ai_controller.build_context(self, world, snapshot)
+		world.record_ai_context_ms(float(Time.get_ticks_usec() - context_started_at_usec) / 1000.0)
+		var next_ai_state: StringName = _ai_controller.resolve_state(self, context)
+		set_ai_state(next_ai_state)
+	else:
+		set_ai_state(_ai_controller.resolve_state(self, context))
+
+	if ai_state == AgentAIState.ENGAGED:
 		_ai_controller.sync_engaged_action(self, world.current_tick)
 		if _continue_engaged_flow(world, delta):
 			return
 		set_ai_state(AgentAIState.ALIVE)
-		context = _ai_controller.build_context(self, world)
+		var rebuild_started_at_usec := Time.get_ticks_usec()
+		snapshot = world.build_predator_snapshot(self)
+		context = _ai_controller.build_context(self, world, snapshot)
+		world.record_ai_context_ms(float(Time.get_ticks_usec() - rebuild_started_at_usec) / 1000.0)
 
 	var scoped_context = context.with_state(ai_state)
 	_ai_controller.update_action_target_tracking(self, scoped_context)
+	cache_decision_state(snapshot, scoped_context, world.current_tick)
 	if can_reproduce() and _attempt_reproduce(world, delta):
 		set_ai_state(AgentAIState.ENGAGED)
 		force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 		return
 
-	var decision = _ai_controller.select_action(self, scoped_context, world.current_tick)
-	apply_action_decision(decision, world.current_tick)
-	_execute_selected_action(world, delta, decision.selected_action)
+	if should_decide or current_action == AgentAction.NONE:
+		var selection_started_at_usec := Time.get_ticks_usec()
+		var decision = _ai_controller.select_action(self, scoped_context, world.current_tick)
+		world.record_action_select_ms(float(Time.get_ticks_usec() - selection_started_at_usec) / 1000.0)
+		apply_action_decision(decision, world.current_tick)
+
+	_execute_selected_action(world, delta, current_action, snapshot)
 
 
 func clear_targets(world = null) -> void:
@@ -85,6 +103,19 @@ func on_carcass_removed(carcass_id: int) -> void:
 	if state == "feed_carcass" or state == "seek_carcass":
 		target_position = null
 		clear_navigation()
+
+
+func export_runtime_state() -> Dictionary:
+	var state_data: Dictionary = super.export_runtime_state()
+	state_data["preferred_mate_id"] = preferred_mate_id
+	state_data["target_carcass_id"] = target_carcass_id
+	return state_data
+
+
+func apply_runtime_state(state_data: Dictionary) -> void:
+	super.apply_runtime_state(state_data)
+	preferred_mate_id = int(state_data.get("preferred_mate_id", preferred_mate_id))
+	target_carcass_id = int(state_data.get("target_carcass_id", target_carcass_id))
 
 
 func _get_debug_target_text() -> String:
@@ -151,8 +182,9 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	return true
 
 
-func _hunt(world, delta: float) -> bool:
-	var prey: AgentBase = _choose_prey(world)
+func _hunt(world, delta: float, prey = null) -> bool:
+	if prey == null:
+		prey = _choose_prey(world)
 	if prey == null:
 		return false
 	release_carcass_target(world)
@@ -278,21 +310,25 @@ func _continue_engaged_flow(world, delta: float) -> bool:
 	return false
 
 
-func _execute_selected_action(world, delta: float, action_name: StringName) -> void:
+func _execute_selected_action(world, delta: float, action_name: StringName, snapshot = null) -> void:
 	match action_name:
 		AgentAction.HUNT_PREY:
-			if not _hunt(world, delta):
+			var prey = null if snapshot == null else snapshot.prey_target
+			if not _hunt(world, delta, prey):
 				_patrol(world, delta)
 		AgentAction.SCAVENGE_CARCASS:
-			if not _scavenge_or_feed(world, delta):
+			var carcass_target: Dictionary = {} if snapshot == null else snapshot.carcass_target
+			if not _scavenge_or_feed(world, delta, carcass_target):
 				_patrol(world, delta)
 		AgentAction.DRINK:
-			if not _seek_or_drink(world, delta):
+			var water_target: Dictionary = {} if snapshot == null else snapshot.water_target
+			if not _seek_or_drink(world, delta, water_target):
 				_patrol(world, delta)
 		AgentAction.REST:
 			_rest(world, delta)
 		AgentAction.INVESTIGATE_WATER:
-			if not _investigate_recent_water(world, delta):
+			var investigation_source: Dictionary = {} if snapshot == null else snapshot.investigation_source
+			if not _investigate_recent_water(world, delta, investigation_source):
 				_patrol(world, delta)
 		AgentAction.PAIR_COHESION:
 			if not _regroup_with_kin(world, delta):
@@ -329,14 +365,15 @@ func _maybe_drink(world) -> void:
 	})
 
 
-func _choose_prey(world) -> AgentBase:
-	var prey_candidates: Array = Perception.get_nearby_agents(
-		world,
-		position,
-		float(perception.get("vision_radius", 240.0)),
-		SPECIES_HERBIVORE,
-		id
-	)
+func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
+	if prey_candidates.is_empty():
+		prey_candidates = Perception.get_nearby_agents(
+			world,
+			position,
+			float(perception.get("vision_radius", 240.0)),
+			SPECIES_HERBIVORE,
+			id
+		)
 	if prey_candidates.is_empty():
 		return null
 
@@ -394,18 +431,19 @@ func _regroup_with_kin(world, delta: float) -> bool:
 	return true
 
 
-func _find_viable_mate(world, require_reproduction_ready: bool) -> AgentBase:
+func _find_viable_mate(world, require_reproduction_ready: bool, mates: Array = []) -> AgentBase:
 	var preferred_mate: AgentBase = _get_preferred_mate(world)
 	if _is_valid_mate_candidate(preferred_mate, require_reproduction_ready):
 		return preferred_mate
 
-	var mates: Array = Perception.get_nearby_agents(
-		world,
-		position,
-		float(perception.get("mate_search_radius", 80.0)),
-		SPECIES_PREDATOR,
-		id
-	)
+	if mates.is_empty():
+		mates = Perception.get_nearby_agents(
+			world,
+			position,
+			float(perception.get("mate_search_radius", 80.0)),
+			SPECIES_PREDATOR,
+			id
+		)
 	var chosen_mate: AgentBase = null
 	var best_distance_sq: float = INF
 	for mate in mates:
@@ -484,8 +522,8 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 	return true
 
 
-func _scavenge_or_feed(world, delta: float) -> bool:
-	var carcass: Dictionary = _resolve_carcass_target(world)
+func _scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -> bool:
+	var carcass: Dictionary = _resolve_carcass_target(world, preferred_carcass)
 	if carcass.is_empty():
 		return false
 
@@ -529,7 +567,7 @@ func _scavenge_or_feed(world, delta: float) -> bool:
 	return true
 
 
-func _resolve_carcass_target(world) -> Dictionary:
+func _resolve_carcass_target(world, preferred_carcass: Dictionary = {}) -> Dictionary:
 	if target_carcass_id != -1:
 		var current_target: Dictionary = world.get_carcass(target_carcass_id)
 		if not current_target.is_empty():
@@ -537,19 +575,21 @@ func _resolve_carcass_target(world) -> Dictionary:
 		release_carcass_target(world)
 		target_position = null
 
-	var carcass: Dictionary = _choose_carcass(world)
+	var carcass: Dictionary = preferred_carcass if not preferred_carcass.is_empty() else _choose_carcass(world)
 	if carcass.is_empty():
 		return {}
 	target_carcass_id = int(carcass.get("id", -1))
 	return carcass
 
 
-func _choose_carcass(world) -> Dictionary:
+func _choose_carcass(world, carcasses: Array = []) -> Dictionary:
 	var search_radius := float(balance.get("carcass", {}).get("search_radius", perception.get("vision_radius", 240.0)))
 	var best_carcass := {}
 	var best_distance_sq := INF
 	var best_meat := -INF
-	for carcass in world.query_carcasses(position, search_radius):
+	if carcasses.is_empty():
+		carcasses = world.query_carcasses(position, search_radius)
+	for carcass in carcasses:
 		var active_feeders: Array = carcass.get("active_feeder_ids", [])
 		if not active_feeders.has(id) and active_feeders.size() >= int(carcass.get("max_feeders", 1)):
 			continue
@@ -607,8 +647,9 @@ func _should_rest(thresholds: Dictionary) -> bool:
 	return energy <= rest_energy
 
 
-func _investigate_recent_water(world, delta: float) -> bool:
-	var source: Dictionary = _get_recent_investigation_water_source(world)
+func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> bool:
+	if source.is_empty():
+		source = _get_recent_investigation_water_source(world)
 	if source.is_empty():
 		return false
 	release_carcass_target(world)

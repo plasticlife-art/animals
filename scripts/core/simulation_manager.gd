@@ -71,7 +71,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	debug_flags = debug_config.get("overlays", {}).duplicate(true)
 	ui_refresh_interval_ticks = max(1, int(debug_config.get("ui_refresh_interval_ticks", 5)))
 	lod_settings = _build_lod_settings(debug_config)
-	lod_enabled = false
+	lod_enabled = bool(lod_settings.get("enabled", false))
 	lod_focus_rect = Rect2()
 	debug_flags["show_lod_overlay"] = bool(debug_flags.get("show_lod_overlay", lod_settings.get("show_lod_overlay", false)))
 	var speeds: Array = debug_config.get("speed_steps", [1.0])
@@ -251,8 +251,27 @@ func run_headless(total_ticks: int, export_on_finish: bool = true) -> Dictionary
 	}
 
 
+func shutdown() -> void:
+	if is_instance_valid(self):
+		set_process(false)
+	if stats_system != null and stats_system.has_method("shutdown"):
+		stats_system.shutdown()
+	if telemetry_logger != null and telemetry_logger.has_method("shutdown"):
+		telemetry_logger.shutdown()
+	if world_state != null and world_state.has_method("shutdown"):
+		world_state.shutdown()
+	if event_bus != null and event_bus.has_method("shutdown"):
+		event_bus.shutdown()
+	world_state = null
+	stats_system = null
+	telemetry_logger = null
+	event_bus = null
+	config_bundle.clear()
+
+
 func _build_lod_settings(debug_config: Dictionary) -> Dictionary:
 	var lod_config: Dictionary = debug_config.get("lod", {})
+	var simulation_lod_config: Dictionary = config_bundle.get("world", {}).get("simulation_lod", {})
 	var near_margin := maxf(0.0, float(lod_config.get("near_margin", 192.0)))
 	return {
 		"enabled": bool(lod_config.get("enabled", false)),
@@ -260,19 +279,33 @@ func _build_lod_settings(debug_config: Dictionary) -> Dictionary:
 		"mid_margin": maxf(near_margin, float(lod_config.get("mid_margin", 768.0))),
 		"mid_update_interval_ticks": maxi(1, int(lod_config.get("mid_update_interval_ticks", 2))),
 		"far_update_interval_ticks": maxi(1, int(lod_config.get("far_update_interval_ticks", 5))),
+		"mid_decision_interval_ticks": maxi(1, int(simulation_lod_config.get("mid_decision_interval", 3))),
+		"far_decision_interval_ticks": maxi(1, int(simulation_lod_config.get("far_decision_interval", 8))),
+		"headless_active_radius": maxf(0.0, float(simulation_lod_config.get("headless_active_radius", 720.0))),
+		"very_far_sector_step_seconds": maxf(0.25, float(simulation_lod_config.get("very_far_sector_step_seconds", 0.75))),
 		"show_lod_overlay": bool(lod_config.get("show_lod_overlay", false)),
 	}
 
 
 func _build_lod_context() -> Dictionary:
+	var focus_rect := lod_focus_rect
+	if focus_rect.size.is_zero_approx() and world_state != null:
+		var headless_active_radius := float(lod_settings.get("headless_active_radius", 0.0))
+		if headless_active_radius > 0.0:
+			var center := world_state.bounds.get_center()
+			focus_rect = Rect2(center - Vector2.ONE * headless_active_radius, Vector2.ONE * headless_active_radius * 2.0)
 	return {
-		"enabled": lod_enabled and not lod_focus_rect.size.is_zero_approx(),
-		"focus_rect": lod_focus_rect,
+		"enabled": lod_enabled,
+		"focus_rect": focus_rect,
 		"selected_agent_id": selected_agent_id,
 		"near_margin": float(lod_settings.get("near_margin", 192.0)),
 		"mid_margin": float(lod_settings.get("mid_margin", 768.0)),
 		"mid_update_interval_ticks": int(lod_settings.get("mid_update_interval_ticks", 2)),
 		"far_update_interval_ticks": int(lod_settings.get("far_update_interval_ticks", 5)),
+		"mid_decision_interval_ticks": int(lod_settings.get("mid_decision_interval_ticks", 3)),
+		"far_decision_interval_ticks": int(lod_settings.get("far_decision_interval_ticks", 8)),
+		"headless_active_radius": float(lod_settings.get("headless_active_radius", 720.0)),
+		"very_far_sector_step_seconds": float(lod_settings.get("very_far_sector_step_seconds", 0.75)),
 	}
 
 
