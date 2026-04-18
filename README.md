@@ -1,8 +1,8 @@
 # Engine of Ecosystem
 
-`Engine of Ecosystem` is a Godot 4.6 ecosystem simulation prototype focused on simulation-first gameplay: deterministic ticking, autonomous herbivore and predator behavior, terrain-aware navigation, telemetry, and debug tooling.
+`Engine of Ecosystem` is a Godot 4.6 ecosystem simulation prototype focused on simulation-first gameplay: deterministic ticking, hybrid FSM + utility-based agent AI, terrain-aware navigation, telemetry, and debug tooling.
 
-The current build simulates a continuous 2D world with biomes, obstacles, grass regrowth, fixed water sources, herbivore herds, predator hunting, carcass scavenging, reproduction, aging, camera follow modes, minimap navigation, telemetry exports, and camera-driven LOD for interactive play.
+The current build simulates a continuous 2D world with biomes, obstacles, grass regrowth, fixed water sources, herbivore herds, predator hunting, carcass scavenging, reproduction, aging, camera follow modes, minimap navigation, telemetry exports, built-in headless tests, and camera-driven LOD for interactive play.
 
 ## Current Build
 
@@ -20,15 +20,16 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 
 - Deterministic fixed-step simulation with seeded RNG
 - JSON-driven configuration for world, species, balance, and debug settings
+- Hybrid AI pipeline: top-level FSM plus utility-based action selection inside active states
 - Procedural terrain grid with biome-specific move cost and forage multipliers
 - Obstacle generation and terrain-aware pathfinding
 - Renewable grass resource grid linked to terrain productivity
 - Spatial grid acceleration for proximity queries
-- Herbivore behavior: wander, regroup, graze, drink, flee, rest, reproduce
-- Predator behavior: patrol, select prey, chase, attack, drink, rest, reproduce, scavenge carcasses
+- Herbivore behavior: `alive/panic/dead` AI states with utility-driven graze, drink, rest, explore, herd join, and flee actions
+- Predator behavior: `alive/engaged/dead` AI states with utility-driven hunt, scavenge, drink, rest, investigate water, pair cohesion, and patrol actions
 - Lifecycle rules: hunger, thirst, energy depletion, predation, old age
 - Carcass lifecycle with feeder reservation and meat depletion
-- Runtime telemetry, charts, event log, agent inspector, overlays, minimap
+- Runtime telemetry, charts, event log, agent inspector with utility scores, overlays, minimap
 - Camera-driven interactive LOD for distant agents
 
 ## Run
@@ -44,6 +45,14 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 1. Open `res://scenes/main/headless_runner.tscn`.
 2. Configure `total_ticks`, `seed_override`, and `export_on_finish` in the inspector.
 3. Run the scene. It executes the simulation, prints a summary, optionally exports telemetry, and quits automatically.
+
+### Built-In Tests
+
+Run the internal AI and simulation regression suites with:
+
+```sh
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/plasticlife/Documents/Projects/Animals res://scenes/tests/test_runner.tscn
+```
 
 ## Controls
 
@@ -64,7 +73,7 @@ From the HUD you can:
 - single-step one tick
 - switch speed between configured speed presets
 - switch follow mode between `Off`, `Agent`, and `Flock`
-- inspect the selected agent
+- inspect the selected agent, including AI state, current action, decision reason, and utility scores
 - review recent events
 - toggle LOD on or off
 - toggle biome, obstacle, carcass, path, density, water, and debug overlays
@@ -89,7 +98,7 @@ The summary includes population metrics, death causes, hunt success, carcass met
 - `data/config/species.json`
   Movement, perception, metabolism, feeding, reproduction, and aging for each species
 - `data/config/balance.json`
-  Shared thresholds, herd weights, hunt rules, carcass behavior, lifecycle rules, stats sampling
+  Shared thresholds, herd weights, hunt rules, carcass behavior, lifecycle rules, AI selector tuning, evaluator weights, stats sampling
 - `data/config/debug.json`
   HUD defaults, UI refresh cadence, overlays, export directory, interactive LOD tuning
 
@@ -99,11 +108,20 @@ The summary includes population metrics, death causes, hunt success, carcass met
 scenes/main/
   main.tscn
   headless_runner.tscn
+scenes/tests/
+  test_runner.tscn
 scripts/core/
   config_loader.gd
   event_bus.gd
   headless_runner.gd
   simulation_manager.gd
+scripts/agents/ai/
+  agent_ai_state.gd
+  agent_action.gd
+  herbivore_ai.gd
+  predator_ai.gd
+  action_selector.gd
+  evaluators/
 scripts/world/
   resource_system.gd
   spatial_grid.gd
@@ -126,6 +144,9 @@ scripts/ui/
   minimap.gd
   overlay_renderer.gd
   world_view.gd
+scripts/tests/
+  test_runner.gd
+  *_tests.gd
 data/config/
   balance.json
   debug.json
@@ -133,13 +154,11 @@ data/config/
   world.json
 docs/
   ARCHITECTURE.md
-  FEATURE_BACKLOG.md
 ```
 
 ## Documentation
 
 - [Architecture Overview](docs/ARCHITECTURE.md)
-- [Feature Backlog](docs/FEATURE_BACKLOG.md)
 
 ## Current Limitations
 

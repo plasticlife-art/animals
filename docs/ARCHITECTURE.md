@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the current structure of `Engine of Ecosystem`, the main runtime flow, and the responsibilities of each major subsystem.
+This document describes the current structure of `Engine of Ecosystem`, the main runtime flow, the hybrid AI model, and the responsibilities of each major subsystem.
 
 ## Runtime Flow
 
@@ -12,6 +12,7 @@ This document describes the current structure of `Engine of Ecosystem`, the main
 4. Every fixed simulation tick:
    - `ResourceSystem` regrows grass.
    - Each living agent runs either a full behavior tick or a lightweight LOD maintenance tick.
+   - Full AI ticks resolve high-level agent state, build one utility context, select or keep an action, and execute it through the existing movement and interaction helpers.
    - Pending removals, pending spawns, and carcass lifecycle updates are flushed.
    - The spatial grid and LOD counters are rebuilt.
    - `StatsSystem` samples the world and emits snapshots to the UI.
@@ -102,6 +103,7 @@ Current snapshot categories:
 Shared state includes:
 
 - needs: energy, hunger, thirst, age
+- AI runtime: `ai_state`, `current_action`, action age, switch reason, utility scores
 - navigation: path cells, path index, repath timing, stuck timer
 - targeting: `target_agent_id`, `target_position`
 - memory: recent water sources and kin IDs
@@ -110,33 +112,78 @@ Shared state includes:
 Shared capabilities include:
 
 - needs update and survival checks
+- action-decision bookkeeping for debug and anti-thrashing
 - terrain-aware movement and inertia movement
 - water memory management
 - path state reset and movement to target
 - reproduction eligibility checks
 
+### Hybrid AI Layer
+
+The runtime AI is split into additive layers:
+
+- `agent.state`
+  Legacy execution label used by movement helpers, energy recovery rules, LOD priority, and overlays
+- `agent.ai_state`
+  High-level FSM-like state such as `alive`, `panic`, `engaged`, `dead`
+- `agent.current_action`
+  Utility-selected intent such as `graze`, `drink`, `rest`, `hunt_prey`, or `scavenge_carcass`
+
+Utility selection is shared under `scripts/agents/ai/`:
+
+- `UtilityContext`
+  One deterministic perception snapshot built once per full AI tick
+- `StatePolicy`
+  Declares which actions are legal in the current high-level state
+- `ActionSelector`
+  Scores actions, applies stickiness and switch thresholds, and returns an explainable decision
+- evaluators
+  Species-relevant utility functions for each action
+
+Anti-thrashing is handled centrally through:
+
+- current action bonus / stickiness
+- minimum commitment ticks
+- switch threshold delta
+- forced interrupts on emergency state changes or invalid targets
+
 ### Herbivore
 
-Current behavior stack:
+High-level states:
 
-- flee from predators
-- drink when thirst-critical
-- eat when hunger-critical
-- regroup with herd
-- reproduce when safe and eligible
-- otherwise wander or graze locally
+- `alive`
+- `panic`
+- `dead`
+
+Utility actions inside `alive`:
+
+- graze
+- drink
+- rest
+- explore
+- join herd
+
+`panic` restricts the decision space to flee and herd-join behavior.
 
 ### Predator
 
-Current behavior stack:
+High-level states:
 
-- maintain chase if already engaged
-- drink when needed
-- rest when low energy
-- reproduce if possible
-- hunt herbivores when hungry
-- scavenge carcasses when appropriate
-- patrol or follow remembered herd activity around water
+- `alive`
+- `engaged`
+- `dead`
+
+Utility actions inside `alive`:
+
+- hunt prey
+- scavenge carcass
+- drink
+- rest
+- investigate water
+- pair cohesion
+- patrol
+
+`engaged` keeps existing locked flows such as chase, attack, carcass feeding, water investigation, and reproduction instead of re-scoring every tick.
 
 ## UI Layer
 
@@ -158,6 +205,7 @@ Current behavior stack:
 - LOD toggle
 - Overlay toggles
 - Summary, selected agent inspector, event log, export status
+- Selected-agent AI visibility: AI state, current action, action age, decision reason, utility scores
 
 ### `ChartsPanel`
 
@@ -197,6 +245,7 @@ Agents are forced into `LOD0` when:
 - selected
 - currently interacting
 - chasing, fleeing, attacking, reproducing, feeding, drinking, or scavenging
+- in `panic`
 - actively targeting another agent
 
 On skipped ticks, distant agents still:
@@ -219,11 +268,23 @@ On skipped ticks, distant agents still:
 
 ### `balance.json`
 
-- tunes cross-species rules and shared lifecycle thresholds
+- tunes cross-species rules, shared lifecycle thresholds, selector thresholds, and utility evaluator weights
 
 ### `debug.json`
 
 - controls HUD defaults, overlay defaults, UI refresh frequency, and LOD settings
+
+## Built-In Tests
+
+The project includes an internal headless test runner in `scenes/tests/test_runner.tscn`.
+
+Current suites cover:
+
+- evaluator dominance checks
+- selector stickiness and threshold behavior
+- state-policy expectations
+- small simulation regression scenarios
+- deterministic action/state traces across repeated seeded runs
 
 ## Known Gaps
 
