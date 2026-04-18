@@ -1,6 +1,12 @@
 class_name Herbivore
 extends AgentBase
 
+const AgentAIState := preload("res://scripts/agents/ai/agent_ai_state.gd")
+const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
+const HerbivoreAIScript := preload("res://scripts/agents/ai/herbivore_ai.gd")
+
+var _ai_controller
+
 
 func configure(
 	agent_id: int,
@@ -13,20 +19,26 @@ func configure(
 	new_group_id: int = -1
 ) -> void:
 	super.configure(agent_id, new_species_type, spawn_position, new_sex, species_config, balance_config, rng, new_group_id)
+	_ai_controller = HerbivoreAIScript.new(balance_config)
 	debug_color = Color(0.71, 0.88, 0.54)
 
 
 func tick(world, delta: float) -> void:
 	update_needs(delta)
 	if apply_survival_checks(world, delta):
+		set_ai_state(AgentAIState.DEAD)
 		return
 
 	if interaction_timer > 0.0:
 		stop_motion(delta)
 		return
 
-	var thresholds: Dictionary = balance.get("state_thresholds", {})
 	var neighbors: Array = _get_group_neighbors(world)
+	var context = _ai_controller.build_context(self, world)
+	var next_ai_state: StringName = _ai_controller.resolve_state(self, context)
+	var scoped_context = context.with_state(next_ai_state)
+	_ai_controller.update_action_target_tracking(self, scoped_context)
+	set_ai_state(next_ai_state)
 	var predators: Array = Perception.get_nearby_agents(
 		world,
 		position,
@@ -34,33 +46,20 @@ func tick(world, delta: float) -> void:
 		SPECIES_PREDATOR,
 		id
 	)
-	if not predators.is_empty():
-		_flee(world, delta, predators, neighbors)
+
+	if can_reproduce() and next_ai_state == AgentAIState.ALIVE and _attempt_reproduce(world, delta, neighbors):
+		force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 		return
 
-	if thirst >= float(thresholds.get("critical_thirst", 60.0)) and _seek_or_drink(world, delta, neighbors):
-		return
-	if hunger >= float(thresholds.get("critical_hunger", 65.0)) and _seek_or_eat(world, delta, neighbors):
-		return
-	if _should_regroup(world):
-		_regroup(world, delta, neighbors)
-		return
-	if can_reproduce() and _attempt_reproduce(world, delta, neighbors):
-		return
-
-	_wander_or_graze(world, delta, neighbors)
+	var decision = _ai_controller.select_action(self, scoped_context, world.current_tick)
+	apply_action_decision(decision, world.current_tick)
+	_execute_selected_action(world, delta, neighbors, predators, decision.selected_action)
 
 
 func _seek_or_drink(world, delta: float, neighbors: Array) -> bool:
-	var water: Dictionary = Perception.find_nearest_water(world, position, float(perception.get("water_search_radius", 260.0)))
-	if water.is_empty():
-		water = get_remembered_water(
-			world.current_time,
-			float(perception.get("water_memory_duration_seconds", 0.0))
-		)
+	var water: Dictionary = _resolve_water_target(world)
 	if water.is_empty():
 		return false
-	remember_water(water, world.current_time)
 
 	target_position = water["position"]
 	var drink_distance: float = float(feeding.get("drink_distance", 28.0)) + float(water.get("radius", 0.0))
@@ -86,6 +85,18 @@ func _seek_or_drink(world, delta: float, neighbors: Array) -> bool:
 	return true
 
 
+func _resolve_water_target(world) -> Dictionary:
+	var water: Dictionary = Perception.find_nearest_water(world, position, float(perception.get("water_search_radius", 260.0)))
+	if water.is_empty():
+		water = get_remembered_water(
+			world.current_time,
+			float(perception.get("water_memory_duration_seconds", 0.0))
+		)
+	if not water.is_empty():
+		remember_water(water, world.current_time)
+	return water
+
+
 func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
 	var grass: Dictionary = _find_grass_target(world)
 	if grass.is_empty():
@@ -95,36 +106,42 @@ func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
 
 func _find_grass_target(world) -> Dictionary:
 	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	var graze_hunger_floor := float(thresholds.get("graze_hunger_floor", 20.0))
 	var critical_hunger := float(thresholds.get("critical_hunger", 65.0))
 	var base_search_radius := float(perception.get("grass_search_radius", 180.0))
 	var urgency_ratio := 0.0
-	if hunger > critical_hunger:
-		urgency_ratio = clampf((hunger - critical_hunger) / maxf(1.0, need_max - critical_hunger), 0.0, 1.0)
+	var urgency_start := minf(graze_hunger_floor, critical_hunger)
+	if hunger > urgency_start:
+		urgency_ratio = clampf((hunger - urgency_start) / maxf(1.0, need_max - urgency_start), 0.0, 1.0)
 	var min_biomass := 4.0 if urgency_ratio < 0.45 else 2.0
 
 	var local_grass: Dictionary = Perception.find_best_grass(world, position, base_search_radius, min_biomass)
 	if not local_grass.is_empty():
 		return local_grass
 
-	var expanded_search_radius := _get_expanded_grass_search_radius(critical_hunger)
+	var expanded_search_radius := _get_expanded_grass_search_radius(urgency_start)
 	if expanded_search_radius <= base_search_radius:
 		return {}
 	return Perception.find_best_grass(world, position, expanded_search_radius, min_biomass)
 
 
-func _get_expanded_grass_search_radius(critical_hunger: float) -> float:
+func _get_expanded_grass_search_radius(urgency_start: float) -> float:
 	var base_search_radius := float(perception.get("grass_search_radius", 180.0))
 	var urgency_ratio := 0.0
-	if hunger > critical_hunger:
-		urgency_ratio = clampf((hunger - critical_hunger) / maxf(1.0, need_max - critical_hunger), 0.0, 1.0)
-	return lerpf(base_search_radius, maxf(base_search_radius * 3.0, 540.0), urgency_ratio)
+	if hunger > urgency_start:
+		urgency_ratio = clampf((hunger - urgency_start) / maxf(1.0, need_max - urgency_start), 0.0, 1.0)
+	return lerpf(base_search_radius, maxf(base_search_radius * 4.0, 720.0), urgency_ratio)
 
 
 func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Dictionary) -> bool:
 	target_position = grass["center"]
 	var eat_distance := float(feeding.get("eat_distance", 18.0))
-	if position.distance_squared_to(grass["center"]) <= eat_distance * eat_distance:
-		var consumed: float = world.resource_system.consume_at_position(position, float(feeding.get("bite_amount", 18.0)))
+	var current_cell_index: int = -1 if world.terrain_system == null else world.terrain_system.get_index_from_position(position)
+	var cell_reach_distance: float = minf(eat_distance, world.resource_system.cell_size * 0.45)
+	var reached_target_cell: bool = int(grass.get("index", -1)) == current_cell_index
+	var reached_target_radius: bool = position.distance_squared_to(grass["center"]) <= cell_reach_distance * cell_reach_distance
+	if reached_target_cell or reached_target_radius:
+		var consumed: float = world.resource_system.consume_cell(int(grass.get("index", -1)), float(feeding.get("bite_amount", 18.0)))
 		if consumed > 0.0:
 			set_state("eat", world.current_tick)
 			clear_navigation()
@@ -136,13 +153,20 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 				"cell_index": int(grass["index"]),
 			})
 			return true
+		clear_targets()
+		var fallback_grass: Dictionary = _find_grass_target(world)
+		if fallback_grass.is_empty():
+			return false
+		if int(fallback_grass.get("index", -1)) == int(grass.get("index", -1)):
+			return false
+		return _move_to_grass_target(world, delta, neighbors, fallback_grass)
 
 	set_state("seek_food", world.current_tick)
-	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
+	var herd_vector: Vector2 = _herd_vector(world, neighbors, false)
 	var waypoint: Vector2 = world.get_next_waypoint(position, grass["center"], id)
 	var move_vector: Vector2 = Steering.combine([
 		{"vector": Steering.seek(position, waypoint), "weight": 1.3},
-		{"vector": herd_vector, "weight": 0.7},
+		{"vector": herd_vector, "weight": 0.15},
 	])
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
 	return true
@@ -171,7 +195,7 @@ func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 func _should_regroup(world) -> bool:
 	if group_id == -1:
 		return false
-	if hunger >= float(balance.get("state_thresholds", {}).get("critical_hunger", 65.0)):
+	if hunger >= float(balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0)):
 		return false
 	var center: Variant = world.get_group_center(group_id, species_type, id)
 	if center == null:
@@ -251,6 +275,51 @@ func _attempt_reproduce(world, delta: float, neighbors: Array) -> bool:
 	spend_energy(float(reproduction.get("birth_energy_cost", 18.0)))
 	chosen_mate.spend_energy(float(chosen_mate.reproduction.get("birth_energy_cost", 18.0)))
 	return true
+
+
+func _execute_selected_action(world, delta: float, neighbors: Array, predators: Array, action_name: StringName) -> void:
+	match action_name:
+		AgentAction.FLEE_TO_SAFE_AREA:
+			if predators.is_empty():
+				_explore(world, delta, neighbors)
+				return
+			_flee(world, delta, predators, neighbors)
+		AgentAction.DRINK:
+			if not _seek_or_drink(world, delta, neighbors):
+				_explore(world, delta, neighbors)
+		AgentAction.GRAZE:
+			if not _seek_or_eat(world, delta, neighbors):
+				_explore(world, delta, neighbors)
+		AgentAction.REST:
+			_rest(world, delta)
+		AgentAction.JOIN_HERD:
+			if _should_regroup(world):
+				_regroup(world, delta, neighbors)
+			else:
+				_explore(world, delta, neighbors)
+		AgentAction.EXPLORE:
+			_explore(world, delta, neighbors)
+		_:
+			_explore(world, delta, neighbors)
+
+
+func _rest(world, delta: float) -> void:
+	set_state("rest", world.current_tick)
+	clear_targets()
+	move_with_vector(world, Vector2.ZERO, 0.0, delta)
+
+
+func _explore(world, delta: float, neighbors: Array) -> void:
+	var weights: Dictionary = balance.get("herd_weights", {})
+	var wander_vector: Vector2 = Steering.wander(self, world.rng)
+	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
+	set_state("wander", world.current_tick)
+	clear_targets()
+	var combined: Vector2 = Steering.combine([
+		{"vector": wander_vector, "weight": float(weights.get("wander", 0.45))},
+		{"vector": herd_vector, "weight": 1.0},
+	])
+	move_with_vector(world, combined, float(movement.get("max_speed", 70.0)) * 0.9, delta)
 
 
 func _wander_or_graze(world, delta: float, neighbors: Array) -> void:

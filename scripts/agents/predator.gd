@@ -2,10 +2,14 @@ class_name Predator
 extends AgentBase
 
 const WATER_INVESTIGATION_COOLDOWN_SECONDS := 12.0
+const AgentAIState := preload("res://scripts/agents/ai/agent_ai_state.gd")
+const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
+const PredatorAIScript := preload("res://scripts/agents/ai/predator_ai.gd")
 
 var hunt: Dictionary = {}
 var preferred_mate_id: int = -1
 var target_carcass_id: int = -1
+var _ai_controller
 
 
 func configure(
@@ -22,6 +26,7 @@ func configure(
 	hunt = species_config.get("hunt", {})
 	preferred_mate_id = -1
 	target_carcass_id = -1
+	_ai_controller = PredatorAIScript.new(balance_config)
 	debug_color = Color(0.93, 0.47, 0.32)
 
 
@@ -29,6 +34,7 @@ func tick(world, delta: float) -> void:
 	update_needs(delta)
 	_maybe_drink(world)
 	if apply_survival_checks(world, delta):
+		set_ai_state(AgentAIState.DEAD)
 		return
 	_update_kin_state(world)
 
@@ -36,35 +42,26 @@ func tick(world, delta: float) -> void:
 		stop_motion(delta)
 		return
 
-	var thresholds: Dictionary = balance.get("state_thresholds", {})
-	if _continue_or_finish_chase(world, delta):
-		return
+	var context = _ai_controller.build_context(self, world)
+	var next_ai_state: StringName = _ai_controller.resolve_state(self, context)
+	set_ai_state(next_ai_state)
+	if next_ai_state == AgentAIState.ENGAGED:
+		_ai_controller.sync_engaged_action(self, world.current_tick)
+		if _continue_engaged_flow(world, delta):
+			return
+		set_ai_state(AgentAIState.ALIVE)
+		context = _ai_controller.build_context(self, world)
 
-	var water_target: Dictionary = _resolve_water_target(world, thresholds)
-	if _should_seek_water(thresholds, water_target) and _seek_or_drink(world, delta, water_target):
-		return
-
-	var carcass_config: Dictionary = balance.get("carcass", {})
-	if (target_carcass_id != -1 or hunger >= float(carcass_config.get("scavenging_hunger", hunt.get("engage_hunger", 42.0)))) and _scavenge_or_feed(world, delta):
-		return
-
-	if hunger >= float(hunt.get("engage_hunger", 42.0)) and _hunt(world, delta):
-		return
-
-	if hunger >= float(hunt.get("engage_hunger", 42.0)) and _investigate_recent_water(world, delta):
-		return
-
-	if _should_rest(thresholds):
-		_rest(world, delta)
-		return
-
+	var scoped_context = context.with_state(ai_state)
+	_ai_controller.update_action_target_tracking(self, scoped_context)
 	if can_reproduce() and _attempt_reproduce(world, delta):
+		set_ai_state(AgentAIState.ENGAGED)
+		force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 		return
 
-	if _regroup_with_kin(world, delta):
-		return
-
-	_patrol(world, delta)
+	var decision = _ai_controller.select_action(self, scoped_context, world.current_tick)
+	apply_action_decision(decision, world.current_tick)
+	_execute_selected_action(world, delta, decision.selected_action)
 
 
 func clear_targets(world = null) -> void:
@@ -267,6 +264,43 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	if chosen_mate.has_method("clear_targets"):
 		chosen_mate.call("clear_targets", world)
 	return true
+
+
+func _continue_engaged_flow(world, delta: float) -> bool:
+	if state == "reproduce" and _attempt_reproduce(world, delta):
+		return true
+	if _continue_or_finish_chase(world, delta):
+		return true
+	if (state in ["seek_carcass", "feed_carcass"] or target_carcass_id != -1) and _scavenge_or_feed(world, delta):
+		return true
+	if state == "investigate_water" and _investigate_recent_water(world, delta):
+		return true
+	return false
+
+
+func _execute_selected_action(world, delta: float, action_name: StringName) -> void:
+	match action_name:
+		AgentAction.HUNT_PREY:
+			if not _hunt(world, delta):
+				_patrol(world, delta)
+		AgentAction.SCAVENGE_CARCASS:
+			if not _scavenge_or_feed(world, delta):
+				_patrol(world, delta)
+		AgentAction.DRINK:
+			if not _seek_or_drink(world, delta):
+				_patrol(world, delta)
+		AgentAction.REST:
+			_rest(world, delta)
+		AgentAction.INVESTIGATE_WATER:
+			if not _investigate_recent_water(world, delta):
+				_patrol(world, delta)
+		AgentAction.PAIR_COHESION:
+			if not _regroup_with_kin(world, delta):
+				_patrol(world, delta)
+		AgentAction.PATROL:
+			_patrol(world, delta)
+		_:
+			_patrol(world, delta)
 
 
 func _patrol(world, delta: float) -> void:

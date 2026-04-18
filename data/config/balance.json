@@ -6,7 +6,7 @@
     "rest_energy": 26.0,
     "rest_energy_resume": 34.0,
     "rejoin_distance": 135.0,
-    "graze_hunger_floor": 20.0
+    "graze_hunger_floor": 12.0
   },
   "herd_weights": {
     "cohesion": 0.75,
@@ -39,6 +39,111 @@
     "max_feeders": 5,
     "search_radius": 420.0,
     "scavenging_hunger": 38.0
+  },
+  "ai": {
+    "selector": {
+      "stickiness_bonus": 0.1,
+      "switch_threshold_delta": 0.15,
+      "minimum_commitment_ticks": 6,
+      "target_invalid_interrupt_ticks": 2
+    },
+    "herbivore": {
+      "panic_threat_threshold": 0.55,
+      "evaluators": {
+        "graze": {
+          "hunger_weight": 0.42,
+          "food_weight": 0.28,
+          "biomass_weight": 0.18,
+          "safety_weight": 0.14,
+          "threat_penalty": 0.32,
+          "fatigue_penalty": 0.08,
+          "thirst_penalty": 0.12
+        },
+        "drink": {
+          "thirst_weight": 0.5,
+          "water_weight": 0.3,
+          "safety_weight": 0.08,
+          "water_threat_penalty": 0.35,
+          "ambient_threat_penalty": 0.12,
+          "hunger_penalty": 0.08
+        },
+        "rest": {
+          "fatigue_weight": 0.45,
+          "safe_biome_weight": 0.25,
+          "low_threat_weight": 0.1,
+          "hunger_penalty": 0.18,
+          "thirst_penalty": 0.22,
+          "threat_penalty": 0.35
+        },
+        "explore": {
+          "low_urgency_weight": 0.45,
+          "scarcity_weight": 0.35,
+          "low_threat_weight": 0.2
+        },
+        "join_herd": {
+          "isolation_weight": 0.35,
+          "herd_weight": 0.25,
+          "availability_weight": 0.2,
+          "threat_weight": 0.2
+        },
+        "flee_to_safe_area": {
+          "threat_weight": 0.5,
+          "predator_visible_weight": 0.2,
+          "open_area_weight": 0.1,
+          "low_energy_weight": 0.1,
+          "safe_zone_weight": 0.1
+        }
+      }
+    },
+    "predator": {
+      "evaluators": {
+        "hunt_prey": {
+          "hunger_weight": 0.35,
+          "prey_quality_weight": 0.35,
+          "prey_proximity_weight": 0.15,
+          "energy_weight": 0.15,
+          "low_energy_penalty": 0.12
+        },
+        "scavenge_carcass": {
+          "hunger_weight": 0.35,
+          "carcass_proximity_weight": 0.25,
+          "carcass_meat_weight": 0.25,
+          "prey_scarcity_weight": 0.15
+        },
+        "drink": {
+          "thirst_weight": 0.5,
+          "water_weight": 0.3,
+          "safety_weight": 0.08,
+          "water_threat_penalty": 0.15,
+          "ambient_threat_penalty": 0.0,
+          "hunger_penalty": 0.04
+        },
+        "rest": {
+          "fatigue_weight": 0.42,
+          "safe_biome_weight": 0.2,
+          "low_threat_weight": 0.08,
+          "hunger_penalty": 0.16,
+          "thirst_penalty": 0.2,
+          "threat_penalty": 0.05
+        },
+        "investigate_water": {
+          "hunger_weight": 0.2,
+          "thirst_weight": 0.15,
+          "signal_weight": 0.45,
+          "water_weight": 0.2
+        },
+        "pair_cohesion": {
+          "separation_weight": 0.45,
+          "mate_available_weight": 0.25,
+          "low_urgency_weight": 0.3
+        },
+        "patrol": {
+          "base_score": 0.15,
+          "low_urgency_weight": 0.55,
+          "no_targets_weight": 0.3
+        }
+      }
+    }
   },
   "lifecycle": {
     "starvation_death_threshold": 100.0,

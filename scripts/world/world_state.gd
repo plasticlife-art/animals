@@ -743,6 +743,7 @@ func _resolve_lod_tier(agent: AgentBase, lod_context: Dictionary) -> int:
 func _is_priority_lod_agent(agent: AgentBase) -> bool:
 	return agent.target_agent_id != -1 \
 		or agent.interaction_timer > 0.0 \
+		or agent.ai_state == &"panic" \
 		or LOD_PRIORITY_STATES.has(agent.state)
 
 

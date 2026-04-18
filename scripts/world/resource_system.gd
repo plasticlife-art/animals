@@ -162,6 +162,10 @@ func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) 
 
 func consume_at_position(position: Vector2, amount: float) -> float:
 	var index := _position_to_index(position)
+	return consume_cell(index, amount)
+
+
+func consume_cell(index: int, amount: float) -> float:
 	if index == -1:
 		return 0.0
 	var consumed := minf(_cells[index], amount)

@@ -16,6 +16,8 @@ var hunger: float = 0.0
 var thirst: float = 0.0
 var age: float = 0.0
 var state: String = "idle"
+var ai_state: StringName = &"alive"
+var current_action: StringName = &"none"
 var is_alive: bool = true
 var sex: String = SEX_FEMALE
 var reproduction_cooldown: float = 0.0
@@ -23,6 +25,7 @@ var target_agent_id: int = -1
 var target_position = null
 var group_id: int = -1
 var last_state_change_tick: int = 0
+var last_action_change_tick: int = 0
 var interaction_timer: float = 0.0
 var attack_cooldown: float = 0.0
 var chase_timer: float = 0.0
@@ -31,6 +34,11 @@ var debug_color: Color = Color.WHITE
 var recent_water_sources: Array = []
 var kin_ids: Array = []
 var last_known_kin_center = null
+var last_action_reason: String = ""
+var last_action_scores: Dictionary = {}
+var last_action_raw_scores: Dictionary = {}
+var decision_target_data: Dictionary = {}
+var action_target_failure_ticks: int = 0
 var lod_tier: int = 0
 var path_cells: Array = []
 var path_index: int = 0
@@ -73,11 +81,19 @@ func configure(
 	need_max = float(balance_config.get("need_max", 100.0))
 	energy = float(metabolism.get("max_energy", 100.0))
 	wander_angle = rng.randf_range(0.0, TAU)
+	ai_state = &"alive"
+	current_action = &"none"
+	last_action_change_tick = 0
 	target_agent_id = -1
 	target_position = null
 	clear_water_memory()
 	kin_ids.clear()
 	last_known_kin_center = null
+	last_action_reason = ""
+	last_action_scores.clear()
+	last_action_raw_scores.clear()
+	decision_target_data.clear()
+	action_target_failure_ticks = 0
 	clear_navigation()
 	lod_tier = 0
 	debug_color = Color(0.9, 0.9, 0.9)
@@ -99,6 +115,48 @@ func set_state(new_state: String, current_tick: int) -> void:
 		return
 	state = new_state
 	last_state_change_tick = current_tick
+
+
+func set_ai_state(new_state: StringName) -> void:
+	ai_state = new_state
+
+
+func get_ticks_in_current_action(current_tick: int) -> int:
+	if current_action == &"none":
+		return 0
+	return maxi(0, current_tick - last_action_change_tick)
+
+
+func apply_action_decision(decision, current_tick: int) -> void:
+	if decision == null:
+		return
+	var selected_action: StringName = StringName(decision.selected_action)
+	if current_action != selected_action:
+		current_action = selected_action
+		last_action_change_tick = current_tick
+	last_action_reason = str(decision.reason)
+	last_action_scores = decision.final_scores.duplicate(true)
+	last_action_raw_scores = decision.raw_scores.duplicate(true)
+	decision_target_data = decision.target_data.duplicate(true)
+
+
+func force_current_action(action_name: StringName, reason: String, current_tick: int) -> void:
+	if current_action != action_name:
+		current_action = action_name
+		last_action_change_tick = current_tick
+	last_action_reason = reason
+	last_action_scores.clear()
+	last_action_raw_scores.clear()
+
+
+func clear_action_tracking(current_tick: int) -> void:
+	current_action = &"none"
+	last_action_change_tick = current_tick
+	last_action_reason = ""
+	last_action_scores.clear()
+	last_action_raw_scores.clear()
+	decision_target_data.clear()
+	action_target_failure_ticks = 0
 
 
 func update_needs(delta: float) -> void:
@@ -337,11 +395,13 @@ func _sort_water_memory_entry(a: Dictionary, b: Dictionary) -> bool:
 	return float(a.get("last_seen_time", -1.0)) > float(b.get("last_seen_time", -1.0))
 
 
-func get_debug_summary() -> Dictionary:
+func get_debug_summary(current_tick: int = 0) -> Dictionary:
 	return {
 		"id": id,
 		"species": species_type,
 		"state": state,
+		"ai_state": String(ai_state),
+		"current_action": String(current_action),
 		"energy": snappedf(energy, 0.1),
 		"hunger": snappedf(hunger, 0.1),
 		"thirst": snappedf(thirst, 0.1),
@@ -350,6 +410,10 @@ func get_debug_summary() -> Dictionary:
 		"speed": snappedf(velocity.length(), 0.1),
 		"biome": "-",
 		"path_nodes": path_cells.size(),
+		"ticks_in_current_action": get_ticks_in_current_action(current_tick),
+		"last_action_reason": last_action_reason,
+		"utility_scores": _snapshot_scores(last_action_scores),
+		"utility_raw_scores": _snapshot_scores(last_action_raw_scores),
 		"alive": is_alive,
 		"sex": sex,
 	}
@@ -361,3 +425,12 @@ func _get_debug_target_text() -> String:
 	if target_position != null:
 		return str(target_position)
 	return "-"
+
+
+func _snapshot_scores(scores: Dictionary) -> Dictionary:
+	var snapshot := {}
+	var keys: Array = scores.keys()
+	keys.sort_custom(func(a, b): return str(a) < str(b))
+	for key in keys:
+		snapshot[String(key)] = snappedf(float(scores.get(key, 0.0)), 0.001)
+	return snapshot

@@ -12,7 +12,7 @@
       "danger_radius": 120.0,
       "water_search_radius": 640.0,
       "water_memory_duration_seconds": 120.0,
-      "grass_search_radius": 280.0,
+      "grass_search_radius": 360.0,
       "neighbor_radius": 95.0,
       "separation_radius": 28.0,
       "mate_search_radius": 64.0
@@ -36,9 +36,9 @@
     },
     "reproduction": {
       "maturity_age": 24.0,
-      "energy_threshold": 58.0,
-      "cooldown": 38.0,
-      "birth_energy_cost": 18.0,
+      "energy_threshold": 66.0,
+      "cooldown": 46.0,
+      "birth_energy_cost": 22.0,
       "safe_radius": 120.0,
       "offspring_spawn_radius": 18.0
     },

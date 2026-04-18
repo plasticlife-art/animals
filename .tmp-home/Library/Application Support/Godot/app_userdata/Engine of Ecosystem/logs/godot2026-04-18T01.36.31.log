@@ -1,0 +1,154 @@
+Godot Engine v4.6.2.stable.official.71f334935 - https://godotengine.org
+
+ERROR: Condition "ret != noErr" is true. Returning: ""
+   at: get_system_ca_certificates (platform/macos/os_macos.mm:1028)
+{
+	"predator_free": {
+		"checkpoints": [
+			{
+				"average_energy": 99.8666666666663,
+				"average_hunger": 0.111111111111111,
+				"average_thirst": 0.0833333333333334,
+				"grass_total_biomass": 760546.16771645,
+				"herbivores": 220,
+				"predators": 0,
+				"tick": 1
+			},
+			{
+				"average_energy": 38.5162327416149,
+				"average_hunger": 7.45969756738987,
+				"average_thirst": 33.7157297830378,
+				"grass_total_biomass": 1011285.86663842,
+				"herbivores": 338,
+				"predators": 0,
+				"tick": 1000
+			},
+			{
+				"average_energy": 5.99662790697637,
+				"average_hunger": 7.79063307493537,
+				"average_thirst": 17.2526647286831,
+				"grass_total_biomass": 1010578.15958497,
+				"herbivores": 344,
+				"predators": 0,
+				"tick": 2000
+			},
+			{
+				"average_energy": 2.88542635658915,
+				"average_hunger": 8.02667958656328,
+				"average_thirst": 35.026162790699,
+				"grass_total_biomass": 1010973.09380524,
+				"herbivores": 344,
+				"predators": 0,
+				"tick": 3000
+			},
+			{
+				"average_energy": 2.45956989247312,
+				"average_hunger": 6.83560334528075,
+				"average_thirst": 37.3933691756289,
+				"grass_total_biomass": 1012198.42747411,
+				"herbivores": 93,
+				"predators": 0,
+				"tick": 4000
+			}
+		],
+		"deaths_by_cause": {
+			"old_age": 251
+		}
+	},
+	"standard": {
+		"checkpoints": [
+			{
+				"average_energy": 103.649019607843,
+				"average_hunger": 0.109430438842203,
+				"average_thirst": 0.0820728291316527,
+				"grass_total_biomass": 760546.16771645,
+				"herbivores": 220,
+				"predators": 18,
+				"tick": 1
+			},
+			{
+				"average_energy": 40.6017994100273,
+				"average_hunger": 11.5845952146837,
+				"average_thirst": 33.2874139626354,
+				"grass_total_biomass": 1011067.21949252,
+				"herbivores": 311,
+				"predators": 28,
+				"tick": 1000
+			},
+			{
+				"average_energy": 11.3297631487284,
+				"average_hunger": 10.8260536398467,
+				"average_thirst": 19.326854754442,
+				"grass_total_biomass": 1010939.55521132,
+				"herbivores": 295,
+				"predators": 24,
+				"tick": 2000
+			},
+			{
+				"average_energy": 5.94025470653378,
+				"average_hunger": 12.8958287190845,
+				"average_thirst": 37.4047065337779,
+				"grass_total_biomass": 1011633.55210094,
+				"herbivores": 281,
+				"predators": 20,
+				"tick": 3000
+			},
+			{
+				"average_energy": 20.4842735042736,
+				"average_hunger": 10.5817663817663,
+				"average_thirst": 32.9846153846168,
+				"grass_total_biomass": 1012344.62229786,
+				"herbivores": 63,
+				"predators": 15,
+				"tick": 4000
+			}
+		],
+		"deaths_by_cause": {
+			"old_age": 213,
+			"predation": 48,
+			"starvation": 20,
+			"thirst": 7
+		}
+	}
+}
+1633.55210094,
+				"herbivores": 281,
+				"predators": 20,
+				"tick": 3000
+			},
+			{
+				"average_energy": 20.4842735042736,
+				"average_hunger": 10.5817663817663,
+				"average_thirst": 32.9846153846168,
+				"grass_total_biomass": 1012344.62229786,
+				"herbivores": 63,
+				"predators": 15,
+				"tick": 4000
+			},
+			{
+				"average_energy": 85.0741666666657,
+				"average_hunger": 20.1314814814814,
+				"average_thirst": 26.9111111111116,
+				"grass_total_biomass": 1012687.58366059,
+				"herbivores": 3,
+				"predators": 9,
+				"tick": 5000
+			},
+			{
+				"average_energy": 61.5166666666665,
+				"average_hunger": 60.4592592592591,
+				"average_thirst": 7.92222222222237,
+				"grass_total_biomass": 1012687.58312146,
+				"herbivores": 0,
+				"predators": 6,
+				"tick": 6000
+			}
+		],
+		"deaths_by_cause": {
+			"old_age": 286,
+			"predation": 48,
+			"starvation": 22,
+			"thirst": 7
+		}
+	}
+}

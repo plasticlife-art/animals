@@ -249,6 +249,7 @@ func _refresh_inspector(agent_summary: Dictionary) -> void:
 		"[b]ID[/b] %s" % str(agent_summary.get("id", "-")),
 		"[b]Species[/b] %s    [b]Sex[/b] %s" % [agent_summary.get("species", "-"), agent_summary.get("sex", "-")],
 		"[b]State[/b] %s    [b]Alive[/b] %s" % [agent_summary.get("state", "-"), str(agent_summary.get("alive", false))],
+		"[b]AI State[/b] %s    [b]Action[/b] %s" % [agent_summary.get("ai_state", "-"), agent_summary.get("current_action", "-")],
 		"[b]Energy[/b] %.1f    [b]Hunger[/b] %.1f    [b]Thirst[/b] %.1f" % [
 			float(agent_summary.get("energy", 0.0)),
 			float(agent_summary.get("hunger", 0.0)),
@@ -263,7 +264,21 @@ func _refresh_inspector(agent_summary: Dictionary) -> void:
 			int(agent_summary.get("path_nodes", 0)),
 		],
 		"[b]Target[/b] %s" % str(agent_summary.get("target", "-")),
+		"[b]Action ticks[/b] %d" % int(agent_summary.get("ticks_in_current_action", 0)),
+		"[b]Decision[/b] %s" % str(agent_summary.get("last_action_reason", "-")),
+		_format_utility_scores(agent_summary.get("utility_scores", {})),
 	])
+
+
+func _format_utility_scores(scores: Dictionary) -> String:
+	if scores.is_empty():
+		return "[b]Scores[/b] -"
+	var lines := ["[b]Scores[/b]"]
+	var keys: Array = scores.keys()
+	keys.sort()
+	for key in keys:
+		lines.append("- %s: %.3f" % [str(key), float(scores.get(key, 0.0))])
+	return "\n".join(lines)
 
 
 func _refresh_event_log() -> void:

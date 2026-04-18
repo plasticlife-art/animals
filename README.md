@@ -1,22 +1,45 @@
 # Engine of Ecosystem
 
-`Engine of Ecosystem` is a Godot 4.6 ecosystem simulation prototype focused on the simulation layer first: deterministic ticking, autonomous herbivore and predator behavior, world resources, telemetry, and debug tooling.
+`Engine of Ecosystem` is a Godot 4.6 ecosystem simulation prototype focused on simulation-first gameplay: deterministic ticking, autonomous herbivore and predator behavior, terrain-aware navigation, telemetry, and debug tooling.
 
-The current build simulates a continuous 2D world with grass regrowth, fixed water sources, herbivore herds, predator hunting, reproduction, aging, and event-driven telemetry. The game-facing presentation is intentionally minimal and built around inspection, overlays, and exportable metrics.
+The current build simulates a continuous 2D world with biomes, obstacles, grass regrowth, fixed water sources, herbivore herds, predator hunting, carcass scavenging, reproduction, aging, camera follow modes, minimap navigation, telemetry exports, and camera-driven LOD for interactive play.
 
-## Requirements
+## Current Build
 
-- Godot 4.6
+- Godot version: `4.6`
+- Main scene: `res://scenes/main/main.tscn`
+- Headless scene: `res://scenes/main/headless_runner.tscn`
+- Default seed: `3`
+- Tick rate: `18` ticks per second
+- World size: `4800 x 2700`
+- Initial population: `220` herbivores in `12` herds, `18` predators
+- Water sources: `18`
+- Terrain: meadow, forest, drought, swamp biomes plus obstacles and chokepoints
+
+## Core Systems
+
+- Deterministic fixed-step simulation with seeded RNG
+- JSON-driven configuration for world, species, balance, and debug settings
+- Procedural terrain grid with biome-specific move cost and forage multipliers
+- Obstacle generation and terrain-aware pathfinding
+- Renewable grass resource grid linked to terrain productivity
+- Spatial grid acceleration for proximity queries
+- Herbivore behavior: wander, regroup, graze, drink, flee, rest, reproduce
+- Predator behavior: patrol, select prey, chase, attack, drink, rest, reproduce, scavenge carcasses
+- Lifecycle rules: hunger, thirst, energy depletion, predation, old age
+- Carcass lifecycle with feeder reservation and meat depletion
+- Runtime telemetry, charts, event log, agent inspector, overlays, minimap
+- Camera-driven interactive LOD for distant agents
 
 ## Run
 
-### Interactive scene
+### Interactive Scene
 
 1. Open the project in Godot.
 2. Run the project, or open `res://scenes/main/main.tscn`.
 3. Press `Tab` to show or hide the HUD. The HUD starts hidden by default.
 
-### Headless scene
+### Headless Scene
 
 1. Open `res://scenes/main/headless_runner.tscn`.
 2. Configure `total_ticks`, `seed_override`, and `export_on_finish` in the inspector.
@@ -27,58 +50,48 @@ The current build simulates a continuous 2D world with grass regrowth, fixed wat
 - `Tab`: toggle HUD visibility
 - `Esc`: open or close the pause menu
 - `W`, `A`, `S`, `D`: pan camera
-- Mouse wheel: zoom
-- Middle mouse drag: pan camera
-- Left click: select the nearest agent under the cursor and start following it
-- Any manual pan input: exit follow mode and return camera control to the player
+- Mouse wheel / trackpad pinch: zoom
+- Middle mouse drag / trackpad pan: pan camera
+- Left click on world: select nearest agent and switch follow mode to `Agent`
+- Drag or click on minimap: move camera
+- Manual pan input while following: clear follow mode
+
+## HUD Features
 
 From the HUD you can:
 
 - pause or resume the simulation
 - single-step one tick
-- switch speed between `1x`, `2x`, `4x`, and `10x`
-- switch follow mode between `Off`, `Agent`, and `Flock` (`Flock` follows the selected herd center)
+- switch speed between configured speed presets
+- switch follow mode between `Off`, `Agent`, and `Flock`
 - inspect the selected agent
 - review recent events
-- toggle debug overlays
-- export telemetry
-
-## Default Simulation Setup
-
-The shipped config in `data/config/` currently starts with:
-
-- seed `1337`
-- tick rate `20` ticks per second
-- world size `4800 x 2700`
-- `480` herbivores in `18` groups
-- `48` predators
-- `18` water sources
-- terrain grid with biomes, obstacles, and grass biomass regrowth
-
-## Implemented Systems
-
-- Fixed-step simulation manager with deterministic seeded RNG
-- JSON-driven configuration loading for world, species, balance, and debug settings
-- Procedural terrain grid with meadow, forest, drought, and swamp biomes
-- Obstacle generation, chokepoints, and A*-based waypoint navigation on the terrain grid
-- Renewable grass resource grid with biome-scaled carrying capacity and regrowth
-- Spatial grid acceleration for neighborhood and density queries
-- Herbivore behavior for wandering, regrouping, grazing, drinking, fleeing, resting, and reproduction
-- Predator behavior for patrol, prey selection, chase, attack, feeding, drinking, resting, mate following, and reproduction
-- Lifecycle rules for hunger, thirst, energy depletion, predation, and old age
-- Event bus for births, deaths, feeding, water use, and predation outcomes
-- Runtime stats collection for populations, births, deaths, hunger, energy, hunt success, biomass, and step timings
-- In-game telemetry panels with charts, event log, agent inspection, and overlay toggles
+- toggle LOD on or off
+- toggle biome, obstacle, carcass, path, density, water, and debug overlays
+- export telemetry snapshots and event logs
 
 ## Telemetry Exports
 
-Using the export button or the headless runner writes files to `user://exports` by default:
+Exports are written to `user://exports` by default:
 
 - `metrics_<timestamp>_seed_<seed>.csv`
 - `metrics_<timestamp>_seed_<seed>.json`
 - `events_<timestamp>_seed_<seed>.csv`
 - `events_<timestamp>_seed_<seed>.json`
 - `summary_<timestamp>_seed_<seed>.json`
+
+The summary includes population metrics, death causes, hunt success, carcass metrics, blocked terrain ratio, and LOD counters.
+
+## Configuration
+
+- `data/config/world.json`
+  World size, tick rate, terrain generation, navigation limits, water sources, spawn counts
+- `data/config/species.json`
+  Movement, perception, metabolism, feeding, reproduction, and aging for each species
+- `data/config/balance.json`
+  Shared thresholds, herd weights, hunt rules, carcass behavior, lifecycle rules, stats sampling
+- `data/config/debug.json`
+  HUD defaults, UI refresh cadence, overlays, export directory, interactive LOD tuning
 
 ## Project Structure
 
@@ -110,6 +123,7 @@ scripts/ui/
   debug_panel.gd
   game_camera.gd
   main_controller.gd
+  minimap.gd
   overlay_renderer.gd
   world_view.gd
 data/config/
@@ -117,18 +131,19 @@ data/config/
   debug.json
   species.json
   world.json
+docs/
+  ARCHITECTURE.md
+  FEATURE_BACKLOG.md
 ```
 
-## Config Files
+## Documentation
 
-- `data/config/world.json`: seed, tick rate, world bounds, spatial partitioning, grass settings, terrain generation, navigation, water sources, spawn counts
-- `data/config/species.json`: per-species movement, perception, metabolism, feeding, reproduction, and aging values
-- `data/config/balance.json`: shared thresholds, herd and hunt weights, attack tuning, lifecycle thresholds, stats sampling
-- `data/config/debug.json`: HUD speeds, selection radius, chart history, visible event count, export directory, overlay defaults
+- [Architecture Overview](docs/ARCHITECTURE.md)
+- [Feature Backlog](docs/FEATURE_BACKLOG.md)
 
 ## Current Limitations
 
-- The prototype models one herbivore species and one predator species.
+- The prototype still models one herbivore species and one predator species.
 - Rendering is debug-oriented rather than art-driven.
-- There is no shelter logic, genetics, seasons, or save/load flow.
-- Runtime verification was limited to static inspection here because no local Godot CLI was available in this workspace.
+- There is no save/load flow, seasons, genetics, shelter logic, or authored scenario editor.
+- Headless mode currently runs the same simulation systems but without camera-driven LOD benefits.

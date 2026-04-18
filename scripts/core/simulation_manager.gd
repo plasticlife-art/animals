@@ -193,7 +193,7 @@ func get_selected_agent_summary() -> Dictionary:
 	var agent = get_selected_agent()
 	if agent == null:
 		return {}
-	var summary: Dictionary = agent.get_debug_summary()
+	var summary: Dictionary = agent.get_debug_summary(current_tick)
 	summary["biome"] = "meadow" if world_state == null else world_state.get_biome_at_position(agent.position)
 	summary["path_nodes"] = agent.path_cells.size()
 	return summary
