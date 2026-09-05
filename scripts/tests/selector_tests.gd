@@ -18,6 +18,13 @@ class FixedEvaluator:
 		return {"score": fixed_score, "reasons": []}
 
 
+class VetoEvaluator:
+	extends RefCounted
+
+	func evaluate(_agent, _context) -> Dictionary:
+		return {"score": -1.0, "reasons": ["below hunger floor"], "vetoed": true}
+
+
 class AgentStub:
 	extends RefCounted
 
@@ -79,3 +86,25 @@ func run(asserts) -> void:
 		AgentAction.DRINK: FixedEvaluator.new(0.95),
 	}, 20, true)
 	asserts.equal(interrupt_pick.selected_action, AgentAction.DRINK, "selector should bypass commitment rules on forced interrupt")
+
+	# A veto must beat every retention rule: stickiness, minimum commitment, and the
+	# switch threshold all favor the current action, and none may resurrect it.
+	var vetoed_agent := AgentStub.new()
+	vetoed_agent.current_action = AgentAction.GRAZE
+	vetoed_agent.action_ticks = 1
+	var vetoed_pick = selector.select(vetoed_agent, policy, context, {
+		AgentAction.GRAZE: VetoEvaluator.new(),
+		AgentAction.DRINK: FixedEvaluator.new(0.0),
+	}, 20, false)
+	asserts.equal(vetoed_pick.selected_action, AgentAction.DRINK, "selector must drop a vetoed action even when it is the current one and scores tie")
+
+	var all_vetoed_agent := AgentStub.new()
+	all_vetoed_agent.current_action = AgentAction.NONE
+	var all_vetoed_pick = selector.select(all_vetoed_agent, policy, context, {
+		AgentAction.GRAZE: VetoEvaluator.new(),
+		AgentAction.DRINK: VetoEvaluator.new(),
+	}, 20, false)
+	asserts.is_true(
+		policy.is_action_allowed(all_vetoed_pick.selected_action),
+		"selector should still return a legal action when every candidate vetoes"
+	)

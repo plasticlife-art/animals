@@ -11,6 +11,10 @@ var regrowth_rate: float = 5.0
 var total_biomass: float = 0.0
 var _cells: PackedFloat32Array = PackedFloat32Array()
 var _biomass_totals_by_biome: Dictionary = {}
+# Indices of cells below their local maximum. A cell at max cannot regrow, so
+# stepping the whole grid every tick costs the same whether or not anything was
+# eaten; only depleted cells need work.
+var _regrowing_cells: Dictionary = {}
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrain_system: TerrainSystem = null) -> void:
@@ -31,6 +35,7 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 	_cells.resize(cols * rows)
 	total_biomass = 0.0
 	_biomass_totals_by_biome.clear()
+	_regrowing_cells.clear()
 
 	var density_min := float(grass_config.get("initial_density_min", 0.45))
 	var density_max := float(grass_config.get("initial_density_max", 0.95))
@@ -40,19 +45,36 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 		_cells[index] = biomass
 		total_biomass += biomass
 		_add_biomass_to_biome(index, biomass)
+		if biomass < _get_cell_max_biomass(index):
+			_regrowing_cells[index] = true
 
 
 func step(delta: float) -> void:
-	for index in range(_cells.size()):
+	if _regrowing_cells.is_empty():
+		return
+	var filled_cells: Array = []
+	for index in _regrowing_cells.keys():
 		var previous := _cells[index]
+		var cell_max := _get_cell_max_biomass(index)
 		var regrowth_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_regrowth_multiplier(index)
-		var updated := minf(_get_cell_max_biomass(index), previous + regrowth_rate * regrowth_multiplier * delta)
-		_cells[index] = updated
+		var updated := minf(cell_max, previous + regrowth_rate * regrowth_multiplier * delta)
 		var delta_biomass := updated - previous
 		if is_zero_approx(delta_biomass):
+			# A cell that cannot regrow at all would otherwise sit in the set forever;
+			# consumption puts it back when it next matters.
+			filled_cells.append(index)
 			continue
+		_cells[index] = updated
 		total_biomass += delta_biomass
 		_add_biomass_to_biome(index, delta_biomass)
+		if updated >= cell_max:
+			filled_cells.append(index)
+	for index in filled_cells:
+		_regrowing_cells.erase(index)
+
+
+func get_regrowing_cell_count() -> int:
+	return _regrowing_cells.size()
 
 
 func get_total_biomass() -> float:
@@ -169,9 +191,12 @@ func consume_cell(index: int, amount: float) -> float:
 	if index == -1:
 		return 0.0
 	var consumed := minf(_cells[index], amount)
+	if consumed <= 0.0:
+		return 0.0
 	_cells[index] -= consumed
 	total_biomass -= consumed
 	_add_biomass_to_biome(index, -consumed)
+	_regrowing_cells[index] = true
 	return consumed
 
 

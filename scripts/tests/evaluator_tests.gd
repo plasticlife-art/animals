@@ -28,6 +28,22 @@ func run(asserts) -> void:
 	var explore_score := float(ExploreUtilityEvaluatorScript.new().evaluate(null, graze_context).get("score", 0.0))
 	asserts.greater(graze_score, explore_score, "graze should beat explore when hunger is high and food is nearby")
 
+	var sated_graze_context = TestHelpers.build_context({
+		"hunger": 0.04,
+		"food_proximity": 0.95,
+		"food_biomass": 1.0,
+		"threat": 0.0,
+		"thirst": 0.1,
+		"water_proximity": 0.1,
+		"fatigue": 0.1,
+		"graze_allowed": 0.0,
+		"low_urgency": 0.9,
+		"resource_scarcity": 0.0,
+	})
+	var sated_graze_score := float(GrazeUtilityEvaluatorScript.new().evaluate(null, sated_graze_context).get("score", 0.0))
+	var sated_explore_score := float(ExploreUtilityEvaluatorScript.new().evaluate(null, sated_graze_context).get("score", 0.0))
+	asserts.is_true(sated_graze_score < sated_explore_score, "graze should drop below explore when hunger is below the graze floor")
+
 	var drink_context = TestHelpers.build_context({
 		"hunger": 0.25,
 		"food_proximity": 0.55,
@@ -78,6 +94,19 @@ func run(asserts) -> void:
 	var patrol_score := float(PatrolUtilityEvaluatorScript.new().evaluate(null, hunt_context).get("score", 0.0))
 	asserts.greater(hunt_score, patrol_score, "hunt should beat patrol when hunger is high and prey is available")
 
+	var sated_hunt_context = TestHelpers.build_context({
+		"hunger": 0.02,
+		"prey_quality": 0.95,
+		"prey_proximity": 0.95,
+		"energy_ratio": 0.95,
+		"feeding_allowed": 0.0,
+		"low_urgency": 0.9,
+		"no_targets_score": 0.0,
+	})
+	var sated_hunt_score := float(HuntPreyUtilityEvaluatorScript.new().evaluate(null, sated_hunt_context).get("score", 0.0))
+	var sated_patrol_score := float(PatrolUtilityEvaluatorScript.new().evaluate(null, sated_hunt_context).get("score", 0.0))
+	asserts.is_true(sated_hunt_score < sated_patrol_score, "hunt should drop below patrol when hunger is below the feed floor")
+
 	var scavenge_context = TestHelpers.build_context({
 		"hunger": 0.82,
 		"carcass_proximity": 0.92,
@@ -89,3 +118,24 @@ func run(asserts) -> void:
 	var scavenge_score := float(ScavengeCarcassUtilityEvaluatorScript.new().evaluate(null, scavenge_context).get("score", 0.0))
 	var fallback_patrol := float(PatrolUtilityEvaluatorScript.new().evaluate(null, scavenge_context).get("score", 0.0))
 	asserts.greater(scavenge_score, fallback_patrol, "scavenge should beat patrol when carcass opportunity is strong")
+
+	var sated_scavenge_context = TestHelpers.build_context({
+		"hunger": 0.03,
+		"carcass_proximity": 0.95,
+		"carcass_meat": 1.0,
+		"prey_scarcity": 0.9,
+		"feeding_allowed": 0.0,
+		"low_urgency": 0.9,
+		"no_targets_score": 0.0,
+	})
+	var sated_scavenge_score := float(ScavengeCarcassUtilityEvaluatorScript.new().evaluate(null, sated_scavenge_context).get("score", 0.0))
+	var sated_scavenge_patrol := float(PatrolUtilityEvaluatorScript.new().evaluate(null, sated_scavenge_context).get("score", 0.0))
+	asserts.is_true(sated_scavenge_score < sated_scavenge_patrol, "scavenge should drop below patrol when hunger is below the feed floor")
+
+	var graze_veto: Dictionary = GrazeUtilityEvaluatorScript.new().evaluate(null, sated_graze_context)
+	var hunt_veto: Dictionary = HuntPreyUtilityEvaluatorScript.new().evaluate(null, sated_hunt_context)
+	var scavenge_veto: Dictionary = ScavengeCarcassUtilityEvaluatorScript.new().evaluate(null, sated_scavenge_context)
+	asserts.is_true(bool(graze_veto.get("vetoed", false)), "graze below the hunger floor should be vetoed, not merely scored low")
+	asserts.is_true(bool(hunt_veto.get("vetoed", false)), "hunt below the feed floor should be vetoed, not merely scored low")
+	asserts.is_true(bool(scavenge_veto.get("vetoed", false)), "scavenge below the feed floor should be vetoed, not merely scored low")
+	asserts.is_true(graze_veto.get("score", 0.0) < 0.0, "a veto must survive result clamping as a negative score")

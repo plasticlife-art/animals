@@ -72,6 +72,7 @@ func build_context(agent, world, snapshot = null):
 	var investigation_source: Dictionary = snapshot.investigation_source
 	var mate = snapshot.mate_target
 	var max_energy := float(agent.metabolism.get("max_energy", 100.0))
+	var feeding_hunger_floor: float = agent.get_feed_hunger_floor() if agent.has_method("get_feed_hunger_floor") else float(thresholds.get("feed_hunger_floor", thresholds.get("graze_hunger_floor", 12.0)))
 	var hunger := UtilityContextFactory.need_ratio(agent.hunger, agent.need_max)
 	var thirst := UtilityContextFactory.need_ratio(agent.thirst, agent.need_max)
 	var energy_ratio := UtilityContextFactory.energy_ratio(agent.energy, max_energy)
@@ -136,6 +137,7 @@ func build_context(agent, world, snapshot = null):
 		"carcass_meat": carcass_meat,
 		"prey_scarcity": clampf(1.0 - maxf(prey_quality, prey_proximity), 0.0, 1.0),
 		"water_proximity": water_proximity,
+		"feeding_allowed": UtilityContextFactory.bool_ratio(agent.hunger >= feeding_hunger_floor),
 		"investigation_signal": investigation_signal,
 		"kin_separation": kin_separation,
 		"mate_available": UtilityContextFactory.bool_ratio(mate != null),
@@ -178,6 +180,8 @@ func select_action(agent, context, current_tick: int):
 func should_force_interrupt(agent, next_state: StringName) -> bool:
 	var policy = get_policy(next_state)
 	if next_state == AgentAIState.ENGAGED and agent.ai_state != AgentAIState.ENGAGED:
+		return true
+	if StringName(agent.current_action) in [AgentAction.HUNT_PREY, AgentAction.SCAVENGE_CARCASS] and agent.has_method("can_continue_feeding") and not bool(agent.call("can_continue_feeding")):
 		return true
 	if agent.current_action != &"" and not policy.is_action_allowed(StringName(agent.current_action)):
 		return true

@@ -65,6 +65,7 @@ func build_context(agent, world, snapshot = null):
 	var group_center = snapshot.group_center
 	var biome_id: String = str(world.get_biome_at_position(agent.position))
 	var max_energy := float(agent.metabolism.get("max_energy", 100.0))
+	var graze_hunger_floor: float = agent.get_graze_hunger_floor() if agent.has_method("get_graze_hunger_floor") else float(agent.balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0))
 	var hunger := UtilityContextFactory.need_ratio(agent.hunger, agent.need_max)
 	var thirst := UtilityContextFactory.need_ratio(agent.thirst, agent.need_max)
 	var energy_ratio := UtilityContextFactory.energy_ratio(agent.energy, max_energy)
@@ -135,6 +136,7 @@ func build_context(agent, world, snapshot = null):
 		"food_proximity": food_proximity,
 		"food_biomass": food_biomass,
 		"water_proximity": water_proximity,
+		"graze_allowed": UtilityContextFactory.bool_ratio(agent.hunger >= graze_hunger_floor),
 		"herd_proximity": herd_proximity,
 		"herd_available": herd_available,
 		"isolation": clampf(1.0 - minf(float(neighbors.size()) / 5.0, 1.0), 0.0, 1.0),
@@ -178,6 +180,8 @@ func select_action(agent, context, current_tick: int):
 func should_force_interrupt(agent, next_state: StringName, context) -> bool:
 	var policy = get_policy(next_state)
 	if next_state == AgentAIState.PANIC and agent.ai_state != AgentAIState.PANIC:
+		return true
+	if StringName(agent.current_action) == AgentAction.GRAZE and agent.has_method("can_continue_grazing") and not bool(agent.call("can_continue_grazing")):
 		return true
 	if agent.current_action != &"" and not policy.is_action_allowed(StringName(agent.current_action)):
 		return true

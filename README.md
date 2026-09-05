@@ -12,7 +12,7 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - Default seed: `3`
 - Tick rate: `18` ticks per second
 - World size: `4800 x 2700`
-- Initial population: `220` herbivores in `12` herds, `18` predators
+- Initial population: `240` herbivores in `12` herds, `24` predators
 - Water sources: `18`
 - Terrain: meadow, forest, drought, swamp biomes plus obstacles and chokepoints
 
@@ -165,4 +165,8 @@ docs/
 - The prototype still models one herbivore species and one predator species.
 - Rendering is debug-oriented rather than art-driven.
 - There is no save/load flow, seasons, genetics, shelter logic, or authored scenario editor.
-- Headless mode currently runs the same simulation systems but without camera-driven LOD benefits.
+- Headless mode runs the same simulation systems, but with LOD enabled it substitutes a fixed
+  `headless_active_radius` window at the world center for the camera rect. Everything outside that
+  window degrades to coarse tiers and can go dormant, so headless benchmarks measure the LOD path
+  rather than full-fidelity simulation. Set `simulation_lod.enabled` to `false` in `data/config/debug.json`
+  for a full-fidelity run.

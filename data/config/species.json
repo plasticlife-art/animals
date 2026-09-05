@@ -32,7 +32,7 @@
       "drink_distance": 50.0,
       "drink_restore": 52.0,
       "eat_duration": 0.5,
-      "drink_duration": 0.6
+      "drink_duration": 0.3
     },
     "reproduction": {
       "maturity_age": 24.0,
@@ -86,7 +86,6 @@
       "drink_restore": 50.0
     },
     "hunt": {
-      "engage_hunger": 38.0,
       "min_chase_energy": 4.0
     },
     "reproduction": {

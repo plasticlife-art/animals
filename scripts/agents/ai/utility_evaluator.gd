@@ -1,6 +1,8 @@
 class_name UtilityEvaluator
 extends RefCounted
 
+const VETO_SCORE := -1.0
+
 var action_name: StringName = StringName()
 var config: Dictionary = {}
 
@@ -22,6 +24,17 @@ static func result(score: float, reasons: Array = []) -> Dictionary:
 	return {
 		"score": clampf(score, 0.0, 1.5),
 		"reasons": reasons.duplicate(),
+	}
+
+
+## Marks the action as illegal for this decision tick. The selector drops vetoed
+## actions from the candidate set instead of ranking them, so a veto cannot be
+## outvoted by the stickiness bonus the way a zero score can.
+static func veto(reasons: Array = []) -> Dictionary:
+	return {
+		"score": VETO_SCORE,
+		"reasons": reasons.duplicate(),
+		"vetoed": true,
 	}
 
 

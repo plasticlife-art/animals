@@ -114,6 +114,9 @@ func _resolve_water_target(world) -> Dictionary:
 
 
 func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
+	if not _is_hungry_enough_to_graze(can_continue_grazing()):
+		clear_targets()
+		return false
 	var grass: Dictionary = _find_grass_target(world)
 	if grass.is_empty():
 		return false
@@ -124,15 +127,10 @@ func _find_grass_target(world) -> Dictionary:
 	return world._find_grass_target_for_agent(self)
 
 
-func _get_expanded_grass_search_radius(urgency_start: float) -> float:
-	var base_search_radius := float(perception.get("grass_search_radius", 180.0))
-	var urgency_ratio := 0.0
-	if hunger > urgency_start:
-		urgency_ratio = clampf((hunger - urgency_start) / maxf(1.0, need_max - urgency_start), 0.0, 1.0)
-	return lerpf(base_search_radius, maxf(base_search_radius * 4.0, 720.0), urgency_ratio)
-
-
 func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Dictionary) -> bool:
+	if not _is_hungry_enough_to_graze(can_continue_grazing()):
+		clear_targets()
+		return false
 	target_position = grass["center"]
 	var eat_distance := float(feeding.get("eat_distance", 18.0))
 	var current_cell_index: int = -1 if world.terrain_system == null else world.terrain_system.get_index_from_position(position)
@@ -145,7 +143,10 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 			set_state("eat", world.current_tick)
 			clear_navigation()
 			interaction_timer = float(feeding.get("eat_duration", 0.55))
-			reduce_hunger(consumed * float(feeding.get("nutrition_gain", 0.8)))
+			var hunger_reduction := consumed * float(feeding.get("nutrition_gain", 0.8))
+			reduce_hunger(hunger_reduction)
+			if world.has_method("record_herbivore_hunger_reduction"):
+				world.record_herbivore_hunger_reduction(hunger_reduction)
 			restore_energy(consumed * 0.18)
 			world.emit_event("GrassConsumed", self, -1, {
 				"consumed": consumed,
@@ -194,7 +195,7 @@ func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 func _should_regroup(world, group_center = null) -> bool:
 	if group_id == -1:
 		return false
-	if hunger >= float(balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0)):
+	if hunger >= get_graze_hunger_floor():
 		return false
 	var center: Variant = group_center if group_center != null else world.get_group_center(group_id, species_type, id)
 	if center == null:
@@ -290,6 +291,9 @@ func _execute_selected_action(world, delta: float, neighbors: Array, predators: 
 			if not _seek_or_drink(world, delta, neighbors, water_target):
 				_explore(world, delta, neighbors)
 		AgentAction.GRAZE:
+			if not _is_hungry_enough_to_graze(can_continue_grazing()):
+				_explore(world, delta, neighbors)
+				return
 			var grass_target: Dictionary = {} if snapshot == null else snapshot.grass_target
 			if grass_target.is_empty():
 				if not _seek_or_eat(world, delta, neighbors):
@@ -334,9 +338,7 @@ func _wander_or_graze(world, delta: float, neighbors: Array) -> void:
 	var wander_vector: Vector2 = Steering.wander(self, world.rng)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
 	var base_speed: float = float(movement.get("max_speed", 70.0))
-	var graze_hunger_floor := float(balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0))
-
-	if hunger >= graze_hunger_floor:
+	if hunger >= get_graze_hunger_floor():
 		var grass: Dictionary = _find_grass_target(world)
 		if not grass.is_empty():
 			_move_to_grass_target(world, delta, neighbors, grass)
@@ -380,3 +382,15 @@ func _herd_vector(world, neighbors: Array, include_wander: bool) -> Vector2:
 	if include_wander:
 		vectors.append({"vector": Steering.wander(self, world.rng), "weight": float(weights.get("wander", 0.45))})
 	return Steering.combine(vectors)
+
+
+func can_continue_grazing() -> bool:
+	return current_action == AgentAction.GRAZE or state in ["seek_food", "eat"]
+
+
+func get_graze_hunger_floor() -> float:
+	return float(balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0))
+
+
+func _is_hungry_enough_to_graze(continuing: bool = false) -> bool:
+	return is_hunger_above_floor(get_graze_hunger_floor(), "graze_stop_hunger_floor", continuing)

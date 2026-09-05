@@ -9,6 +9,9 @@ func _init(new_config: Dictionary = {}) -> void:
 
 
 func evaluate(_agent, context) -> Dictionary:
+	var feeding_allowed := float(context.get_value("feeding_allowed", 1.0))
+	if feeding_allowed < 0.5:
+		return veto(["below hunger floor"])
 	var hunger := float(context.get_value("hunger", 0.0))
 	var carcass_proximity := float(context.get_value("carcass_proximity", 0.0))
 	var carcass_meat := float(context.get_value("carcass_meat", 0.0))

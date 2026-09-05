@@ -32,7 +32,10 @@ Responsibilities:
 Key behavior:
 
 - Interactive LOD is camera-driven and only activates when a valid focus rect exists.
-- Headless runs use the same simulation logic but effectively stay in full simulation mode.
+- Headless runs have no camera rect, so `_build_lod_context()` substitutes a fixed
+  `simulation_lod.headless_active_radius` box at the world center. Agents outside it drop to the
+  coarse tiers and their sectors can go dormant, which means headless benchmarks measure the LOD
+  path, not full-fidelity simulation. Disable `simulation_lod.enabled` for a full-fidelity run.
 
 ### `WorldState`
 
@@ -73,7 +76,11 @@ Current terrain features:
 Responsibilities:
 
 - Stores grass biomass per cell
-- Regrows biomass every tick
+- Regrows biomass every tick, stepping only the cells currently below their local maximum.
+  Consumption adds a cell to that working set and a cell drops out once it refills, so the
+  per-tick cost tracks grazing pressure instead of grid size. In a warmed-up world roughly
+  1% of cells are regrowing at any moment. `get_regrowing_cell_count()` exposes the set size,
+  and the metrics snapshot reports it as `grass_regrowing_cells`.
 - Applies terrain multipliers to initial biomass, regrowth, and max biomass
 - Reports total biomass and biomass totals by biome
 

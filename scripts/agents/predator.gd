@@ -127,6 +127,9 @@ func _get_debug_target_text() -> String:
 func _continue_or_finish_chase(world, delta: float) -> bool:
 	if state not in ["seek_prey", "chase", "attack"]:
 		return false
+	if not _is_hungry_enough_to_feed(can_continue_feeding()):
+		clear_targets(world)
+		return false
 	if target_agent_id == -1:
 		return false
 
@@ -183,6 +186,9 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 
 
 func _hunt(world, delta: float, prey = null) -> bool:
+	if not _is_hungry_enough_to_feed(can_continue_feeding()):
+		clear_targets(world)
+		return false
 	if prey == null:
 		prey = _choose_prey(world)
 	if prey == null:
@@ -313,10 +319,16 @@ func _continue_engaged_flow(world, delta: float) -> bool:
 func _execute_selected_action(world, delta: float, action_name: StringName, snapshot = null) -> void:
 	match action_name:
 		AgentAction.HUNT_PREY:
+			if not _is_hungry_enough_to_feed(can_continue_feeding()):
+				_patrol(world, delta)
+				return
 			var prey = null if snapshot == null else snapshot.prey_target
 			if not _hunt(world, delta, prey):
 				_patrol(world, delta)
 		AgentAction.SCAVENGE_CARCASS:
+			if not _is_hungry_enough_to_feed(can_continue_feeding()):
+				_patrol(world, delta)
+				return
 			var carcass_target: Dictionary = {} if snapshot == null else snapshot.carcass_target
 			if not _scavenge_or_feed(world, delta, carcass_target):
 				_patrol(world, delta)
@@ -523,6 +535,10 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 
 
 func _scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -> bool:
+	if not _is_hungry_enough_to_feed(can_continue_feeding()):
+		release_carcass_target(world)
+		target_position = null
+		return false
 	var carcass: Dictionary = _resolve_carcass_target(world, preferred_carcass)
 	if carcass.is_empty():
 		return false
@@ -633,18 +649,17 @@ func _update_water_memory(world) -> void:
 		_remember_water_source(world, visible_water)
 
 
-func _should_seek_water(thresholds: Dictionary, water_target: Dictionary) -> bool:
-	if water_target.is_empty():
-		return false
-	return thirst >= float(thresholds.get("critical_thirst", 60.0))
+func get_feed_hunger_floor() -> float:
+	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	return float(thresholds.get("feed_hunger_floor", thresholds.get("graze_hunger_floor", 12.0)))
 
 
-func _should_rest(thresholds: Dictionary) -> bool:
-	var rest_energy := float(thresholds.get("rest_energy", 26.0))
-	var rest_energy_resume := float(thresholds.get("rest_energy_resume", rest_energy + 8.0))
-	if state == "rest":
-		return energy <= rest_energy_resume
-	return energy <= rest_energy
+func can_continue_feeding() -> bool:
+	return current_action in [AgentAction.HUNT_PREY, AgentAction.SCAVENGE_CARCASS] or state in ["seek_prey", "chase", "attack", "seek_carcass", "feed_carcass"]
+
+
+func _is_hungry_enough_to_feed(continuing: bool = false) -> bool:
+	return is_hunger_above_floor(get_feed_hunger_floor(), "feed_stop_hunger_floor", continuing)
 
 
 func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> bool:

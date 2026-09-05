@@ -79,7 +79,11 @@
     "mid_decision_interval": 3,
     "far_decision_interval": 8,
     "very_far_sector_step_seconds": 0.75,
-    "headless_active_radius": 960.0
+    "headless_active_radius": 960.0,
+    "dormant_speed_scale": 0.45,
+    "dormant_goal_refresh_seconds": 2.0,
+    "dormant_stale_wake_seconds": 6.0,
+    "dormant_reify_budget_per_tick": 1
   },
   "water_sources": [
     { "x": 420.0, "y": 340.0, "radius": 52.0 },
@@ -102,8 +106,8 @@
     { "x": 4560.0, "y": 2460.0, "radius": 58.0 }
   ],
   "spawns": {
-    "herbivore_count": 440,
-    "predator_count": 36,
+    "herbivore_count": 240,
+    "predator_count": 24,
     "herbivore_group_count": 12
   }
 }

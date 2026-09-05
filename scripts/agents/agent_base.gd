@@ -177,6 +177,16 @@ func clear_action_tracking(current_tick: int) -> void:
 	action_target_failure_ticks = 0
 
 
+## Feeding uses hysteresis: an agent only starts eating once hunger reaches the
+## start floor, but keeps eating down to the lower stop floor, so it neither
+## grazes while full nor abandons a meal one point past the threshold.
+func is_hunger_above_floor(start_floor: float, stop_floor_key: String, continuing: bool) -> bool:
+	if not continuing:
+		return hunger >= start_floor
+	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	return hunger >= float(thresholds.get(stop_floor_key, minf(start_floor, 4.0)))
+
+
 func update_needs(delta: float) -> void:
 	age += delta
 	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * delta)

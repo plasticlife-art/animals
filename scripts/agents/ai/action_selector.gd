@@ -33,6 +33,8 @@ func select(
 	var raw_scores := {}
 	var final_scores := {}
 	var reasons_by_action := {}
+	var vetoed_actions := {}
+	var candidates: Array = []
 	var current_action: StringName = StringName(agent.current_action)
 	for action_name in allowed_actions:
 		var evaluator = evaluators.get(action_name, null)
@@ -42,14 +44,24 @@ func select(
 		var raw_score := float(evaluation.get("score", 0.0))
 		raw_scores[action_name] = raw_score
 		reasons_by_action[action_name] = evaluation.get("reasons", [])
+		var is_vetoed := bool(evaluation.get("vetoed", false))
 		var final_score := raw_score + float(policy.get_state_modifier(action_name, context))
-		if action_name == current_action:
-			final_score += stickiness_bonus
+		if is_vetoed:
+			vetoed_actions[action_name] = true
+		else:
+			candidates.append(action_name)
+			if action_name == current_action:
+				final_score += stickiness_bonus
 		final_scores[action_name] = final_score
 
-	var best_action: StringName = allowed_actions[0]
+	# An evaluator veto removes the action from the running entirely; falling back to
+	# the full list keeps the agent from stalling if every option vetoes at once.
+	if candidates.is_empty():
+		candidates = allowed_actions
+
+	var best_action: StringName = candidates[0]
 	var best_score: float = float(final_scores.get(best_action, -INF))
-	for action_name in allowed_actions:
+	for action_name in candidates:
 		var action_score := float(final_scores.get(action_name, -INF))
 		if action_score > best_score:
 			best_action = action_name
@@ -58,7 +70,13 @@ func select(
 	var chosen_action: StringName = best_action
 	var did_switch := current_action != StringName() and current_action != best_action
 	var reason := _build_base_reason(best_action, best_score, reasons_by_action)
-	if current_action != StringName() and policy.is_action_allowed(current_action):
+	if vetoed_actions.has(current_action) and chosen_action != current_action:
+		reason = "dropped %s (%s); %s" % [
+			String(current_action),
+			_first_reason(reasons_by_action.get(current_action, [])),
+			reason,
+		]
+	elif current_action != StringName() and policy.is_action_allowed(current_action):
 		var current_score := float(final_scores.get(current_action, -INF))
 		var ticks_in_current_action: int = agent.get_ticks_in_current_action(current_tick)
 		if current_action != best_action and not force_interrupt:
@@ -108,3 +126,11 @@ func _build_base_reason(best_action: StringName, best_score: float, reasons_by_a
 			break
 	var suffix := "" if filtered.is_empty() else " (%s)" % ", ".join(filtered)
 	return "selected %s at %.2f%s" % [String(best_action), best_score, suffix]
+
+
+func _first_reason(reasons: Array) -> String:
+	for fragment in reasons:
+		var text := str(fragment)
+		if text != "":
+			return text
+	return "vetoed"

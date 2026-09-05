@@ -165,7 +165,7 @@ func set_lod_focus_rect(rect: Rect2) -> void:
 func select_agent_at_position(position: Vector2, radius: float) -> void:
 	if world_state == null:
 		return
-	var nearby := world_state.query_agents(position, radius, "", -1)
+	var nearby: Array = world_state.query_agents(position, radius, "", -1)
 	if nearby.is_empty():
 		selected_agent_id = -1
 		clear_focus()
@@ -292,7 +292,7 @@ func _build_lod_context() -> Dictionary:
 	if focus_rect.size.is_zero_approx() and world_state != null:
 		var headless_active_radius := float(lod_settings.get("headless_active_radius", 0.0))
 		if headless_active_radius > 0.0:
-			var center := world_state.bounds.get_center()
+			var center: Vector2 = world_state.bounds.get_center()
 			focus_rect = Rect2(center - Vector2.ONE * headless_active_radius, Vector2.ONE * headless_active_radius * 2.0)
 	return {
 		"enabled": lod_enabled,

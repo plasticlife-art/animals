@@ -82,6 +82,10 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 		"far_decision_interval": 4,
 		"very_far_sector_step_seconds": 0.5,
 		"headless_active_radius": 96.0,
+		"dormant_speed_scale": 0.45,
+		"dormant_goal_refresh_seconds": 1.0,
+		"dormant_stale_wake_seconds": 2.5,
+		"dormant_reify_budget_per_tick": 1,
 	}
 	bundle["world"]["spawns"] = {
 		"herbivore_count": 0,

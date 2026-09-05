@@ -6,7 +6,10 @@
     "rest_energy": 26.0,
     "rest_energy_resume": 34.0,
     "rejoin_distance": 135.0,
-    "graze_hunger_floor": 12.0
+    "graze_hunger_floor": 12.0,
+    "graze_stop_hunger_floor": 4.0,
+    "feed_hunger_floor": 12.0,
+    "feed_stop_hunger_floor": 4.0
   },
   "herd_weights": {
     "cohesion": 0.75,
@@ -37,8 +40,7 @@
     "ttl_seconds": 30.0,
     "meat_total": 150.0,
     "max_feeders": 5,
-    "search_radius": 420.0,
-    "scavenging_hunger": 38.0
+    "search_radius": 420.0
   },
   "ai": {
     "selector": {
@@ -51,8 +53,8 @@
       "panic_threat_threshold": 0.55,
       "evaluators": {
         "graze": {
-          "hunger_weight": 0.42,
-          "food_weight": 0.28,
+          "hunger_weight": 0.52,
+          "food_weight": 0.38,
           "biomass_weight": 0.18,
           "safety_weight": 0.14,
           "threat_penalty": 0.32,
@@ -60,8 +62,8 @@
           "thirst_penalty": 0.12
         },
         "drink": {
-          "thirst_weight": 0.5,
-          "water_weight": 0.3,
+          "thirst_weight": 0.6,
+          "water_weight": 0.4,
           "safety_weight": 0.08,
           "water_threat_penalty": 0.35,
           "ambient_threat_penalty": 0.12,

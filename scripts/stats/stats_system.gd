@@ -26,6 +26,7 @@ var latest_snapshot: Dictionary = {}
 var _step_duration_total_ms: float = 0.0
 var _step_duration_max_ms: float = 0.0
 var _step_duration_samples: int = 0
+var _sample_accumulators: Dictionary = {}
 
 
 func initialize(config_bundle: Dictionary, new_event_bus) -> void:
@@ -36,6 +37,7 @@ func initialize(config_bundle: Dictionary, new_event_bus) -> void:
 	sample_interval_ticks = int(stats_config.get("sample_interval_ticks", 5))
 	history_limit = int(debug_config.get("chart_history_limit", stats_config.get("history_limit", 720)))
 	event_bus.event_emitted.connect(_on_event_emitted)
+	_reset_sample_accumulators()
 
 
 func record_step_duration(step_duration_ms: float) -> void:
@@ -45,6 +47,11 @@ func record_step_duration(step_duration_ms: float) -> void:
 
 
 func record_sample(world, tick: int, time_seconds: float) -> void:
+	var perf: Dictionary = world.get_performance_counters()
+	_sample_accumulators["dormant_steps_total"] += int(perf.get("dormant_steps", 0))
+	_sample_accumulators["dormant_migrations_total"] += int(perf.get("dormant_migrations", 0))
+	_sample_accumulators["grass_consumed_total"] += float(perf.get("grass_consumed_total", 0.0))
+	_sample_accumulators["herbivore_hunger_reduced_total"] += float(perf.get("herbivore_hunger_reduced_total", 0.0))
 	if tick % max(1, sample_interval_ticks) != 0 and tick != 0:
 		return
 
@@ -54,10 +61,13 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 	var hunger_sum := float(population_metrics.get("hunger_sum", 0.0))
 	var energy_sum := float(population_metrics.get("energy_sum", 0.0))
 	var living_count := int(population_metrics.get("living_count", 0))
+	var active_herbivore_count := int(population_metrics.get("active_herbivore_count", 0))
+	var dormant_herbivore_count := int(population_metrics.get("dormant_herbivore_count", 0))
+	var active_herbivore_hunger_sum := float(population_metrics.get("active_herbivore_hunger_sum", 0.0))
+	var dormant_herbivore_hunger_sum := float(population_metrics.get("dormant_herbivore_hunger_sum", 0.0))
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
 	var lod_counts: Dictionary = world.get_lod_counts()
-	var perf: Dictionary = world.get_performance_counters()
 	var grass_biomass_by_biome: Dictionary = world.resource_system.get_biomass_totals_by_biome()
 	var snapshot: Dictionary = {
 		"tick": tick,
@@ -74,8 +84,14 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"deaths_old_age": counters["deaths_old_age"],
 		"average_hunger": 0.0 if living_count == 0 else hunger_sum / living_count,
 		"average_energy": 0.0 if living_count == 0 else energy_sum / living_count,
+		"active_herbivore_count": active_herbivore_count,
+		"dormant_herbivore_count": dormant_herbivore_count,
+		"active_herbivore_avg_hunger": 0.0 if active_herbivore_count == 0 else active_herbivore_hunger_sum / active_herbivore_count,
+		"dormant_herbivore_avg_hunger": 0.0 if dormant_herbivore_count == 0 else dormant_herbivore_hunger_sum / dormant_herbivore_count,
+		"starvation_risk_herbivore_count": int(population_metrics.get("starvation_risk_herbivore_count", 0)),
 		"hunt_success_rate": 0.0 if hunt_total == 0 else float(counters["hunt_success"]) / hunt_total,
 		"grass_total_biomass": world.resource_system.get_total_biomass(),
+		"grass_regrowing_cells": world.resource_system.get_regrowing_cell_count(),
 		"grass_biomass_by_biome": grass_biomass_by_biome,
 		"active_carcasses": world.get_active_carcass_count(),
 		"carcass_meat_remaining_total": world.get_total_carcass_meat_remaining(),
@@ -100,11 +116,23 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"sector_wakeups": int(perf.get("sector_wakeups", 0)),
 		"dormant_sectors": world.get_dormant_sector_count(),
 		"dormant_agents": world.get_dormant_agent_count(),
+		"dormant_steps": int(perf.get("dormant_steps", 0)),
+		"dormant_migrations": int(perf.get("dormant_migrations", 0)),
+		"dormant_forced_wakeups": int(perf.get("dormant_forced_wakeups", 0)),
+		"dormant_goal_refreshes": int(perf.get("dormant_goal_refreshes", 0)),
+		"dormant_stale_sectors": int(perf.get("dormant_stale_sectors", 0)),
+		"grass_consumed": float(perf.get("grass_consumed_total", 0.0)),
+		"herbivore_hunger_reduced": float(perf.get("herbivore_hunger_reduced_total", 0.0)),
+		"dormant_steps_total": int(_sample_accumulators.get("dormant_steps_total", 0)),
+		"dormant_migrations_total": int(_sample_accumulators.get("dormant_migrations_total", 0)),
+		"grass_consumed_total": float(_sample_accumulators.get("grass_consumed_total", 0.0)),
+		"herbivore_hunger_reduced_total": float(_sample_accumulators.get("herbivore_hunger_reduced_total", 0.0)),
 	}
 	latest_snapshot = snapshot
 	time_series.append(snapshot)
 	while time_series.size() > history_limit:
 		time_series.pop_front()
+	_reset_sample_accumulators()
 
 
 func get_snapshot() -> Dictionary:
@@ -121,6 +149,16 @@ func shutdown() -> void:
 	event_bus = null
 	time_series.clear()
 	latest_snapshot.clear()
+	_reset_sample_accumulators()
+
+
+func _reset_sample_accumulators() -> void:
+	_sample_accumulators = {
+		"dormant_steps_total": 0,
+		"dormant_migrations_total": 0,
+		"grass_consumed_total": 0.0,
+		"herbivore_hunger_reduced_total": 0.0,
+	}
 
 
 func _on_event_emitted(event: Dictionary) -> void:
