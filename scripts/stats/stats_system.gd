@@ -26,6 +26,11 @@ var latest_snapshot: Dictionary = {}
 var _step_duration_total_ms: float = 0.0
 var _step_duration_max_ms: float = 0.0
 var _step_duration_samples: int = 0
+# Lifetime totals are kept alongside the windowed ones: the window is what makes a
+# regression visible in the charts, the lifetime figures are what benchmark runs compare.
+var _step_duration_lifetime_total_ms: float = 0.0
+var _step_duration_lifetime_samples: int = 0
+var _step_duration_peak_ms: float = 0.0
 var _sample_accumulators: Dictionary = {}
 
 
@@ -44,6 +49,9 @@ func record_step_duration(step_duration_ms: float) -> void:
 	_step_duration_total_ms += step_duration_ms
 	_step_duration_max_ms = maxf(_step_duration_max_ms, step_duration_ms)
 	_step_duration_samples += 1
+	_step_duration_lifetime_total_ms += step_duration_ms
+	_step_duration_lifetime_samples += 1
+	_step_duration_peak_ms = maxf(_step_duration_peak_ms, step_duration_ms)
 
 
 func record_sample(world, tick: int, time_seconds: float) -> void:
@@ -101,6 +109,8 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"blocked_cell_ratio": 0.0 if world.terrain_system == null else world.terrain_system.get_blocked_cell_ratio(),
 		"sim_step_ms_avg": 0.0 if _step_duration_samples == 0 else _step_duration_total_ms / _step_duration_samples,
 		"sim_step_ms_max": _step_duration_max_ms,
+		"sim_step_ms_lifetime_avg": 0.0 if _step_duration_lifetime_samples == 0 else _step_duration_lifetime_total_ms / _step_duration_lifetime_samples,
+		"sim_step_ms_peak": _step_duration_peak_ms,
 		"lod0_agents": int(lod_counts.get("lod0_agents", living_count)),
 		"lod1_agents": int(lod_counts.get("lod1_agents", 0)),
 		"lod2_agents": int(lod_counts.get("lod2_agents", 0)),
@@ -110,7 +120,19 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"action_select_ms": float(perf.get("action_select_ms", 0.0)),
 		"pathfind_calls": int(perf.get("pathfind_calls", 0)),
 		"path_cache_hits": int(perf.get("path_cache_hits", 0)),
+		"pathfind_ms": float(perf.get("pathfind_ms", 0.0)),
 		"grass_query_calls": int(perf.get("grass_query_calls", 0)),
+		"grass_search_ms": float(perf.get("grass_search_ms", 0.0)),
+		"grass_search_calls": int(perf.get("grass_search_calls", 0)),
+		"grass_cells_scanned": int(perf.get("grass_cells_scanned", 0)),
+		"phase_resources_ms": float(perf.get("phase_resources_ms", 0.0)),
+		"phase_agents_ms": float(perf.get("phase_agents_ms", 0.0)),
+		"phase_dormant_ms": float(perf.get("phase_dormant_ms", 0.0)),
+		"phase_sectors_ms": float(perf.get("phase_sectors_ms", 0.0)),
+		"grass_target_budget_misses": int(perf.get("grass_target_budget_misses", 0)),
+		"agent_query_calls": int(perf.get("agent_query_calls", 0)),
+		"water_query_calls": int(perf.get("water_query_calls", 0)),
+		"carcass_query_calls": int(perf.get("carcass_query_calls", 0)),
 		"spatial_update_ms": float(perf.get("spatial_update_ms", 0.0)),
 		"group_center_lookups": int(perf.get("group_center_lookups", 0)),
 		"sector_wakeups": int(perf.get("sector_wakeups", 0)),
@@ -153,6 +175,9 @@ func shutdown() -> void:
 
 
 func _reset_sample_accumulators() -> void:
+	_step_duration_total_ms = 0.0
+	_step_duration_max_ms = 0.0
+	_step_duration_samples = 0
 	_sample_accumulators = {
 		"dormant_steps_total": 0,
 		"dormant_migrations_total": 0,

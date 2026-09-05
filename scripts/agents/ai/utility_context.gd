@@ -23,9 +23,12 @@ func has_target(action_name: StringName) -> bool:
 
 
 func with_state(new_state_name: StringName) -> Variant:
-	var next_context = load("res://scripts/agents/ai/utility_context.gd").new()
+	# Runs on every predator tick, so it avoids a runtime load() and deep copies.
+	# `values` holds only floats, and target dictionaries are read-only downstream,
+	# so shallow copies are enough to keep the two contexts independent.
+	var next_context = get_script().new()
 	next_context.species_type = species_type
 	next_context.state_name = new_state_name
-	next_context.values = values.duplicate(true)
-	next_context.targets = targets.duplicate(true)
+	next_context.values = values.duplicate()
+	next_context.targets = targets.duplicate()
 	return next_context

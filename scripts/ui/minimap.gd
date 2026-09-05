@@ -394,6 +394,8 @@ func _rect_changed(previous: Rect2, current: Rect2, epsilon: float = 0.1) -> boo
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
+	if simulation_manager != null and not simulation_manager.should_refresh_ui_on_tick(_tick):
+		return
 	request_refresh()
 
 

@@ -48,6 +48,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	rng.seed = seed
 
 	event_bus = EventBusScript.new()
+	event_bus.initialize(config_bundle.get("debug", {}))
 	stats_system = StatsSystemScript.new()
 	stats_system.initialize(config_bundle, event_bus)
 

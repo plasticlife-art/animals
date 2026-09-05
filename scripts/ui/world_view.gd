@@ -97,6 +97,8 @@ func _draw_terrain_background(world, visible_rect: Rect2) -> void:
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
+	if simulation_manager != null and not simulation_manager.should_refresh_ui_on_tick(_tick):
+		return
 	request_refresh()
 
 

@@ -6,6 +6,8 @@ const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
 const HerbivoreAIScript := preload("res://scripts/agents/ai/herbivore_ai.gd")
 
 var _ai_controller
+var _escape_target_tick: int = -1
+var _escape_target_position: Vector2 = Vector2.ZERO
 
 
 func configure(
@@ -172,6 +174,17 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 	return true
 
 
+## Both the context builder and the flee action want the escape destination in the same
+## tick, and each computation costs several pathfinds. Memoize it per tick so a panicking
+## herd asks the navigation budget once per agent instead of twice.
+func get_escape_destination(world, flee_vector: Vector2, base_distance: float) -> Vector2:
+	if _escape_target_tick == world.current_tick:
+		return _escape_target_position
+	_escape_target_tick = world.current_tick
+	_escape_target_position = world.choose_escape_destination(position, flee_vector, base_distance)
+	return _escape_target_position
+
+
 func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 	set_state("flee", world.current_tick)
 	clear_targets()
@@ -182,7 +195,7 @@ func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 	flee_vector = flee_vector.normalized()
 
 	var herd_weights: Dictionary = balance.get("herd_weights", {})
-	var escape_target: Vector2 = world.choose_escape_destination(position, flee_vector, 168.0)
+	var escape_target: Vector2 = get_escape_destination(world, flee_vector, 168.0)
 	target_position = escape_target
 	var waypoint: Vector2 = world.get_next_waypoint(position, escape_target, id, true)
 	var move_vector: Vector2 = Steering.combine([

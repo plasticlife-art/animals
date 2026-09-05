@@ -10,6 +10,9 @@ var hunt: Dictionary = {}
 var preferred_mate_id: int = -1
 var target_carcass_id: int = -1
 var _ai_controller
+var _cached_isolation_prey_id: int = -1
+var _cached_prey_isolation: float = 0.0
+var _last_water_memory_tick: int = -9999
 
 
 func configure(
@@ -414,12 +417,23 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 		if score > best_score:
 			best_score = score
 			best_prey = prey
+			_cached_isolation_prey_id = prey.id
+			_cached_prey_isolation = isolation
 	return best_prey
 
 
 func _prey_isolation(world, prey) -> float:
 	var neighbors: Array = world.query_agents(prey.position, 72.0, SPECIES_HERBIVORE, prey.id)
 	return clampf(1.0 - (float(neighbors.size()) / 6.0), 0.0, 1.0)
+
+
+## `_choose_prey` already scored isolation for every candidate, including the winner.
+## Context building asks for the winner's score again, so reuse it rather than paying
+## for a second spatial query over the same neighbourhood in the same tick.
+func get_prey_isolation(world, prey) -> float:
+	if prey != null and prey.id == _cached_isolation_prey_id:
+		return _cached_prey_isolation
+	return _prey_isolation(world, prey)
 
 
 func _regroup_with_kin(world, delta: float) -> bool:
@@ -639,7 +653,17 @@ func _resolve_water_target(world, thresholds: Dictionary = {}) -> Dictionary:
 	return remembered_sources.front()
 
 
+## Throttled: this runs on every patrol tick and each call ends in a vision-radius
+## spatial query over the water source. Water sources do not move and herbivores do not
+## arrive within a single tick, so refreshing a few times per second is enough.
+const WATER_MEMORY_REFRESH_TICKS := 9
+
+
 func _update_water_memory(world) -> void:
+	# Phase by id so predators refresh on different ticks instead of spiking together.
+	if (world.current_tick + id) % WATER_MEMORY_REFRESH_TICKS != 0:
+		return
+	_last_water_memory_tick = world.current_tick
 	var visible_water: Dictionary = Perception.find_nearest_water(
 		world,
 		position,

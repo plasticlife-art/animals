@@ -84,7 +84,7 @@ func build_context(agent, world, snapshot = null):
 	var prey_target := {}
 	if prey != null:
 		prey_target = {"agent_id": prey.id, "position": prey.position}
-		prey_quality = clampf(agent._prey_isolation(world, prey) * 0.45 + (1.0 - UtilityContextFactory.energy_ratio(prey.energy, float(prey.metabolism.get("max_energy", 100.0)))) * 0.35 + 0.2, 0.0, 1.0)
+		prey_quality = clampf(agent.get_prey_isolation(world, prey) * 0.45 + (1.0 - UtilityContextFactory.energy_ratio(prey.energy, float(prey.metabolism.get("max_energy", 100.0)))) * 0.35 + 0.2, 0.0, 1.0)
 		prey_proximity = UtilityContextFactory.proximity_ratio(agent.position.distance_to(prey.position), hunt_vision)
 
 	var carcass_proximity := 0.0

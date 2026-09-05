@@ -5,6 +5,7 @@
   "chart_history_limit": 720,
   "ui_refresh_interval_ticks": 5,
   "event_log_visible_limit": 12,
+  "event_history_limit": 4096,
   "export_directory": "user://exports",
   "lod": {
     "enabled": true,

@@ -15,6 +15,9 @@ var _biomass_totals_by_biome: Dictionary = {}
 # stepping the whole grid every tick costs the same whether or not anything was
 # eaten; only depleted cells need work.
 var _regrowing_cells: Dictionary = {}
+# Counts cells visited by find_best_cell since the last drain, so the cost of grass
+# searching is attributable instead of hiding inside the agent tick.
+var _cells_scanned: int = 0
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrain_system: TerrainSystem = null) -> void:
@@ -141,6 +144,12 @@ func query_cells(position: Vector2, radius: float) -> Array:
 	return result
 
 
+func take_cells_scanned() -> int:
+	var scanned := _cells_scanned
+	_cells_scanned = 0
+	return scanned
+
+
 func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
 	var best := {}
 	var best_distance := INF
@@ -156,6 +165,7 @@ func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) 
 		mini(rows - 1, int(floor((position.y + radius) / cell_size)))
 	)
 
+	_cells_scanned += (max_cell.x - min_cell.x + 1) * (max_cell.y - min_cell.y + 1)
 	for x in range(min_cell.x, max_cell.x + 1):
 		for y in range(min_cell.y, max_cell.y + 1):
 			var index := y * cols + x

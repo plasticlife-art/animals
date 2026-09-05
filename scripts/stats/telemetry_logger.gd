@@ -19,10 +19,12 @@ func export_all(seed: int, stats_system: StatsSystem, event_bus, extra_metadata:
 	var events_path := "%s/events_%s_seed_%d.json" % [absolute_directory, timestamp, seed]
 	var summary_path := "%s/summary_%s_seed_%d.json" % [absolute_directory, timestamp, seed]
 
-	_write_metrics_csv(metrics_path, stats_system.get_series())
-	_write_json(metrics_json_path, stats_system.get_series())
-	_write_events_csv(events_csv_path, event_bus.get_events())
-	_write_json(events_path, event_bus.get_events())
+	var series: Array = stats_system.get_series()
+	var events: Array = event_bus.get_events()
+	_write_metrics_csv(metrics_path, series)
+	_write_json(metrics_json_path, series)
+	_write_events_csv(events_csv_path, events)
+	_write_json(events_path, events)
 	_write_json(summary_path, {
 		"seed": seed,
 		"summary": stats_system.get_snapshot(),

@@ -115,7 +115,7 @@ func build_context(agent, world, snapshot = null):
 	var escape_target := {}
 	var safe_zone_proximity := 0.0
 	if flee_vector.length_squared() > 0.001:
-		var escape_position: Vector2 = world.choose_escape_destination(agent.position, flee_vector.normalized(), 168.0)
+		var escape_position: Vector2 = agent.get_escape_destination(world, flee_vector.normalized(), 168.0)
 		escape_target = {"position": escape_position}
 		safe_zone_proximity = UtilityContextFactory.proximity_ratio(agent.position.distance_to(escape_position), 220.0)
 

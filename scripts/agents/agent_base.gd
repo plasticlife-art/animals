@@ -153,9 +153,11 @@ func apply_action_decision(decision, current_tick: int) -> void:
 		current_action = selected_action
 		last_action_change_tick = current_tick
 	last_action_reason = str(decision.reason)
-	last_action_scores = decision.final_scores.duplicate(true)
-	last_action_raw_scores = decision.raw_scores.duplicate(true)
-	decision_target_data = decision.target_data.duplicate(true)
+	# ActionSelector already hands us freshly built dictionaries and drops the decision
+	# immediately afterwards, so copying them again here was pure waste.
+	last_action_scores = decision.final_scores
+	last_action_raw_scores = decision.raw_scores
+	decision_target_data = decision.target_data
 
 
 func force_current_action(action_name: StringName, reason: String, current_tick: int) -> void:

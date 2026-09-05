@@ -133,14 +133,19 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	current_time = time_seconds
 	_reset_performance_counters()
 	_prepare_navigation_budget()
+	var phase_started_usec: int = Time.get_ticks_usec()
 	resource_system.step(delta)
+	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
 	_mid_decision_interval_ticks = int(active_lod_context.get("mid_decision_interval_ticks", 3))
 	_far_decision_interval_ticks = int(active_lod_context.get("far_decision_interval_ticks", 8))
 	_very_far_sector_step_seconds = float(active_lod_context.get("very_far_sector_step_seconds", 0.75))
+	phase_started_usec = Time.get_ticks_usec()
 	_wake_relevant_dormant_sectors(active_lod_context)
 	_rebuild_group_state_cache()
+	performance_counters["phase_sectors_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 
+	phase_started_usec = Time.get_ticks_usec()
 	for agent in living_agents:
 		if agent == null or not agent.is_alive:
 			continue
@@ -155,16 +160,21 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 			agent.tick_maintenance(self, delta)
 		_track_agent_runtime_position(agent, previous_position)
 
+	performance_counters["phase_agents_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
+
 	_flush_removals()
 	_flush_spawns()
 	_step_carcasses(delta)
+	phase_started_usec = Time.get_ticks_usec()
 	_step_dormant_sectors(delta, active_lod_context)
 	_sleep_far_sectors(active_lod_context)
+	performance_counters["phase_dormant_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	_flush_carcass_removals()
 	var path_stats: Dictionary = {} if terrain_system == null else terrain_system.consume_path_query_stats()
 	performance_counters["pathfind_calls"] += int(path_stats.get("queries", 0))
 	performance_counters["path_cache_hits"] += int(path_stats.get("cache_hits", 0))
-	_update_lod_assignments(active_lod_context)
+	performance_counters["grass_cells_scanned"] += resource_system.take_cells_scanned()
+	_update_lod_assignments(active_lod_context, true)
 
 
 func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, sex_override: String = "", metadata: Dictionary = {}) -> AgentBase:
@@ -651,6 +661,14 @@ func record_herbivore_hunger_reduction(amount: float, herbivore_count: int = 1) 
 
 
 func find_reachable_grass(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
+	var started_at_usec: int = Time.get_ticks_usec()
+	var result: Dictionary = _find_reachable_grass_uncounted(position, radius, min_biomass)
+	performance_counters["grass_search_ms"] += float(Time.get_ticks_usec() - started_at_usec) / 1000.0
+	performance_counters["grass_search_calls"] += 1
+	return result
+
+
+func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_biomass: float) -> Dictionary:
 	if terrain_system == null:
 		return resource_system.find_best_cell(position, radius, min_biomass)
 
@@ -1077,7 +1095,10 @@ func should_run_decision_tick(agent: AgentBase) -> bool:
 	return current_tick % interval == agent.id % interval
 
 
-func _update_lod_assignments(lod_context: Dictionary) -> void:
+## `reuse_agent_tiers` skips recomputing every agent's tier when the caller already did
+## it this tick (the step loop does). Recomputing there was a second full pass over all
+## agents whose result the next tick's loop immediately overwrites anyway.
+func _update_lod_assignments(lod_context: Dictionary, reuse_agent_tiers: bool = false) -> void:
 	lod_counts = {
 		"lod0_agents": 0,
 		"lod1_agents": 0,
@@ -1086,7 +1107,7 @@ func _update_lod_assignments(lod_context: Dictionary) -> void:
 	for agent in living_agents:
 		if agent == null or not agent.is_alive:
 			continue
-		var lod_tier: int = _resolve_lod_tier(agent, lod_context)
+		var lod_tier: int = agent.lod_tier if reuse_agent_tiers else _resolve_lod_tier(agent, lod_context)
 		agent.lod_tier = lod_tier
 		match lod_tier:
 			LOD_TIER_1:
@@ -1134,6 +1155,14 @@ func _reset_performance_counters() -> void:
 		"grass_consumed_total": 0.0,
 		"herbivore_hunger_reduced_total": 0.0,
 		"grass_target_budget_misses": 0,
+		"grass_search_ms": 0.0,
+		"grass_search_calls": 0,
+		"grass_cells_scanned": 0,
+		"pathfind_ms": 0.0,
+		"phase_resources_ms": 0.0,
+		"phase_agents_ms": 0.0,
+		"phase_dormant_ms": 0.0,
+		"phase_sectors_ms": 0.0,
 	}
 
 
@@ -1165,7 +1194,10 @@ func _find_path_with_budget(start_index: int, goal_index: int) -> Dictionary:
 			}
 		_path_budget_remaining -= 1
 		_new_path_budget_remaining -= 1
-	return terrain_system.find_path_between_indices(start_index, goal_index)
+	var started_at_usec: int = Time.get_ticks_usec()
+	var path_result: Dictionary = terrain_system.find_path_between_indices(start_index, goal_index)
+	performance_counters["pathfind_ms"] += float(Time.get_ticks_usec() - started_at_usec) / 1000.0
+	return path_result
 
 
 func _register_living_agent(agent) -> void:
@@ -1191,6 +1223,11 @@ func _unregister_living_agent(agent) -> void:
 			_living_agent_index_by_id[last_agent.id] = index
 	spatial_grid.remove(agent)
 	_unregister_sector_presence(agent)
+	# The cached snapshot holds references to neighbouring agents, and two mutual
+	# neighbours form a reference cycle. RefCounted has no cycle collector, so without
+	# this every agent that ever took a decision tick leaks when it dies or its sector
+	# sleeps.
+	agent.clear_decision_cache()
 
 
 func _track_agent_runtime_position(agent, previous_position: Vector2) -> void:
@@ -1336,22 +1373,33 @@ func _mark_grass_sector_dirty_by_index(index: int) -> void:
 	_sector_grass_cache.erase(sector_key)
 
 
+## Cached per (sector, biomass threshold). Caching the *absence* of grass matters as
+## much as caching its presence: an exhausted sector returns nothing, and treating that
+## empty result as a cache miss made it rescan ~625 cells on every query, every tick,
+## forever. That cost grows as the world is grazed down, which is what made long
+## sessions degrade.
 func _get_sector_best_grass(sector_key: Vector2i, min_biomass: float) -> Dictionary:
 	var sector_state: Dictionary = _get_or_create_sector_state(sector_key)
-	var cache_entry: Dictionary = _sector_grass_cache.get(sector_key, {})
+	var sector_cache: Dictionary = _sector_grass_cache.get(sector_key, {})
+	if bool(sector_state.get("dirty_grass", false)):
+		sector_cache = {}
+	var threshold_key := int(round(min_biomass * 10.0))
+	var cache_entry: Dictionary = sector_cache.get(threshold_key, {})
 	var is_stale := cache_entry.is_empty() \
-		or bool(sector_state.get("dirty_grass", false)) \
-		or current_tick - int(sector_state.get("last_grass_refresh_tick", -9999)) >= _sector_grass_refresh_ticks \
-		or float(cache_entry.get("biomass", 0.0)) < min_biomass
+		or current_tick - int(cache_entry.get("refresh_tick", -9999)) >= _sector_grass_refresh_ticks
 	if is_stale:
 		var sector_rect := _sector_key_to_rect(sector_key)
 		var best: Dictionary = resource_system.find_best_cell(sector_rect.get_center(), maxf(sector_rect.size.x, sector_rect.size.y) * 0.75, min_biomass)
-		_sector_grass_cache[sector_key] = best
+		sector_cache[threshold_key] = {
+			"result": best,
+			"refresh_tick": current_tick,
+		}
+		_sector_grass_cache[sector_key] = sector_cache
 		sector_state["dirty_grass"] = false
 		sector_state["last_grass_refresh_tick"] = current_tick
 		_sector_states[sector_key] = sector_state
 		return best
-	return cache_entry
+	return cache_entry.get("result", {})
 
 
 func _find_sector_grass_candidate(position: Vector2, radius: float, min_biomass: float) -> Dictionary:
