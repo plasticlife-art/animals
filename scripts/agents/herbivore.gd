@@ -136,7 +136,11 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 	target_position = grass["center"]
 	var eat_distance := float(feeding.get("eat_distance", 18.0))
 	var current_cell_index: int = -1 if world.terrain_system == null else world.terrain_system.get_index_from_position(position)
-	var cell_reach_distance: float = minf(eat_distance, world.resource_system.cell_size * 0.45)
+	# `eat_distance` is the configured grazing reach; clamping it down to a fraction of a
+	# grass cell made the acceptance window (14.4px at a 32px cell) narrower than the
+	# distance an agent covers between two LOD-throttled ticks, so it could run past its
+	# target cell without the arrival check ever sampling it inside.
+	var cell_reach_distance: float = maxf(eat_distance, world.resource_system.cell_size * 0.5)
 	var reached_target_cell: bool = int(grass.get("index", -1)) == current_cell_index
 	var reached_target_radius: bool = position.distance_squared_to(grass["center"]) <= cell_reach_distance * cell_reach_distance
 	if reached_target_cell or reached_target_radius:

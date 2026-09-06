@@ -55,6 +55,21 @@ Important world queries:
 - carcass lookup and reservation
 - group center lookup for herd/flock logic
 
+Grass target resolution is deliberately two-stage:
+
+1. `_find_local_grass_target()` scans the cells the agent can reach by walking, bounded by
+   `navigation.grass_local_reach_cells` steps of walkable neighbours. This needs no path
+   search and is what a grazing animal actually does, so it is tried first.
+2. Only when nothing edible is within walking reach does the search fall back to the
+   per-sector cache (`_find_sector_grass_candidate()`) plus a budgeted path. That cache
+   picks its candidate relative to the *sector centre*, so it is a coarse "there is grass
+   over there" hint for travel, not a per-agent answer — resolving it first sends every
+   herbivore in a sector to the same cell while they stand on untouched meadow.
+
+The grass grid and the terrain grid share a cell index space. That only holds while
+`grass.cell_size` equals `terrain.cell_size`; both the walkability checks and the path
+goals above depend on it, so the two must be changed together.
+
 ### `TerrainSystem`
 
 Responsibilities:

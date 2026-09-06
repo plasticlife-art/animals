@@ -70,7 +70,8 @@
     "path_budget_per_tick": 96,
     "max_new_paths_per_tick": 28,
     "goal_bucket_size": 4,
-    "sector_grass_refresh_ticks": 18
+    "sector_grass_refresh_ticks": 18,
+    "grass_local_reach_cells": 3
   },
   "simulation_lod": {
     "sector_size": 512.0,

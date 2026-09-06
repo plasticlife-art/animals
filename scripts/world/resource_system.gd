@@ -192,6 +192,57 @@ func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) 
 	return best
 
 
+## Best cell by biomass discounted for distance, restricted to a caller-supplied set of
+## cell indices, allocating a dictionary only for the winner. The local grazing lookup runs
+## for every hungry herbivore on every decision tick, so building one dictionary per scanned
+## cell (as `query_cells` does) dominated the search.
+func find_best_cell_in_set(position: Vector2, radius: float, min_biomass: float, allowed_indices: Dictionary) -> Dictionary:
+	var best_index := -1
+	var best_score := -INF
+	var best_center := Vector2.ZERO
+	var expanded_radius := radius + cell_size
+	var radius_sq := expanded_radius * expanded_radius
+	var min_cell := Vector2i(
+		maxi(0, int(floor((position.x - radius) / cell_size))),
+		maxi(0, int(floor((position.y - radius) / cell_size)))
+	)
+	var max_cell := Vector2i(
+		mini(cols - 1, int(floor((position.x + radius) / cell_size))),
+		mini(rows - 1, int(floor((position.y + radius) / cell_size)))
+	)
+
+	_cells_scanned += (max_cell.x - min_cell.x + 1) * (max_cell.y - min_cell.y + 1)
+	for x in range(min_cell.x, max_cell.x + 1):
+		for y in range(min_cell.y, max_cell.y + 1):
+			var index := y * cols + x
+			if not allowed_indices.has(index):
+				continue
+			var biomass := _cells[index]
+			if biomass < min_biomass:
+				continue
+			var center := Vector2((x + 0.5) * cell_size, (y + 0.5) * cell_size)
+			var distance_sq := position.distance_squared_to(center)
+			if distance_sq > radius_sq:
+				continue
+			var score := biomass - sqrt(distance_sq) * 0.1
+			if score <= best_score:
+				continue
+			best_index = index
+			best_score = score
+			best_center = center
+
+	if best_index == -1:
+		return {}
+	return {
+		"index": best_index,
+		"coords": Vector2i(best_index % cols, int(best_index / cols)),
+		"center": best_center,
+		"biomass": _cells[best_index],
+		"density": _cells[best_index] / _get_cell_max_biomass(best_index),
+		"score": best_score,
+	}
+
+
 func consume_at_position(position: Vector2, amount: float) -> float:
 	var index := _position_to_index(position)
 	return consume_cell(index, amount)

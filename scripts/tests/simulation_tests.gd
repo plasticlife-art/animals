@@ -24,6 +24,8 @@ func run(asserts) -> void:
 	_test_dormant_population_changes_are_counted(asserts)
 	_test_snapshot_tracks_dormant_herbivore_metrics(asserts)
 	_test_local_grass_fallback_without_path_budget(asserts)
+	_test_grass_target_prefers_grass_underfoot(asserts)
+	_test_grass_budget_miss_counted_when_local_grass_is_gone(asserts)
 	_test_perf_snapshot_fields(asserts)
 	_test_determinism(asserts)
 
@@ -379,7 +381,50 @@ func _test_local_grass_fallback_without_path_budget(asserts) -> void:
 	manager.world_state._new_path_budget_remaining = 0
 	var grass_target: Dictionary = manager.world_state._find_grass_target_for_agent(herbivore)
 	asserts.is_true(not grass_target.is_empty(), "herbivore should still get a nearby grass target when path budget is exhausted")
-	asserts.is_true(float(manager.world_state.performance_counters.get("grass_target_budget_misses", 0)) >= 1.0, "grass budget miss counter should increase when local fallback is used")
+	var reach: float = manager.world_state.terrain_system.cell_size * float(manager.world_state._grass_local_reach_cells) + manager.world_state.resource_system.cell_size
+	asserts.is_true(
+		herbivore.position.distance_to(grass_target.get("center", Vector2.ZERO)) <= reach,
+		"grass target resolved without path budget should be within walking reach"
+	)
+	TestHelpers.destroy_manager(manager)
+
+
+## A herbivore standing in grass must graze it rather than being routed to whichever cell
+## the sector cache happens to hold, which is chosen relative to the sector centre and is
+## therefore the same distant cell for every agent in that sector.
+func _test_grass_target_prefers_grass_underfoot(asserts) -> void:
+	var manager = TestHelpers.create_manager(452)
+	var herbivore = TestHelpers.spawn_herbivore(manager.world_state, Vector2(96.0, 96.0), 0)
+	herbivore.hunger = 24.0
+	manager.world_state._prepare_navigation_budget()
+	var grass_target: Dictionary = manager.world_state._find_grass_target_for_agent(herbivore)
+	asserts.is_true(not grass_target.is_empty(), "herbivore standing in grass should resolve a grass target")
+	var reach: float = manager.world_state.terrain_system.cell_size * float(manager.world_state._grass_local_reach_cells) + manager.world_state.resource_system.cell_size
+	asserts.is_true(
+		herbivore.position.distance_to(grass_target.get("center", Vector2.ZERO)) <= reach,
+		"grass target should be the grass underfoot, not a distant sector candidate"
+	)
+	TestHelpers.destroy_manager(manager)
+
+
+## Once the nearby cells are grazed out the agent has to travel, and that is when the
+## path budget becomes the limit worth counting.
+func _test_grass_budget_miss_counted_when_local_grass_is_gone(asserts) -> void:
+	var manager = TestHelpers.create_manager(453)
+	var world = manager.world_state
+	var herbivore = TestHelpers.spawn_herbivore(world, Vector2(96.0, 96.0), 0)
+	herbivore.hunger = 24.0
+	var start_index: int = world.terrain_system.find_nearest_walkable_index(world.terrain_system.get_index_from_position(herbivore.position))
+	for cell_index in world._collect_walk_reachable_cells(start_index, world._grass_local_reach_cells).keys():
+		world.resource_system.consume_cell(int(cell_index), world.resource_system.max_biomass)
+	world._path_budget_remaining = 0
+	world._new_path_budget_remaining = 0
+	var grass_target: Dictionary = world._find_grass_target_for_agent(herbivore)
+	asserts.is_true(grass_target.is_empty(), "no target should be resolved when local grass is gone and no path budget remains")
+	asserts.is_true(
+		float(world.performance_counters.get("grass_target_budget_misses", 0)) >= 1.0,
+		"grass budget miss counter should increase when a distant candidate cannot be pathed"
+	)
 	TestHelpers.destroy_manager(manager)
 
 

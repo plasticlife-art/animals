@@ -13,6 +13,13 @@ var counters := {
 	"deaths_thirst": 0,
 	"deaths_predation": 0,
 	"deaths_old_age": 0,
+	"deaths_starvation_herbivore": 0,
+	"deaths_starvation_predator": 0,
+	"deaths_thirst_herbivore": 0,
+	"deaths_thirst_predator": 0,
+	"deaths_predation_herbivore": 0,
+	"deaths_old_age_herbivore": 0,
+	"deaths_old_age_predator": 0,
 	"water_events": 0,
 	"grass_events": 0,
 	"hunt_success": 0,
@@ -90,6 +97,13 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"deaths_thirst": counters["deaths_thirst"],
 		"deaths_predation": counters["deaths_predation"],
 		"deaths_old_age": counters["deaths_old_age"],
+		"deaths_starvation_herbivore": counters["deaths_starvation_herbivore"],
+		"deaths_starvation_predator": counters["deaths_starvation_predator"],
+		"deaths_thirst_herbivore": counters["deaths_thirst_herbivore"],
+		"deaths_thirst_predator": counters["deaths_thirst_predator"],
+		"deaths_predation_herbivore": counters["deaths_predation_herbivore"],
+		"deaths_old_age_herbivore": counters["deaths_old_age_herbivore"],
+		"deaths_old_age_predator": counters["deaths_old_age_predator"],
 		"average_hunger": 0.0 if living_count == 0 else hunger_sum / living_count,
 		"average_energy": 0.0 if living_count == 0 else energy_sum / living_count,
 		"active_herbivore_count": active_herbivore_count,
@@ -204,7 +218,8 @@ func _on_event_emitted(event: Dictionary) -> void:
 				counters["deaths_herbivore"] += 1
 			elif species == "predator":
 				counters["deaths_predator"] += 1
-			match str(data.get("cause", "")):
+			var cause := str(data.get("cause", ""))
+			match cause:
 				"starvation":
 					counters["deaths_starvation"] += 1
 				"thirst":
@@ -213,6 +228,9 @@ func _on_event_emitted(event: Dictionary) -> void:
 					counters["deaths_predation"] += 1
 				"old_age":
 					counters["deaths_old_age"] += 1
+			var species_cause_key := "deaths_%s_%s" % [cause, species]
+			if counters.has(species_cause_key):
+				counters[species_cause_key] += 1
 		"PredationSuccess":
 			counters["hunt_success"] += 1
 		"PredationFailed":

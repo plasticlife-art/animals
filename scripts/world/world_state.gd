@@ -60,6 +60,10 @@ var _path_budget_remaining: int = 0
 var _new_path_budget_remaining: int = 0
 var _goal_bucket_size: int = 4
 var _sector_grass_refresh_ticks: int = 18
+var _grass_local_reach_cells: int = 3
+var _walk_reachable_cache: Dictionary = {}
+var _walk_reachable_order: Array = []
+var _walk_reachable_cache_limit: int = 4096
 var _mid_decision_interval_ticks: int = 3
 var _far_decision_interval_ticks: int = 8
 var _very_far_sector_step_seconds: float = 0.75
@@ -108,6 +112,10 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
+	_grass_local_reach_cells = maxi(1, int(navigation_config.get("grass_local_reach_cells", 3)))
+	_walk_reachable_cache_limit = maxi(64, int(navigation_config.get("grass_local_reach_cache_limit", 4096)))
+	_walk_reachable_cache.clear()
+	_walk_reachable_order.clear()
 	_dormant_speed_scale = clampf(float(simulation_lod_config.get("dormant_speed_scale", 0.45)), 0.1, 1.0)
 	_dormant_goal_refresh_seconds = maxf(0.5, float(simulation_lod_config.get("dormant_goal_refresh_seconds", 2.0)))
 	_dormant_stale_wake_seconds = maxf(_dormant_goal_refresh_seconds, float(simulation_lod_config.get("dormant_stale_wake_seconds", 6.0)))
@@ -353,6 +361,8 @@ func shutdown() -> void:
 	_agent_sector_cells.clear()
 	_sector_states.clear()
 	_sector_grass_cache.clear()
+	_walk_reachable_cache.clear()
+	_walk_reachable_order.clear()
 	spatial_grid = null
 	resource_system = null
 	terrain_system = null
@@ -676,6 +686,18 @@ func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_bioma
 	if start_index == -1:
 		return {}
 
+	# Grass and terrain share a cell index space: both grids are sized from the same world
+	# bounds, so an index means the same cell in each only while `grass.cell_size` equals
+	# `terrain.cell_size`. Everything below (and `_find_sector_grass_candidate`) relies on
+	# that, so the two must be configured together.
+	# Grass within a few cells needs no route planning: the agent can walk straight to it.
+	# Resolving it first is what keeps a herbivore eating the meadow it is standing in
+	# instead of marching off to the sector cache's candidate, which is picked relative to
+	# the sector centre and is therefore the same cell for every agent in the sector.
+	var local_grass := _find_local_grass_target(position, start_index, radius, min_biomass)
+	if not local_grass.is_empty():
+		return local_grass
+
 	var candidate := _find_sector_grass_candidate(position, radius, min_biomass)
 	if candidate.is_empty():
 		candidate = resource_system.find_best_cell(position, radius, min_biomass)
@@ -687,11 +709,8 @@ func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_bioma
 	var path_result := _find_path_with_budget(start_index, candidate_index)
 	var path_cells: Array = path_result.get("cells", [])
 	if path_cells.is_empty():
-		var local_fallback := _find_local_grass_fallback(position, start_index, radius, min_biomass)
-		if not local_fallback.is_empty():
-			if not terrain_system.has_cached_path_between_indices(start_index, candidate_index):
-				performance_counters["grass_target_budget_misses"] += 1
-			return local_fallback
+		if not terrain_system.has_cached_path_between_indices(start_index, candidate_index):
+			performance_counters["grass_target_budget_misses"] += 1
 		return {}
 	candidate["path_cost"] = float(path_result.get("cost", INF))
 	candidate["reachable"] = bool(path_result.get("reachable", false))
@@ -700,33 +719,54 @@ func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_bioma
 	return candidate
 
 
-func _find_local_grass_fallback(position: Vector2, start_index: int, radius: float, min_biomass: float = 0.0) -> Dictionary:
+## Terrain walkability is fixed once the world is generated, so a cell's reachable set never
+## changes. Herds revisit the same cells constantly, so memoising it turns the per-agent
+## flood fill into a dictionary lookup.
+func _get_walk_reachable_cells(start_index: int) -> Dictionary:
+	var cached: Dictionary = _walk_reachable_cache.get(start_index, {})
+	if not cached.is_empty():
+		return cached
+	var reachable_cells := _collect_walk_reachable_cells(start_index, _grass_local_reach_cells)
+	if _walk_reachable_order.size() >= _walk_reachable_cache_limit:
+		_walk_reachable_cache.erase(_walk_reachable_order.pop_front())
+	_walk_reachable_cache[start_index] = reachable_cells
+	_walk_reachable_order.append(start_index)
+	return reachable_cells
+
+
+## The cells an agent can walk to without a route: everything within `depth` steps of
+## walkable neighbours. Bounded by construction, and every entry is connected to
+## `start_index`, so a target drawn from it is reachable without spending path budget.
+func _collect_walk_reachable_cells(start_index: int, depth: int) -> Dictionary:
+	var reachable_cells: Dictionary = {start_index: true}
+	var frontier: Array = [start_index]
+	for _step in range(maxi(1, depth)):
+		var next_frontier: Array = []
+		for cell_index in frontier:
+			for neighbor_index in terrain_system.get_walkable_neighbors(int(cell_index)):
+				var neighbor := int(neighbor_index)
+				if reachable_cells.has(neighbor):
+					continue
+				reachable_cells[neighbor] = true
+				next_frontier.append(neighbor)
+		if next_frontier.is_empty():
+			break
+		frontier = next_frontier
+	return reachable_cells
+
+
+func _find_local_grass_target(position: Vector2, start_index: int, radius: float, min_biomass: float = 0.0) -> Dictionary:
 	if resource_system == null or terrain_system == null or start_index == -1:
 		return {}
-	var local_radius := minf(radius, maxf(resource_system.cell_size * 2.0, terrain_system.cell_size * 2.5))
-	var neighbor_cells: Array = terrain_system.get_walkable_neighbors(start_index)
-	var reachable_cells: Dictionary = {start_index: true}
-	for neighbor_index in neighbor_cells:
-		reachable_cells[int(neighbor_index)] = true
-	var best := {}
-	var best_score := -INF
-	for candidate in resource_system.query_cells(position, local_radius):
-		var candidate_index := terrain_system.find_nearest_walkable_index(int(candidate.get("index", -1)))
-		if candidate_index == -1 or not reachable_cells.has(candidate_index):
-			continue
-		var biomass := float(candidate.get("biomass", 0.0))
-		if biomass < min_biomass:
-			continue
-		var center: Vector2 = candidate.get("center", position)
-		var score := biomass - position.distance_to(center) * 0.1
-		if score <= best_score:
-			continue
-		best = candidate.duplicate(true)
-		best["path_cost"] = position.distance_to(center)
-		best["reachable"] = true
-		best["path_cells"] = [start_index] if candidate_index == start_index else [start_index, candidate_index]
-		best["score"] = score
-		best_score = score
+	var local_radius := minf(radius, terrain_system.cell_size * float(_grass_local_reach_cells) + resource_system.cell_size)
+	var reachable_cells: Dictionary = _get_walk_reachable_cells(start_index)
+	var best: Dictionary = resource_system.find_best_cell_in_set(position, local_radius, min_biomass, reachable_cells)
+	if best.is_empty():
+		return best
+	var best_index: int = int(best.get("index", -1))
+	best["path_cost"] = position.distance_to(best.get("center", position))
+	best["reachable"] = true
+	best["path_cells"] = [start_index] if best_index == start_index else [start_index, best_index]
 	return best
 
 
@@ -1416,7 +1456,13 @@ func _find_sector_grass_candidate(position: Vector2, radius: float, min_biomass:
 			var candidate_index := int(candidate.get("index", -1))
 			if candidate_index == -1 or not terrain_system.is_walkable_index(candidate_index):
 				continue
-			var score := float(candidate.get("biomass", 0.0)) - position.distance_to(candidate.get("center", position)) * 0.14
+			# Sectors are swept by whole sector, so a corner sector can hold a cell well
+			# outside the caller's radius. Honouring the radius is what makes the hunger
+			# driven expansion in `_find_grass_target_for_agent` mean anything.
+			var candidate_distance := position.distance_to(candidate.get("center", position))
+			if candidate_distance > radius:
+				continue
+			var score := float(candidate.get("biomass", 0.0)) - candidate_distance * 0.14
 			if score > best_score:
 				best = candidate.duplicate(true)
 				best_score = score
