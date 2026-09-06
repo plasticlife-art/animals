@@ -20,6 +20,16 @@ func run(asserts) -> void:
 	_test_dormant_herbivore_drinking_reduces_thirst(asserts)
 	_test_dormant_thirst_sector_moves_toward_water(asserts)
 	_test_dormant_predator_goal_tracks_prey_pressure(asserts)
+	_test_dormant_predator_hunts_from_feed_floor(asserts)
+	_test_dormant_predator_drinking_reduces_thirst(asserts)
+	_test_dormant_predation_grants_meat_for_every_kill(asserts)
+	_test_dormant_predator_recovers_energy_when_idle(asserts)
+	_test_dormant_aggregate_rebuild_keeps_accumulators(asserts)
+	_test_hungry_predator_hunts_herd_member(asserts)
+	_test_predator_energy_recovers_over_feeding_cycle(asserts)
+	_test_attack_cooldown_keeps_pursuing(asserts)
+	_test_predator_pair_closes_to_contact_and_breeds(asserts)
+	_test_per_species_death_causes_are_counted(asserts)
 	_test_dormant_stale_sector_forced_wake(asserts)
 	_test_dormant_population_changes_are_counted(asserts)
 	_test_snapshot_tracks_dormant_herbivore_metrics(asserts)
@@ -478,3 +488,239 @@ func _find_any_dormant_aggregate(world, species_type: String) -> Dictionary:
 			if str(aggregate.get("species_type", "")) == species_type:
 				return aggregate
 	return {}
+
+
+## Sleeps the sector holding `position` and returns its state plus the aggregate for
+## `species_type`, with `goal_kind` forced so the resource-interaction branch under test
+## is the one that runs.
+static func _sleep_with_goal(world, position: Vector2, species_type: String, goal_kind: String, extra: Dictionary = {}) -> Array:
+	var sector_key: Vector2i = world._get_sector_key(position)
+	world._sleep_sector(sector_key)
+	var dormant_state: Dictionary = world._sector_states.get(sector_key, {})
+	for aggregate in dormant_state.get("dormant_aggregates", []):
+		if str(aggregate.get("species_type", "")) != species_type:
+			continue
+		aggregate["goal_kind"] = goal_kind
+		aggregate["goal_sector"] = sector_key
+		aggregate["goal_position"] = position
+		aggregate["last_goal_refresh_time"] = world.current_time
+		for key in extra.keys():
+			aggregate[key] = extra[key]
+		world._sector_states[sector_key] = dormant_state
+		return [sector_key, dormant_state, aggregate]
+	return [sector_key, dormant_state, {}]
+
+
+func _test_dormant_predator_hunts_from_feed_floor(asserts) -> void:
+	var manager = TestHelpers.create_manager(61)
+	manager.lod_enabled = true
+	var herd_position := Vector2(220.0, 20.0)
+	for index in range(6):
+		TestHelpers.spawn_herbivore(manager.world_state, herd_position + Vector2(float(index) * 3.0, 0.0), 0)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(20.0, 220.0))
+	# Above `feed_hunger_floor` (12) but far below the old `critical_hunger * 0.9` gate of
+	# 54, which left too little of the hunger clock to reach prey a sector away.
+	predator.hunger = 20.0
+	predator.thirst = 0.0
+	var sector_key: Vector2i = manager.world_state._get_sector_key(predator.position)
+	manager.world_state._refresh_prey_pressure_sectors()
+	manager.world_state._sleep_sector(sector_key)
+	var dormant_state: Dictionary = manager.world_state._sector_states.get(sector_key, {})
+	var aggregates: Array = dormant_state.get("dormant_aggregates", [])
+	asserts.is_true(not aggregates.is_empty(), "predator sector should produce a dormant aggregate")
+	if aggregates.is_empty():
+		TestHelpers.destroy_manager(manager)
+		return
+	var goal: Dictionary = manager.world_state._select_dormant_goal(sector_key, aggregates[0])
+	asserts.equal(str(goal.get("goal_kind", "")), "hunt", "mildly hungry dormant predator should already head for prey")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_dormant_predator_drinking_reduces_thirst(asserts) -> void:
+	var manager = TestHelpers.create_manager(62)
+	manager.lod_enabled = true
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(20.0, 220.0))
+	predator.thirst = 95.0
+	predator.hunger = 0.0
+	var slept: Array = _sleep_with_goal(manager.world_state, predator.position, "predator", "water")
+	manager.world_state._apply_dormant_resource_interactions(slept[0], slept[1], 0.75)
+	asserts.is_true(float(slept[2].get("avg_thirst", 999.0)) < 95.0, "dormant predator reaching water should drink")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_dormant_predation_grants_meat_for_every_kill(asserts) -> void:
+	var manager = TestHelpers.create_manager(63)
+	manager.lod_enabled = true
+	var herd_position := Vector2(20.0, 220.0)
+	for index in range(8):
+		TestHelpers.spawn_herbivore(manager.world_state, herd_position + Vector2(float(index) * 2.0, 0.0), 0)
+	var predator = TestHelpers.spawn_predator(manager.world_state, herd_position + Vector2(4.0, 4.0))
+	predator.hunger = 60.0
+	# The shipped rate is deliberately slow, so drive it hard enough to resolve a kill in
+	# one step. Setting it here also proves the knob is actually read.
+	manager.world_state.config_bundle["balance"]["dormant_ecology"]["kill_rate_per_prey_per_second"] = 0.5
+	var slept: Array = _sleep_with_goal(manager.world_state, herd_position, "predator", "hunt")
+	var sector_state: Dictionary = slept[1]
+	var herbivores_before := 0
+	for aggregate in sector_state.get("dormant_aggregates", []):
+		if str(aggregate.get("species_type", "")) == "herbivore":
+			herbivores_before += int(aggregate.get("count", 0))
+	var meat_total := float(manager.world_state.config_bundle["balance"]["carcass"]["meat_total"])
+	manager.world_state._resolve_dormant_predation(slept[0], sector_state, sector_state.get("dormant_aggregates", []), 0.75)
+	var herbivores_after := 0
+	for aggregate in sector_state.get("dormant_aggregates", []):
+		if str(aggregate.get("species_type", "")) == "herbivore":
+			herbivores_after += int(aggregate.get("count", 0))
+	var kills: int = herbivores_before - herbivores_after
+	asserts.greater(kills, 0, "a hunting dormant predator among prey should make a kill")
+	var counters: Dictionary = manager.world_state.get_performance_counters()
+	asserts.equal(int(counters.get("dormant_predation_kills", -1)), kills, "counted kills should match the herbivores removed")
+	# The invariant: meat exists only because something died, in exact proportion.
+	asserts.equal(float(counters.get("dormant_meat_granted", -1.0)), float(kills) * meat_total, "every kill should grant exactly one carcass worth of meat")
+	asserts.equal(float(sector_state.get("dormant_meat_pool", -1.0)), float(kills) * meat_total, "the granted meat should be in this sector's pool")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_dormant_predator_recovers_energy_when_idle(asserts) -> void:
+	var manager = TestHelpers.create_manager(64)
+	manager.lod_enabled = true
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(20.0, 220.0))
+	predator.hunger = 0.0
+	predator.thirst = 0.0
+	predator.energy = 40.0
+	var slept: Array = _sleep_with_goal(manager.world_state, predator.position, "predator", "wander")
+	var sector_key: Vector2i = slept[0]
+	var aggregate: Dictionary = slept[2]
+	aggregate["avg_hunger"] = 0.0
+	aggregate["avg_thirst"] = 0.0
+	aggregate["avg_energy"] = 20.0
+	manager.world_state._apply_dormant_metabolism_to_aggregate(sector_key, aggregate, 0.75)
+	# The dormant path only ever drained energy, so a dormant predator could never reach
+	# `reproduction.energy_threshold` and dormant breeding was impossible.
+	asserts.greater(float(aggregate.get("avg_energy", 0.0)), 20.0, "an idle, fed dormant predator should recover energy")
+
+	# Idle rest stops below the breeding reserve: only actually feeding may carry an
+	# aggregate up to `reproduction.energy_threshold`, so a dormant litter still has to be
+	# paid for with food.
+	var breeding_reserve := float(predator.reproduction.get("energy_threshold", 92.0))
+	aggregate["avg_energy"] = 20.0
+	for _step in range(60):
+		aggregate["avg_hunger"] = 0.0
+		aggregate["avg_thirst"] = 0.0
+		manager.world_state._apply_dormant_metabolism_to_aggregate(sector_key, aggregate, 0.75)
+	asserts.is_true(float(aggregate.get("avg_energy", 0.0)) < breeding_reserve, "idle rest alone should never reach the breeding reserve")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_hungry_predator_hunts_herd_member(asserts) -> void:
+	var manager = TestHelpers.create_manager(65)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(100.0, 100.0))
+	# A packed herd: `_prey_isolation` reports 0 here, which is the case where `patrol`
+	# used to outscore `hunt_prey` until hunger was within a point or two of lethal.
+	for index in range(6):
+		TestHelpers.spawn_herbivore(manager.world_state, Vector2(118.0 + float(index) * 4.0, 100.0), 0)
+	predator.hunger = 20.0
+	predator.energy = 140.0
+	TestHelpers.run_ticks(manager, 1)
+	asserts.equal(predator.current_action, AgentAction.HUNT_PREY, "a mildly hungry predator should hunt a healthy herd animal")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_predator_energy_recovers_over_feeding_cycle(asserts) -> void:
+	var manager = TestHelpers.create_manager(66)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(112.0, 112.0))
+	predator.hunger = 60.0
+	predator.energy = 20.0
+	TestHelpers.spawn_carcass(manager.world_state, Vector2(118.0, 112.0), 150.0)
+	TestHelpers.run_ticks(manager, 60)
+	# Feeding used to stop at `feed_stop_hunger_floor`, capping intake at the hunger the
+	# predator arrived with. That made every cycle net-negative on energy and put the
+	# breeding threshold permanently out of reach.
+	asserts.greater(predator.energy, float(predator.reproduction.get("energy_threshold", 92.0)), "gorging on a full carcass should carry a predator past its breeding reserve")
+	TestHelpers.destroy_manager(manager)
+
+
+## The rendezvous threshold has to clear the bodies. `_resolve_agent_overlap()` holds two
+## predators apart at the sum of their radii - about 30 px - so the 18 px this used to ask
+## for could never be reached: the pair pressed into each other forever, one of them being
+## shoved backwards on every tick, and no predator was ever born inside an awake sector.
+func _test_predator_pair_closes_to_contact_and_breeds(asserts) -> void:
+	var manager = TestHelpers.create_manager(68)
+	var world = manager.world_state
+	var male = TestHelpers.spawn_predator(world, Vector2(100.0, 100.0))
+	var female = TestHelpers.spawn_predator(world, Vector2(140.0, 100.0))
+	female.sex = AgentBase.SEX_FEMALE
+	for parent in [male, female]:
+		parent.reproduction_cooldown = 0.0
+		parent.hunger = 0.0
+		parent.thirst = 0.0
+		parent.energy = 140.0
+
+	var separation: float = male.position.distance_to(female.position)
+	asserts.greater(separation, male.mate_contact_distance(female), "the pair should start further apart than contact, so they have to close the gap")
+
+	TestHelpers.run_ticks(manager, 60)
+	var predators: int = 0
+	for agent in world.get_living_agents():
+		if agent.species_type == "predator":
+			predators += 1
+	asserts.equal(predators, 3, "a fed, mature predator pair should meet and produce one cub")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_attack_cooldown_keeps_pursuing(asserts) -> void:
+	var manager = TestHelpers.create_manager(67)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(100.0, 100.0))
+	var herbivore = TestHelpers.spawn_herbivore(manager.world_state, Vector2(104.0, 100.0), 0)
+	predator.hunger = 80.0
+	predator.energy = 140.0
+	predator.target_agent_id = herbivore.id
+	predator.set_state("attack", manager.world_state.current_tick)
+	predator.attack_cooldown = 0.5
+	var position_before: Vector2 = predator.position
+	TestHelpers.run_ticks(manager, 1)
+	# Standing still through the cooldown handed the prey a free second of sprinting.
+	asserts.is_true(predator.position.distance_to(position_before) > 0.0, "a predator on attack cooldown should keep closing on its prey")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_per_species_death_causes_are_counted(asserts) -> void:
+	var manager = TestHelpers.create_manager(68)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(100.0, 100.0))
+	var herbivore = TestHelpers.spawn_herbivore(manager.world_state, Vector2(180.0, 180.0), 0)
+	manager.world_state.kill_agent(predator, "starvation")
+	manager.world_state.kill_agent(herbivore, "thirst")
+	TestHelpers.run_ticks(manager, 1)
+	var counters: Dictionary = manager.stats_system.counters
+	asserts.equal(int(counters.get("deaths_starvation_predator", -1)), 1, "a starved predator should be counted against its own species")
+	asserts.equal(int(counters.get("deaths_thirst_herbivore", -1)), 1, "a herbivore lost to thirst should be counted against its own species")
+	asserts.equal(int(counters.get("deaths_starvation_herbivore", -1)), 0, "the split should not leak across species")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_dormant_aggregate_rebuild_keeps_accumulators(asserts) -> void:
+	var manager = TestHelpers.create_manager(69)
+	manager.lod_enabled = true
+	var herd_position := Vector2(20.0, 220.0)
+	for index in range(4):
+		TestHelpers.spawn_herbivore(manager.world_state, herd_position + Vector2(float(index) * 3.0, 0.0), 0)
+	var slept: Array = _sleep_with_goal(manager.world_state, herd_position, "herbivore", "grass", {
+		"birth_debt": 0.4,
+		"starvation_debt": 0.3,
+		"carcass_id": 11,
+	})
+	var sector_key: Vector2i = slept[0]
+	var sector_state: Dictionary = slept[1]
+	# Aggregates are rebuilt from records on every dormant step. Fractional accumulators that
+	# do not survive the rebuild are silently floored to zero every step, which suppresses any
+	# rate below one event per step - births and need-deaths for every small group.
+	var previous_map: Dictionary = manager.world_state._build_dormant_aggregate_previous_map(sector_state.get("dormant_aggregates", []))
+	var rebuilt: Array = manager.world_state._build_dormant_aggregates(sector_state.get("dormant_records", []), sector_key, previous_map)
+	asserts.is_true(not rebuilt.is_empty(), "rebuilding should produce an aggregate")
+	if rebuilt.is_empty():
+		TestHelpers.destroy_manager(manager)
+		return
+	asserts.equal(float(rebuilt[0].get("birth_debt", -1.0)), 0.4, "birth debt should survive an aggregate rebuild")
+	asserts.equal(float(rebuilt[0].get("starvation_debt", -1.0)), 0.3, "starvation debt should survive an aggregate rebuild")
+	asserts.equal(int(rebuilt[0].get("carcass_id", -1)), 11, "the carcass a goal refers to should survive an aggregate rebuild")
+	TestHelpers.destroy_manager(manager)

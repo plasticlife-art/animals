@@ -4,11 +4,17 @@ extends Node2D
 var simulation_manager: SimulationManager
 var debug_flags: Dictionary = {}
 
+## Cached for the duration of one `_draw()` so the projection helpers can look
+## up terrain elevation without threading `world` through every call.
+var _terrain = null
+
 
 func bind_manager(manager: SimulationManager) -> void:
 	simulation_manager = manager
-	simulation_manager.tick_completed.connect(_on_tick_completed)
-	simulation_manager.selection_changed.connect(_on_selection_changed)
+	if not simulation_manager.tick_completed.is_connected(_on_tick_completed):
+		simulation_manager.tick_completed.connect(_on_tick_completed)
+	if not simulation_manager.selection_changed.is_connected(_on_selection_changed):
+		simulation_manager.selection_changed.connect(_on_selection_changed)
 	queue_redraw()
 
 
@@ -27,6 +33,7 @@ func _draw() -> void:
 		return
 
 	var world = simulation_manager.world_state
+	_terrain = world.terrain_system
 	var visible_rect := _get_visible_world_rect(world.bounds)
 	if bool(debug_flags.get("show_biomes", false)):
 		_draw_biomes(world, visible_rect)
@@ -52,6 +59,76 @@ func _draw() -> void:
 		_draw_selected_group_relation(world, visible_rect)
 
 
+
+## Projection helpers.
+##
+## Under the orthogonal projection every one of these is the plain Godot call it
+## replaces, so the overlays look exactly as before. Under the isometric one a
+## world rect is no longer a screen rect and a world circle is no longer a screen
+## circle, so cells become diamonds and discs become ellipses. Sampling the shape
+## in world space and projecting the samples keeps that honest without anyone
+## having to hand-derive the projected form.
+
+func _height_at(world_position: Vector2) -> int:
+	if _terrain == null or WorldProjection.is_identity():
+		return 0
+	return _terrain.get_height_at_position(world_position)
+
+
+func _p(world_position: Vector2) -> Vector2:
+	return WorldProjection.to_screen(world_position, _height_at(world_position))
+
+
+## One terrain-grid cell. Kept as `draw_rect` under the orthogonal projection:
+## abutting polygons show hairline seams where filled rects do not.
+func _draw_world_cell(rect: Rect2, fill: Color, filled: bool = true, width: float = 1.0) -> void:
+	if WorldProjection.is_identity():
+		draw_rect(rect, fill, filled, width)
+		return
+	var level := _height_at(rect.get_center())
+	var corners := PackedVector2Array([
+		WorldProjection.to_screen(rect.position, level),
+		WorldProjection.to_screen(Vector2(rect.end.x, rect.position.y), level),
+		WorldProjection.to_screen(rect.end, level),
+		WorldProjection.to_screen(Vector2(rect.position.x, rect.end.y), level),
+	])
+	if filled:
+		draw_colored_polygon(corners, fill)
+	else:
+		corners.append(corners[0])
+		draw_polyline(corners, fill, width)
+
+
+func _world_ellipse(center: Vector2, radius: float, segments: int) -> PackedVector2Array:
+	var level := _height_at(center)
+	var points := PackedVector2Array()
+	for step in range(segments):
+		var angle := TAU * float(step) / float(segments)
+		points.append(WorldProjection.to_screen(
+			center + Vector2(cos(angle), sin(angle)) * radius, level))
+	return points
+
+
+func _draw_world_disc(center: Vector2, radius: float, color: Color) -> void:
+	if WorldProjection.is_identity():
+		draw_circle(center, radius, color)
+		return
+	draw_colored_polygon(_world_ellipse(center, radius, 24), color)
+
+
+func _draw_world_ring(center: Vector2, radius: float, color: Color, width: float, segments: int = 32) -> void:
+	if WorldProjection.is_identity():
+		draw_arc(center, radius, 0.0, TAU, segments, color, width)
+		return
+	var points := _world_ellipse(center, radius, segments)
+	points.append(points[0])
+	draw_polyline(points, color, width)
+
+
+func _draw_world_line(from_point: Vector2, to_point: Vector2, color: Color, width: float) -> void:
+	draw_line(_p(from_point), _p(to_point), color, width)
+
+
 func _draw_grass_density(world, visible_rect: Rect2) -> void:
 	var cell_size: float = world.resource_system.cell_size
 	var min_cell_x := maxi(0, int(floor(visible_rect.position.x / cell_size)))
@@ -67,7 +144,7 @@ func _draw_grass_density(world, visible_rect: Rect2) -> void:
 			var density: float = biomass / maxf(1.0, world.resource_system.max_biomass)
 			if density <= 0.02:
 				continue
-			draw_rect(world.resource_system.get_cell_rect(index), Color(0.18, 0.44, 0.2, density * 0.42), true)
+			_draw_world_cell(world.resource_system.get_cell_rect(index), Color(0.18, 0.44, 0.2, density * 0.42))
 
 
 func _draw_biomes(world, visible_rect: Rect2) -> void:
@@ -84,7 +161,7 @@ func _draw_biomes(world, visible_rect: Rect2) -> void:
 			var index: int = y * terrain.cols + x
 			var biome_color: Color = terrain.get_biome_color_at_index(index)
 			biome_color.a = 0.32
-			draw_rect(terrain.get_cell_rect(index), biome_color, true)
+			_draw_world_cell(terrain.get_cell_rect(index), biome_color)
 
 
 func _draw_obstacles(world, visible_rect: Rect2) -> void:
@@ -105,8 +182,8 @@ func _draw_obstacles(world, visible_rect: Rect2) -> void:
 			var rect: Rect2 = terrain.get_cell_rect(index)
 			var obstacle_color: Color = terrain.get_obstacle_color(obstacle_id)
 			obstacle_color.a = 0.72
-			draw_rect(rect, obstacle_color, true)
-			draw_rect(rect, Color(0.9, 0.9, 0.9, 0.12), false, 1.0)
+			_draw_world_cell(rect, obstacle_color)
+			_draw_world_cell(rect, Color(0.9, 0.9, 0.9, 0.12), false, 1.0)
 
 
 func _draw_water(world, visible_rect: Rect2) -> void:
@@ -116,8 +193,8 @@ func _draw_water(world, visible_rect: Rect2) -> void:
 		var source_rect := Rect2(position - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)
 		if not visible_rect.intersects(source_rect):
 			continue
-		draw_circle(position, radius, Color(0.2, 0.42, 0.82, 0.22))
-		draw_arc(position, radius, 0.0, TAU, 32, Color(0.52, 0.75, 1.0, 0.65), 2.0)
+		_draw_world_disc(position, radius, Color(0.2, 0.42, 0.82, 0.22))
+		_draw_world_ring(position, radius, Color(0.52, 0.75, 1.0, 0.65), 2.0)
 
 
 func _draw_carcasses(world, visible_rect: Rect2) -> void:
@@ -134,17 +211,20 @@ func _draw_carcasses(world, visible_rect: Rect2) -> void:
 		if not visible_rect.intersects(carcass_rect):
 			continue
 
-		draw_circle(position, carcass_radius + 3.0, Color(0.18, 0.08, 0.06, 0.5))
-		draw_circle(position, carcass_radius, Color(0.42, 0.14, 0.1, 0.86))
-		draw_arc(position, carcass_radius + 1.5, 0.0, TAU, 24, Color(0.93, 0.78, 0.66, 0.9), 1.4)
-		draw_line(position + Vector2(-4.0, -4.0), position + Vector2(4.0, 4.0), Color(0.97, 0.88, 0.8, 0.72), 1.4)
-		draw_line(position + Vector2(-4.0, 4.0), position + Vector2(4.0, -4.0), Color(0.97, 0.88, 0.8, 0.72), 1.4)
+		_draw_world_disc(position, carcass_radius + 3.0, Color(0.18, 0.08, 0.06, 0.5))
+		_draw_world_disc(position, carcass_radius, Color(0.42, 0.14, 0.1, 0.86))
+		_draw_world_ring(position, carcass_radius + 1.5, Color(0.93, 0.78, 0.66, 0.9), 1.4, 24)
+		# The cross and the label are screen-space decoration on the marker, not
+		# world geometry, so they are offset after projecting the anchor.
+		var marker: Vector2 = _p(position)
+		draw_line(marker + Vector2(-4.0, -4.0), marker + Vector2(4.0, 4.0), Color(0.97, 0.88, 0.8, 0.72), 1.4)
+		draw_line(marker + Vector2(-4.0, 4.0), marker + Vector2(4.0, -4.0), Color(0.97, 0.88, 0.8, 0.72), 1.4)
 
 		if font != null:
 			var label: String = "%.0f" % meat_remaining
 			draw_string(
 				font,
-				position + Vector2(carcass_radius + 6.0, -carcass_radius - 2.0),
+				marker + Vector2(carcass_radius + 6.0, -carcass_radius - 2.0),
 				label,
 				HORIZONTAL_ALIGNMENT_LEFT,
 				-1.0,
@@ -171,8 +251,8 @@ func _draw_selected_path(world, visible_rect: Rect2) -> void:
 		var to_point: Vector2 = path_points[index + 1]
 		if not _line_is_visible(from_point, to_point, visible_rect.grow(12.0)):
 			continue
-		draw_line(from_point, to_point, Color(0.98, 0.94, 0.62, 0.92), 2.6)
-		draw_circle(to_point, 3.5, Color(0.98, 0.94, 0.62, 0.92))
+		_draw_world_line(from_point, to_point, Color(0.98, 0.94, 0.62, 0.92), 2.6)
+		_draw_world_disc(to_point, 3.5, Color(0.98, 0.94, 0.62, 0.92))
 
 
 func _draw_population_density(world, visible_rect: Rect2) -> void:
@@ -185,7 +265,7 @@ func _draw_population_density(world, visible_rect: Rect2) -> void:
 			Vector2.ONE * float(cell_data["size"])
 		)
 		var alpha := clampf(float(count) / 10.0, 0.05, 0.4)
-		draw_rect(rect, Color(0.96, 0.72, 0.18, alpha), true)
+		_draw_world_cell(rect, Color(0.96, 0.72, 0.18, alpha))
 
 
 func _draw_target_lines(world, visible_rect: Rect2) -> void:
@@ -195,11 +275,11 @@ func _draw_target_lines(world, visible_rect: Rect2) -> void:
 			if target_agent != null and target_agent.is_alive:
 				if not _line_is_visible(agent.position, target_agent.position, visible_rect):
 					continue
-				draw_line(agent.position, target_agent.position, Color(1.0, 1.0, 1.0, 0.42), 1.5)
+				_draw_world_line(agent.position, target_agent.position, Color(1.0, 1.0, 1.0, 0.42), 1.5)
 		elif agent.target_position != null:
 			if not _line_is_visible(agent.position, agent.target_position, visible_rect):
 				continue
-			draw_line(agent.position, agent.target_position, Color(0.8, 0.8, 0.8, 0.22), 1.0)
+			_draw_world_line(agent.position, agent.target_position, Color(0.8, 0.8, 0.8, 0.22), 1.0)
 
 
 func _draw_chase_lines(world, visible_rect: Rect2) -> void:
@@ -215,15 +295,23 @@ func _draw_chase_lines(world, visible_rect: Rect2) -> void:
 			continue
 		if not _line_is_visible(agent.position, prey.position, visible_rect):
 			continue
-		draw_line(agent.position, prey.position, Color(1.0, 0.42, 0.18, 0.78), 2.0)
+		_draw_world_line(agent.position, prey.position, Color(1.0, 0.42, 0.18, 0.78), 2.0)
 
 
 func _draw_selected_agent_radius() -> void:
 	var agent = simulation_manager.get_selected_agent()
 	if agent == null:
 		return
-	var radius: float = float(agent.perception.get("vision_radius", agent.perception.get("danger_radius", 0.0)))
-	draw_arc(agent.position, radius, 0.0, TAU, 48, Color(0.85, 0.9, 1.0, 0.7), 1.5)
+	# The ring exists to show what the animal can actually see, so it takes the
+	# climate multiplier and it uses the radius the species really detects with.
+	# A herbivore's `vision_radius` is a dead key - nothing but this ring ever
+	# read it - and its real predator detection runs on `danger_radius`.
+	var world = simulation_manager.world_state
+	var key := "danger_radius" if agent.species_type == AgentBase.SPECIES_HERBIVORE else "vision_radius"
+	var radius: float = float(agent.perception.get(key, 0.0))
+	if world != null:
+		radius = world.perception_radius(agent, key, 0.0)
+	_draw_world_ring(agent.position, radius, Color(0.85, 0.9, 1.0, 0.7), 1.5, 48)
 
 
 func _draw_selected_group_relation(world, visible_rect: Rect2) -> void:
@@ -235,8 +323,8 @@ func _draw_selected_group_relation(world, visible_rect: Rect2) -> void:
 		return
 	if not _line_is_visible(agent.position, group_center, visible_rect.grow(12.0)):
 		return
-	draw_line(agent.position, group_center, Color(0.78, 1.0, 0.8, 0.85), 2.0)
-	draw_circle(group_center, 6.0, Color(0.78, 1.0, 0.8, 0.85))
+	_draw_world_line(agent.position, group_center, Color(0.78, 1.0, 0.8, 0.85), 2.0)
+	_draw_world_disc(group_center, 6.0, Color(0.78, 1.0, 0.8, 0.85))
 
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
@@ -252,7 +340,7 @@ func _on_selection_changed(_agent_id: int) -> void:
 func _get_visible_world_rect(_world_bounds: Rect2) -> Rect2:
 	var camera := _get_game_camera()
 	if camera != null:
-		return camera.get_visible_world_rect()
+		return WorldProjection.world_rect_covering(camera.get_visible_screen_rect())
 	return _world_bounds
 
 

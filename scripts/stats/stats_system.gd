@@ -13,17 +13,30 @@ var counters := {
 	"deaths_thirst": 0,
 	"deaths_predation": 0,
 	"deaths_old_age": 0,
+	# Split by species, and for predators also by whether the death happened in the
+	# coarse dormant path. Without this split a predator die-off is indistinguishable
+	# from a herbivore one, and a dormant-ecology regression is invisible.
 	"deaths_starvation_herbivore": 0,
 	"deaths_starvation_predator": 0,
 	"deaths_thirst_herbivore": 0,
 	"deaths_thirst_predator": 0,
-	"deaths_predation_herbivore": 0,
 	"deaths_old_age_herbivore": 0,
 	"deaths_old_age_predator": 0,
+	"deaths_starvation_predator_dormant": 0,
+	"deaths_thirst_predator_dormant": 0,
+	"deaths_predation_herbivore": 0,
 	"water_events": 0,
 	"grass_events": 0,
 	"hunt_success": 0,
 	"hunt_fail": 0,
+	# Why chases end. `PredationFailed` already carries the reason; without the split, a low
+	# hunt success rate says nothing about whether predators lose prey to range, the chase
+	# clock, exhaustion, the mate leash, or simply missing.
+	"hunt_fail_out_of_range": 0,
+	"hunt_fail_timeout": 0,
+	"hunt_fail_low_energy": 0,
+	"hunt_fail_kin_gap": 0,
+	"hunt_fail_miss": 0,
 	"carcasses_spawned": 0,
 	"carcasses_expired": 0,
 	"carcass_consumption_events": 0,
@@ -69,7 +82,19 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 	_sample_accumulators["herbivore_hunger_reduced_total"] += float(perf.get("herbivore_hunger_reduced_total", 0.0))
 	if tick % max(1, sample_interval_ticks) != 0 and tick != 0:
 		return
+	_write_snapshot(world, tick, time_seconds, perf)
 
+
+## Rebuilds the snapshot without touching the running totals or the interval.
+##
+## Loading a save needs exactly this: the interface must stop showing the world
+## as it was generated, but the accumulators belong to ticks that have run, and
+## feeding them the same counters twice would inflate every lifetime figure.
+func refresh_snapshot(world, tick: int, time_seconds: float) -> void:
+	_write_snapshot(world, tick, time_seconds, world.get_performance_counters())
+
+
+func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) -> void:
 	var population_metrics: Dictionary = world.get_population_metrics()
 	var herbivore_count := int(population_metrics.get("herbivore_count", 0))
 	var predator_count := int(population_metrics.get("predator_count", 0))
@@ -80,13 +105,27 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 	var dormant_herbivore_count := int(population_metrics.get("dormant_herbivore_count", 0))
 	var active_herbivore_hunger_sum := float(population_metrics.get("active_herbivore_hunger_sum", 0.0))
 	var dormant_herbivore_hunger_sum := float(population_metrics.get("dormant_herbivore_hunger_sum", 0.0))
+	var active_predator_count := int(population_metrics.get("active_predator_count", 0))
+	var dormant_predator_count := int(population_metrics.get("dormant_predator_count", 0))
+	var dormant_predator_hunger_sum := float(population_metrics.get("dormant_predator_hunger_sum", 0.0))
+	var dormant_predator_thirst_sum := float(population_metrics.get("dormant_predator_thirst_sum", 0.0))
+	var dormant_predator_energy_sum := float(population_metrics.get("dormant_predator_energy_sum", 0.0))
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
 	var lod_counts: Dictionary = world.get_lod_counts()
 	var grass_biomass_by_biome: Dictionary = world.resource_system.get_biomass_totals_by_biome()
+	# Always present, even without a clock, so the charts and the HUD never have
+	# to branch on whether the climate is running.
+	var climate_values: Dictionary = {} if world.climate == null else world.climate.snapshot_values()
 	var snapshot: Dictionary = {
 		"tick": tick,
 		"time_seconds": time_seconds,
+		"season": str(climate_values.get("season", "spring")),
+		"season_index": int(climate_values.get("season_index", 0)),
+		"season_progress": float(climate_values.get("season_progress", 0.0)),
+		"day_phase": float(climate_values.get("day_phase", 0.5)),
+		"is_night": bool(climate_values.get("is_night", false)),
+		"climate_regrowth_multiplier": float(climate_values.get("climate_regrowth_multiplier", 1.0)),
 		"herbivore_population": herbivore_count,
 		"predator_population": predator_count,
 		"births_herbivore": counters["births_herbivore"],
@@ -101,9 +140,11 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"deaths_starvation_predator": counters["deaths_starvation_predator"],
 		"deaths_thirst_herbivore": counters["deaths_thirst_herbivore"],
 		"deaths_thirst_predator": counters["deaths_thirst_predator"],
-		"deaths_predation_herbivore": counters["deaths_predation_herbivore"],
 		"deaths_old_age_herbivore": counters["deaths_old_age_herbivore"],
 		"deaths_old_age_predator": counters["deaths_old_age_predator"],
+		"deaths_starvation_predator_dormant": counters["deaths_starvation_predator_dormant"],
+		"deaths_thirst_predator_dormant": counters["deaths_thirst_predator_dormant"],
+		"deaths_predation_herbivore": counters["deaths_predation_herbivore"],
 		"average_hunger": 0.0 if living_count == 0 else hunger_sum / living_count,
 		"average_energy": 0.0 if living_count == 0 else energy_sum / living_count,
 		"active_herbivore_count": active_herbivore_count,
@@ -111,7 +152,17 @@ func record_sample(world, tick: int, time_seconds: float) -> void:
 		"active_herbivore_avg_hunger": 0.0 if active_herbivore_count == 0 else active_herbivore_hunger_sum / active_herbivore_count,
 		"dormant_herbivore_avg_hunger": 0.0 if dormant_herbivore_count == 0 else dormant_herbivore_hunger_sum / dormant_herbivore_count,
 		"starvation_risk_herbivore_count": int(population_metrics.get("starvation_risk_herbivore_count", 0)),
+		"active_predator_count": active_predator_count,
+		"dormant_predator_count": dormant_predator_count,
+		"dormant_predator_avg_hunger": 0.0 if dormant_predator_count == 0 else dormant_predator_hunger_sum / dormant_predator_count,
+		"dormant_predator_avg_thirst": 0.0 if dormant_predator_count == 0 else dormant_predator_thirst_sum / dormant_predator_count,
+		"dormant_predator_avg_energy": 0.0 if dormant_predator_count == 0 else dormant_predator_energy_sum / dormant_predator_count,
 		"hunt_success_rate": 0.0 if hunt_total == 0 else float(counters["hunt_success"]) / hunt_total,
+		"hunt_fail_out_of_range": counters["hunt_fail_out_of_range"],
+		"hunt_fail_timeout": counters["hunt_fail_timeout"],
+		"hunt_fail_low_energy": counters["hunt_fail_low_energy"],
+		"hunt_fail_kin_gap": counters["hunt_fail_kin_gap"],
+		"hunt_fail_miss": counters["hunt_fail_miss"],
 		"grass_total_biomass": world.resource_system.get_total_biomass(),
 		"grass_regrowing_cells": world.resource_system.get_regrowing_cell_count(),
 		"grass_biomass_by_biome": grass_biomass_by_biome,
@@ -200,6 +251,23 @@ func _reset_sample_accumulators() -> void:
 	}
 
 
+## Per-species (and, for predators, per-dormancy) death tallies live in the same flat
+## `counters` dictionary as the aggregate ones, so the key is composed rather than
+## matched. Unknown combinations are ignored instead of creating keys, which keeps the
+## snapshot schema fixed and the CSV columns stable across runs.
+func _count_death_detail(cause: String, species: String, is_dormant: bool) -> void:
+	if cause == "" or species == "":
+		return
+	var species_key := "deaths_%s_%s" % [cause, species]
+	if counters.has(species_key):
+		counters[species_key] += 1
+	if not is_dormant:
+		return
+	var dormant_key := "%s_dormant" % species_key
+	if counters.has(dormant_key):
+		counters[dormant_key] += 1
+
+
 func _on_event_emitted(event: Dictionary) -> void:
 	var event_type := str(event.get("type", ""))
 	var species := str(event.get("species", ""))
@@ -228,13 +296,14 @@ func _on_event_emitted(event: Dictionary) -> void:
 					counters["deaths_predation"] += 1
 				"old_age":
 					counters["deaths_old_age"] += 1
-			var species_cause_key := "deaths_%s_%s" % [cause, species]
-			if counters.has(species_cause_key):
-				counters[species_cause_key] += 1
+			_count_death_detail(cause, species, bool(data.get("dormant", false)))
 		"PredationSuccess":
 			counters["hunt_success"] += 1
 		"PredationFailed":
 			counters["hunt_fail"] += 1
+			var fail_key := "hunt_fail_%s" % str(data.get("reason", ""))
+			if counters.has(fail_key):
+				counters[fail_key] += 1
 		"WaterConsumed":
 			counters["water_events"] += 1
 		"GrassConsumed":

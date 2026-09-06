@@ -1,0 +1,271 @@
+{
+  "projection": "isometric",
+  "level_height_px": 16,
+  "tile_px": 32,
+  "terrain": {
+    "atlas": "res://assets/tiles/terrain_atlas.png",
+    "biomes": {
+      "meadow": {
+        "atlas_coords": [
+          0,
+          0
+        ],
+        "iso_row": 0
+      },
+      "forest": {
+        "atlas_coords": [
+          1,
+          0
+        ],
+        "iso_row": 1
+      },
+      "drought": {
+        "atlas_coords": [
+          2,
+          0
+        ],
+        "iso_row": 2
+      },
+      "swamp": {
+        "atlas_coords": [
+          3,
+          0
+        ],
+        "iso_row": 3
+      }
+    },
+    "obstacles": {
+      "cliff": {
+        "atlas_coords": [
+          4,
+          0
+        ],
+        "iso_row": 4
+      },
+      "dense_forest": {
+        "atlas_coords": [
+          5,
+          0
+        ],
+        "iso_row": 5
+      }
+    },
+    "iso_atlas": "res://assets/tiles/terrain_iso_atlas.png",
+    "iso_tile_size": [
+      64,
+      32
+    ],
+    "iso_region_size": [
+      64,
+      80
+    ],
+    "iso_skirt_levels": 4
+  },
+  "species": {
+    "herbivore": {
+      "atlas": "res://assets/sprites/herbivore_atlas.png",
+      "frame_px": 32,
+      "sprite_scale": 0.85,
+      "stride_length": 26.0,
+      "directions": 4,
+      "animations": {
+        "idle": {
+          "row": 0,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "walk": {
+          "row": 4,
+          "frames": 6,
+          "fps": 8.0
+        },
+        "run": {
+          "row": 8,
+          "frames": 6,
+          "fps": 13.0
+        },
+        "eat": {
+          "row": 12,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "dead": {
+          "row": 16,
+          "frames": 7,
+          "fps": 0.0
+        }
+      }
+    },
+    "predator": {
+      "atlas": "res://assets/sprites/predator_atlas.png",
+      "frame_px": 32,
+      "sprite_scale": 0.72,
+      "stride_length": 30.0,
+      "directions": 4,
+      "animations": {
+        "idle": {
+          "row": 0,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "walk": {
+          "row": 4,
+          "frames": 6,
+          "fps": 8.0
+        },
+        "run": {
+          "row": 8,
+          "frames": 6,
+          "fps": 13.0
+        },
+        "eat": {
+          "row": 12,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "dead": {
+          "row": 16,
+          "frames": 6,
+          "fps": 0.0
+        }
+      }
+    }
+  },
+  "carcass": {
+    "atlas": "res://assets/sprites/carcass_atlas.png",
+    "frame_px": 32,
+    "sprite_scale": 0.8,
+    "stages": 3
+  },
+  "animation": {
+    "walk_speed_threshold": 8.0,
+    "run_speed_threshold": 85.0,
+    "phase_step": 0.37,
+    "turn_lerp_per_second": 4.0,
+    "facing_deadzone": 0.35,
+    "teleport_distance": 220.0,
+    "idle_bob_px": 1.6,
+    "direction_hysteresis": 0.25
+  },
+  "shadow": {
+    "texture": "res://assets/sprites/shadow.png",
+    "size_px": [
+      48,
+      24
+    ],
+    "scale": 0.34,
+    "alpha": 0.5,
+    "ground_bias": 2.0
+  },
+  "age_scale": {
+    "young": 0.72,
+    "adult": 1.0,
+    "old": 1.08
+  },
+  "outline": {
+    "enabled": false,
+    "width_px": 1.0,
+    "color": [
+      0.1,
+      0.08,
+      0.06,
+      0.9
+    ]
+  },
+  "props": {
+    "atlas": "res://assets/tiles/props_atlas.png",
+    "cell_px": [
+      52,
+      66
+    ],
+    "columns": 8,
+    "scale": 1.0,
+    "groups": {
+      "tree_large": [
+        0,
+        1,
+        2
+      ],
+      "tree_small": [
+        3,
+        4
+      ],
+      "bush": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "meadow": [
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "drought": [
+        15,
+        16,
+        17
+      ],
+      "swamp": [
+        18,
+        19,
+        20,
+        21
+      ],
+      "stone": [
+        22,
+        23
+      ]
+    },
+    "obstacles": {
+      "dense_forest": {
+        "group": "tree_large",
+        "chance": 0.75
+      },
+      "cliff": {
+        "group": "stone",
+        "chance": 0.35
+      }
+    },
+    "biomes": {
+      "forest": {
+        "groups": [
+          "tree_small",
+          "bush"
+        ],
+        "chance": 0.22
+      },
+      "meadow": {
+        "groups": [
+          "meadow"
+        ],
+        "chance": 0.07
+      },
+      "drought": {
+        "groups": [
+          "drought",
+          "stone"
+        ],
+        "chance": 0.06
+      },
+      "swamp": {
+        "groups": [
+          "swamp"
+        ],
+        "chance": 0.11
+      }
+    },
+    "group_scale": {
+      "tree_large": 1.4,
+      "tree_small": 1.05,
+      "bush": 0.42,
+      "meadow": 0.34,
+      "drought": 0.38,
+      "swamp": 0.34,
+      "stone": 0.3
+    }
+  }
+}

@@ -26,7 +26,7 @@ func configure(
 
 
 func tick(world, delta: float) -> void:
-	update_needs(delta)
+	update_needs(delta, world.climate.metabolism_multiplier)
 	if apply_survival_checks(world, delta):
 		set_ai_state(AgentAIState.DEAD)
 		return
@@ -38,7 +38,7 @@ func tick(world, delta: float) -> void:
 	var should_decide: bool = world.should_run_decision_tick(self)
 	var predators: Array = []
 	if not should_decide:
-		predators = world.query_agents(position, float(perception.get("danger_radius", 120.0)), SPECIES_PREDATOR, id)
+		predators = world.query_agents(position, world.perception_radius(self, "danger_radius", 120.0), SPECIES_PREDATOR, id)
 		should_decide = not predators.is_empty()
 	var snapshot = cached_snapshot
 	var context = cached_context
@@ -136,15 +136,31 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 	target_position = grass["center"]
 	var eat_distance := float(feeding.get("eat_distance", 18.0))
 	var current_cell_index: int = -1 if world.terrain_system == null else world.terrain_system.get_index_from_position(position)
-	# `eat_distance` is the configured grazing reach; clamping it down to a fraction of a
-	# grass cell made the acceptance window (14.4px at a 32px cell) narrower than the
-	# distance an agent covers between two LOD-throttled ticks, so it could run past its
-	# target cell without the arrival check ever sampling it inside.
+	# `eat_distance` is the configured grazing reach, and the window must also never be
+	# narrower than half a cell or a target cell centre is unreachable by the radius test.
+	# The old `min` of the two took whichever was smaller, so on a fine grid the window
+	# shrank below the distance an agent covers between two LOD-throttled ticks and it
+	# could run past its target without the arrival check ever sampling it inside.
 	var cell_reach_distance: float = maxf(eat_distance, world.resource_system.cell_size * 0.5)
 	var reached_target_cell: bool = int(grass.get("index", -1)) == current_cell_index
 	var reached_target_radius: bool = position.distance_squared_to(grass["center"]) <= cell_reach_distance * cell_reach_distance
+	# Graze where you stand, not only on the exact cell that was chosen.
+	#
+	# A herd cannot physically fit inside one cell once bodies push each other
+	# apart - twenty animals at arm's length need more than a 96-unit square - so
+	# insisting on the chosen cell left most of the herd shuffling at its edge,
+	# never eating. Any cell underfoot with grass on it is food.
+	var bite_amount := float(feeding.get("bite_amount", 18.0))
+	var eat_index: int = int(grass.get("index", -1))
+	if not (reached_target_cell or reached_target_radius) and current_cell_index != -1:
+		# A full bite, not a scrap. A lower bar had animals stopping for `eat_duration`
+		# on nearly bare ground instead of walking to the patch they had chosen,
+		# which fed them less than never grazing underfoot at all.
+		if world.resource_system.get_biomass(current_cell_index) >= bite_amount:
+			eat_index = current_cell_index
+			reached_target_cell = true
 	if reached_target_cell or reached_target_radius:
-		var consumed: float = world.consume_grass_cell(int(grass.get("index", -1)), float(feeding.get("bite_amount", 18.0)))
+		var consumed: float = world.consume_grass_cell(eat_index, bite_amount)
 		if consumed > 0.0:
 			set_state("eat", world.current_tick)
 			clear_navigation()
@@ -156,7 +172,7 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 			restore_energy(consumed * 0.18)
 			world.emit_event("GrassConsumed", self, -1, {
 				"consumed": consumed,
-				"cell_index": int(grass["index"]),
+				"cell_index": eat_index,
 			})
 			return true
 		clear_targets()
@@ -266,7 +282,8 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 
 	target_agent_id = chosen_mate.id
 	target_position = chosen_mate.position
-	if position.distance_squared_to(chosen_mate.position) > 16.0 * 16.0:
+	var contact_distance: float = mate_contact_distance(chosen_mate)
+	if position.distance_squared_to(chosen_mate.position) > contact_distance * contact_distance:
 		set_state("reproduce", world.current_tick)
 		var waypoint: Vector2 = world.get_next_waypoint(position, chosen_mate.position, id)
 		var move_vector: Vector2 = Steering.combine([

@@ -1,0 +1,115 @@
+extends SceneTree
+
+# Screenshot harness for visual verification. Not part of the game.
+#
+#   Godot --path . --script res://scripts/dev/capture.gd -- <out.png> [zoom]
+# Loads the real main scene, parks the camera, waits for
+# LOD sectors around it to reify, then writes a PNG.
+#
+# The camera has to be parked before agents are read: agents outside the LOD
+# focus rect are dormant and absent from `world.agents` entirely, so a fresh
+# scene reports zero living agents until the camera tells it where to look.
+
+var _frames := 0
+var _main: Node = null
+var _manager = null
+var _camera = null
+var _out := "user://capture.png"
+var _zoom := 0.55
+var _focus := Vector2.ZERO
+var _preset := ""
+var _hide_overlays := false
+
+const PARK_FRAME := 90
+const SETTLE_FRAMES := 300
+
+
+func _initialize() -> void:
+	var args := OS.get_cmdline_user_args()
+	if args.size() > 0:
+		_out = args[0]
+	if args.size() > 1:
+		_zoom = float(args[1])
+	if args.size() > 2:
+		_preset = args[2]
+	if args.size() > 3:
+		_hide_overlays = args[3] == "noverlay"
+	root.size = Vector2i(1600, 900)
+	_main = load("res://scenes/main/main.tscn").instantiate()
+	root.add_child(_main)
+
+
+func _process(_delta: float) -> bool:
+	_frames += 1
+	if _frames == 10:
+		# The app now opens on the setup screen and simulates nothing until it is
+		# dismissed, so the harness makes the choice a person would.
+		var menu = _main.get_node_or_null("CanvasLayer/StartMenu")
+		if _preset == "menu":
+			return false
+		if menu != null and menu.visible:
+			var selection: Dictionary = ConfigLoader.default_selection()
+			if _preset != "":
+				selection["style"] = _preset
+			menu.start_requested.emit(selection)
+	if _preset == "menu":
+		if _frames < 40:
+			return false
+		root.get_texture().get_image().save_png(_out)
+		print("saved menu %s" % _out)
+		return true
+	if _frames == PARK_FRAME:
+		if _hide_overlays:
+			_main.get_node("OverlayRenderer").visible = false
+			_main.get_node("WorldView").visible = false
+			_main.get_node("TerrainTiles").visible = false
+		if _preset == "hud" or _preset == "selected_hud":
+			_main.set_hud_visible(true)
+		if _preset == "water":
+			_main.set_hud_visible(true)
+			_main._on_overlay_flag_changed("show_minimap_water", true)
+		_manager = _main.get_node_or_null("SimulationManager")
+		_camera = _main.get_node_or_null("GameCamera")
+		var bounds: Rect2 = _manager.world_state.bounds
+		_focus = bounds.position + bounds.size * 0.5
+		_aim(_focus)
+	if _frames == PARK_FRAME + SETTLE_FRAMES:
+		_park_on_agent()
+	if _frames < PARK_FRAME + SETTLE_FRAMES + 8:
+		return false
+	root.get_texture().get_image().save_png(_out)
+	print("saved %s" % _out)
+	return true
+
+
+func _aim(world_position: Vector2) -> void:
+	_camera.global_position = WorldProjection.to_screen(
+		world_position, _height_at(world_position))
+	_camera.zoom = Vector2(_zoom, _zoom)
+	_camera.force_update_scroll()
+
+
+func _height_at(world_position: Vector2) -> int:
+	var terrain = _manager.world_state.terrain_system
+	return 0 if terrain == null else terrain.get_height_at_position(world_position)
+
+
+func _park_on_agent() -> void:
+	var world = _manager.world_state
+	var agents: Array = world.get_living_agents()
+	if agents.is_empty():
+		push_error("capture: no living agents even after settling")
+		return
+	var target = agents[agents.size() / 2]
+	_aim(target.position)
+	if _preset == "selected" or _preset == "selected_hud":
+		# Centring is not selecting, and the tag and card only exist for a selection.
+		var radius := float(_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
+		_manager.select_agent_at_position(target.position, radius)
+	var rect: Rect2 = _camera.get_visible_screen_rect()
+	var in_frame := 0
+	for agent in agents:
+		if rect.has_point(WorldProjection.to_screen(agent.position, _height_at(agent.position))):
+			in_frame += 1
+	print("tick=%d camera=%s zoom=%s agents_in_frame=%d/%d" % [
+		_manager.current_tick, _camera.global_position, _camera.zoom, in_frame, agents.size()])

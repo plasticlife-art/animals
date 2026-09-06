@@ -48,6 +48,12 @@ var stuck_timer: float = 0.0
 var last_decision_tick: int = -9999
 var cached_snapshot = null
 var cached_context = null
+## Grazing target, held across a few ticks. Searching for one is the single most
+## expensive thing a herbivore does, and the answer rarely changes between
+## consecutive ticks. `WorldState._find_grass_target_for_agent()` owns the
+## refresh rule and drops the cache early once the cell is grazed down.
+var grass_target_cache: Dictionary = {}
+var grass_target_tick: int = -9999
 
 var movement: Dictionary = {}
 var perception: Dictionary = {}
@@ -102,6 +108,8 @@ func configure(
 	last_decision_tick = -9999
 	cached_snapshot = null
 	cached_context = null
+	grass_target_cache = {}
+	grass_target_tick = -9999
 	debug_color = Color(0.9, 0.9, 0.9)
 
 
@@ -110,7 +118,7 @@ func tick(_world, _delta: float) -> void:
 
 
 func tick_maintenance(world, delta: float) -> void:
-	update_needs(delta)
+	update_needs(delta, world.climate.metabolism_multiplier)
 	if apply_survival_checks(world, delta):
 		return
 	advance_inertia(world, delta)
@@ -125,6 +133,8 @@ func cache_decision_state(snapshot, context, current_tick: int) -> void:
 func clear_decision_cache() -> void:
 	cached_snapshot = null
 	cached_context = null
+	grass_target_cache = {}
+	grass_target_tick = -9999
 	last_decision_tick = -9999
 
 
@@ -189,17 +199,25 @@ func is_hunger_above_floor(start_floor: float, stop_floor_key: String, continuin
 	return hunger >= float(thresholds.get(stop_floor_key, minf(start_floor, 4.0)))
 
 
-func update_needs(delta: float) -> void:
+## `metabolism_scale` is the climate multiplier - winter costs more, night costs
+## less. It is applied at the read sites and never written back: `metabolism` is
+## a reference to the species.json sub-dictionary, shared by every agent of the
+## species, so mutating it would scale the whole species permanently.
+##
+## Aging, recovery and the cooldowns stay unscaled. Recovery is not consumption,
+## and scaling it would hand night rest a compounding bonus on top of the
+## cheaper night metabolism.
+func update_needs(delta: float, metabolism_scale: float = 1.0) -> void:
 	age += delta
-	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * delta)
-	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * delta)
+	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * metabolism_scale * delta)
+	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * delta)
 	reproduction_cooldown = maxf(0.0, reproduction_cooldown - delta)
 	interaction_timer = maxf(0.0, interaction_timer - delta)
 	attack_cooldown = maxf(0.0, attack_cooldown - delta)
 
 	var max_energy := float(metabolism.get("max_energy", 100.0))
 	var rest_recovery := float(metabolism.get("rest_recovery", 6.0))
-	var energy_decay := float(metabolism.get("energy_decay", 2.0))
+	var energy_decay := float(metabolism.get("energy_decay", 2.0)) * metabolism_scale
 	if state in ["rest", "eat", "drink", "reproduce", "feed_carcass"]:
 		energy = minf(max_energy, energy + rest_recovery * delta)
 	else:
@@ -207,7 +225,7 @@ func update_needs(delta: float) -> void:
 
 	var critical_thirst := float(balance.get("state_thresholds", {}).get("critical_thirst", 65.0))
 	if thirst >= critical_thirst:
-		energy = maxf(0.0, energy - float(metabolism.get("dehydration_energy_penalty", 4.0)) * delta)
+		energy = maxf(0.0, energy - float(metabolism.get("dehydration_energy_penalty", 4.0)) * metabolism_scale * delta)
 
 
 func apply_survival_checks(world, delta: float) -> bool:
@@ -245,6 +263,7 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
 	if effective_speed > 0.0 and velocity.length() > effective_speed:
 		velocity = velocity.normalized() * effective_speed
+	velocity = _damp_turn(velocity, delta)
 	position = world.resolve_movement_position(position, position + velocity * delta)
 	if position.distance_squared_to(previous_position) <= 0.04 and desired_velocity.length_squared() > 0.001:
 		stuck_timer += delta
@@ -254,6 +273,28 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 			velocity = velocity.move_toward(Vector2.ZERO, acceleration * delta)
 	if velocity.length_squared() > 0.001:
 		direction = velocity.normalized()
+
+
+## Caps how fast an animal can swing its heading.
+##
+## Without this the path itself is jagged, not just its rendering: `wander()`
+## adds a random kick to the steering angle every tick, and the agent turns to
+## the new heading instantly. No amount of smoothing in the renderer can hide a
+## trajectory that genuinely zig-zags, which is why this lives in the simulation
+## and is measured as a behaviour change rather than a visual one.
+##
+## A rate of zero disables it, which is what the test fixtures rely on.
+func _damp_turn(new_velocity: Vector2, delta: float) -> Vector2:
+	var max_rate := float(movement.get("max_turn_rate_degrees", 0.0))
+	if max_rate <= 0.0 or delta <= 0.0:
+		return new_velocity
+	if new_velocity.length_squared() <= 0.0001 or direction.length_squared() <= 0.0001:
+		return new_velocity
+	var limit := deg_to_rad(max_rate) * delta
+	var difference := wrapf(new_velocity.angle() - direction.angle(), -PI, PI)
+	if absf(difference) <= limit:
+		return new_velocity
+	return Vector2.from_angle(direction.angle() + signf(difference) * limit) * new_velocity.length()
 
 
 func advance_inertia(world, delta: float) -> void:
@@ -447,6 +488,51 @@ func get_debug_summary(current_tick: int = 0) -> Dictionary:
 		"alive": is_alive,
 		"sex": sex,
 	}
+
+
+## Half the space this animal's body occupies, used by the overlap pass in
+## WorldState. Derived from the sprite so the simulation's idea of a body and
+## the drawn animal agree; zero disables the pass for this agent.
+func get_body_radius() -> float:
+	return float(movement.get("body_radius", 0.0))
+
+
+## How close a pair has to be for the rendezvous to count as contact.
+##
+## Derived from the bodies rather than hardcoded, because it has to clear them:
+## `WorldState._resolve_agent_overlap()` holds two animals apart at the sum of
+## their radii, so any threshold below that sum is unreachable and the pair
+## shoves each other in place forever instead of breeding. `mate_contact_slack`
+## is the margin on top, and it exists so the check is not decided by a float
+## comparison against the exact distance the solver is aiming for.
+func mate_contact_distance(mate: AgentBase) -> float:
+	var slack := maxf(0.0, float(reproduction.get("mate_contact_slack", 4.0)))
+	return get_body_radius() + mate.get_body_radius() + slack
+
+
+## Everything `export_runtime_state` carries, plus the per-decision caches.
+##
+## Kept separate because the two callers want different things. Sector sleep
+## drops the caches deliberately - a herd that wakes somewhere else should look
+## around again - whereas a save is meant to resume exactly where it left off,
+## and an agent that loses its grass target immediately re-searches. Measured:
+## restoring without these had the loaded world eating twenty-seven times as
+## much grass in its first ten ticks as the run it was supposed to continue.
+func export_save_state() -> Dictionary:
+	var state_data: Dictionary = export_runtime_state()
+	state_data["last_decision_tick"] = last_decision_tick
+	state_data["decision_target_data"] = decision_target_data.duplicate(true)
+	state_data["grass_target_cache"] = grass_target_cache.duplicate(true)
+	state_data["grass_target_tick"] = grass_target_tick
+	return state_data
+
+
+func apply_save_state(state_data: Dictionary) -> void:
+	apply_runtime_state(state_data)
+	last_decision_tick = int(state_data.get("last_decision_tick", last_decision_tick))
+	decision_target_data = state_data.get("decision_target_data", {}).duplicate(true)
+	grass_target_cache = state_data.get("grass_target_cache", {}).duplicate(true)
+	grass_target_tick = int(state_data.get("grass_target_tick", grass_target_tick))
 
 
 func export_runtime_state() -> Dictionary:

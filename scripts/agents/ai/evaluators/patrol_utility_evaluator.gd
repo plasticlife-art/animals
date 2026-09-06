@@ -9,6 +9,9 @@ func _init(new_config: Dictionary = {}) -> void:
 
 
 func evaluate(_agent, context) -> Dictionary:
+	# Patrol is the "nothing to do" fallback, not a competitor to hunting.
+	if has_feeding_opportunity(context):
+		return veto(["prey in reach"])
 	var low_urgency := float(context.get_value("low_urgency", 0.0))
 	var no_targets := float(context.get_value("no_targets_score", 0.0))
 	var score := get_weight("base_score", 0.15)

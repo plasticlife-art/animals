@@ -95,18 +95,50 @@ func query_into(results: Array, position: Vector2, radius: float, species_filter
 	var radius_sq := radius * radius
 	var center := _to_cell(position)
 	var cell_radius := int(ceil(radius / cell_size))
+	# Wide queries sweep a lot of empty space - a predator's 480 vision radius
+	# covers 81 cells - so misses have to be free. `get()` without a default
+	# returns null instead of building a throwaway Array for every empty cell.
+	var has_species_filter := species_filter != ""
 	for x in range(center.x - cell_radius, center.x + cell_radius + 1):
 		for y in range(center.y - cell_radius, center.y + cell_radius + 1):
-			var bucket: Array = _cells.get(Vector2i(x, y), [])
+			var bucket = _cells.get(Vector2i(x, y))
+			if bucket == null:
+				continue
 			for agent in bucket:
 				if agent == null or agent.id == exclude_id:
 					continue
 				if not agent.is_alive:
 					continue
-				if species_filter != "" and agent.species_type != species_filter:
+				if has_species_filter and agent.species_type != species_filter:
 					continue
 				if agent.position.distance_squared_to(position) <= radius_sq:
 					results.append(agent)
+
+
+## Same predicate as `query_into()`, but returns only how many matched. Callers
+## that just need a neighbour count - prey isolation scores one per candidate,
+## per predator, per tick - would otherwise pay for an Array they throw away.
+func count(position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1) -> int:
+	var total := 0
+	var radius_sq := radius * radius
+	var center := _to_cell(position)
+	var cell_radius := int(ceil(radius / cell_size))
+	var has_species_filter := species_filter != ""
+	for x in range(center.x - cell_radius, center.x + cell_radius + 1):
+		for y in range(center.y - cell_radius, center.y + cell_radius + 1):
+			var bucket = _cells.get(Vector2i(x, y))
+			if bucket == null:
+				continue
+			for agent in bucket:
+				if agent == null or agent.id == exclude_id:
+					continue
+				if not agent.is_alive:
+					continue
+				if has_species_filter and agent.species_type != species_filter:
+					continue
+				if agent.position.distance_squared_to(position) <= radius_sq:
+					total += 1
+	return total
 
 
 func get_population_density() -> Array:

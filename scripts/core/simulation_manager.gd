@@ -145,6 +145,16 @@ func set_debug_flag(flag_name: String, enabled: bool) -> void:
 	debug_flags[flag_name] = enabled
 
 
+## How far the clock has run past the last completed tick, as 0..1. Renderers
+## use it to place things between two simulation states instead of snapping them
+## to the last one. The speed multiplier is already folded into `accumulator`,
+## so this stays correct at 4x and 10x without further work.
+func get_tick_alpha() -> float:
+	if tick_duration <= 0.0:
+		return 0.0
+	return clampf(accumulator / tick_duration, 0.0, 1.0)
+
+
 func should_refresh_ui_on_tick(tick: int) -> bool:
 	return tick <= 0 or tick % ui_refresh_interval_ticks == 0
 
@@ -273,11 +283,16 @@ func shutdown() -> void:
 func _build_lod_settings(debug_config: Dictionary) -> Dictionary:
 	var lod_config: Dictionary = debug_config.get("lod", {})
 	var simulation_lod_config: Dictionary = config_bundle.get("world", {}).get("simulation_lod", {})
-	var near_margin := maxf(0.0, float(lod_config.get("near_margin", 192.0)))
+	# The margins default from `world.simulation_lod`, which `presets.json` scales per map
+	# size. They used to default to fixed literals with `debug.json` always supplying a
+	# value, so the per-size numbers were dead: the active window stayed the same width
+	# while the map tripled, and nearly every sector went dormant in the GUI.
+	var near_margin := maxf(0.0, float(lod_config.get("near_margin", simulation_lod_config.get("near_sector_margin", 192.0))))
+	var mid_margin := maxf(near_margin, float(lod_config.get("mid_margin", simulation_lod_config.get("mid_sector_margin", 768.0))))
 	return {
 		"enabled": bool(lod_config.get("enabled", false)),
 		"near_margin": near_margin,
-		"mid_margin": maxf(near_margin, float(lod_config.get("mid_margin", 768.0))),
+		"mid_margin": mid_margin,
 		"mid_update_interval_ticks": maxi(1, int(lod_config.get("mid_update_interval_ticks", 2))),
 		"far_update_interval_ticks": maxi(1, int(lod_config.get("far_update_interval_ticks", 5))),
 		"mid_decision_interval_ticks": maxi(1, int(simulation_lod_config.get("mid_decision_interval", 3))),

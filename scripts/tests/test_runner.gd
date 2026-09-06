@@ -6,6 +6,7 @@ const SUITES := [
 	{"name": "EvaluatorTests", "script": preload("res://scripts/tests/evaluator_tests.gd")},
 	{"name": "SelectorTests", "script": preload("res://scripts/tests/selector_tests.gd")},
 	{"name": "StateTests", "script": preload("res://scripts/tests/state_tests.gd")},
+	{"name": "ClimateTests", "script": preload("res://scripts/tests/climate_tests.gd")},
 	{"name": "SimulationTests", "script": preload("res://scripts/tests/simulation_tests.gd")},
 ]
 
@@ -33,6 +34,9 @@ func _run_suites() -> void:
 		asserts = null
 
 	print("Test summary: %d checks, %d failures" % [total_checks, total_failures])
-	queue_free()
+	# No queue_free() here. Freeing this node before the await meant the
+	# coroutine had no instance left to resume on, so quit() was never reached
+	# and the headless process hung until something killed it. The tree is about
+	# to quit anyway, so there is nothing worth cleaning up first.
 	await get_tree().process_frame
 	get_tree().quit(1 if total_failures > 0 else 0)

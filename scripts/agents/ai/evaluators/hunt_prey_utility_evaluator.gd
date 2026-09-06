@@ -21,8 +21,15 @@ func evaluate(_agent, context) -> Dictionary:
 	score += prey_proximity * get_weight("prey_proximity_weight", 0.15)
 	score += energy_ratio * get_weight("energy_weight", 0.15)
 	score -= (1.0 - energy_ratio) * get_weight("low_energy_penalty", 0.12)
+	# Hunger alone enters linearly, so crossing the critical threshold used to change
+	# nothing. The knee makes starving decisively outrank drinking and resting, which
+	# both scale with their own need and would otherwise tie at high hunger.
+	var knee := get_weight("critical_hunger_ratio", 0.6)
+	var urgency := clampf((hunger - knee) / maxf(0.01, 1.0 - knee), 0.0, 1.0)
+	score += urgency * get_weight("critical_hunger_weight", 0.45)
 	return result(score, [
 		reason_if("hunger", hunger),
 		reason_if("prey", prey_quality),
 		reason_if("range", prey_proximity),
+		reason_if("urgent", urgency),
 	])

@@ -3,10 +3,15 @@ extends PanelContainer
 
 var simulation_manager: SimulationManager
 
+## Read once at bind time so `_draw()` stays free of dictionary walks.
+var _season_colors: Array = []
+
 
 func bind_manager(manager: SimulationManager) -> void:
 	simulation_manager = manager
-	simulation_manager.tick_completed.connect(_on_tick_completed)
+	_cache_season_colors()
+	if not simulation_manager.tick_completed.is_connected(_on_tick_completed):
+		simulation_manager.tick_completed.connect(_on_tick_completed)
 	queue_redraw()
 
 
@@ -15,51 +20,120 @@ func request_refresh() -> void:
 		queue_redraw()
 
 
+## Padding around the panel's contents, and the gap between the two charts.
+const PADDING := 14.0
+const CHART_GAP := 10.0
+
+
 func _draw() -> void:
-	var font = ThemeDB.fallback_font
-	var font_size := ThemeDB.fallback_font_size
+	# The panel's own theme, not ThemeDB's fallback. The fallback is a fixed
+	# 16 px regardless of the HUD's type scale, so this used to be the one part
+	# of the interface that ignored the theme entirely.
+	var font := get_theme_default_font()
+	var font_size := get_theme_default_font_size()
 	var rect := Rect2(Vector2.ZERO, size)
 	draw_rect(rect, Color(0.06, 0.07, 0.08, 0.82), true)
 	draw_rect(rect, Color(0.22, 0.24, 0.26), false, 1.5)
+	if font == null:
+		return
+	var line_height: float = font.get_height(font_size)
 
 	if simulation_manager == null or simulation_manager.stats_system == null:
-		if font != null:
-			draw_string(font, Vector2(16.0, 28.0), "Waiting for simulation", HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color.WHITE)
+		draw_string(font, Vector2(PADDING, PADDING + line_height), "Waiting for simulation",
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color.WHITE)
 		return
 
 	var series := simulation_manager.stats_system.get_series()
 	if series.size() < 2:
-		if font != null:
-			draw_string(font, Vector2(16.0, 28.0), "Collecting telemetry", HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color.WHITE)
+		draw_string(font, Vector2(PADDING, PADDING + line_height), "Collecting telemetry",
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color.WHITE)
 		return
 
-	var population_rect := Rect2(14.0, 28.0, size.x - 28.0, size.y * 0.5 - 36.0)
-	var trends_rect := Rect2(14.0, size.y * 0.54, size.x - 28.0, size.y * 0.34)
+	# The two footer lines are measured and reserved before the charts are laid
+	# out. Placing them at fixed offsets from the bottom, as this did, put them
+	# underneath the lower chart as soon as the type scale changed.
+	var footer_height: float = line_height * 2.0 + 4.0
+	var charts_height: float = maxf(40.0, size.y - PADDING * 2.0 - footer_height)
+	var chart_width: float = size.x - PADDING * 2.0
+	var population_height: float = charts_height * 0.55
+	var population_rect := Rect2(PADDING, PADDING, chart_width, population_height)
+	var trends_rect := Rect2(
+		PADDING, population_rect.end.y + CHART_GAP,
+		chart_width, charts_height - population_height - CHART_GAP)
 	_draw_chart_background(population_rect, "Population", font, font_size)
 	_draw_chart_background(trends_rect, "Birth / Death Trends", font, font_size)
+	_draw_season_bands(series, population_rect)
+	_draw_season_bands(series, trends_rect)
 
 	_draw_series_line(series, population_rect, "herbivore_population", Color(0.61, 0.88, 0.52))
 	_draw_series_line(series, population_rect, "predator_population", Color(0.98, 0.45, 0.2))
 	_draw_combined_line(series, trends_rect, ["births_herbivore", "births_predator"], Color(0.39, 0.82, 1.0))
 	_draw_combined_line(series, trends_rect, ["deaths_herbivore", "deaths_predator"], Color(1.0, 0.5, 0.65))
 
-	if font != null:
-		var latest: Dictionary = series[-1]
-		draw_string(font, Vector2(20.0, size.y - 32.0), "H green  P orange  Births blue  Deaths pink", HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.88, 0.9, 0.92))
-		draw_string(
-			font,
-			Vector2(20.0, size.y - 16.0),
-			"Avg energy %.1f  Avg hunger %.1f  Hunt %.2f" % [
-				float(latest.get("average_energy", 0.0)),
-				float(latest.get("average_hunger", 0.0)),
-				float(latest.get("hunt_success_rate", 0.0)),
-			],
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1.0,
-			font_size,
-			Color(0.88, 0.9, 0.92)
-		)
-		draw_string(font, Vector2(size.x - 190.0, size.y - 18.0), "Tick %d" % int(latest.get("tick", 0)), HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.88, 0.9, 0.92))
+	var latest: Dictionary = series[-1]
+	var ink := Color(0.88, 0.9, 0.92)
+	var stats_baseline: float = size.y - PADDING
+	var legend_baseline: float = stats_baseline - line_height
+	draw_string(font, Vector2(PADDING, legend_baseline),
+		"H green  P orange  Births blue  Deaths pink",
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
+	draw_string(font, Vector2(PADDING, stats_baseline),
+		"Avg energy %.1f  Avg hunger %.1f  Hunt %.2f" % [
+			float(latest.get("average_energy", 0.0)),
+			float(latest.get("average_hunger", 0.0)),
+			float(latest.get("hunt_success_rate", 0.0)),
+		],
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
+	# Right-aligned from its measured width rather than a guessed offset, so a
+	# five-digit tick cannot run off the panel or into the line beside it.
+	var tick_text := "Tick %d" % int(latest.get("tick", 0))
+	var tick_width: float = font.get_string_size(
+		tick_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+	draw_string(font, Vector2(size.x - PADDING - tick_width, legend_baseline), tick_text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
+
+
+func _cache_season_colors() -> void:
+	_season_colors.clear()
+	if simulation_manager == null:
+		return
+	for season in simulation_manager.config_bundle.get("world", {}) \
+			.get("climate", {}).get("seasons", []):
+		var raw: Array = season.get("band_color", [0.5, 0.5, 0.5, 0.1])
+		_season_colors.append(Color(
+			float(raw[0]), float(raw[1]), float(raw[2]),
+			float(raw[3]) if raw.size() > 3 else 0.1))
+
+
+## Contiguous runs of one season, washed in behind the lines. Taken from the
+## series itself rather than from the clock, so the bands stay aligned with the
+## samples even after a save is loaded mid-year.
+##
+## A single run spanning the whole window is skipped: that is either a disabled
+## clock (every row reports season 0) or a window narrower than one season, and
+## either way a full-width flat tint carries no information.
+func _draw_season_bands(series: Array, rect: Rect2) -> void:
+	var count := series.size()
+	if _season_colors.is_empty() or count < 2:
+		return
+	var runs: Array = []
+	var run_start := 0
+	var run_index := int(series[0].get("season_index", -1))
+	for index in range(1, count + 1):
+		var next_index := -999 if index == count else int(series[index].get("season_index", -1))
+		if next_index == run_index:
+			continue
+		if run_index >= 0 and run_index < _season_colors.size():
+			runs.append([run_start, index - 1, run_index])
+		run_start = index
+		run_index = next_index
+	if runs.size() < 2:
+		return
+	for run in runs:
+		var span_from: float = rect.position.x + (float(run[0]) / maxf(1.0, count - 1.0)) * rect.size.x
+		var span_to: float = rect.position.x + (float(run[1]) / maxf(1.0, count - 1.0)) * rect.size.x
+		draw_rect(Rect2(span_from, rect.position.y, maxf(1.0, span_to - span_from), rect.size.y),
+			_season_colors[run[2]], true)
 
 
 func _draw_chart_background(rect: Rect2, label: String, font, font_size: int) -> void:

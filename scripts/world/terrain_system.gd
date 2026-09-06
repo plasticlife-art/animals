@@ -45,9 +45,16 @@ var _biomes: Array = []
 var _obstacles: Array = []
 var _move_costs: PackedFloat32Array = PackedFloat32Array()
 var _walkable: PackedByteArray = PackedByteArray()
+## Discrete elevation level per cell. Level 0 everywhere means a flat world and
+## the height rules below become no-ops, which is the default and what the test
+## fixtures build.
+var _heights: PackedByteArray = PackedByteArray()
 var _forage_init_multipliers: PackedFloat32Array = PackedFloat32Array()
 var _forage_regrowth_multipliers: PackedFloat32Array = PackedFloat32Array()
 var _blocked_cell_count: int = 0
+var height_levels: int = 1
+var _max_climb_step: int = 1
+var _height_slope_cost: float = 0.35
 var _cell_centers: PackedVector2Array = PackedVector2Array()
 var _cached_walkable_neighbors: Array = []
 var _cached_walkable_neighbor_costs: Array = []
@@ -75,11 +82,17 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	biome_definitions = _build_biome_definitions(terrain_config.get("biomes", {}))
 	biome_order = ["meadow", "forest", "drought", "swamp"]
 
+	var height_config: Dictionary = terrain_config.get("height", {})
+	height_levels = maxi(1, int(height_config.get("levels", 1)))
+	_max_climb_step = maxi(1, int(height_config.get("max_climb_step", 1)))
+	_height_slope_cost = maxf(0.0, float(height_config.get("slope_cost", 0.35)))
+
 	var cell_count: int = cols * rows
 	_biomes.resize(cell_count)
 	_obstacles.resize(cell_count)
 	_move_costs.resize(cell_count)
 	_walkable.resize(cell_count)
+	_heights.resize(cell_count)
 	_forage_init_multipliers.resize(cell_count)
 	_forage_regrowth_multipliers.resize(cell_count)
 	_cell_centers = PackedVector2Array()
@@ -92,6 +105,7 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_path_cache_hit_count = 0
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
+	_generate_heights(height_config, rng)
 	_apply_obstacles(terrain_config.get("obstacles", {}), rng)
 	_connect_walkable_regions()
 	_refresh_cached_values()
@@ -257,6 +271,15 @@ func find_path(from_position: Vector2, to_position: Vector2) -> Dictionary:
 	return find_path_between_indices(start_index, goal_index)
 
 
+## Returns a path result as `{cells, cost, reachable, start_index, goal_index}`.
+##
+## The returned dictionary is READ-ONLY for callers. On a cache hit it is the
+## cached object itself, so mutating it in place would corrupt the cache for
+## everyone. Callers that need to keep or edit the cells copy them first - see
+## `WorldState.get_next_waypoint()` and `_find_reachable_grass_uncounted()`,
+## which both `.duplicate()` before storing. This replaced a defensive copy on
+## every single return, which cost an Array duplication per query even on the
+## ~94% of queries that hit the cache.
 func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 	if start_index == -1 or goal_index == -1:
 		return {
@@ -279,7 +302,7 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 	_path_query_count += 1
 	if _path_cache.has(cache_key):
 		_path_cache_hit_count += 1
-		return _duplicate_path_result(_path_cache[cache_key])
+		return _path_cache[cache_key]
 
 	var max_search_cells: int = maxi(64, int(navigation_config.get("max_search_cells", 2800)))
 	var open_heap: Array = []
@@ -319,7 +342,7 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 				"goal_index": goal_index,
 			}
 			_store_path_cache_entry(cache_key, result)
-			return _duplicate_path_result(result)
+			return result
 
 		var neighbor_indices: Array = get_walkable_neighbors(current_index)
 		var neighbor_costs: Array = _get_walkable_neighbor_costs(current_index)
@@ -346,7 +369,7 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 			"goal_index": goal_index,
 		}
 		_store_path_cache_entry(cache_key, failed_result)
-		return _duplicate_path_result(failed_result)
+		return failed_result
 	var partial_result := {
 		"cells": _reconstruct_path(best_index, came_from),
 		"cost": float(g_score.get(best_index, INF)),
@@ -355,7 +378,7 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 		"goal_index": goal_index,
 	}
 	_store_path_cache_entry(cache_key, partial_result)
-	return _duplicate_path_result(partial_result)
+	return partial_result
 
 
 func has_cached_path_between_indices(start_index: int, goal_index: int) -> bool:
@@ -432,6 +455,52 @@ func _generate_biomes(generation_config: Dictionary, rng: RandomNumberGenerator,
 		_walkable[index] = 1
 
 
+## Elevation is a separate noise layer from the biomes, so relief and vegetation
+## do not have to agree. With `levels` at 1 every cell stays at 0 and every
+## height rule downstream collapses to a no-op.
+func _generate_heights(height_config: Dictionary, rng: RandomNumberGenerator) -> void:
+	var cell_count := get_cell_count()
+	if height_levels <= 1:
+		for index in range(cell_count):
+			_heights[index] = 0
+		return
+
+	var height_noise: FastNoiseLite = FastNoiseLite.new()
+	height_noise.seed = int(rng.randi())
+	height_noise.frequency = float(height_config.get("frequency", 0.012))
+	height_noise.fractal_octaves = int(height_config.get("octaves", 3))
+
+	var top_level: int = height_levels - 1
+	for index in range(cell_count):
+		var center: Vector2 = get_cell_center(index)
+		var value: float = (height_noise.get_noise_2d(center.x, center.y) + 1.0) * 0.5
+		_heights[index] = clampi(int(floor(value * float(height_levels))), 0, top_level)
+
+
+func get_height_at_index(index: int) -> int:
+	if index < 0 or index >= _heights.size():
+		return 0
+	return int(_heights[index])
+
+
+func get_height_at_position(position: Vector2) -> int:
+	return get_height_at_index(get_index_from_position(position))
+
+
+func get_max_height_level() -> int:
+	return maxi(0, height_levels - 1)
+
+
+## A transition is climbable when the step between the two cells is small
+## enough. Elevation is a property of the move, not of the cell, so
+## `is_walkable_index()` keeps meaning "not blocked by an obstacle" and every
+## caller that asks that question is unaffected.
+func _is_climbable(from_index: int, to_index: int) -> bool:
+	if height_levels <= 1:
+		return true
+	return absi(int(_heights[from_index]) - int(_heights[to_index])) <= _max_climb_step
+
+
 func _apply_obstacles(obstacle_config: Dictionary, rng: RandomNumberGenerator) -> void:
 	var forest_cluster_count: int = maxi(0, int(obstacle_config.get("dense_forest_cluster_count", 6)))
 	var forest_radius_min: float = maxf(1.5, float(obstacle_config.get("dense_forest_radius_min_cells", 2.0)))
@@ -489,6 +558,16 @@ func _connect_walkable_regions() -> void:
 		for index in components[component_index]["cells"]:
 			_clear_obstacle(int(index))
 
+	# Terminal fallback. Clearing obstacles cannot rescue a region that is walled
+	# off by elevation rather than by an obstacle, so if the map is still split
+	# the height field is abandoned entirely. A connected world matters more than
+	# relief, and this firing at all means the height settings are too extreme
+	# for the map - hence the warning rather than a silent flatten.
+	if _collect_walkable_components().size() > 1:
+		push_warning("Terrain still disconnected after carving; flattening height field. Check terrain.height settings.")
+		for index in range(get_cell_count()):
+			_heights[index] = 0
+
 
 func _collect_walkable_components() -> Array:
 	var components: Array = []
@@ -513,19 +592,50 @@ func _collect_walkable_components() -> Array:
 	return components
 
 
+## Cuts an L-shaped passage between two disconnected regions. Clearing the
+## obstacles is only half the job once terrain has elevation: a corridor that
+## runs into a cliff face is still a wall, so the height field is graded along
+## it as well.
 func _carve_corridor(start_index: int, end_index: int) -> void:
+	var cells: Array = _corridor_cells(start_index, end_index)
+	for index in cells:
+		_clear_obstacle(int(index))
+	_grade_corridor(cells)
+
+
+func _corridor_cells(start_index: int, end_index: int) -> Array:
 	var from_coords: Vector2i = get_cell_coords(start_index)
 	var to_coords: Vector2i = get_cell_coords(end_index)
 	var cursor: Vector2i = from_coords
-	_clear_obstacle(start_index)
-	_clear_obstacle(end_index)
-
+	var cells: Array = [start_index]
 	while cursor.x != to_coords.x:
 		cursor.x += 1 if to_coords.x > cursor.x else -1
-		_clear_obstacle(cursor.y * cols + cursor.x)
+		cells.append(cursor.y * cols + cursor.x)
 	while cursor.y != to_coords.y:
 		cursor.y += 1 if to_coords.y > cursor.y else -1
-		_clear_obstacle(cursor.y * cols + cursor.x)
+		cells.append(cursor.y * cols + cursor.x)
+	return cells
+
+
+## Grades the interior of a corridor into a ramp between the two ends, whose own
+## heights belong to the regions being joined and are left alone. A long enough
+## corridor absorbs any difference; a corridor too short to ramp legally is
+## flattened to the destination level instead, which is still connected.
+func _grade_corridor(cells: Array) -> void:
+	if height_levels <= 1 or cells.size() < 2:
+		return
+	var first: int = int(cells[0])
+	var last: int = int(cells[cells.size() - 1])
+	var from_height: int = int(_heights[first])
+	var to_height: int = int(_heights[last])
+	var span: int = cells.size() - 1
+	if absi(to_height - from_height) > span * _max_climb_step:
+		for cell_index in cells:
+			_heights[int(cell_index)] = to_height
+		return
+	for step in range(1, span):
+		var t: float = float(step) / float(span)
+		_heights[int(cells[step])] = int(round(lerpf(float(from_height), float(to_height), t)))
 
 
 func _paint_obstacle_circle(center_index: int, radius_cells: float, obstacle_id: String) -> void:
@@ -651,7 +761,7 @@ func _compute_walkable_neighbors(index: int) -> Array:
 	]
 	for offset in orthogonal_offsets:
 		var neighbor_index := _offset_to_walkable_index(coords, offset)
-		if neighbor_index != -1:
+		if neighbor_index != -1 and _is_climbable(index, neighbor_index):
 			neighbors.append(neighbor_index)
 	if not allow_diagonal:
 		return neighbors
@@ -668,9 +778,15 @@ func _compute_walkable_neighbors(index: int) -> Array:
 		var neighbor_index: int = neighbor.y * cols + neighbor.x
 		if not is_walkable_index(neighbor_index):
 			continue
-		var horizontal := Vector2i(coords.x + offset.x, coords.y)
-		var vertical := Vector2i(coords.x, coords.y + offset.y)
-		if not is_walkable_index(horizontal.y * cols + horizontal.x) and not is_walkable_index(vertical.y * cols + vertical.x):
+		if not _is_climbable(index, neighbor_index):
+			continue
+		# A diagonal needs one of its two orthogonal supports to be usable,
+		# climb included - otherwise an agent could cut the corner of a cliff.
+		var horizontal_index: int = coords.y * cols + (coords.x + offset.x)
+		var vertical_index: int = (coords.y + offset.y) * cols + coords.x
+		var horizontal_ok := is_walkable_index(horizontal_index) and _is_climbable(index, horizontal_index)
+		var vertical_ok := is_walkable_index(vertical_index) and _is_climbable(index, vertical_index)
+		if not horizontal_ok and not vertical_ok:
 			continue
 		neighbors.append(neighbor_index)
 	return neighbors
@@ -756,7 +872,15 @@ func _heuristic_cost(from_index: int, to_index: int) -> float:
 
 
 func _step_cost(from_index: int, to_index: int) -> float:
-	return get_cell_center(from_index).distance_to(get_cell_center(to_index)) * get_move_cost_at_index(to_index)
+	var base: float = get_cell_center(from_index).distance_to(get_cell_center(to_index)) * get_move_cost_at_index(to_index)
+	if height_levels <= 1 or _height_slope_cost <= 0.0:
+		return base
+	# Only climbing is penalised. Going downhill is free, which keeps agents
+	# from treating a descent as a detour worth avoiding.
+	var climb: int = int(_heights[to_index]) - int(_heights[from_index])
+	if climb <= 0:
+		return base
+	return base * (1.0 + float(climb) * _height_slope_cost)
 
 
 func _reconstruct_path(current_index: int, came_from: Dictionary) -> Array:
@@ -780,18 +904,14 @@ func _closest_point_on_segment(point: Vector2, segment_start: Vector2, segment_e
 func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary) -> void:
 	if _path_cache.has(cache_key):
 		return
-	_path_cache[cache_key] = _duplicate_path_result(result)
+	# Stored by reference, and `find_path_between_indices()` hands the same
+	# object back, so there is one rule for callers rather than two: never
+	# mutate a path result in place.
+	_path_cache[cache_key] = result
 	_path_cache_order.append(cache_key)
 	if _path_cache_order.size() > _path_cache_limit:
 		var oldest_key: Vector2i = _path_cache_order.pop_front()
 		_path_cache.erase(oldest_key)
 
 
-func _duplicate_path_result(result: Dictionary) -> Dictionary:
-	return {
-		"cells": result.get("cells", []).duplicate(),
-		"cost": float(result.get("cost", INF)),
-		"reachable": bool(result.get("reachable", false)),
-		"start_index": int(result.get("start_index", -1)),
-		"goal_index": int(result.get("goal_index", -1)),
-	}
+

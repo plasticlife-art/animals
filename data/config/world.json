@@ -2,49 +2,218 @@
   "seed": 3,
   "tick_rate": 18.0,
   "world_size": {
-    "x": 4800.0,
-    "y": 2700.0
+    "x": 14400.0,
+    "y": 8100.0
   },
   "spatial_cell_size": 128.0,
   "grass": {
-    "cell_size": 32.0,
+    "cell_size": 96.0,
     "max_biomass": 100.0,
     "regrowth_rate": 6.0,
     "initial_density_min": 0.5,
-    "initial_density_max": 1.0
+    "initial_density_max": 1.0,
+    "biomass_reference_cell_size": 32.0
+  },
+  "climate": {
+    "enabled": true,
+    "day_length_seconds": 120.0,
+    "season_length_days": 1.0,
+    "start_day_phase": 0.5,
+    "start_season_index": 0,
+    "season_transition_fraction": 0.35,
+    "seasons": [
+      {
+        "id": "spring",
+        "label": "Весна",
+        "regrowth_multiplier": 1.0,
+        "metabolism_multiplier": 1.0,
+        "perception_multiplier": 1.0,
+        "tint": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "band_color": [
+          0.42,
+          0.72,
+          0.4,
+          0.1
+        ]
+      },
+      {
+        "id": "summer",
+        "label": "Лето",
+        "regrowth_multiplier": 1.15,
+        "metabolism_multiplier": 1.05,
+        "perception_multiplier": 1.0,
+        "tint": [
+          1.04,
+          1.01,
+          0.92
+        ],
+        "band_color": [
+          0.85,
+          0.76,
+          0.32,
+          0.1
+        ]
+      },
+      {
+        "id": "autumn",
+        "label": "Осень",
+        "regrowth_multiplier": 0.75,
+        "metabolism_multiplier": 1.0,
+        "perception_multiplier": 0.97,
+        "tint": [
+          1.03,
+          0.95,
+          0.85
+        ],
+        "band_color": [
+          0.82,
+          0.5,
+          0.24,
+          0.1
+        ]
+      },
+      {
+        "id": "winter",
+        "label": "Зима",
+        "regrowth_multiplier": 0.4,
+        "metabolism_multiplier": 1.15,
+        "perception_multiplier": 0.9,
+        "tint": [
+          0.9,
+          0.95,
+          1.08
+        ],
+        "band_color": [
+          0.46,
+          0.62,
+          0.86,
+          0.12
+        ]
+      }
+    ],
+    "day": {
+      "night_start_phase": 0.8,
+      "night_end_phase": 0.22,
+      "twilight_fraction": 0.07,
+      "night_regrowth_multiplier": 1.0,
+      "night_metabolism_multiplier": 0.85,
+      "night_perception_multiplier": 0.55,
+      "light_keyframes": [
+        {
+          "phase": 0.0,
+          "color": [
+            0.34,
+            0.4,
+            0.62
+          ]
+        },
+        {
+          "phase": 0.2,
+          "color": [
+            0.34,
+            0.4,
+            0.62
+          ]
+        },
+        {
+          "phase": 0.27,
+          "color": [
+            0.88,
+            0.72,
+            0.62
+          ]
+        },
+        {
+          "phase": 0.36,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "phase": 0.72,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "phase": 0.8,
+          "color": [
+            0.96,
+            0.68,
+            0.48
+          ]
+        },
+        {
+          "phase": 0.88,
+          "color": [
+            0.34,
+            0.4,
+            0.62
+          ]
+        }
+      ]
+    },
+    "species_night_perception_multiplier": {
+      "herbivore": 0.55,
+      "predator": 0.55
+    }
   },
   "terrain": {
-    "cell_size": 32.0,
+    "cell_size": 96.0,
     "biomes": {
       "meadow": {
         "move_cost": 1.0,
         "forage_init_multiplier": 1.0,
         "forage_regrowth_multiplier": 1.0,
-        "color": [0.31, 0.41, 0.22]
+        "color": [
+          0.31,
+          0.41,
+          0.22
+        ]
       },
       "forest": {
         "move_cost": 1.3,
         "forage_init_multiplier": 0.65,
         "forage_regrowth_multiplier": 0.7,
-        "color": [0.2, 0.3, 0.18]
+        "color": [
+          0.2,
+          0.3,
+          0.18
+        ]
       },
       "drought": {
         "move_cost": 1.15,
         "forage_init_multiplier": 0.2,
         "forage_regrowth_multiplier": 0.28,
-        "color": [0.48, 0.39, 0.2]
+        "color": [
+          0.48,
+          0.39,
+          0.2
+        ]
       },
       "swamp": {
         "move_cost": 1.7,
         "forage_init_multiplier": 0.45,
         "forage_regrowth_multiplier": 0.52,
-        "color": [0.18, 0.27, 0.23]
+        "color": [
+          0.18,
+          0.27,
+          0.23
+        ]
       }
     },
     "generation": {
-      "biome_frequency": 0.018,
-      "moisture_frequency": 0.012,
-      "drought_frequency": 0.016,
+      "biome_frequency": 0.003,
+      "moisture_frequency": 0.002,
+      "drought_frequency": 0.00266,
       "forest_threshold": 0.2,
       "drought_threshold": 0.42,
       "swamp_threshold": 0.48,
@@ -59,6 +228,13 @@
       "cliff_thickness_max_cells": 2.0,
       "cliff_gap_radius_cells": 1.6,
       "border_clearance_cells": 1
+    },
+    "height": {
+      "levels": 4,
+      "frequency": 0.002,
+      "octaves": 3,
+      "max_climb_step": 1,
+      "slope_cost": 0.35
     }
   },
   "navigation": {
@@ -71,44 +247,127 @@
     "max_new_paths_per_tick": 28,
     "goal_bucket_size": 4,
     "sector_grass_refresh_ticks": 18,
-    "grass_local_reach_cells": 3
+    "grass_local_reach_cells": 3,
+    "grass_target_refresh_ticks": 6,
+    "prey_pressure_refresh_ticks": 9
   },
   "simulation_lod": {
-    "sector_size": 512.0,
-    "near_sector_margin": 192.0,
-    "mid_sector_margin": 960.0,
+    "sector_size": 1536.0,
+    "near_sector_margin": 576.0,
+    "mid_sector_margin": 2880.0,
     "mid_decision_interval": 3,
     "far_decision_interval": 8,
     "very_far_sector_step_seconds": 0.75,
-    "headless_active_radius": 960.0,
+    "headless_active_radius": 2880.0,
     "dormant_speed_scale": 0.45,
     "dormant_goal_refresh_seconds": 2.0,
     "dormant_stale_wake_seconds": 6.0,
-    "dormant_reify_budget_per_tick": 1
+    "dormant_reify_budget_per_tick": 1,
+    "dormant_travel_reference_sector_size": 512.0,
+    "dormant_directed_speed_boost": 1.2
   },
   "water_sources": [
-    { "x": 420.0, "y": 340.0, "radius": 52.0 },
-    { "x": 1180.0, "y": 560.0, "radius": 56.0 },
-    { "x": 1920.0, "y": 300.0, "radius": 50.0 },
-    { "x": 2680.0, "y": 620.0, "radius": 54.0 },
-    { "x": 3440.0, "y": 360.0, "radius": 52.0 },
-    { "x": 4180.0, "y": 700.0, "radius": 56.0 },
-    { "x": 760.0, "y": 1260.0, "radius": 56.0 },
-    { "x": 1540.0, "y": 1520.0, "radius": 58.0 },
-    { "x": 2320.0, "y": 1180.0, "radius": 72.0 },
-    { "x": 3120.0, "y": 1480.0, "radius": 56.0 },
-    { "x": 3900.0, "y": 1220.0, "radius": 54.0 },
-    { "x": 4500.0, "y": 1540.0, "radius": 58.0 },
-    { "x": 520.0, "y": 2480.0, "radius": 54.0 },
-    { "x": 1320.0, "y": 2440.0, "radius": 58.0 },
-    { "x": 2180.0, "y": 2460.0, "radius": 54.0 },
-    { "x": 3040.0, "y": 2380.0, "radius": 58.0 },
-    { "x": 3900.0, "y": 2520.0, "radius": 56.0 },
-    { "x": 4560.0, "y": 2460.0, "radius": 58.0 }
+    {
+      "x": 1260.0,
+      "y": 1020.0,
+      "radius": 104.0
+    },
+    {
+      "x": 3540.0,
+      "y": 1680.0,
+      "radius": 112.0
+    },
+    {
+      "x": 5760.0,
+      "y": 900.0,
+      "radius": 100.0
+    },
+    {
+      "x": 8040.0,
+      "y": 1860.0,
+      "radius": 108.0
+    },
+    {
+      "x": 10320.0,
+      "y": 1080.0,
+      "radius": 104.0
+    },
+    {
+      "x": 12540.0,
+      "y": 2100.0,
+      "radius": 112.0
+    },
+    {
+      "x": 2280.0,
+      "y": 3780.0,
+      "radius": 112.0
+    },
+    {
+      "x": 4620.0,
+      "y": 4560.0,
+      "radius": 116.0
+    },
+    {
+      "x": 6960.0,
+      "y": 3540.0,
+      "radius": 144.0
+    },
+    {
+      "x": 9360.0,
+      "y": 4440.0,
+      "radius": 112.0
+    },
+    {
+      "x": 11700.0,
+      "y": 3660.0,
+      "radius": 108.0
+    },
+    {
+      "x": 13500.0,
+      "y": 4620.0,
+      "radius": 116.0
+    },
+    {
+      "x": 1560.0,
+      "y": 7440.0,
+      "radius": 108.0
+    },
+    {
+      "x": 3960.0,
+      "y": 7320.0,
+      "radius": 116.0
+    },
+    {
+      "x": 6540.0,
+      "y": 7380.0,
+      "radius": 108.0
+    },
+    {
+      "x": 9120.0,
+      "y": 7140.0,
+      "radius": 116.0
+    },
+    {
+      "x": 11700.0,
+      "y": 7560.0,
+      "radius": 112.0
+    },
+    {
+      "x": 13680.0,
+      "y": 7380.0,
+      "radius": 116.0
+    }
   ],
   "spawns": {
     "herbivore_count": 240,
     "predator_count": 24,
     "herbivore_group_count": 12
+  },
+  "water_generation": {
+    "sources_per_million_units": 0.45,
+    "radius_min": 180.0,
+    "radius_max": 280.0,
+    "jitter": 0.42,
+    "seed": 3
   }
 }
