@@ -14,7 +14,13 @@ func evaluate(_agent, context) -> Dictionary:
 	var threat := float(context.get_value("threat", 0.0))
 	var hunger := float(context.get_value("hunger", 0.0))
 	var thirst := float(context.get_value("thirst", 0.0))
+	# A smooth 0..1 ramp through dusk, not a flag, so the herd settles over the
+	# twilight instead of dropping where it stands. The weight defaults to zero,
+	# which is what keeps predators hunting at night and keeps every context that
+	# never sets `night_ratio` scoring exactly as it did before.
+	var night := float(context.get_value("night_ratio", 0.0))
 	var score := fatigue * get_weight("fatigue_weight", 0.45)
+	score += night * get_weight("night_weight", 0.0)
 	score += safe_biome * get_weight("safe_biome_weight", 0.25)
 	score += (1.0 - threat) * get_weight("low_threat_weight", 0.10)
 	score -= hunger * get_weight("hunger_penalty", 0.18)
@@ -24,4 +30,5 @@ func evaluate(_agent, context) -> Dictionary:
 		reason_if("fatigue", fatigue),
 		reason_if("safe", safe_biome),
 		reason_if("threat", threat, 0.2),
+		reason_if("night", night, 0.2),
 	])

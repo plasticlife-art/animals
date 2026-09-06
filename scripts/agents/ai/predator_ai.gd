@@ -77,14 +77,20 @@ func build_context(agent, world, snapshot = null):
 	var thirst := UtilityContextFactory.need_ratio(agent.thirst, agent.need_max)
 	var energy_ratio := UtilityContextFactory.energy_ratio(agent.energy, max_energy)
 	var fatigue := UtilityContextFactory.fatigue_ratio(agent.energy, max_energy)
-	var hunt_vision := float(agent.perception.get("vision_radius", 240.0))
+	# Paired with the snapshot query in `build_predator_snapshot`, for the same
+	# reason the herbivore threat radius is paired with its own.
+	var hunt_vision: float = world.perception_radius(agent, "vision_radius", 240.0)
 
 	var prey_quality := 0.0
 	var prey_proximity := 0.0
 	var prey_target := {}
 	if prey != null:
 		prey_target = {"agent_id": prey.id, "position": prey.position}
-		prey_quality = clampf(agent.get_prey_isolation(world, prey) * 0.45 + (1.0 - UtilityContextFactory.energy_ratio(prey.energy, float(prey.metabolism.get("max_energy", 100.0)))) * 0.35 + 0.2, 0.0, 1.0)
+		# Isolation and prey condition tune *preference*, they must not gate the
+		# decision: any reachable herbivore feeds a predator that has to eat. The old
+		# 0.2 floor meant a healthy herd animal scored 0.2, which fed straight into
+		# `no_targets_score` below and told the selector there was nothing to hunt.
+		prey_quality = clampf(agent.get_prey_isolation(world, prey) * 0.25 + (1.0 - UtilityContextFactory.energy_ratio(prey.energy, float(prey.metabolism.get("max_energy", 100.0)))) * 0.20 + 0.55, 0.0, 1.0)
 		prey_proximity = UtilityContextFactory.proximity_ratio(agent.position.distance_to(prey.position), hunt_vision)
 
 	var carcass_proximity := 0.0
@@ -137,11 +143,12 @@ func build_context(agent, world, snapshot = null):
 		"carcass_meat": carcass_meat,
 		"prey_scarcity": clampf(1.0 - maxf(prey_quality, prey_proximity), 0.0, 1.0),
 		"water_proximity": water_proximity,
-		"feeding_allowed": UtilityContextFactory.bool_ratio(agent.hunger >= feeding_hunger_floor),
+		"feeding_allowed": UtilityContextFactory.bool_ratio(agent.is_feeding_allowed() if agent.has_method("is_feeding_allowed") else agent.hunger >= feeding_hunger_floor),
 		"investigation_signal": investigation_signal,
 		"kin_separation": kin_separation,
 		"mate_available": UtilityContextFactory.bool_ratio(mate != null),
 		"low_urgency": low_urgency,
+		"night_ratio": world.climate.night_ratio,
 		"safe_biome_score": UtilityContextFactory.safe_biome_score(world.get_biome_at_position(agent.position)),
 		"no_targets_score": no_targets_score,
 	}

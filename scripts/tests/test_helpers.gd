@@ -45,7 +45,15 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 		"initial_density_min": 1.0,
 		"initial_density_max": 1.0,
 	}
+	# Pinned off on purpose, same reasoning as the flat terrain below: the
+	# behavioural fixtures assert on chosen actions and need ratios, and a
+	# season sweeping past mid-run must not reach them. `ClimateTests` builds
+	# its own bundles when it wants the clock running.
+	bundle["world"]["climate"] = {"enabled": false}
 	bundle["world"]["terrain"]["cell_size"] = 32.0
+	# Pinned flat on purpose: the fixtures assert on routes and reachability, so
+	# turning relief on in world.json must not reach them.
+	bundle["world"]["terrain"]["height"] = {"levels": 1}
 	bundle["world"]["terrain"]["generation"] = {
 		"biome_frequency": 0.0,
 		"moisture_frequency": 0.0,
@@ -74,10 +82,15 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	bundle["world"]["navigation"]["max_new_paths_per_tick"] = 16
 	bundle["world"]["navigation"]["goal_bucket_size"] = 2
 	bundle["world"]["navigation"]["sector_grass_refresh_ticks"] = 1
+	# The margins are what `_build_lod_settings()` now derives the LOD window from. They
+	# used to be dead here, overridden by fixed values in `debug.json`, so the fixture's
+	# own 0/64 never applied and every test actually ran against 144/560. Stating those
+	# explicitly keeps the behaviour these tests were written against; the tests that
+	# want dormancy shrink `headless_active_radius` instead.
 	bundle["world"]["simulation_lod"] = {
 		"sector_size": 64.0,
-		"near_sector_margin": 0.0,
-		"mid_sector_margin": 64.0,
+		"near_sector_margin": 144.0,
+		"mid_sector_margin": 560.0,
 		"mid_decision_interval": 2,
 		"far_decision_interval": 4,
 		"very_far_sector_step_seconds": 0.5,
@@ -87,6 +100,11 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 		"dormant_stale_wake_seconds": 2.5,
 		"dormant_reify_budget_per_tick": 1,
 	}
+	# Pinned so the fixtures stop depending on the shipped chart tuning. Raising
+	# `sample_interval_ticks` for the seasonal charts moved the sample window
+	# past the ten ticks the dormant-metrics fixtures run, and they silently read
+	# a stale tick-0 snapshot instead of the window they meant to assert on.
+	bundle["balance"]["stats"]["sample_interval_ticks"] = 5
 	bundle["world"]["spawns"] = {
 		"herbivore_count": 0,
 		"predator_count": 0,

@@ -9,6 +9,10 @@ func _init(new_config: Dictionary = {}) -> void:
 
 
 func evaluate(_agent, context) -> Dictionary:
+	# Investigating a water source is a guess about where prey might turn up. It has no
+	# business outranking prey the predator can already see; thirst is `drink`'s job.
+	if has_feeding_opportunity(context):
+		return veto(["prey in reach"])
 	var hunger := float(context.get_value("hunger", 0.0))
 	var thirst := float(context.get_value("thirst", 0.0))
 	var signal_score := float(context.get_value("investigation_signal", 0.0))

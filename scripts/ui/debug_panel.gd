@@ -59,6 +59,7 @@ func _ready() -> void:
 	_try_register_overlay_checkbox("show_carcasses", "%CarcassesCheck")
 	_try_register_overlay_checkbox("show_selected_path", "%SelectedPathCheck")
 	_try_register_overlay_checkbox("show_lod_overlay", "%LodOverlayCheck")
+	_try_register_overlay_checkbox("show_minimap_water", "%MinimapWaterCheck")
 	for flag_name in overlay_checkboxes.keys():
 		var checkbox: CheckBox = overlay_checkboxes[flag_name]
 		checkbox.toggled.connect(_on_overlay_toggled.bind(flag_name))
@@ -203,6 +204,16 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 			int(snapshot.get("tick", 0)),
 			float(snapshot.get("time_seconds", 0.0)),
 			simulation_manager.seed,
+		],
+		# Climate goes in the summary as well as the always-on indicator, because
+		# this line is what reaches telemetry exports and screenshots.
+		"[b]Season[/b] %s    [b]Clock[/b] %s    [b]Regrowth[/b] x%.2f" % [
+			str(snapshot.get("season", "-")),
+			"%02d:%02d" % [
+				int(float(snapshot.get("day_phase", 0.0)) * 24.0) % 24,
+				int(float(snapshot.get("day_phase", 0.0)) * 1440.0) % 60,
+			],
+			float(snapshot.get("climate_regrowth_multiplier", 1.0)),
 		],
 		"[b]Herbivores[/b] %d    [b]Predators[/b] %d" % [
 			int(snapshot.get("herbivore_population", 0)),

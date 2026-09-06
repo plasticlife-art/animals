@@ -1,23 +1,26 @@
 {
   "default_speed_index": 0,
-  "speed_steps": [1.0, 2.0, 4.0, 10.0],
+  "speed_steps": [
+    1.0,
+    2.0,
+    4.0,
+    10.0
+  ],
   "selection_radius": 18.0,
-  "chart_history_limit": 720,
+  "chart_history_limit": 1440,
   "ui_refresh_interval_ticks": 5,
   "event_log_visible_limit": 12,
   "event_history_limit": 4096,
   "export_directory": "user://exports",
   "lod": {
     "enabled": true,
-    "near_margin": 144.0,
-    "mid_margin": 560.0,
     "mid_update_interval_ticks": 3,
     "far_update_interval_ticks": 8,
     "show_lod_overlay": false
   },
   "overlays": {
-    "show_biomes": true,
-    "show_obstacles": true,
+    "show_biomes": false,
+    "show_obstacles": false,
     "show_state_labels": false,
     "show_target_lines": false,
     "show_vision_radius": false,
@@ -26,8 +29,10 @@
     "show_grass_density": false,
     "show_population_density": false,
     "show_water_overlay": false,
-    "show_carcasses": true,
+    "show_carcasses": false,
     "show_selected_path": false,
-    "show_lod_overlay": false
-  }
+    "show_lod_overlay": false,
+    "show_minimap_water": false
+  },
+  "autosave_interval_ticks": 600
 }

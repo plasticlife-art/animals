@@ -2,3 +2,8 @@
 *.import
 *.uid
 .DS_Store
+
+# Godot regenerates .import files, but they carry the texture import settings
+# (Nearest filtering for the pixel art) and the resource UID, so the ones that
+# belong to committed art must be tracked.
+!assets/**/*.import

@@ -30,8 +30,22 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 		float(world_size_config.get("y", 900.0))
 	)
 	cell_size = float(grass_config.get("cell_size", 32.0))
-	max_biomass = float(grass_config.get("max_biomass", 100.0))
-	regrowth_rate = float(grass_config.get("regrowth_rate", 5.0))
+	# Biomass is stored per cell but means grass over an area, so both the cap
+	# and the regrowth have to scale with the square of the cell. `max_biomass`
+	# and `regrowth_rate` are the values tuned at `biomass_reference_cell_size`.
+	#
+	# Missing the key defaults the reference to the cell itself - factor 1, no
+	# change - which is what keeps the test fixtures' own worlds untouched.
+	#
+	# This is not cosmetic. Carrying 100/6.0 from a 32-unit cell to a 96-unit one
+	# left a cell holding three bites of `bite_amount` 33 while a herd has twenty
+	# members, so a herd stripped a cell and moved on before most of it had eaten.
+	var reference_cell_size := float(grass_config.get("biomass_reference_cell_size", cell_size))
+	var area_scale: float = 1.0
+	if reference_cell_size > 0.0:
+		area_scale = pow(cell_size / reference_cell_size, 2.0)
+	max_biomass = float(grass_config.get("max_biomass", 100.0)) * area_scale
+	regrowth_rate = float(grass_config.get("regrowth_rate", 5.0)) * area_scale
 
 	cols = maxi(1, int(ceil(world_size.x / cell_size)))
 	rows = maxi(1, int(ceil(world_size.y / cell_size)))
@@ -52,7 +66,35 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 			_regrowing_cells[index] = true
 
 
-func step(delta: float) -> void:
+## Grass biomass is the one accumulated field here; everything else - the total,
+## the per-biome totals and the regrowing set - is derived from it on import.
+func export_cells() -> PackedFloat32Array:
+	return _cells.duplicate()
+
+
+func import_cells(cells, new_terrain_system: TerrainSystem = null) -> void:
+	if new_terrain_system != null:
+		terrain_system = new_terrain_system
+	if not (cells is PackedFloat32Array) or cells.size() != _cells.size():
+		push_error("Saved grass grid is %d cells, world has %d; keeping generated grass"
+			% [cells.size() if cells is PackedFloat32Array else -1, _cells.size()])
+		return
+	_cells = cells.duplicate()
+	total_biomass = 0.0
+	_biomass_totals_by_biome.clear()
+	_regrowing_cells.clear()
+	for index in range(_cells.size()):
+		var biomass: float = _cells[index]
+		total_biomass += biomass
+		_add_biomass_to_biome(index, biomass)
+		if biomass < _get_cell_max_biomass(index):
+			_regrowing_cells[index] = true
+
+
+## `season_regrowth_multiplier` is applied here rather than folded into
+## `regrowth_rate`, which is resolved once at init with the area scale and must
+## stay the tuned value - multiplying into it would compound every tick.
+func step(delta: float, season_regrowth_multiplier: float = 1.0) -> void:
 	if _regrowing_cells.is_empty():
 		return
 	var filled_cells: Array = []
@@ -60,18 +102,23 @@ func step(delta: float) -> void:
 		var previous := _cells[index]
 		var cell_max := _get_cell_max_biomass(index)
 		var regrowth_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_regrowth_multiplier(index)
-		var updated := minf(cell_max, previous + regrowth_rate * regrowth_multiplier * delta)
+		var base_growth := regrowth_rate * regrowth_multiplier * delta
+		var updated := minf(cell_max, previous + base_growth * season_regrowth_multiplier)
 		var delta_biomass := updated - previous
-		if is_zero_approx(delta_biomass):
-			# A cell that cannot regrow at all would otherwise sit in the set forever;
-			# consumption puts it back when it next matters.
+		if updated >= cell_max:
 			filled_cells.append(index)
+		elif is_zero_approx(base_growth):
+			# Only a cell whose terrain cannot regrow at all earns permanent
+			# eviction; consumption puts it back when it next matters. Testing the
+			# season-scaled growth instead would let a hard winter quietly empty
+			# the working set, and those cells would never resume.
+			filled_cells.append(index)
+			continue
+		if delta_biomass <= 0.0:
 			continue
 		_cells[index] = updated
 		total_biomass += delta_biomass
 		_add_biomass_to_biome(index, delta_biomass)
-		if updated >= cell_max:
-			filled_cells.append(index)
 	for index in filled_cells:
 		_regrowing_cells.erase(index)
 

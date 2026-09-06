@@ -6,6 +6,7 @@ const PredatorScript = preload("res://scripts/agents/predator.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_perception_snapshot.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
+const ClimateScript = preload("res://scripts/world/climate.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
 
@@ -38,6 +39,7 @@ var event_bus
 var rng: RandomNumberGenerator
 var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
+var climate: Climate
 var spatial_grid: SpatialGrid
 var navigation_config: Dictionary = {}
 var simulation_lod_config: Dictionary = {}
@@ -56,10 +58,14 @@ var _agent_sector_cells: Dictionary = {}
 var _sector_states: Dictionary = {}
 var _sector_size: float = 512.0
 var _sector_grass_cache: Dictionary = {}
+var _prey_pressure_sectors: Array = []
+var _prey_pressure_refresh_tick: int = -9999
+var _prey_pressure_refresh_ticks: int = 9
 var _path_budget_remaining: int = 0
 var _new_path_budget_remaining: int = 0
 var _goal_bucket_size: int = 4
 var _sector_grass_refresh_ticks: int = 18
+var _grass_target_refresh_ticks: int = 6
 var _mid_decision_interval_ticks: int = 3
 var _far_decision_interval_ticks: int = 8
 var _very_far_sector_step_seconds: float = 0.75
@@ -94,20 +100,30 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	simulation_lod_config = world_config.get("simulation_lod", {}).duplicate(true)
 
 	water_sources.clear()
-	for source in world_config.get("water_sources", []):
-		water_sources.append({
-			"position": Vector2(float(source.get("x", 0.0)), float(source.get("y", 0.0))),
-			"radius": float(source.get("radius", 48.0)),
-		})
+	var water_generation: Dictionary = world_config.get("water_generation", {})
+	if water_generation.is_empty():
+		for source in world_config.get("water_sources", []):
+			water_sources.append({
+				"position": Vector2(float(source.get("x", 0.0)), float(source.get("y", 0.0))),
+				"radius": float(source.get("radius", 48.0)),
+			})
+	else:
+		_generate_water_sources(water_generation)
 
 	terrain_system = TerrainSystemScript.new()
 	terrain_system.initialize(world_config, rng, water_sources)
 
 	resource_system = ResourceSystemScript.new()
 	resource_system.initialize(world_config, rng, terrain_system)
+	# Sampled here and not only in `step()` because the manager writes a stats
+	# snapshot on tick 0, before the first step ever runs.
+	climate = ClimateScript.new()
+	climate.configure(world_config)
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
+	_prey_pressure_refresh_ticks = maxi(1, int(navigation_config.get("prey_pressure_refresh_ticks", 9)))
+	_grass_target_refresh_ticks = maxi(1, int(navigation_config.get("grass_target_refresh_ticks", 6)))
 	_dormant_speed_scale = clampf(float(simulation_lod_config.get("dormant_speed_scale", 0.45)), 0.1, 1.0)
 	_dormant_goal_refresh_seconds = maxf(0.5, float(simulation_lod_config.get("dormant_goal_refresh_seconds", 2.0)))
 	_dormant_stale_wake_seconds = maxf(_dormant_goal_refresh_seconds, float(simulation_lod_config.get("dormant_stale_wake_seconds", 6.0)))
@@ -122,6 +138,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_agent_sector_cells.clear()
 	_sector_states.clear()
 	_sector_grass_cache.clear()
+	_prey_pressure_sectors.clear()
+	_prey_pressure_refresh_tick = -9999
 	_reset_performance_counters()
 	_spawn_initial_agents()
 	_rebuild_group_state_cache()
@@ -131,10 +149,11 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary = {}) -> void:
 	current_tick = tick
 	current_time = time_seconds
+	climate.sample(current_time)
 	_reset_performance_counters()
 	_prepare_navigation_budget()
 	var phase_started_usec: int = Time.get_ticks_usec()
-	resource_system.step(delta)
+	resource_system.step(delta, climate.regrowth_multiplier)
 	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
 	_mid_decision_interval_ticks = int(active_lod_context.get("mid_decision_interval_ticks", 3))
@@ -142,6 +161,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	_very_far_sector_step_seconds = float(active_lod_context.get("very_far_sector_step_seconds", 0.75))
 	phase_started_usec = Time.get_ticks_usec()
 	_wake_relevant_dormant_sectors(active_lod_context)
+	_refresh_prey_pressure_sectors()
 	_rebuild_group_state_cache()
 	performance_counters["phase_sectors_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 
@@ -160,6 +180,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 			agent.tick_maintenance(self, delta)
 		_track_agent_runtime_position(agent, previous_position)
 
+	_resolve_agent_overlap(delta)
 	performance_counters["phase_agents_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 
 	_flush_removals()
@@ -253,6 +274,11 @@ func get_population_metrics() -> Dictionary:
 	var dormant_herbivore_count := 0
 	var active_herbivore_hunger_sum := 0.0
 	var dormant_herbivore_hunger_sum := 0.0
+	var active_predator_count := 0
+	var dormant_predator_count := 0
+	var dormant_predator_hunger_sum := 0.0
+	var dormant_predator_thirst_sum := 0.0
+	var dormant_predator_energy_sum := 0.0
 	var critical_hunger := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("critical_hunger", 60.0))
 	var starvation_risk_herbivore_count := 0
 	for agent in living_agents:
@@ -269,6 +295,7 @@ func get_population_metrics() -> Dictionary:
 				starvation_risk_herbivore_count += 1
 		elif agent.species_type == AgentBaseScript.SPECIES_PREDATOR:
 			predator_count += 1
+			active_predator_count += 1
 	for sector_state in _sector_states.values():
 		if not bool(sector_state.get("dormant", false)):
 			continue
@@ -289,6 +316,10 @@ func get_population_metrics() -> Dictionary:
 					starvation_risk_herbivore_count += count
 			elif species_key == AgentBaseScript.SPECIES_PREDATOR:
 				predator_count += count
+				dormant_predator_count += count
+				dormant_predator_hunger_sum += float(species_state.get("avg_hunger", 0.0)) * count
+				dormant_predator_thirst_sum += float(species_state.get("avg_thirst", 0.0)) * count
+				dormant_predator_energy_sum += float(species_state.get("avg_energy", 0.0)) * count
 	return {
 		"herbivore_count": herbivore_count,
 		"predator_count": predator_count,
@@ -300,6 +331,11 @@ func get_population_metrics() -> Dictionary:
 		"active_herbivore_hunger_sum": active_herbivore_hunger_sum,
 		"dormant_herbivore_hunger_sum": dormant_herbivore_hunger_sum,
 		"starvation_risk_herbivore_count": starvation_risk_herbivore_count,
+		"active_predator_count": active_predator_count,
+		"dormant_predator_count": dormant_predator_count,
+		"dormant_predator_hunger_sum": dormant_predator_hunger_sum,
+		"dormant_predator_thirst_sum": dormant_predator_thirst_sum,
+		"dormant_predator_energy_sum": dormant_predator_energy_sum,
 	}
 
 
@@ -353,6 +389,8 @@ func shutdown() -> void:
 	_agent_sector_cells.clear()
 	_sector_states.clear()
 	_sector_grass_cache.clear()
+	_prey_pressure_sectors.clear()
+	_prey_pressure_refresh_tick = -9999
 	spatial_grid = null
 	resource_system = null
 	terrain_system = null
@@ -368,6 +406,13 @@ func refresh_lod_assignments(lod_context: Dictionary = {}) -> void:
 func query_agents(position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1) -> Array:
 	performance_counters["agent_query_calls"] += 1
 	return spatial_grid.query(position, radius, species_filter, exclude_id)
+
+
+## Neighbour count without materialising the agents. Same filter as
+## `query_agents()`.
+func count_agents(position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1) -> int:
+	performance_counters["agent_query_calls"] += 1
+	return spatial_grid.count(position, radius, species_filter, exclude_id)
 
 
 func query_grass_cells(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
@@ -398,10 +443,24 @@ func query_carcasses(position: Vector2, radius: float) -> Array:
 	return matches
 
 
+## Eyesight only, scaled by the climate. Search radii that stand in for memory
+## rather than sight - water and grass, both an order of magnitude wider than the
+## eye - deliberately do not pass through here: an animal does not forget where
+## the river is when the sun goes down. It goes blind, not amnesiac.
+##
+## Every scaled site routes through this one function so a missed one is a grep
+## rather than a guess. The pairing that matters: a search radius and the
+## normalizer that divides by it must scale together, or every candidate found
+## reads as maximally close and it looks like an AI bug instead of a sight one.
+func perception_radius(agent, key: String, default_value: float) -> float:
+	return float(agent.perception.get(key, default_value)) * climate.perception_multiplier_for(agent.species_type)
+
+
 func build_herbivore_snapshot(agent) -> Variant:
 	var snapshot = AgentPerceptionSnapshotScript.new()
 	snapshot.built_at_tick = current_tick
 	snapshot.built_at_time = current_time
+	var started_usec: int = Time.get_ticks_usec()
 	var neighbor_radius := float(agent.perception.get("neighbor_radius", 90.0))
 	snapshot.species_neighbors = query_agents(agent.position, neighbor_radius, AgentBaseScript.SPECIES_HERBIVORE, agent.id)
 	if agent.group_id == -1:
@@ -412,10 +471,18 @@ func build_herbivore_snapshot(agent) -> Variant:
 				snapshot.group_neighbors.append(neighbor)
 		if snapshot.group_neighbors.is_empty():
 			snapshot.group_neighbors = snapshot.species_neighbors
-	var danger_radius := float(agent.perception.get("danger_radius", 120.0))
+	var danger_radius := perception_radius(agent, "danger_radius", 120.0)
 	snapshot.predators = query_agents(agent.position, danger_radius, AgentBaseScript.SPECIES_PREDATOR, agent.id)
+	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
 	snapshot.group_center = get_group_center(agent.group_id, agent.species_type, agent.id)
+	performance_counters["snapshot_group_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
 	snapshot.water_target = _resolve_water_source(agent.position, float(agent.perception.get("water_search_radius", 260.0)))
+	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
 	snapshot.grass_target = _find_grass_target_for_agent(agent)
 	return snapshot
 
@@ -424,17 +491,28 @@ func build_predator_snapshot(agent) -> Variant:
 	var snapshot = AgentPerceptionSnapshotScript.new()
 	snapshot.built_at_tick = current_tick
 	snapshot.built_at_time = current_time
-	var vision_radius := float(agent.perception.get("vision_radius", 240.0))
+	var started_usec: int = Time.get_ticks_usec()
+	var vision_radius := perception_radius(agent, "vision_radius", 240.0)
 	snapshot.prey_candidates = query_agents(agent.position, vision_radius, AgentBaseScript.SPECIES_HERBIVORE, agent.id)
-	snapshot.carcasses = query_carcasses(agent.position, float(agent.balance.get("carcass", {}).get("search_radius", vision_radius)))
 	var mate_radius := float(agent.perception.get("mate_search_radius", 80.0))
 	var mates := query_agents(agent.position, mate_radius, AgentBaseScript.SPECIES_PREDATOR, agent.id)
+	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
+	snapshot.carcasses = query_carcasses(agent.position, float(agent.balance.get("carcass", {}).get("search_radius", vision_radius)))
+	performance_counters["snapshot_carcass_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
 	snapshot.water_target = _resolve_water_source(agent.position, _resolve_predator_water_search_radius(agent))
 	snapshot.investigation_source = agent._get_recent_investigation_water_source(self)
+	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
 	snapshot.mate_target = agent._find_viable_mate(self, false, mates)
 	snapshot.kin_center = agent.last_known_kin_center
 	snapshot.prey_target = agent._choose_prey(self, snapshot.prey_candidates)
 	snapshot.carcass_target = agent._choose_carcass(self, snapshot.carcasses)
+	performance_counters["snapshot_predator_choice_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 	snapshot.values["water_has_herbivore"] = false
 	return snapshot
 
@@ -514,7 +592,7 @@ func find_carcass_by_source_agent(source_agent_id: int) -> Dictionary:
 
 func get_group_center(group_id: int, species_type: String, exclude_id: int = -1):
 	performance_counters["group_center_lookups"] += 1
-	var cache_key := "%s:%d" % [species_type, group_id]
+	var cache_key := _group_cache_key(species_type, group_id)
 	var group_state: Dictionary = _group_state_cache.get(cache_key, {})
 	if group_state.is_empty():
 		return null
@@ -596,11 +674,19 @@ func random_unit_vector() -> Vector2:
 	return Vector2.RIGHT.rotated(rng.randf_range(0.0, TAU))
 
 
+## Nearest water source in range. Fused rather than going through
+## `query_water_sources()`, which would build a match array and then measure the
+## same distances a second time. Iteration order and first-wins tie-breaking are
+## unchanged, so the chosen source is identical.
 func _resolve_water_source(position: Vector2, radius: float) -> Dictionary:
+	performance_counters["water_query_calls"] += 1
 	var best := {}
 	var best_distance_sq := INF
-	for source in query_water_sources(position, radius):
-		var distance_sq := position.distance_squared_to(source["position"])
+	for source in water_sources:
+		var combined_radius: float = radius + float(source.get("radius", 0.0))
+		var distance_sq: float = position.distance_squared_to(source["position"])
+		if distance_sq > combined_radius * combined_radius:
+			continue
 		if distance_sq < best_distance_sq:
 			best = source
 			best_distance_sq = distance_sq
@@ -625,13 +711,311 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	if agent.hunger > urgency_start:
 		urgency_ratio = clampf((agent.hunger - urgency_start) / maxf(1.0, agent.need_max - urgency_start), 0.0, 1.0)
 	var min_biomass := 4.0 if urgency_ratio < 0.45 else 2.0
+
+	# Reuse a recent target instead of searching every decision tick. The cache
+	# is dropped early if the cell has since been grazed below the threshold, so
+	# a herd cannot keep walking to grass that is already gone.
+	var cached: Dictionary = agent.grass_target_cache
+	if not cached.is_empty() and current_tick - agent.grass_target_tick < _grass_target_refresh_ticks:
+		var cached_index: int = int(cached.get("index", -1))
+		if cached_index != -1 and resource_system.get_biomass(cached_index) >= min_biomass:
+			return cached
+		agent.grass_target_cache = {}
+
+	# Tried and rejected: offsetting this search origin per agent to fan a herd
+	# onto neighbouring cells. It measured flat (101 vs 107 vs 111 herbivores at
+	# tick 1500 for offsets of 0, half a cell and a full cell), so the concept is
+	# not carried. Herd contention is handled by the overlap pass instead.
 	var local_grass := find_reachable_grass(agent.position, base_search_radius, min_biomass)
 	if not local_grass.is_empty():
+		agent.grass_target_cache = local_grass
+		agent.grass_target_tick = current_tick
 		return local_grass
 	var expanded_search_radius := lerpf(base_search_radius, maxf(base_search_radius * 4.0, 720.0), urgency_ratio)
 	if expanded_search_radius <= base_search_radius:
 		return {}
-	return find_reachable_grass(agent.position, expanded_search_radius, min_biomass)
+	var expanded_grass := find_reachable_grass(agent.position, expanded_search_radius, min_biomass)
+	if not expanded_grass.is_empty():
+		agent.grass_target_cache = expanded_grass
+		agent.grass_target_tick = current_tick
+	return expanded_grass
+
+
+## Places water on a jittered grid sized from the world's area.
+##
+## The alternative - a literal `water_sources` list - is what the map used
+## before, and it is coordinates hardcoded for one particular world size with no
+## clamping, so any change of `world_size` silently left sources outside the map
+## or left the survivors nine times too sparse. Deriving the count from a density
+## keeps water per unit area fixed however the map is resized.
+##
+## Uses its own generator rather than `rng`. Drawing from the simulation's stream
+## here would shift every later draw - terrain, grass, spawns - so a change to
+## water placement would reshuffle the whole world.
+func _generate_water_sources(config: Dictionary) -> void:
+	var area: float = bounds.size.x * bounds.size.y
+	if area <= 0.0:
+		return
+	var density := float(config.get("sources_per_million_units", 1.39))
+	var count: int = maxi(1, int(round(density * area / 1_000_000.0)))
+	var radius_min := float(config.get("radius_min", 100.0))
+	var radius_max := maxf(radius_min, float(config.get("radius_max", 144.0)))
+	var jitter := clampf(float(config.get("jitter", 0.35)), 0.0, 0.5)
+
+	# Grid proportioned to the world so cells stay near-square; a square grid on
+	# a 16:9 map would band the water into columns.
+	var columns: int = maxi(1, int(round(sqrt(float(count) * bounds.size.x / maxf(1.0, bounds.size.y)))))
+	@warning_ignore("integer_division")
+	var rows: int = maxi(1, int(ceil(float(count) / float(columns))))
+	var step := Vector2(bounds.size.x / float(columns), bounds.size.y / float(rows))
+
+	var water_rng := RandomNumberGenerator.new()
+	water_rng.seed = int(config.get("seed", 0)) ^ hash(bounds.size)
+	var placed: int = 0
+	for row in range(rows):
+		for column in range(columns):
+			if placed >= count:
+				break
+			var centre := bounds.position + Vector2(
+				(float(column) + 0.5) * step.x,
+				(float(row) + 0.5) * step.y)
+			var offset := Vector2(
+				water_rng.randf_range(-jitter, jitter) * step.x,
+				water_rng.randf_range(-jitter, jitter) * step.y)
+			var radius := water_rng.randf_range(radius_min, radius_max)
+			# Kept a full radius inside the map: a source clipped by the border
+			# is a watering hole agents can path to but never reach.
+			water_sources.append({
+				"position": Vector2(
+					clampf(centre.x + offset.x, bounds.position.x + radius, bounds.end.x - radius),
+					clampf(centre.y + offset.y, bounds.position.y + radius, bounds.end.y - radius)),
+				"radius": radius,
+			})
+			placed += 1
+
+
+## Pushes overlapping animals apart after everyone has moved.
+##
+## Steering alone cannot promise this. Separation is one weighted vote among
+## several, and during grazing it is outvoted roughly twenty to one, so a herd
+## converging on one patch stacks up however the force law is tuned. Bodies are
+## resolved here instead, as a position correction rather than a force - the same
+## split physics engines make between steering and contacts.
+##
+## Two passes, and the split matters. Applying each pair's correction as it was
+## found made the result depend on the order pairs happened to be visited, and -
+## far worse - let one animal accumulate a correction from every neighbour at
+## once: five contacts could displace it ninety units in a tick, against a
+## walking speed near four. Animals were flung across the map faster than they
+## could travel, never settling anywhere long enough to eat, and the population
+## fell from 386 to 56 by tick 1500. Corrections are now summed first and then
+## clamped to a fraction of a stride, so crowding relaxes over several ticks
+## instead of snapping.
+func _resolve_agent_overlap(delta: float) -> void:
+	if spatial_grid == null:
+		return
+	var corrections: Dictionary = {}
+	var neighbours: Array = []
+	for agent in living_agents:
+		if agent == null or not agent.is_alive:
+			continue
+		var radius: float = agent.get_body_radius()
+		if radius <= 0.0:
+			continue
+		neighbours.clear()
+		spatial_grid.query_into(neighbours, agent.position, radius * 2.0, "", agent.id)
+		for other in neighbours:
+			if other == null or not other.is_alive or int(other.id) <= int(agent.id):
+				continue
+			var minimum: float = radius + other.get_body_radius()
+			var offset: Vector2 = other.position - agent.position
+			var distance: float = offset.length()
+			if distance >= minimum:
+				continue
+			var direction: Vector2
+			if distance <= 0.001:
+				# Coincident, so there is no offset to point along. Derive a
+				# direction from the id pair: any consistent choice will do, as
+				# long as a replay makes the same one.
+				direction = Vector2.RIGHT.rotated(float((int(agent.id) + int(other.id)) % 6283) * 0.001)
+				distance = 0.0
+			else:
+				direction = offset / distance
+			var push: Vector2 = direction * ((minimum - distance) * 0.5)
+			corrections[agent.id] = corrections.get(agent.id, Vector2.ZERO) - push
+			corrections[other.id] = corrections.get(other.id, Vector2.ZERO) + push
+	if corrections.is_empty():
+		return
+	for agent in living_agents:
+		if agent == null or not agent.is_alive or not corrections.has(agent.id):
+			continue
+		var correction: Vector2 = corrections[agent.id]
+		var limit: float = float(agent.movement.get("max_speed", 70.0)) * delta * _OVERLAP_RELAXATION
+		if correction.length() > limit:
+			correction = correction.normalized() * limit
+		var previous: Vector2 = agent.position
+		agent.position = resolve_movement_position(previous, previous + correction)
+		_track_agent_runtime_position(agent, previous)
+
+
+## Everything about this world that a fresh `initialize()` would not reproduce.
+##
+## Terrain is deliberately absent: it is regenerated bit-for-bit from the seed
+## and config, and it is the largest structure here by far. Same for the spatial
+## grid, the group cache and the biome totals - all derived, all rebuilt on load.
+##
+## `living_agents` order is saved explicitly. It is the order agents tick in, it
+## is maintained by swap-removal, and it cannot be recovered from `agents`.
+func export_state() -> Dictionary:
+	var agent_records: Array = []
+	for agent in living_agents:
+		if agent == null:
+			continue
+		agent_records.append(agent.export_save_state())
+	var carcass_records: Dictionary = {}
+	for carcass_id in carcasses.keys():
+		carcass_records[carcass_id] = carcasses[carcass_id].duplicate(true)
+	return {
+		"current_tick": current_tick,
+		"current_time": current_time,
+		"next_agent_id": next_agent_id,
+		"next_carcass_id": next_carcass_id,
+		"agents": agent_records,
+		"carcasses": carcass_records,
+		"grass": resource_system.export_cells(),
+		"sectors": _export_sector_states(),
+		# A memo, but a behaviourally visible one: it can hold a stale patch for
+		# up to `sector_grass_refresh_ticks`, and a loaded world that recomputed
+		# it fresh would find better grass than the run it is continuing.
+		"sector_grass": _export_keyed(_sector_grass_cache),
+	}
+
+
+## Replaces the mutable layers of an already-initialized world.
+##
+## Call after `initialize()` with the same config and seed: this assumes terrain
+## and the grids already exist, and only swaps out what changes over time.
+func import_state(data: Dictionary) -> void:
+	for agent in living_agents.duplicate():
+		if agent != null:
+			agent.clear_decision_cache()
+	agents.clear()
+	living_agents.clear()
+	_living_agent_index_by_id.clear()
+	_agent_sector_cells.clear()
+	_sector_states.clear()
+	carcasses.clear()
+	pending_spawns.clear()
+	pending_removals.clear()
+	pending_carcass_removals.clear()
+
+	current_tick = int(data.get("current_tick", 0))
+	current_time = float(data.get("current_time", 0.0))
+	# A restored save calls `refresh_snapshot()` immediately; without this the
+	# loaded game would report spring noon for one tick.
+	climate.sample(current_time)
+
+	for record in data.get("agents", []):
+		var agent = _restore_agent_record(record)
+		if agent != null:
+			agents[agent.id] = agent
+			_register_living_agent(agent)
+	# After the agents, so a stale counter cannot hand out an id already in use.
+	next_agent_id = maxi(int(data.get("next_agent_id", 1)), _highest_agent_id() + 1)
+	next_carcass_id = int(data.get("next_carcass_id", 1))
+
+	for carcass_id in data.get("carcasses", {}).keys():
+		carcasses[int(carcass_id)] = data["carcasses"][carcass_id].duplicate(true)
+
+	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
+	_import_sector_states(data.get("sectors", {}))
+	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
+	spatial_grid.rebuild(living_agents)
+	_rebuild_group_state_cache()
+
+
+func _restore_agent_record(record: Dictionary):
+	var species_type := str(record.get("species_type", ""))
+	var agent = _create_agent(species_type)
+	if agent == null:
+		return null
+	agent.configure(
+		int(record.get("id", 0)),
+		species_type,
+		record.get("position", Vector2.ZERO),
+		str(record.get("sex", "")),
+		config_bundle.get("species", {}).get(species_type, {}),
+		config_bundle.get("balance", {}),
+		rng,
+		int(record.get("group_id", -1))
+	)
+	agent.apply_save_state(record)
+	return agent
+
+
+func _highest_agent_id() -> int:
+	var highest: int = 0
+	for agent_id in agents.keys():
+		highest = maxi(highest, int(agent_id))
+	for sector_state in _sector_states.values():
+		for record in sector_state.get("dormant_records", []):
+			highest = maxi(highest, int(record.get("id", 0)))
+	return highest
+
+
+## `Vector2i`-keyed dictionaries, flattened to a list of `[key, value]` pairs.
+## Storing them as-is works with `store_var` but not with any text format, and
+## keeping one shape for both makes the save file easier to inspect.
+func _export_keyed(source: Dictionary) -> Array:
+	var exported: Array = []
+	for key in source.keys():
+		exported.append([key, source[key].duplicate(true) if source[key] is Dictionary else source[key]])
+	return exported
+
+
+func _import_keyed(data) -> Dictionary:
+	var restored: Dictionary = {}
+	if not (data is Array):
+		return restored
+	for pair in data:
+		if pair is Array and pair.size() == 2:
+			restored[pair[0]] = pair[1]
+	return restored
+
+
+## Sector keys are `Vector2i`, which no text format can use as a key, so each
+## sector is stored as a record carrying its own coordinates.
+func _export_sector_states() -> Array:
+	var exported: Array = []
+	for sector_key in _sector_states.keys():
+		var entry: Dictionary = _sector_states[sector_key].duplicate(true)
+		entry["sector_key"] = sector_key
+		exported.append(entry)
+	return exported
+
+
+func _import_sector_states(data) -> void:
+	if not (data is Array):
+		return
+	for entry in data:
+		if not (entry is Dictionary) or not entry.has("sector_key"):
+			continue
+		var restored: Dictionary = entry.duplicate(true)
+		var sector_key = restored["sector_key"]
+		restored.erase("sector_key")
+		_sector_states[sector_key] = restored
+	# Live agents were registered before this ran and rebuilt the occupancy of
+	# the sectors they are in; a saved sector must not double-count them.
+	for sector_key in _sector_states.keys():
+		var state: Dictionary = _sector_states[sector_key]
+		if bool(state.get("dormant", false)):
+			continue
+		state["agent_ids"] = []
+		state["herbivore_count"] = 0
+		state["predator_count"] = 0
+	for agent in living_agents:
+		if agent != null:
+			_register_sector_presence(agent)
 
 
 func find_path(from_position: Vector2, to_position: Vector2) -> Dictionary:
@@ -983,7 +1367,8 @@ func _spawn_initial_agents() -> void:
 	for index in range(herbivore_count):
 		var center: Vector2 = herd_centers[index % group_count]
 		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(center + Vector2(rng.randf_range(-60.0, 60.0), rng.randf_range(-60.0, 60.0))))
-		spawn_agent(AgentBaseScript.SPECIES_HERBIVORE, spawn_position, index % group_count, "", {"reason": "initial"})
+		var herbivore = spawn_agent(AgentBaseScript.SPECIES_HERBIVORE, spawn_position, index % group_count, "", {"reason": "initial"})
+		_stagger_initial_agent(herbivore)
 
 	var predator_pair_count: int = maxi(1, int(ceil(float(predator_count) / 2.0)))
 	var predator_centers: Array = []
@@ -1017,11 +1402,51 @@ func _spawn_initial_agents() -> void:
 				{"reason": "initial"}
 			)
 
+		_stagger_initial_agent(male_predator)
+		_stagger_initial_agent(female_predator)
+
 		if male_predator != null and female_predator != null:
 			if male_predator.has_method("set_preferred_mate_id"):
 				male_predator.call("set_preferred_mate_id", female_predator.id)
 			if female_predator.has_method("set_preferred_mate_id"):
 				female_predator.call("set_preferred_mate_id", male_predator.id)
+
+
+## Spreads the starting cohort's needs and ages.
+##
+## Every initial animal used to begin at hunger 0 and thirst 0 with identical
+## metabolism, so the whole population crossed every threshold on the same tick:
+## a single synchronized famine around tick 600 that killed roughly half the map
+## before the survivors desynchronized on their own. Staggering the start turns
+## that cliff into ordinary churn.
+##
+## Age is deliberately NOT staggered. Tried, and it cost three quarters of the
+## population by tick 900: age gates reproduction, so a cohort spread across the
+## lifespan cannot breed its way back from the first famine.
+##
+## Draws from `rng`, deliberately - this is world generation, the same stream
+## that already places herds and grass.
+func _stagger_initial_agent(agent) -> void:
+	if agent == null:
+		return
+	var thresholds: Dictionary = agent.balance.get("state_thresholds", {})
+	var hunger_ceiling := float(thresholds.get("critical_hunger", 60.0))
+	var thirst_ceiling := float(thresholds.get("critical_thirst", 50.0))
+	agent.hunger = rng.randf_range(0.0, hunger_ceiling * 0.75)
+	agent.thirst = rng.randf_range(0.0, thirst_ceiling * 0.75)
+
+
+## Spacing for animals rehydrated out of a sleeping sector. The first ring used
+## to sit 8 units out, well inside a sprite, so a waking herd appeared as a
+## single blob and then had to be untangled by the overlap pass. Starting at
+## roughly a body width costs nothing and puts them down already apart.
+## Share of one tick's stride that the overlap pass may move an animal. Small
+## on purpose: it corrects crowding over several ticks instead of teleporting.
+const _OVERLAP_RELAXATION := 0.6
+
+const PREY_PRESSURE_CACHE_LIMIT := 32
+const _REIFY_RING_START := 24.0
+const _REIFY_RING_STEP := 14.0
 
 
 func _normalize_lod_context(lod_context: Dictionary) -> Dictionary:
@@ -1148,6 +1573,11 @@ func _reset_performance_counters() -> void:
 		"group_center_lookups": 0,
 		"sector_wakeups": 0,
 		"dormant_steps": 0,
+		"dormant_predation_kills": 0,
+		"dormant_hunting_predator_steps": 0,
+		"dormant_hunt_colocated_steps": 0,
+		"dormant_meat_granted": 0.0,
+		"dormant_predator_hunger_reduced": 0.0,
 		"dormant_migrations": 0,
 		"dormant_forced_wakeups": 0,
 		"dormant_goal_refreshes": 0,
@@ -1159,6 +1589,11 @@ func _reset_performance_counters() -> void:
 		"grass_search_calls": 0,
 		"grass_cells_scanned": 0,
 		"pathfind_ms": 0.0,
+		"snapshot_agent_query_ms": 0.0,
+		"snapshot_water_ms": 0.0,
+		"snapshot_group_ms": 0.0,
+		"snapshot_carcass_ms": 0.0,
+		"snapshot_predator_choice_ms": 0.0,
 		"phase_resources_ms": 0.0,
 		"phase_agents_ms": 0.0,
 		"phase_dormant_ms": 0.0,
@@ -1265,6 +1700,8 @@ func _get_or_create_sector_state(sector_key: Vector2i) -> Dictionary:
 			"dormant_records": [],
 			"dormant_species": {},
 			"dormant_aggregates": [],
+			"dormant_meat_pool": 0.0,
+			"dormant_kill_debt": 0.0,
 		}
 	return _sector_states[sector_key]
 
@@ -1337,6 +1774,13 @@ func _sector_has_water(sector_key: Vector2i) -> bool:
 	return false
 
 
+## Group cache key. A Vector2i keeps this allocation-free: the old
+## `"%s:%d"` format ran once per agent per tick in the rebuild and again on every
+## lookup, which is several hundred throwaway Strings a tick.
+func _group_cache_key(species_type: String, group_id: int) -> Vector2i:
+	return Vector2i(0 if species_type == AgentBaseScript.SPECIES_HERBIVORE else 1, group_id)
+
+
 func _rebuild_group_state_cache() -> void:
 	_group_state_cache.clear()
 	for agent in living_agents:
@@ -1344,7 +1788,7 @@ func _rebuild_group_state_cache() -> void:
 			continue
 		if agent.group_id == -1:
 			continue
-		var cache_key := "%s:%d" % [agent.species_type, agent.group_id]
+		var cache_key := _group_cache_key(agent.species_type, agent.group_id)
 		var group_state: Dictionary = _group_state_cache.get(cache_key, {
 			"count": 0,
 			"sum": Vector2.ZERO,
@@ -1418,9 +1862,12 @@ func _find_sector_grass_candidate(position: Vector2, radius: float, min_biomass:
 				continue
 			var score := float(candidate.get("biomass", 0.0)) - position.distance_to(candidate.get("center", position)) * 0.14
 			if score > best_score:
-				best = candidate.duplicate(true)
+				best = candidate
 				best_score = score
-	return best
+	# Copied once, at the end. The loop used to deep-copy every intermediate
+	# winner, and the caller mutates the result (it adds path_cells and score),
+	# so the copy still has to happen - just not up to nine times per search.
+	return best.duplicate(true) if not best.is_empty() else best
 
 
 func _resolve_sector_lod_tier(sector_key: Vector2i, lod_context: Dictionary) -> int:
@@ -1585,6 +2032,10 @@ func _wake_sector(sector_key: Vector2i) -> void:
 	sector_state["dormant_aggregates"] = []
 	sector_state["dormant_count"] = 0
 	sector_state["dormant_elapsed"] = 0.0
+	# The coarse meat pool and kill debt only mean anything while the sector is asleep;
+	# once awake its predators eat real carcasses through the normal ledger.
+	sector_state["dormant_meat_pool"] = 0.0
+	sector_state["dormant_kill_debt"] = 0.0
 	sector_state["last_active_tick"] = current_tick
 	_sector_states[sector_key] = sector_state
 	performance_counters["sector_wakeups"] += 1
@@ -1686,6 +2137,15 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		aggregate["last_goal_refresh_time"] = float(previous.get("last_goal_refresh_time", current_time))
 		aggregate["stale_time"] = float(previous.get("stale_time", 0.0))
 		aggregate["home_position"] = previous.get("home_position", center)
+		# Aggregates are rebuilt from records on every dormant step, so anything that has to
+		# survive across steps must be carried over explicitly. The debts are fractional
+		# accumulators: dropping them silently floored every sub-one-per-step rate to zero,
+		# which suppressed births and need-deaths for any aggregate small enough that its
+		# per-step share was below 1. `carcass_id` identifies the carcass a `seek_carcass`
+		# goal refers to, so losing it broke dormant scavenging entirely.
+		for carried_key in ["birth_debt", "starvation_debt", "thirst_debt", "carcass_id"]:
+			if previous.has(carried_key):
+				aggregate[carried_key] = previous[carried_key]
 		aggregates.append(aggregate)
 	return aggregates
 
@@ -1769,31 +2229,59 @@ func _find_dormant_grass_goal(position: Vector2, radius: float, min_biomass: flo
 	return best
 
 
-func _find_dormant_prey_goal(position: Vector2, radius: float) -> Dictionary:
-	var center_sector: Vector2i = _get_sector_key(position)
-	var sector_radius: int = maxi(1, int(ceil(radius / _sector_size)))
+## Sectors that currently hold herbivores, highest pressure first, rebuilt on a throttle.
+##
+## This is the simulation's only long-range prey signal, and both the dormant goal
+## selector and the live predator patrol read it. A predator sees 480 units while herds
+## sit roughly 3100 apart on the large map, so without a sector-level census it cannot
+## find prey it has lost sight of. `herbivore_count` is maintained for live sectors too
+## by `_register_sector_presence()`, so one cache covers both paths.
+func _refresh_prey_pressure_sectors() -> void:
+	if current_tick - _prey_pressure_refresh_tick < _prey_pressure_refresh_ticks:
+		return
+	_prey_pressure_refresh_tick = current_tick
+	var entries: Array = []
+	for sector_key in _sector_states.keys():
+		var sector_state: Dictionary = _sector_states[sector_key]
+		var pressure: int = int(sector_state.get("herbivore_count", 0)) \
+			+ int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
+		if pressure <= 0:
+			continue
+		entries.append({
+			"sector": sector_key,
+			"center": _sector_key_to_rect(sector_key).get_center(),
+			"pressure": pressure,
+		})
+	entries.sort_custom(func(a, b): return int(a["pressure"]) > int(b["pressure"]))
+	if entries.size() > PREY_PRESSURE_CACHE_LIMIT:
+		entries = entries.slice(0, PREY_PRESSURE_CACHE_LIMIT)
+	_prey_pressure_sectors = entries
+
+
+## Best prey-bearing sector within `radius`, scored as the dormant selector always scored
+## it: pressure dominates and distance breaks ties.
+func find_prey_pressure_goal(position: Vector2, radius: float) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score: float = -INF
-	for x in range(center_sector.x - sector_radius, center_sector.x + sector_radius + 1):
-		for y in range(center_sector.y - sector_radius, center_sector.y + sector_radius + 1):
-			var candidate_sector: Vector2i = Vector2i(x, y)
-			var sector_state: Dictionary = _sector_states.get(candidate_sector, {})
-			if sector_state.is_empty():
-				continue
-			var herbivore_pressure: int = int(sector_state.get("herbivore_count", 0)) + int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
-			if herbivore_pressure <= 0:
-				continue
-			var candidate_center: Vector2 = _sector_key_to_rect(candidate_sector).get_center()
-			var score: float = float(herbivore_pressure) * 10.0 - position.distance_to(candidate_center) * 0.1
-			if score <= best_score:
-				continue
-			best_score = score
-			best = {
-				"goal_kind": "hunt",
-				"goal_position": candidate_center,
-				"goal_sector": candidate_sector,
-			}
+	for entry in _prey_pressure_sectors:
+		var center: Vector2 = entry["center"]
+		var distance: float = position.distance_to(center)
+		if distance > radius:
+			continue
+		var score: float = float(entry["pressure"]) * 10.0 - distance * 0.1
+		if score <= best_score:
+			continue
+		best_score = score
+		best = {
+			"goal_kind": "hunt",
+			"goal_position": center,
+			"goal_sector": entry["sector"],
+		}
 	return best
+
+
+func _find_dormant_prey_goal(position: Vector2, radius: float) -> Dictionary:
+	return find_prey_pressure_goal(position, radius)
 
 
 func _find_dormant_carcass_goal(sector_key: Vector2i, position: Vector2, radius: float) -> Dictionary:
@@ -1819,6 +2307,7 @@ func _find_dormant_carcass_goal(sector_key: Vector2i, position: Vector2, radius:
 					"goal_kind": "seek_carcass",
 					"goal_position": carcass_position,
 					"goal_sector": candidate_sector,
+					"carcass_id": int(carcass_id),
 				}
 	return best
 
@@ -1859,14 +2348,31 @@ func _resolve_dormant_wander_goal(sector_key: Vector2i, aggregate: Dictionary) -
 	}
 
 
+## Goal-directed travel speed for a dormant aggregate.
+##
+## `dormant_speed_scale` is a fixed 0.45, but `sector_size` scales with the map and that
+## did not: on the large map an aggregate has to cross three times the distance per unit
+## of hunger it did on the small one, which is what turned cross-sector travel from slow
+## into lethal. Scaling with sector size keeps the abstraction's reachability
+## size-invariant; the `sprint_speed` clamp keeps it from outrunning a real animal.
+func _get_dormant_travel_speed(species_config: Dictionary, is_directed: bool = true) -> float:
+	var movement: Dictionary = species_config.get("movement", {})
+	var reference := maxf(1.0, float(simulation_lod_config.get("dormant_travel_reference_sector_size", 512.0)))
+	var travel_scale := maxf(1.0, _sector_size / reference)
+	var speed := float(movement.get("max_speed", 70.0)) * _dormant_speed_scale * travel_scale
+	if is_directed:
+		speed *= float(simulation_lod_config.get("dormant_directed_speed_boost", 1.2))
+	return minf(speed, float(movement.get("sprint_speed", movement.get("max_speed", 70.0))))
+
+
 func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictionary:
 	var species_key := str(aggregate.get("species_type", ""))
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 	var perception: Dictionary = species_config.get("perception", {})
 	var thresholds: Dictionary = config_bundle.get("balance", {}).get("state_thresholds", {})
 	var center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
+	var dormant_config: Dictionary = config_bundle.get("balance", {}).get("dormant_ecology", {})
 	var critical_thirst := float(thresholds.get("critical_thirst", 65.0))
-	var critical_hunger := float(thresholds.get("critical_hunger", 65.0))
 	var graze_hunger_floor := float(thresholds.get("graze_hunger_floor", 20.0))
 	if species_key == AgentBaseScript.SPECIES_HERBIVORE:
 		if float(aggregate.get("avg_thirst", 0.0)) >= critical_thirst:
@@ -1886,21 +2392,207 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 					"goal_sector": _get_sector_key(group_center),
 				}
 		return _resolve_dormant_wander_goal(sector_key, aggregate)
-	var carcass_goal: Dictionary = _find_dormant_carcass_goal(sector_key, center, maxf(float(config_bundle.get("balance", {}).get("carcass", {}).get("search_radius", 260.0)), _sector_size * 2.0))
-	if not carcass_goal.is_empty():
-		return carcass_goal
-	if float(aggregate.get("avg_hunger", 0.0)) >= critical_hunger * 0.9:
-		var prey_goal: Dictionary = _find_dormant_prey_goal(center, maxf(float(perception.get("vision_radius", 240.0)) * 1.5, _sector_size * 3.0))
-		if not prey_goal.is_empty():
-			return prey_goal
-	if float(aggregate.get("avg_thirst", 0.0)) >= critical_thirst:
+	# Thirst first: it is the tighter clock. A predator has 36.7 s of headroom between
+	# `critical_thirst` and death, against 53.75 s for hunger, so checking prey first
+	# could send a thirsty predator across the map and kill it on the way.
+	var predator_thirst := float(aggregate.get("avg_thirst", 0.0))
+	if predator_thirst >= critical_thirst * float(dormant_config.get("predator_thirst_trigger_ratio", 0.6)):
 		var predator_water_goal: Dictionary = _find_nearest_water_goal(center)
 		if not predator_water_goal.is_empty():
 			return predator_water_goal
+	var travel_speed := _get_dormant_travel_speed(species_config)
+	# Only look as far as the hunger clock can actually carry the aggregate. The old
+	# `max(vision * 1.5, sector_size * 3)` was 4608 units on the large map, which needs
+	# 143 hunger points of travel - more than the scale has - so predators committed to
+	# goals they could never reach and starved en route.
+	var carcass_ttl := float(config_bundle.get("balance", {}).get("carcass", {}).get("ttl_seconds", 30.0))
+	var carcass_goal: Dictionary = _find_dormant_carcass_goal(sector_key, center, maxf(carcass_ttl * travel_speed * 0.8, _sector_size))
+	if not carcass_goal.is_empty():
+		return carcass_goal
+	var predator_hunger := float(aggregate.get("avg_hunger", 0.0))
+	# Hunt from the same floor the live path uses via `_is_hungry_enough_to_feed`, not
+	# from `critical_hunger * 0.9`: at 54 hunger only 27.5 s of travel remained, less
+	# than the width of one sector.
+	if predator_hunger >= graze_hunger_floor:
+		# Already standing among prey: hunt here. Without this the goal refresh that fires
+		# on arrival could send the aggregate off to another sector, so it spent most of its
+		# time travelling between herds rather than beside one - and a dormant kill can only
+		# resolve while predator and prey share a sector.
+		if _get_sector_herbivore_pressure(sector_key) > 0:
+			return {
+				"goal_kind": "hunt",
+				"goal_position": center,
+				"goal_sector": sector_key,
+			}
+		# Keep an existing hunt goal that is still valid. The refresh in
+		# `_apply_dormant_sector_step` fires whenever the aggregate is within
+		# `sector_size * 0.18` of its goal, so re-picking on approach let a hunting
+		# aggregate dither its whole travel budget away.
+		if str(aggregate.get("goal_kind", "")) == "hunt" \
+				and not _dormant_aggregate_reached_goal(sector_key, aggregate) \
+				and _get_sector_herbivore_pressure(Vector2i(aggregate.get("goal_sector", sector_key))) > 0:
+			return {
+				"goal_kind": "hunt",
+				"goal_position": aggregate.get("goal_position", center),
+				"goal_sector": aggregate.get("goal_sector", sector_key),
+			}
+		var hunger_headroom := maxf(1.0, 98.0 - predator_hunger) / maxf(0.01, float(species_config.get("metabolism", {}).get("hunger_rate", 1.6)))
+		# The 0.6 covers terrain move cost, water detours and prey that keeps moving. The
+		# floor matters as much as the cap: heading for prey it may not reach still beats
+		# wandering, so a nearly starved aggregate must not fall back to a random walk.
+		var prey_reach := maxf(hunger_headroom * travel_speed * 0.6, _sector_size * 1.5)
+		var prey_goal: Dictionary = _find_dormant_prey_goal(center, prey_reach)
+		if not prey_goal.is_empty():
+			return prey_goal
 	return _resolve_dormant_wander_goal(sector_key, aggregate)
 
 
-func _apply_dormant_metabolism_to_aggregate(aggregate: Dictionary, elapsed: float, predator_count: int, herbivore_count: int) -> void:
+## Energy ceiling recovery may reach in the aggregate's current mode, or a negative value
+## when it should be decaying instead. Mirrors `AgentBase.update_needs()`, which recovers in
+## the rest / eat / drink / feed states and decays otherwise.
+##
+## Idle rest is capped at `rest_energy_resume`, the point a live agent stops resting. Only
+## actually feeding or drinking carries an aggregate past that, which matters because the
+## breeding gate is an energy threshold: uncapped idle recovery would hand every fed
+## aggregate its breeding reserve for free and turn the coarse path into a population pump.
+func _dormant_energy_recovery_ceiling(
+	sector_key: Vector2i,
+	aggregate: Dictionary,
+	avg_hunger: float,
+	avg_thirst: float,
+	thresholds: Dictionary,
+	max_energy: float
+) -> float:
+	var goal_kind := str(aggregate.get("goal_kind", "wander"))
+	# Tie the idle ceiling to what it is actually protecting - the breeding reserve - rather
+	# than to `rest_energy_resume`, which is scaled for the herbivore's smaller maximum. At
+	# 34 a predator woken from dormancy had roughly six seconds of chase energy, which
+	# surfaced as a wall of `low_energy` hunt failures. Staying below the reserve still means
+	# only real food can buy a litter.
+	var reproduction_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {}).get("reproduction", {})
+	var idle_ratio := float(config_bundle.get("balance", {}).get("dormant_ecology", {}).get("idle_recovery_energy_ratio", 0.75))
+	var rest_ceiling := maxf(
+		float(thresholds.get("rest_energy_resume", 34.0)),
+		float(reproduction_config.get("energy_threshold", 0.0)) * idle_ratio
+	)
+	# At a food or water goal the aggregate is eating or drinking, and those live states
+	# recover energy too - this is the only path to the breeding reserve.
+	if goal_kind in ["grass", "water", "seek_carcass"]:
+		return max_energy if _dormant_aggregate_reached_goal(sector_key, aggregate) else -1.0
+	# A predator stalking a herd it has not caught yet is resting between attempts, so it
+	# recovers only to the point a live agent stops resting. Withholding this entirely
+	# looks tidier but bottoms its energy out, and `hunt.min_chase_energy` then aborts every
+	# chase the moment it wakes - which shows up as a wall of `low_energy` hunt failures.
+	# Reaching the breeding reserve still requires actually eating.
+	if goal_kind == "hunt":
+		return rest_ceiling if _dormant_aggregate_reached_goal(sector_key, aggregate) else -1.0
+	if goal_kind != "wander":
+		return -1.0
+	if avg_thirst >= float(thresholds.get("critical_thirst", 65.0)):
+		return -1.0
+	if avg_hunger >= float(thresholds.get("feed_hunger_floor", thresholds.get("graze_hunger_floor", 12.0))):
+		return -1.0
+	return rest_ceiling
+
+
+## Deaths from a saturated need, accumulated as a float debt on the aggregate.
+##
+## This used to be `maxi(1, ceil(count * clampf(fraction, 0.05, 0.35)))`, where `ceil`
+## already forced at least one death per step. At a 0.75 s step that is 1.33 deaths a
+## second regardless of how small the group is, so a pair could not survive dormancy at
+## all while a herd of twenty died at the intended rate. Carrying the fractional
+## remainder makes small aggregates die at the correct *rate* instead.
+func _dormant_need_deaths(aggregate: Dictionary, debt_key: String, count: int, need_value: float, elapsed: float) -> int:
+	var debt: float = float(aggregate.get(debt_key, 0.0))
+	if need_value >= 98.0:
+		debt += float(count) * clampf((need_value - 98.0) / 2.0, 0.05, 0.35) * (elapsed / 0.75)
+	else:
+		debt = 0.0
+	var deaths: int = mini(count, int(floor(debt)))
+	aggregate[debt_key] = debt - float(deaths)
+	return deaths
+
+
+## The single place a dormant kill can happen. Every removed herbivore produces exactly
+## `carcass.meat_total` of meat in the sector's pool, and no meat exists without a
+## matching death - the invariant the accounting test asserts.
+##
+## Uses a float debt rather than rounding per step, because the old per-step
+## `int(round(count * pressure * elapsed * 0.18))` needed four co-located predators to
+## reach 0.5 and predators spawn in pairs: dormant predation was silently always zero,
+## so dormant herbivores were safe while dormant predators had no food source at all.
+##
+## Deliberately free of `rng` calls: the dormant path must not perturb the shared RNG
+## stream, or every agent's rolls shift and the determinism test breaks.
+func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, aggregates: Array, elapsed: float) -> void:
+	var dormant_config: Dictionary = config_bundle.get("balance", {}).get("dormant_ecology", {})
+	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
+	var meat_total: float = maxf(1.0, float(carcass_config.get("meat_total", 150.0)))
+	var pool: float = float(sector_state.get("dormant_meat_pool", 0.0))
+
+	# Meat rots on the same clock a real carcass does, so a sector cannot bank kills.
+	var ttl: float = maxf(1.0, float(carcass_config.get("ttl_seconds", 30.0)))
+	if pool > 0.0:
+		pool = maxf(0.0, pool - pool * minf(1.0, elapsed / ttl))
+
+	var prey_aggregates: Array = []
+	var local_prey: int = 0
+	var hunting_predators: int = 0
+	for aggregate in aggregates:
+		var count: int = int(aggregate.get("count", 0))
+		if count <= 0:
+			continue
+		var species_key := str(aggregate.get("species_type", ""))
+		if species_key == AgentBaseScript.SPECIES_HERBIVORE:
+			prey_aggregates.append(aggregate)
+			local_prey += count
+		elif species_key == AgentBaseScript.SPECIES_PREDATOR and str(aggregate.get("goal_kind", "")) == "hunt":
+			hunting_predators += count
+
+	if hunting_predators > 0:
+		performance_counters["dormant_hunting_predator_steps"] += hunting_predators
+		if local_prey > 0:
+			performance_counters["dormant_hunt_colocated_steps"] += hunting_predators
+	var kills: int = 0
+	var debt: float = float(sector_state.get("dormant_kill_debt", 0.0))
+	if hunting_predators > 0 and local_prey > 0:
+		var kill_rate: float = float(dormant_config.get("kill_rate_per_prey_per_second", 0.001667))
+		debt += float(hunting_predators) * float(local_prey) * kill_rate * elapsed
+		kills = mini(local_prey, int(floor(debt)))
+		debt -= float(kills)
+	else:
+		# Progress towards a kill resets when predator and prey are no longer together,
+		# rather than being banked for a burst of kills whenever a predator wanders back.
+		debt = 0.0
+	sector_state["dormant_kill_debt"] = debt
+
+	if kills > 0:
+		var death_position: Vector2 = prey_aggregates[0].get("center", _sector_key_to_rect(sector_key).get_center())
+		var remaining: int = kills
+		# Largest herd first: a predator in a sector hunts where the prey actually is.
+		prey_aggregates.sort_custom(func(a, b): return int(a.get("count", 0)) > int(b.get("count", 0)))
+		for aggregate in prey_aggregates:
+			if remaining <= 0:
+				break
+			var taken: int = mini(remaining, int(aggregate.get("count", 0)))
+			aggregate["count"] = int(aggregate.get("count", 0)) - taken
+			remaining -= taken
+			var position: Vector2 = aggregate.get("center", death_position)
+			for _index in range(taken):
+				_emit_dormant_death(AgentBaseScript.SPECIES_HERBIVORE, position, "predation")
+				emit_population_event("PredationSuccess", AgentBaseScript.SPECIES_PREDATOR, position, {"dormant": true})
+		kills -= remaining
+		pool += float(kills) * meat_total
+		performance_counters["dormant_predation_kills"] += kills
+		performance_counters["dormant_meat_granted"] += float(kills) * meat_total
+
+	sector_state["dormant_meat_pool"] = pool
+
+
+## Predation is deliberately absent here: it lives in `_resolve_dormant_predation()`,
+## which is the one place a dormant kill can happen, so a herbivore can never be
+## removed without the matching meat being granted.
+func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapsed: float) -> void:
 	var species_key := str(aggregate.get("species_type", ""))
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 	var metabolism: Dictionary = species_config.get("metabolism", {})
@@ -1908,31 +2600,43 @@ func _apply_dormant_metabolism_to_aggregate(aggregate: Dictionary, elapsed: floa
 	var count: int = int(aggregate.get("count", 0))
 	if count <= 0:
 		return
-	var avg_hunger: float = minf(100.0, float(aggregate.get("avg_hunger", 0.0)) + float(metabolism.get("hunger_rate", 2.0)) * elapsed)
-	var avg_thirst: float = minf(100.0, float(aggregate.get("avg_thirst", 0.0)) + float(metabolism.get("thirst_rate", 2.0)) * elapsed)
-	var avg_energy: float = maxf(0.0, float(aggregate.get("avg_energy", 0.0)) - float(metabolism.get("energy_decay", 2.0)) * elapsed)
-	var critical_thirst := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("critical_thirst", 65.0))
-	if avg_thirst >= critical_thirst:
-		avg_energy = maxf(0.0, avg_energy - float(metabolism.get("dehydration_energy_penalty", 4.0)) * elapsed)
+	var thresholds: Dictionary = config_bundle.get("balance", {}).get("state_thresholds", {})
+	# The same climate scale the live agents get, on the same four keys, and with
+	# `rest_recovery` left alone for the same reason. If the two ever drift apart,
+	# dormant herds survive winters that kill active ones - and since dormancy
+	# follows the camera, the divergence hides exactly where you are looking.
+	var metabolism_scale: float = climate.metabolism_multiplier
+	var avg_hunger: float = minf(100.0, float(aggregate.get("avg_hunger", 0.0)) + float(metabolism.get("hunger_rate", 2.0)) * metabolism_scale * elapsed)
+	var avg_thirst: float = minf(100.0, float(aggregate.get("avg_thirst", 0.0)) + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * elapsed)
+	# Live agents recover energy while resting; the dormant path only ever drained it,
+	# so dormant energy fell monotonically to zero. That alone made dormant breeding
+	# impossible, because `_compute_dormant_births_for_aggregate` gates on
+	# `avg_energy >= reproduction.energy_threshold`. An idle, fed, watered aggregate is
+	# resting, and gets the same `rest_recovery` its live counterpart would.
+	var max_energy := float(metabolism.get("max_energy", 100.0))
+	var avg_energy: float = float(aggregate.get("avg_energy", 0.0))
+	var critical_thirst := float(thresholds.get("critical_thirst", 65.0))
+	var recovery_ceiling := _dormant_energy_recovery_ceiling(sector_key, aggregate, avg_hunger, avg_thirst, thresholds, max_energy)
+	if recovery_ceiling >= 0.0 and avg_energy < recovery_ceiling:
+		avg_energy = minf(recovery_ceiling, avg_energy + float(metabolism.get("rest_recovery", 6.0)) * elapsed)
+	else:
+		# Above its ceiling, or with nothing to recover from, an aggregate burns baseline
+		# energy like a live agent outside the recovering states.
+		avg_energy = maxf(0.0, avg_energy - float(metabolism.get("energy_decay", 2.0)) * metabolism_scale * elapsed)
+		if avg_thirst >= critical_thirst:
+			avg_energy = maxf(0.0, avg_energy - float(metabolism.get("dehydration_energy_penalty", 4.0)) * metabolism_scale * elapsed)
+	# Aging is not metabolic, matching the unscaled `age += delta` on the agent.
 	var avg_age: float = float(aggregate.get("avg_age", 0.0)) + elapsed
-	var starvation_deaths: int = 0
-	var thirst_deaths: int = 0
+	var starvation_deaths: int = _dormant_need_deaths(aggregate, "starvation_debt", count, avg_hunger, elapsed)
+	var thirst_deaths: int = _dormant_need_deaths(aggregate, "thirst_debt", count, avg_thirst, elapsed)
 	var old_age_deaths: int = 0
-	var predation_deaths: int = 0
-	if avg_hunger >= 98.0:
-		starvation_deaths = maxi(1, int(ceil(float(count) * clampf((avg_hunger - 98.0) / 2.0, 0.05, 0.35))))
-	if avg_thirst >= 98.0:
-		thirst_deaths = maxi(1, int(ceil(float(count) * clampf((avg_thirst - 98.0) / 2.0, 0.05, 0.35))))
 	var old_age_start := float(aging.get("old_age_start", aging.get("max_age", 9999.0)))
 	var max_age := float(aging.get("max_age", 9999.0))
 	if avg_age >= max_age:
 		old_age_deaths = maxi(1, int(ceil(float(count) * 0.2)))
 	elif avg_age >= old_age_start:
 		old_age_deaths = int(round(float(count) * float(aging.get("old_age_death_chance_per_second", 0.0)) * elapsed))
-	if species_key == AgentBaseScript.SPECIES_HERBIVORE and predator_count > 0 and herbivore_count > 0:
-		var predation_pressure := clampf(float(predator_count) / maxf(1.0, float(herbivore_count)), 0.0, 0.45)
-		predation_deaths = int(round(float(count) * predation_pressure * elapsed * 0.18))
-	var applied_deaths: int = mini(count, starvation_deaths + thirst_deaths + old_age_deaths + predation_deaths)
+	var applied_deaths: int = mini(count, starvation_deaths + thirst_deaths + old_age_deaths)
 	count = maxi(0, count - applied_deaths)
 	aggregate["count"] = count
 	aggregate["avg_hunger"] = avg_hunger
@@ -1948,7 +2652,6 @@ func _apply_dormant_metabolism_to_aggregate(aggregate: Dictionary, elapsed: floa
 		["starvation", starvation_deaths],
 		["thirst", thirst_deaths],
 		["old_age", old_age_deaths],
-		["predation", predation_deaths],
 	]
 	for entry in deaths_by_cause:
 		var cause_deaths: int = mini(applied_deaths, int(entry[1]))
@@ -1959,9 +2662,20 @@ func _apply_dormant_metabolism_to_aggregate(aggregate: Dictionary, elapsed: floa
 			break
 
 
+## Births in the coarse path, rate-limited by `reproduction.cooldown`.
+##
+## An aggregate has no per-animal cooldown timers, so the ceiling is derived: with `count`
+## animals each needing `cooldown` seconds between births, the sustainable rate cannot
+## exceed `count / cooldown` births per second. The unbounded version stayed hidden only
+## because dormant energy could never rise to the threshold; the moment it could, a fed
+## aggregate bred on nearly every step.
+##
+## Fractional births accumulate as a debt for the same reason deaths do - `round()` per step
+## either discards the rate entirely for small aggregates or doubles it for large ones.
 func _compute_dormant_births_for_aggregate(aggregate: Dictionary, elapsed: float) -> int:
 	var count: int = int(aggregate.get("count", 0))
 	if count <= 1:
+		aggregate["birth_debt"] = 0.0
 		return 0
 	var reproduction_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {}).get("reproduction", {})
 	var energy_threshold := float(reproduction_config.get("energy_threshold", 9999.0))
@@ -1969,8 +2683,18 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, elapsed: float
 	var avg_hunger: float = float(aggregate.get("avg_hunger", 0.0))
 	if avg_energy < energy_threshold or avg_hunger > 35.0:
 		return 0
-	var birth_chance: float = clampf((avg_energy - energy_threshold) / maxf(1.0, energy_threshold), 0.0, 0.35) * elapsed * 0.15
-	return maxi(0, int(round(float(count) * birth_chance)))
+	var birth_rate: float = clampf((avg_energy - energy_threshold) / maxf(1.0, energy_threshold), 0.0, 0.35) * 0.15 * float(count)
+	# Only pairs breed, so at most `count / 2` of the group can be on cooldown at once.
+	var cooldown_ceiling: float = float(count) / (2.0 * maxf(1.0, float(reproduction_config.get("cooldown", 46.0))))
+	var debt: float = float(aggregate.get("birth_debt", 0.0)) + minf(birth_rate, cooldown_ceiling) * elapsed
+	var births: int = int(floor(debt))
+	aggregate["birth_debt"] = debt - float(births)
+	if births > 0:
+		# The live path charges `birth_energy_cost` to both parents. Skipping it here left
+		# the coarse path breeding for free, with nothing to pay back between litters.
+		var total_cost: float = float(births) * 2.0 * float(reproduction_config.get("birth_energy_cost", 0.0))
+		aggregate["avg_energy"] = maxf(0.0, avg_energy - total_cost / float(count))
+	return maxi(0, births)
 
 
 func _move_dormant_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapsed: float) -> void:
@@ -1978,9 +2702,8 @@ func _move_dormant_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapse
 	var goal_position: Vector2 = aggregate.get("goal_position", current_center)
 	var species_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {})
 	var movement: Dictionary = species_config.get("movement", {})
-	var base_speed: float = float(movement.get("max_speed", 70.0)) * _dormant_speed_scale
-	if str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass"]:
-		base_speed *= 1.2
+	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass"]
+	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed)
 	var desired_velocity: Vector2 = Vector2.ZERO
 	var to_goal: Vector2 = goal_position - current_center
 	if to_goal.length_squared() > 4.0:
@@ -2021,6 +2744,7 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 		var cluster_radius := minf(_sector_size * 0.22, 36.0 + float(target_count) * 1.5)
 		for index in range(target_count):
 			var record: Dictionary = {}
+			var is_newborn := false
 			if index < bucket.size():
 				record = bucket[index]
 			elif not template.is_empty():
@@ -2029,10 +2753,11 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 				next_agent_id += 1
 				record["sex"] = _random_sex()
 				record["age"] = 0.0
+				is_newborn = true
 			else:
 				continue
 			var angle: float = (TAU / maxf(1.0, float(target_count))) * float(index)
-			var offset: Vector2 = Vector2.RIGHT.rotated(angle) * minf(cluster_radius, 8.0 + floor(float(index) / 4.0) * 6.0)
+			var offset: Vector2 = Vector2.RIGHT.rotated(angle) * minf(cluster_radius, _REIFY_RING_START + floor(float(index) / 4.0) * _REIFY_RING_STEP)
 			var aggregate_center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
 			var positioned := get_nearest_walkable_position(clamp_position(aggregate_center + offset))
 			record["position"] = positioned
@@ -2042,7 +2767,11 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 			record["hunger"] = float(aggregate.get("avg_hunger", record.get("hunger", 0.0)))
 			record["thirst"] = float(aggregate.get("avg_thirst", record.get("thirst", 0.0)))
 			record["energy"] = float(aggregate.get("avg_energy", record.get("energy", 0.0)))
-			record["age"] = float(aggregate.get("avg_age", record.get("age", 0.0)))
+			# A newborn keeps its own age. Overwriting it with the group mean, as the
+			# unconditional assignment did, meant dormant young were born middle-aged
+			# and inflated old-age mortality.
+			if not is_newborn:
+				record["age"] = float(aggregate.get("avg_age", record.get("age", 0.0)))
 			record["group_id"] = int(aggregate.get("group_id", record.get("group_id", -1)))
 			next_records.append(record)
 	sector_state["dormant_records"] = next_records
@@ -2128,6 +2857,17 @@ func _get_sector_herbivore_pressure(sector_key: Vector2i) -> int:
 	return int(sector_state.get("herbivore_count", 0)) + int(dormant_species.get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
 
 
+## Meat to hunger and energy, per head, using exactly the knobs the live
+## `Predator._scavenge_or_feed()` path uses so the two paths cannot drift apart.
+func _apply_dormant_meat_to_predator(aggregate: Dictionary, feeding: Dictionary, meat_per_head: float, max_energy: float) -> void:
+	if meat_per_head <= 0.0:
+		return
+	var hunger_reduction: float = meat_per_head * float(feeding.get("carcass_nutrition_gain", 1.0))
+	aggregate["avg_hunger"] = maxf(0.0, float(aggregate.get("avg_hunger", 0.0)) - hunger_reduction)
+	aggregate["avg_energy"] = minf(max_energy, float(aggregate.get("avg_energy", 0.0)) + meat_per_head * float(feeding.get("carcass_energy_gain", 0.5)))
+	performance_counters["dormant_predator_hunger_reduced"] += hunger_reduction * float(maxi(1, int(aggregate.get("count", 0))))
+
+
 func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Dictionary, elapsed: float) -> void:
 	var aggregates: Array = sector_state.get("dormant_aggregates", [])
 	if aggregates.is_empty():
@@ -2162,10 +2902,46 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 					record_herbivore_hunger_reduction(hunger_reduction, int(aggregate.get("count", 0)))
 				var max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
 				aggregate["avg_energy"] = minf(max_energy, float(aggregate.get("avg_energy", 0.0)) + consumed_per_agent * 0.18)
-		elif species_key == AgentBaseScript.SPECIES_PREDATOR and str(aggregate.get("goal_kind", "")) == "hunt":
-			var prey_pressure := _get_sector_herbivore_pressure(Vector2i(aggregate.get("goal_sector", sector_key)))
-			if prey_pressure <= 0:
-				aggregate["last_goal_refresh_time"] = -INF
+			continue
+		if species_key != AgentBaseScript.SPECIES_PREDATOR:
+			continue
+		# The predator side of the coarse ecology. Without these branches a dormant
+		# predator could reach prey, water or a carcass and still take nothing from any
+		# of them: hunger and thirst only ever rose, so every predator that went
+		# dormant starved on a fixed ~61 s timer no matter how much prey surrounded it.
+		var predator_max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
+		var head_count: int = maxi(1, int(aggregate.get("count", 0)))
+		match str(aggregate.get("goal_kind", "")):
+			"water":
+				if _dormant_aggregate_reached_goal(sector_key, aggregate):
+					aggregate["avg_thirst"] = maxf(0.0, float(aggregate.get("avg_thirst", 0.0)) - float(feeding.get("drink_restore", 35.0)))
+			"seek_carcass":
+				if not _dormant_aggregate_reached_goal(sector_key, aggregate):
+					continue
+				# Routed through `consume_carcass()` so a dormant aggregate and a live
+				# predator can never eat the same meat twice.
+				var carcass_id: int = int(aggregate.get("carcass_id", -1))
+				var carcass_meat: float = 0.0
+				if carcass_id != -1:
+					carcass_meat = consume_carcass(carcass_id, float(feeding.get("carcass_consume_rate", 24.0)) * float(head_count) * elapsed, -1)
+				if carcass_meat <= 0.0:
+					aggregate["last_goal_refresh_time"] = -INF
+					continue
+				_apply_dormant_meat_to_predator(aggregate, feeding, carcass_meat / float(head_count), predator_max_energy)
+			"hunt":
+				var prey_pressure := _get_sector_herbivore_pressure(Vector2i(aggregate.get("goal_sector", sector_key)))
+				if prey_pressure <= 0:
+					aggregate["last_goal_refresh_time"] = -INF
+				# Draw from the meat this sector's kills produced in
+				# `_resolve_dormant_predation()`; the pool is the only source, so intake
+				# can never exceed what actually died here.
+				var pool: float = float(sector_state.get("dormant_meat_pool", 0.0))
+				if pool <= 0.0:
+					continue
+				var wanted: float = float(feeding.get("carcass_consume_rate", 24.0)) * float(head_count) * elapsed
+				var taken: float = minf(wanted, pool)
+				sector_state["dormant_meat_pool"] = pool - taken
+				_apply_dormant_meat_to_predator(aggregate, feeding, taken / float(head_count), predator_max_energy)
 
 
 func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, elapsed: float) -> void:
@@ -2175,16 +2951,12 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 	var aggregates: Array = sector_state.get("dormant_aggregates", [])
 	if aggregates.is_empty():
 		aggregates = _build_dormant_aggregates(records, sector_key)
-	var predator_count := 0
-	var herbivore_count := 0
-	for aggregate in aggregates:
-		if str(aggregate.get("species_type", "")) == AgentBaseScript.SPECIES_PREDATOR:
-			predator_count += int(aggregate.get("count", 0))
-		elif str(aggregate.get("species_type", "")) == AgentBaseScript.SPECIES_HERBIVORE:
-			herbivore_count += int(aggregate.get("count", 0))
+	# Kills resolve before metabolism, so a predator that just ate is not then starved
+	# in the same step by the hunger it had a moment earlier.
+	_resolve_dormant_predation(sector_key, sector_state, aggregates, elapsed)
 	var next_aggregates: Array = []
 	for aggregate in aggregates:
-		_apply_dormant_metabolism_to_aggregate(aggregate, elapsed, predator_count, herbivore_count)
+		_apply_dormant_metabolism_to_aggregate(sector_key, aggregate, elapsed)
 		if int(aggregate.get("count", 0)) <= 0:
 			continue
 		var should_refresh_goal := Vector2(aggregate.get("goal_position", Vector2.ZERO)).distance_to(Vector2(aggregate.get("center", Vector2.ZERO))) <= _sector_size * 0.18
@@ -2197,6 +2969,13 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 				aggregate["goal_kind"] = str(next_goal.get("goal_kind", previous_goal_kind))
 				aggregate["goal_position"] = next_goal.get("goal_position", aggregate.get("goal_position", aggregate.get("center", bounds.get_center())))
 				aggregate["goal_sector"] = next_goal.get("goal_sector", previous_goal_sector)
+				# A `seek_carcass` goal names the carcass it refers to, so dormant feeding can
+				# debit that specific carcass through `consume_carcass()` rather than inventing
+				# meat. Any other goal kind must clear it.
+				if next_goal.has("carcass_id"):
+					aggregate["carcass_id"] = int(next_goal["carcass_id"])
+				else:
+					aggregate.erase("carcass_id")
 				aggregate["last_goal_refresh_time"] = current_time
 				performance_counters["dormant_goal_refreshes"] += 1
 				if str(aggregate.get("goal_kind", "wander")) != previous_goal_kind or aggregate.get("goal_sector", sector_key) != previous_goal_sector:
@@ -2250,7 +3029,7 @@ func _materialize_dormant_records(sector_state: Dictionary) -> Array:
 		for index in range(target_count):
 			var record: Dictionary = bucket[index]
 			var angle := (TAU / maxf(1.0, float(target_count))) * float(index)
-			var offset := Vector2.RIGHT.rotated(angle) * minf(cluster_radius, 8.0 + floor(float(index) / 4.0) * 6.0)
+			var offset := Vector2.RIGHT.rotated(angle) * minf(cluster_radius, _REIFY_RING_START + floor(float(index) / 4.0) * _REIFY_RING_STEP)
 			record["position"] = get_nearest_walkable_position(clamp_position(aggregate_center + offset))
 			record["velocity"] = Vector2(aggregate.get("velocity", Vector2.ZERO))
 			record["direction"] = Vector2.RIGHT if Vector2(record.get("velocity", Vector2.ZERO)).length_squared() <= 0.001 else Vector2(record.get("velocity", Vector2.ZERO)).normalized()

@@ -16,8 +16,15 @@ static func flee(current: Vector2, threat: Vector2) -> Vector2:
 	return offset.normalized()
 
 
-static func wander(agent, rng: RandomNumberGenerator) -> Vector2:
-	var jitter := float(agent.movement.get("wander_jitter", 0.8))
+## Random-walk heading.
+##
+## The jitter is applied on every call, so at `tick_rate` 18 the default 0.75-0.85 rad
+## decorrelates the heading in well under a second - a persistence length of a few dozen
+## units. That is fine for milling around inside a herd, and useless for covering
+## ground. Callers that need to travel pass a much smaller `jitter_override`: for a
+## persistence length L at speed v, jitter is about `sqrt(1 / (L / v * tick_rate))`.
+static func wander(agent, rng: RandomNumberGenerator, jitter_override: float = -1.0) -> Vector2:
+	var jitter := jitter_override if jitter_override >= 0.0 else float(agent.movement.get("wander_jitter", 0.8))
 	agent.wander_angle += rng.randf_range(-jitter, jitter)
 	return Vector2.RIGHT.rotated(agent.wander_angle)
 
@@ -43,17 +50,39 @@ static func alignment(neighbors: Array) -> Vector2:
 	return average.normalized()
 
 
+## Push away from crowding neighbours, with a magnitude that grows as they close in.
+##
+## Unlike the other primitives here this one deliberately does NOT return a unit
+## vector. It used to, and that was the main reason herds packed: an animal two
+## units from its neighbour pushed exactly as hard as one eighty units away, so
+## crowding could never escalate its own response. Since `combine()` normalizes
+## the weighted sum, magnitude is what decides whether separation wins the
+## direction vote, and it has to be free to exceed 1.0 when animals overlap.
 static func separation(position: Vector2, neighbors: Array, separation_radius: float) -> Vector2:
+	if separation_radius <= 0.0:
+		return Vector2.ZERO
 	var total := Vector2.ZERO
+	var closest := separation_radius
 	for neighbor in neighbors:
 		var offset: Vector2 = position - neighbor.position
 		var distance: float = offset.length()
-		if distance <= 0.001 or distance > separation_radius:
+		if distance > separation_radius:
 			continue
-		total += offset.normalized() / maxf(distance, 1.0)
+		if distance <= 0.001:
+			# Exactly coincident: there is no offset to point along. Derive a
+			# direction from the neighbour's id so the pair breaks apart instead
+			# of staying welded, and so it does so identically on every replay.
+			total += Vector2.RIGHT.rotated(float(int(neighbor.id) * 2654435761 % 6283) * 0.001)
+			closest = 0.0
+			continue
+		closest = minf(closest, distance)
+		total += offset.normalized() * (1.0 - distance / separation_radius)
 	if total.length_squared() <= 0.0001:
 		return Vector2.ZERO
-	return total.normalized()
+	# Squared so the push stays gentle at conversational distance and turns
+	# insistent only once animals are genuinely overlapping.
+	var urgency: float = 1.0 - closest / separation_radius
+	return total.normalized() * urgency * urgency * 3.0
 
 
 static func combine(vectors: Array) -> Vector2:

@@ -106,8 +106,11 @@ func select(
 	var target_data: Dictionary = context.get_target(chosen_action)
 	var decision = ActionDecisionScript.new()
 	decision.selected_action = chosen_action
-	decision.raw_scores = raw_scores.duplicate(true)
-	decision.final_scores = final_scores.duplicate(true)
+	# Both maps are flat StringName -> float, so a deep copy walked the same
+	# values a shallow one does. Identical result, one allocation pass instead
+	# of a recursive one, on every decision of every agent.
+	decision.raw_scores = raw_scores.duplicate()
+	decision.final_scores = final_scores.duplicate()
 	decision.reason = reason
 	decision.target_data = target_data.duplicate(true)
 	decision.switched = did_switch

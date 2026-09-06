@@ -31,6 +31,12 @@ var _dragging: bool = false
 var _last_camera_rect: Rect2 = Rect2()
 
 
+## Off by default: on a large map the generator places well over a hundred
+## watering holes, and drawn all at once they read as a lattice over the terrain
+## rather than as information.
+var _show_water: bool = false
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -263,6 +269,17 @@ func _world_to_map_rect(world_rect: Rect2, map_rect: Rect2) -> Rect2:
 	return result.intersection(map_rect)
 
 
+## Water is baked into the cached terrain image rather than drawn each frame, so
+## toggling it has to invalidate that cache. The flag is the only debug flag the
+## minimap reads; the rest are overlays on the main view.
+func set_debug_flag(flag_name: String, enabled: bool) -> void:
+	if flag_name != "show_minimap_water" or _show_water == enabled:
+		return
+	_show_water = enabled
+	_rebuild_static_cache()
+	queue_redraw()
+
+
 func _rebuild_static_cache() -> void:
 	_static_texture = null
 	_cached_world_bounds = Rect2()
@@ -291,7 +308,8 @@ func _rebuild_static_cache() -> void:
 	image.fill(MAP_BACKGROUND_COLOR)
 
 	_rasterize_terrain(image, world)
-	_rasterize_water(image, world)
+	if _show_water:
+		_rasterize_water(image, world)
 	_static_texture = ImageTexture.create_from_image(image)
 
 

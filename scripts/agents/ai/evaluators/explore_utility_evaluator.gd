@@ -12,11 +12,18 @@ func evaluate(_agent, context) -> Dictionary:
 	var low_urgency := float(context.get_value("low_urgency", 0.0))
 	var resource_scarcity := float(context.get_value("resource_scarcity", 0.0))
 	var threat := float(context.get_value("threat", 0.0))
+	# The counterweight to `rest.night_weight`, and not optional. At the shipped
+	# weights a calm herbivore scores explore 0.735 against rest 0.62 even with
+	# the night bonus, so without this the herd wanders all night and the feature
+	# reads as broken.
+	var night := float(context.get_value("night_ratio", 0.0))
 	var score := low_urgency * get_weight("low_urgency_weight", 0.45)
 	score += resource_scarcity * get_weight("scarcity_weight", 0.35)
 	score += (1.0 - threat) * get_weight("low_threat_weight", 0.20)
+	score -= night * get_weight("night_penalty", 0.0)
 	return result(score, [
 		reason_if("calm", low_urgency),
 		reason_if("scarcity", resource_scarcity),
 		reason_if("threat", threat, 0.24),
+		reason_if("night", night, 0.2),
 	])

@@ -1,6 +1,14 @@
 class_name WorldView
 extends Node2D
 
+## World-space input and the few immediate-mode decorations that outlive the
+## sprite renderer.
+##
+## Terrain moved to `terrain_tilemap.gd` and agents to `agent_renderer.gd`, so
+## what is left here is the world border, the selection ring and the optional
+## state labels - all cheap, all debug-adjacent - plus click-to-select, which
+## has to live on a node that receives world input.
+
 var simulation_manager: SimulationManager
 var debug_flags: Dictionary = {}
 var input_enabled: bool = true
@@ -8,8 +16,10 @@ var input_enabled: bool = true
 
 func bind_manager(manager: SimulationManager) -> void:
 	simulation_manager = manager
-	simulation_manager.tick_completed.connect(_on_tick_completed)
-	simulation_manager.selection_changed.connect(_on_selection_changed)
+	if not simulation_manager.tick_completed.is_connected(_on_tick_completed):
+		simulation_manager.tick_completed.connect(_on_tick_completed)
+	if not simulation_manager.selection_changed.is_connected(_on_selection_changed):
+		simulation_manager.selection_changed.connect(_on_selection_changed)
 	queue_redraw()
 
 
@@ -32,7 +42,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var selection_radius := float(simulation_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
-		simulation_manager.select_agent_at_position(get_global_mouse_position(), selection_radius)
+		# The click arrives in screen space; selection happens in simulation
+		# space, so it goes back through the projection seam.
+		var world_position: Vector2 = WorldProjection.to_world(get_global_mouse_position())
+		simulation_manager.select_agent_at_position(world_position, selection_radius)
 
 
 func _draw() -> void:
@@ -40,64 +53,63 @@ func _draw() -> void:
 		return
 
 	var world = simulation_manager.world_state
-	draw_rect(world.bounds, Color(0.08, 0.1, 0.09), true)
+	# The terrain tiles cover every cell inside the bounds now, so only the
+	# border outline is drawn here. Under a non-identity projection the world
+	# rectangle is no longer a screen rectangle, so it is stroked as a polygon.
+	_draw_world_border(world.bounds)
 
+
+	if bool(debug_flags.get("show_state_labels", false)):
+		_draw_state_labels(world)
+
+
+func _draw_world_border(bounds: Rect2) -> void:
+	var color := Color(0.25, 0.3, 0.28)
+	if WorldProjection.is_identity():
+		draw_rect(bounds, color, false, 2.0)
+		return
+	var outline := PackedVector2Array([
+		WorldProjection.to_screen(bounds.position),
+		WorldProjection.to_screen(Vector2(bounds.end.x, bounds.position.y)),
+		WorldProjection.to_screen(bounds.end),
+		WorldProjection.to_screen(Vector2(bounds.position.x, bounds.end.y)),
+	])
+	outline.append(outline[0])
+	draw_polyline(outline, color, 2.0)
+
+
+func _draw_state_labels(world) -> void:
 	var font = ThemeDB.fallback_font
+	if font == null:
+		return
 	var font_size := ThemeDB.fallback_font_size
-	var selected_id := simulation_manager.selected_agent_id
 	var visible_rect := _get_visible_world_rect(world.bounds).grow(24.0)
-	if bool(debug_flags.get("show_biomes", false)) or bool(debug_flags.get("show_obstacles", false)):
-		_draw_terrain_background(world, visible_rect)
-	draw_rect(world.bounds, Color(0.25, 0.3, 0.28), false, 2.0)
 	for agent in world.get_living_agents():
 		if not visible_rect.has_point(agent.position):
 			continue
-		var agent_color := _get_agent_draw_color(agent)
-		draw_circle(agent.position, 7.0 if agent.species_type == "herbivore" else 9.0, agent_color)
-		draw_line(agent.position, agent.position + agent.direction * 14.0, agent_color.lightened(0.25), 2.0)
-		if selected_id == agent.id:
-			draw_arc(agent.position, 14.0, 0.0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.0)
-		if bool(debug_flags.get("show_state_labels", false)) and font != null:
-			draw_string(
-				font,
-				agent.position + Vector2(10.0, -10.0),
-				"%s #%d" % [agent.state, agent.id],
-				HORIZONTAL_ALIGNMENT_LEFT,
-				-1.0,
-				font_size,
-				Color(0.95, 0.95, 0.95, 0.9)
-			)
+		draw_string(
+			font,
+			_screen_of(world, agent.position) + Vector2(10.0, -10.0),
+			"%s #%d" % [agent.state, agent.id],
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			font_size,
+			Color(0.95, 0.95, 0.95, 0.9)
+		)
 
 
-func _draw_terrain_background(world, visible_rect: Rect2) -> void:
-	if world.terrain_system == null:
-		return
-	var terrain: TerrainSystem = world.terrain_system
-	var cell_size: float = terrain.cell_size
-	var min_cell_x: int = maxi(0, int(floor(visible_rect.position.x / cell_size)))
-	var min_cell_y: int = maxi(0, int(floor(visible_rect.position.y / cell_size)))
-	var max_cell_x: int = mini(terrain.cols - 1, int(floor(visible_rect.end.x / cell_size)))
-	var max_cell_y: int = mini(terrain.rows - 1, int(floor(visible_rect.end.y / cell_size)))
-
-	for x in range(min_cell_x, max_cell_x + 1):
-		for y in range(min_cell_y, max_cell_y + 1):
-			var index: int = y * terrain.cols + x
-			var biome_color: Color = terrain.get_biome_color_at_index(index)
-			var tint_strength: float = 0.4
-			if bool(debug_flags.get("show_biomes", false)):
-				tint_strength = 0.72
-			var fill_color := biome_color.darkened(0.08)
-			fill_color.a = tint_strength
-			draw_rect(terrain.get_cell_rect(index), fill_color, true)
-			if terrain.get_obstacle_at_index(index) != "":
-				var obstacle_alpha: float = 0.78 if bool(debug_flags.get("show_obstacles", false)) else 0.52
-				var obstacle_color: Color = terrain.get_obstacle_color(terrain.get_obstacle_at_index(index))
-				obstacle_color.a = obstacle_alpha
-				draw_rect(terrain.get_cell_rect(index), obstacle_color, true)
+## Both markers sit on the ground under the agent, so they need the same
+## elevation the sprite got - otherwise the selection ring drifts off an animal
+## standing on a rise.
+func _screen_of(world, world_position: Vector2) -> Vector2:
+	var level := 0
+	if not WorldProjection.is_identity() and world.terrain_system != null:
+		level = world.terrain_system.get_height_at_position(world_position)
+	return WorldProjection.to_screen(world_position, level)
 
 
-func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
-	if simulation_manager != null and not simulation_manager.should_refresh_ui_on_tick(_tick):
+func _on_tick_completed(tick: int, _snapshot: Dictionary) -> void:
+	if simulation_manager != null and not simulation_manager.should_refresh_ui_on_tick(tick):
 		return
 	request_refresh()
 
@@ -106,25 +118,11 @@ func _on_selection_changed(_agent_id: int) -> void:
 	request_refresh()
 
 
-func _get_visible_world_rect(_world_bounds: Rect2) -> Rect2:
+func _get_visible_world_rect(world_bounds: Rect2) -> Rect2:
 	var camera := _get_game_camera()
 	if camera != null:
-		return camera.get_visible_world_rect()
-	return _world_bounds
-
-
-func _get_agent_draw_color(agent) -> Color:
-	var base_color: Color = agent.debug_color
-	if not bool(debug_flags.get("show_lod_overlay", false)):
-		return base_color
-
-	var lod_color := Color(0.74, 0.93, 0.78)
-	match int(agent.lod_tier):
-		1:
-			lod_color = Color(0.98, 0.8, 0.28)
-		2:
-			lod_color = Color(0.95, 0.45, 0.45)
-	return base_color.lerp(lod_color, 0.68)
+		return WorldProjection.world_rect_covering(camera.get_visible_screen_rect())
+	return world_bounds
 
 
 func _get_game_camera() -> GameCamera:

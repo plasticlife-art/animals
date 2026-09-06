@@ -1,0 +1,767 @@
+class_name AgentSpriteRenderer
+extends Node2D
+
+## Draws living agents and carcasses as animated sprites.
+##
+## Agents are `RefCounted` objects rather than nodes, so there is nothing to
+## hang an `AnimatedSprite2D` on - and at 1500 agents that many nodes would be
+## the wrong answer anyway. Instead each species gets one `MultiMeshInstance2D`
+## and the animation frame travels per instance in custom data, read back by
+## shaders/agent_atlas.gdshader.
+##
+## Nothing here writes to the simulation. The animation frame is derived from
+## fields the simulation already maintains - state, action, velocity, id - and
+## from the simulation clock, so no visual state is stored on `AgentBase` and
+## headless runs stay bit-identical.
+##
+## One accepted limitation: each species is its own MultiMesh, and a MultiMesh
+## is a single canvas item, so depth sorting is exact within a species but not
+## across them. Predators draw above herbivores, carcasses below both. Merging
+## the two atlases into one sheet would allow exact global sorting, but it would
+## also mean compositing every art pack before use, and pack-swapping is the
+## thing this layer is built to keep cheap.
+
+const INSTANCE_GROW_CHUNK := 256
+## Below this much drawn movement in a tick there is no direction to read, and
+## the sprite holds the way it was already facing. 0.05 px is what an animal
+## crawling at 1 px/s covers in a tick at the default rate - the same floor the
+## old velocity test used, restated in the units that are now measured.
+const _DRAWN_STEP_EPSILON_SQ := 0.0025
+
+## Where the ground-distance accumulator behind the walk cycle wraps. The wrap
+## is not stride-aligned, so it does skip a frame - once per agent per million
+## pixels walked, which is hours of running at species speeds, against a float
+## that would otherwise coarsen without bound over a long session.
+const _GAIT_WRAP_PX := 1048576.0
+const SHADOW_Z := -2
+const CARCASS_Z := -1
+const HERBIVORE_Z := 0
+const PREDATOR_Z := 1
+
+const SPECIES_Z := {
+	"herbivore": HERBIVORE_Z,
+	"predator": PREDATOR_Z,
+}
+
+var simulation_manager: SimulationManager
+
+var _batches: Dictionary = {}
+var _carcass_batch: Dictionary = {}
+var _walk_speed_threshold: float = 8.0
+var _run_speed_threshold: float = 85.0
+var _phase_step: float = 0.37
+var _buckets: Dictionary = {}
+## Cached per refresh so the height lookups below do not walk the world each
+## time. Only read; the simulation never learns this node exists.
+var _terrain = null
+## Per-agent render state, keyed by agent id. `_history` holds the last four
+## tick positions so the curve below has neighbours on both sides; `_phase` is
+## the fps-driven animation position; `_facing` is the sticky mirror direction.
+##
+## `_drawn_speed` and `_gait_distance` are derived from `_history` rather than
+## from `agent.velocity`, and everything the eye can compare against the drawn
+## motion - which animation plays, how fast the legs cycle, which way the sprite
+## looks - reads them. Velocity and drawn motion disagree more often than it
+## seems: a body pressed against terrain keeps its velocity while
+## `resolve_movement_position()` denies the step, `_resolve_agent_overlap()`
+## moves `position` without touching `velocity`, and a paused simulation leaves
+## velocity frozen at whatever it was. Animating from velocity made all three
+## walk on the spot.
+var _history: Dictionary = {}
+var _phase: Dictionary = {}
+var _drawn_speed: Dictionary = {}
+var _gait_distance: Dictionary = {}
+var _facing: Dictionary = {}
+var _heading: Dictionary = {}
+var _direction: Dictionary = {}
+var _direction_hysteresis: float = 0.25
+var _turn_lerp: float = 9.0
+var _facing_deadzone: float = 0.18
+var _teleport_distance_sq: float = 220.0 * 220.0
+var _age_scale: Dictionary = {}
+var _idle_bob_px: float = 0.0
+var _shadow_node: MultiMeshInstance2D = null
+var _shadow_scale: float = 0.55
+var _shadow_bias: float = 2.0
+var _shadow_agents: Array = []
+var _marker_phase: float = 0.0
+
+
+func bind_manager(manager: SimulationManager) -> void:
+	simulation_manager = manager
+	if _batches.is_empty():
+		_build_batches()
+	# Guarded: the setup screen can start a new simulation on the same manager,
+	# and a second unguarded connect is an error, not a no-op.
+	if not simulation_manager.tick_completed.is_connected(_on_tick_completed):
+		simulation_manager.tick_completed.connect(_on_tick_completed)
+	refresh()
+
+
+## Throw away the sprite batches and build them again from the current visuals.
+##
+## `bind_manager` deliberately skips `_build_batches()` once batches exist, so a
+## style preset that swaps atlases, frame sizes or animation rows needs this.
+## Repainting is not enough - the geometry itself changed.
+func rebuild_batches() -> void:
+	for child in [_shadow_node]:
+		if child != null:
+			remove_child(child)
+			child.queue_free()
+	_shadow_node = null
+	for entry in _batches.values():
+		var node = entry.get("node")
+		if node != null:
+			remove_child(node)
+			node.queue_free()
+	var carcass_node = _carcass_batch.get("node")
+	if carcass_node != null:
+		remove_child(carcass_node)
+		carcass_node.queue_free()
+	_batches.clear()
+	_carcass_batch.clear()
+	_history.clear()
+	_phase.clear()
+	_drawn_speed.clear()
+	_gait_distance.clear()
+	_facing.clear()
+	_heading.clear()
+	_direction.clear()
+	_build_batches()
+	refresh()
+
+
+func request_refresh() -> void:
+	refresh()
+
+
+func refresh() -> void:
+	if simulation_manager == null or simulation_manager.world_state == null:
+		return
+	if _batches.is_empty():
+		return
+
+	var world = simulation_manager.world_state
+	_terrain = world.terrain_system
+	var visible_rect: Rect2 = _get_visible_world_rect(world.bounds).grow(48.0)
+
+	for species_id in _buckets.keys():
+		_buckets[species_id].clear()
+	for agent in world.get_living_agents():
+		if agent == null:
+			continue
+		if not visible_rect.has_point(agent.position):
+			continue
+		# An unknown species has no batch to draw into, so it is skipped rather
+		# than appended to a throwaway array.
+		if not _buckets.has(agent.species_type):
+			continue
+		_buckets[agent.species_type].append(agent)
+
+	# Depth ordering is decided across the whole visible set, not per species,
+	# because a predator standing behind a hill has to be hidden by the animals
+	# in front of it regardless of what they are.
+	_shadow_agents.clear()
+	for species_id in _batches.keys():
+		var bucket: Array = _buckets.get(species_id, [])
+		_fill_species(species_id, bucket)
+		_shadow_agents.append_array(bucket)
+	_fill_shadows()
+
+	_fill_carcasses(world, visible_rect)
+
+
+func _fill_species(species_id: String, agents: Array) -> void:
+	var batch: Dictionary = _batches[species_id]
+	var multimesh: MultiMesh = batch["multimesh"]
+	if agents.is_empty():
+		multimesh.visible_instance_count = 0
+		return
+
+	# Painter's algorithm: a MultiMesh draws in instance order and has no y-sort
+	# of its own, so the order is established here. Only the culled subset is
+	# sorted, and only on refresh ticks.
+	agents.sort_custom(_compare_depth)
+
+	_ensure_capacity(multimesh, agents.size())
+	# Only the slowly changing part is written here. Transforms and animation
+	# frames belong to `_process`, which runs at the display rate.
+	for index in range(agents.size()):
+		multimesh.set_instance_color(index, _resolve_tint(agents[index]))
+	batch["agents"] = agents
+	multimesh.visible_instance_count = agents.size()
+
+
+## Shadows are one batch for every species: they are identical blobs, and the
+## fewer canvas items the layer costs, the better. Their transforms are written
+## per frame alongside the sprites so they never lag behind an animal.
+func _fill_shadows() -> void:
+	if _shadow_node == null:
+		return
+	var multimesh: MultiMesh = _shadow_node.multimesh
+	if _shadow_agents.is_empty():
+		multimesh.visible_instance_count = 0
+		return
+	_ensure_capacity(multimesh, _shadow_agents.size())
+	for index in range(_shadow_agents.size()):
+		multimesh.set_instance_color(index, Color.WHITE)
+	multimesh.visible_instance_count = _shadow_agents.size()
+
+
+func _animate_shadows(alpha: float) -> void:
+	if _shadow_node == null or _shadow_agents.is_empty():
+		return
+	var multimesh: MultiMesh = _shadow_node.multimesh
+	for index in range(_shadow_agents.size()):
+		var agent = _shadow_agents[index]
+		if agent == null or not agent.is_alive:
+			continue
+		var scale_factor: float = _shadow_scale * _age_scale_of(agent)
+		# Anchored to the ground point, never to the sprite: a bobbing animal
+		# should look like it is lifting off its shadow, not dragging it.
+		var ground: Vector2 = _anchor(_curve_position(agent, alpha), 0.0)
+		multimesh.set_instance_transform_2d(index, Transform2D(
+			Vector2(scale_factor, 0.0),
+			Vector2(0.0, scale_factor),
+			ground + Vector2(0.0, _shadow_bias)
+		))
+	multimesh.visible_instance_count = _shadow_agents.size()
+
+
+## Young animals are visibly smaller and old ones slightly larger. The stage is
+## already tracked by the simulation, so a herd stops looking cloned for free.
+func _age_scale_of(agent) -> float:
+	if _age_scale.is_empty() or not agent.has_method("get_age_stage"):
+		return 1.0
+	return float(_age_scale.get(agent.get_age_stage(), 1.0))
+
+
+func _fill_carcasses(world, visible_rect: Rect2) -> void:
+	if _carcass_batch.is_empty():
+		return
+	var multimesh: MultiMesh = _carcass_batch["multimesh"]
+	var stages: int = maxi(1, int(_carcass_batch["stages"]))
+	var visible_carcasses: Array = []
+	for carcass_id in world.carcasses.keys():
+		var carcass: Dictionary = world.carcasses[carcass_id]
+		var position: Vector2 = carcass.get("position", Vector2.ZERO)
+		if not visible_rect.has_point(position):
+			continue
+		visible_carcasses.append(carcass)
+
+	if visible_carcasses.is_empty():
+		multimesh.visible_instance_count = 0
+		return
+
+	_ensure_capacity(multimesh, visible_carcasses.size())
+	for index in range(visible_carcasses.size()):
+		var carcass: Dictionary = visible_carcasses[index]
+		var total: float = maxf(0.001, float(carcass.get("meat_total", 1.0)))
+		var remaining: float = clampf(float(carcass.get("meat_remaining", 0.0)) / total, 0.0, 1.0)
+		var stage: int = clampi(int((1.0 - remaining) * float(stages)), 0, stages - 1)
+		multimesh.set_instance_transform_2d(index, Transform2D(
+			0.0,
+			_anchor(carcass.get("position", Vector2.ZERO), float(_carcass_batch["ground_offset"]))
+		))
+		multimesh.set_instance_color(index, Color.WHITE)
+		multimesh.set_instance_custom_data(index, Color(float(stage), 0.0, 0.0, 0.0))
+	multimesh.visible_instance_count = visible_carcasses.size()
+
+
+## Collapses the thirteen possible actions onto the five animation rows the
+## atlas actually has. Speed is the main signal rather than an action
+## whitelist, so adding a new action later degrades to walk/idle instead of
+## breaking.
+##
+## The speed is the one the viewer can see - ground actually covered since the
+## last tick - so an animal that wants to run but is not getting anywhere stands
+## still instead of sprinting on the spot. That outranks the action override:
+## a predator shoving against a body it cannot pass is in `hunt_prey` the whole
+## time it is stuck.
+func _resolve_animation(agent) -> String:
+	if not agent.is_alive or agent.ai_state == &"dead":
+		return "dead"
+	var speed: float = float(_drawn_speed.get(agent.id, 0.0))
+	var moving: bool = speed >= _walk_speed_threshold
+	var action: StringName = agent.current_action
+	if moving and (agent.ai_state == &"panic" or action == &"flee_to_safe_area" or action == &"hunt_prey"):
+		return "run"
+	if action == &"graze" or action == &"scavenge_carcass" or action == &"drink":
+		return "eat"
+	if not moving:
+		return "idle"
+	if speed >= _run_speed_threshold:
+		return "run"
+	return "walk"
+
+
+## Species identity now lives in the art, so the sprite is drawn untinted. The
+## LOD debug tint from the old `world_view.gd::_get_agent_draw_color()` is kept,
+## since that overlay is the one case where the color has to override the art.
+func _resolve_tint(agent) -> Color:
+	if not bool(simulation_manager.debug_flags.get("show_lod_overlay", false)):
+		return Color.WHITE
+	match int(agent.lod_tier):
+		1:
+			return Color(0.98, 0.8, 0.28)
+		2:
+			return Color(0.95, 0.45, 0.45)
+		_:
+			return Color(0.74, 0.93, 0.78)
+
+
+func _compare_depth(a, b) -> bool:
+	return _depth_of(a.position) < _depth_of(b.position)
+
+
+## Where an agent is being drawn this frame, in simulation space. Anything that
+## has to sit on a moving animal - the selection marker, the follow camera -
+## must use this rather than `agent.position`: the raw position steps at the
+## tick rate while the sprite glides between ticks, and the difference reads as
+## jitter around an otherwise smooth animal.
+## The selection marker, drawn by this node itself rather than by a sibling.
+##
+## A CanvasItem paints its own content before its children, so drawing here puts
+## the ring beneath the sprite batches while still above the shadows. That is
+## what a mark on the ground should do: the animal stands inside it, not behind
+## it. Drawn from `WorldView` - a node above the agents - the ring covered the
+## animal instead.
+func _draw() -> void:
+	if simulation_manager == null or simulation_manager.world_state == null:
+		return
+	var agent = simulation_manager.get_selected_agent()
+	if agent == null or not agent.is_alive:
+		return
+
+	var origin: Vector2 = get_render_position(agent)
+	var level: int = _height_at(origin)
+	var pulse: float = 0.5 + 0.5 * sin(_marker_phase * 2.2)
+	# Sampled in simulation space and projected, so the ring lies in the ground
+	# plane instead of facing the camera like a sticker.
+	_draw_ground_ring(origin, level, 15.0 + pulse * 2.0,
+		Color(0.98, 0.86, 0.52, 0.34 + pulse * 0.28), 1.6)
+	_draw_ground_ring(origin, level, (15.0 + pulse * 2.0) * 0.62,
+		Color(0.98, 0.86, 0.52, 0.13 + pulse * 0.1), 1.0)
+
+
+func _draw_ground_ring(origin: Vector2, level: int, radius: float, color: Color, width: float) -> void:
+	var points := PackedVector2Array()
+	for step in range(29):
+		var angle := TAU * float(step) / 28.0
+		points.append(WorldProjection.to_screen(
+			origin + Vector2(cos(angle), sin(angle)) * radius, level))
+	draw_polyline(points, color, width)
+
+
+func get_render_position(agent) -> Vector2:
+	if agent == null or simulation_manager == null:
+		return Vector2.ZERO
+	return _curve_position(agent, simulation_manager.get_tick_alpha())
+
+
+func _height_at(world_position: Vector2) -> int:
+	if _terrain == null or WorldProjection.is_identity():
+		return 0
+	return _terrain.get_height_at_position(world_position)
+
+
+func _depth_of(world_position: Vector2) -> float:
+	return WorldProjection.depth_sort_key(world_position, _height_at(world_position))
+
+
+## Where a sprite is pinned. Top-down art is centred on the agent, but under an
+## angled projection an animal stands on the ground rather than hovering over
+## it, so the quad is lifted by half its height to put its feet on the cell.
+func _anchor(world_position: Vector2, ground_offset: float) -> Vector2:
+	var point: Vector2 = WorldProjection.to_screen(world_position, _height_at(world_position))
+	point.y -= ground_offset
+	return point
+
+
+## `instance_count` reallocates and drops the instance buffer, so it is grown in
+## chunks and never shrunk. `visible_instance_count` carries the per-refresh
+## count instead.
+func _ensure_capacity(multimesh: MultiMesh, needed: int) -> void:
+	if multimesh.instance_count >= needed:
+		return
+	var grown: int = multimesh.instance_count + INSTANCE_GROW_CHUNK
+	multimesh.instance_count = maxi(needed, grown)
+
+
+func _build_batches() -> void:
+	var visuals: Dictionary = {}
+	if simulation_manager != null:
+		visuals = simulation_manager.config_bundle.get("visuals", {})
+	var animation_config: Dictionary = visuals.get("animation", {})
+	_turn_lerp = maxf(0.1, float(animation_config.get("turn_lerp_per_second", 9.0)))
+	_facing_deadzone = clampf(float(animation_config.get("facing_deadzone", 0.18)), 0.0, 0.9)
+	_direction_hysteresis = maxf(0.0, float(animation_config.get("direction_hysteresis", 0.25)))
+	var teleport: float = maxf(1.0, float(animation_config.get("teleport_distance", 220.0)))
+	_teleport_distance_sq = teleport * teleport
+	_idle_bob_px = maxf(0.0, float(animation_config.get("idle_bob_px", 0.0)))
+	_age_scale = visuals.get("age_scale", {})
+	_walk_speed_threshold = float(animation_config.get("walk_speed_threshold", 8.0))
+	_run_speed_threshold = float(animation_config.get("run_speed_threshold", 85.0))
+	_phase_step = float(animation_config.get("phase_step", 0.37))
+
+	var species_config: Dictionary = visuals.get("species", {})
+	for species_id in species_config.keys():
+		var config: Dictionary = species_config[species_id]
+		var animations: Dictionary = config.get("animations", {})
+		var species_directions: int = maxi(1, int(config.get("directions", 1)))
+		var rows: int = 1
+		var columns: int = 1
+		for animation_id in animations.keys():
+			var spec: Dictionary = animations[animation_id]
+			rows = maxi(rows, int(spec.get("row", 0)) + species_directions)
+			columns = maxi(columns, int(spec.get("frames", 1)))
+		var node := _make_batch_node(config, columns, rows, int(SPECIES_Z.get(species_id, 0)))
+		if node == null:
+			continue
+		_batches[str(species_id)] = {
+			"multimesh": node.multimesh,
+			"animations": animations,
+			"ground_offset": _ground_offset(config),
+			"stride_length": float(config.get("stride_length", 26.0)),
+			"directions": maxi(1, int(config.get("directions", 1))),
+			"agents": [],
+		}
+		_buckets[str(species_id)] = []
+
+	_build_shadow_batch(visuals.get("shadow", {}))
+
+	var carcass_config: Dictionary = visuals.get("carcass", {})
+	if not carcass_config.is_empty():
+		var stages: int = maxi(1, int(carcass_config.get("stages", 1)))
+		var carcass_node := _make_batch_node(carcass_config, stages, 1, CARCASS_Z)
+		if carcass_node != null:
+			_carcass_batch = {
+				"multimesh": carcass_node.multimesh,
+				"stages": stages,
+				"ground_offset": _ground_offset(carcass_config),
+			}
+
+
+## Half the drawn sprite height, or zero while the projection is the identity -
+## the top-down view wants the sprite centred, not standing.
+## Art is authored against a 32-unit cell. When the world uses larger cells the
+## terrain tiles scale up with them, so sprites have to as well - otherwise one
+## terrain pixel is three times the size of one animal pixel and the two read as
+## different games.
+func _world_scale() -> float:
+	if simulation_manager == null or simulation_manager.world_state == null:
+		return 1.0
+	var terrain = simulation_manager.world_state.terrain_system
+	if terrain == null:
+		return 1.0
+	return terrain.cell_size / 32.0
+
+
+func _ground_offset(config: Dictionary) -> float:
+	if WorldProjection.is_identity():
+		return 0.0
+	return float(config.get("frame_px", 32)) * float(config.get("sprite_scale", 1.0)) * _world_scale() * 0.5
+
+
+func _build_shadow_batch(shadow_config: Dictionary) -> void:
+	if shadow_config.is_empty():
+		return
+	var texture: Texture2D = load(str(shadow_config.get("texture", "")))
+	if texture == null:
+		push_error("Failed to load shadow texture; shadows disabled")
+		return
+	_shadow_scale = float(shadow_config.get("scale", 0.55)) * _world_scale()
+	_shadow_bias = float(shadow_config.get("ground_bias", 2.0))
+	var size: Array = shadow_config.get("size_px", [48, 24])
+	var quad := QuadMesh.new()
+	quad.size = Vector2(float(size[0]), float(size[1]))
+
+	var multimesh := MultiMesh.new()
+	multimesh.transform_format = MultiMesh.TRANSFORM_2D
+	multimesh.use_colors = true
+	multimesh.mesh = quad
+	multimesh.instance_count = INSTANCE_GROW_CHUNK
+	multimesh.visible_instance_count = 0
+
+	_shadow_node = MultiMeshInstance2D.new()
+	_shadow_node.multimesh = multimesh
+	_shadow_node.texture = texture
+	_shadow_node.modulate = Color(1.0, 1.0, 1.0, float(shadow_config.get("alpha", 0.55)))
+	_shadow_node.z_index = SHADOW_Z
+	_shadow_node.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	add_child(_shadow_node)
+
+
+func _make_batch_node(config: Dictionary, columns: int, rows: int, layer_z: int) -> MultiMeshInstance2D:
+	var atlas_path: String = str(config.get("atlas", ""))
+	var texture: Texture2D = load(atlas_path) if atlas_path != "" else null
+	if texture == null:
+		push_error("Failed to load sprite atlas: %s" % atlas_path)
+		return null
+
+	var frame_px: float = float(config.get("frame_px", 32))
+	var sprite_scale: float = float(config.get("sprite_scale", 1.0)) * _world_scale()
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * frame_px * sprite_scale
+
+	var multimesh := MultiMesh.new()
+	multimesh.transform_format = MultiMesh.TRANSFORM_2D
+	multimesh.use_colors = true
+	multimesh.use_custom_data = true
+	multimesh.mesh = quad
+	multimesh.instance_count = INSTANCE_GROW_CHUNK
+	multimesh.visible_instance_count = 0
+
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/agent_atlas.gdshader")
+	material.set_shader_parameter("frame_size_uv", Vector2(1.0 / float(columns), 1.0 / float(rows)))
+	var outline: Dictionary = {}
+	if simulation_manager != null:
+		outline = simulation_manager.config_bundle.get("visuals", {}).get("outline", {})
+	if bool(outline.get("enabled", false)):
+		material.set_shader_parameter("outline_width", float(outline.get("width_px", 1.0)))
+		var rgba: Array = outline.get("color", [0.1, 0.08, 0.06, 0.9])
+		material.set_shader_parameter("outline_color",
+			Color(float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3])))
+
+	var node := MultiMeshInstance2D.new()
+	node.multimesh = multimesh
+	node.texture = texture
+	node.material = material
+	node.z_index = layer_z
+	node.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	add_child(node)
+	return node
+
+
+## Runs on every tick, deliberately ungated. The UI refresh interval still
+## throttles the HUD and the charts, but sprite positions cannot be sampled at
+## 3.6 Hz and then shown at 60 fps without visible teleporting - the history fed
+## to the curve has to advance in step with the simulation.
+func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
+	if simulation_manager == null or simulation_manager.world_state == null:
+		return
+	_advance_histories(simulation_manager.world_state)
+	refresh()
+
+
+## Positions, facings and animation frames are written every drawn frame, not
+## every tick: that is what turns a 18 Hz simulation into smooth motion.
+func _process(delta: float) -> void:
+	if simulation_manager == null or _batches.is_empty():
+		return
+	var alpha: float = simulation_manager.get_tick_alpha()
+	if simulation_manager.selected_agent_id != -1:
+		_marker_phase += delta
+		queue_redraw()
+	_animate_shadows(alpha)
+	for species_id in _batches.keys():
+		_animate_species(_batches[species_id], alpha, delta)
+
+
+func _advance_histories(world) -> void:
+	var seen := {}
+	var tick_duration: float = maxf(0.0001, simulation_manager.tick_duration)
+	for agent in world.get_living_agents():
+		if agent == null:
+			continue
+		var id: int = agent.id
+		seen[id] = true
+		var samples = _history.get(id)
+		# A fresh agent, or one that jumped further than any tick could carry it,
+		# starts flat instead of sweeping a curve across the map.
+		if samples == null or samples[3].distance_squared_to(agent.position) > _teleport_distance_sq:
+			_history[id] = PackedVector2Array([agent.position, agent.position, agent.position, agent.position])
+			_drawn_speed[id] = 0.0
+			continue
+		var step: float = samples[3].distance_to(agent.position)
+		samples[0] = samples[1]
+		samples[1] = samples[2]
+		samples[2] = samples[3]
+		samples[3] = agent.position
+		_history[id] = samples
+		# Measured across the whole window rather than off the last step alone,
+		# so an agent on a coarse LOD tier - which only takes a full tick every
+		# second or fifth one - does not flicker between idle and walk.
+		_drawn_speed[id] = samples[0].distance_to(samples[3]) / (3.0 * tick_duration)
+		# Ground covered, in world pixels. `_advance_frame()` turns it into a
+		# frame index once it knows the species stride, which keeps this loop
+		# free of per-species state. Wrapped so a session left running for hours
+		# cannot drift into coarse float steps.
+		_gait_distance[id] = fmod(float(_gait_distance.get(id, 0.0)) + step, _GAIT_WRAP_PX)
+	for id in _history.keys():
+		if not seen.has(id):
+			_history.erase(id)
+			_phase.erase(id)
+			_drawn_speed.erase(id)
+			_gait_distance.erase(id)
+			_facing.erase(id)
+			_heading.erase(id)
+			_direction.erase(id)
+
+
+## Catmull-Rom through the four samples, evaluated on the segment between the
+## middle two. That leaves the drawn position one tick behind the simulation -
+## about 55 ms, imperceptible - and buys a curve with real neighbours on both
+## sides instead of a straight line whose corners are as sharp as the steering.
+func _curve_position(agent, alpha: float) -> Vector2:
+	var samples = _history.get(agent.id)
+	if samples == null:
+		return agent.position
+	var p0: Vector2 = samples[0]
+	var p1: Vector2 = samples[1]
+	var p2: Vector2 = samples[2]
+	var p3: Vector2 = samples[3]
+	var t2: float = alpha * alpha
+	var t3: float = t2 * alpha
+	return 0.5 * ((2.0 * p1)
+		+ (p2 - p0) * alpha
+		+ (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+		+ (p3 - p0 + 3.0 * (p1 - p2)) * t3)
+
+
+## World-space displacement across the segment `_curve_position()` is currently
+## drawing: what the animal visibly did, as opposed to what its velocity says it
+## is trying to do. Taken from the same pair of samples as the drawn position so
+## the facing cannot lead or lag the motion it belongs to.
+func _drawn_step(agent) -> Vector2:
+	var samples = _history.get(agent.id)
+	if samples == null:
+		return Vector2.ZERO
+	return samples[2] - samples[1]
+
+
+## Which drawn direction row an animal should use, 0..3 in the pack's own order:
+## 0 south (toward the viewer), 1 north, 2 west, 3 east.
+##
+## The choice is made in screen space, not world space. Under the isometric
+## projection a world heading of +x runs diagonally down-right on screen, so
+## picking the row from the world vector would face every animal wrongly.
+## Projecting a short step and reading the result keeps this correct in both
+## projections without a special case.
+##
+## The step projected is the one being drawn - the `_history` segment behind
+## `_curve_position()` - not `agent.direction`. They part company whenever something other than the
+## animal's own velocity moved it, and a sprite that faces one way while sliding
+## the other is the single most obvious rendering fault there is.
+func _resolve_direction(agent) -> int:
+	var id: int = agent.id
+	var current: int = int(_direction.get(id, 0))
+	var step: Vector2 = _drawn_step(agent)
+	if step.length_squared() < _DRAWN_STEP_EPSILON_SQ:
+		return current
+	var level := _height_at(agent.position)
+	var here: Vector2 = WorldProjection.to_screen(agent.position, level)
+	var ahead: Vector2 = WorldProjection.to_screen(agent.position + step.normalized() * 16.0, level)
+	var screen_dir: Vector2 = ahead - here
+	if screen_dir.length_squared() < 0.0001:
+		return current
+	# Hysteresis: the new axis has to win by a margin, otherwise an animal
+	# running along a diagonal would alternate rows every frame.
+	var horizontal: bool = absf(screen_dir.x) > absf(screen_dir.y) * (1.0 + _direction_hysteresis)
+	var vertical: bool = absf(screen_dir.y) > absf(screen_dir.x) * (1.0 + _direction_hysteresis)
+	if horizontal:
+		current = 3 if screen_dir.x > 0.0 else 2
+	elif vertical:
+		current = 0 if screen_dir.y > 0.0 else 1
+	_direction[id] = current
+	return current
+
+
+## Mirror direction with hysteresis, used only by atlases that draw a single
+## side and rely on flipping. The drawn step jitters around zero whenever an
+## animal moves nearly vertically, and flipping on the raw sign made the sprite
+## snap back and forth every refresh.
+func _resolve_facing(agent, delta: float) -> float:
+	var id: int = agent.id
+	var current: float = float(_facing.get(id, 1.0))
+	# A standing animal keeps whatever way it was facing. Otherwise the jitter
+	# `wander()` puts into the steering would spin a sprite that is not moving.
+	var step: Vector2 = _drawn_step(agent)
+	if step.length_squared() < _DRAWN_STEP_EPSILON_SQ:
+		return current
+
+	# The decision is made on a heading that lags the raw step, not on the raw
+	# step itself. Its x component crosses zero constantly while an animal walks
+	# a near-vertical line; deciding on it directly is what made sprites flicker.
+	var target: float = step.angle()
+	var heading: float = float(_heading.get(id, target))
+	heading = lerp_angle(heading, target, clampf(_turn_lerp * delta, 0.0, 1.0))
+	_heading[id] = heading
+
+	# The dead zone is the second half of the guard: within it the sprite holds
+	# its current facing rather than picking one, so a heading hovering near
+	# vertical cannot oscillate.
+	var heading_x: float = cos(heading)
+	if heading_x > _facing_deadzone:
+		current = 1.0
+	elif heading_x < -_facing_deadzone:
+		current = -1.0
+	_facing[id] = current
+	return current
+
+
+func _animate_species(batch: Dictionary, alpha: float, delta: float) -> void:
+	var agents: Array = batch.get("agents", [])
+	if agents.is_empty():
+		return
+	var multimesh: MultiMesh = batch["multimesh"]
+	var animations: Dictionary = batch["animations"]
+	var stride: float = maxf(1.0, float(batch.get("stride_length", 26.0)))
+	var directions: int = int(batch.get("directions", 1))
+	var ground_offset: float = float(batch["ground_offset"])
+	for index in range(agents.size()):
+		var agent = agents[index]
+		if agent == null or not agent.is_alive:
+			continue
+		# An atlas with real direction rows never mirrors: it already has both
+		# sides drawn, and flipping would fight the artwork.
+		var facing: float = 1.0 if directions > 1 else _resolve_facing(agent, delta)
+		var direction_row: int = _resolve_direction(agent) if directions > 1 else 0
+		var animation_id: String = _resolve_animation(agent)
+		var frame: Vector2 = _advance_frame(agent, animations, stride, delta, animation_id)
+		frame.y += float(direction_row)
+		var scale_factor: float = _age_scale_of(agent)
+		var point: Vector2 = _anchor(_curve_position(agent, alpha), ground_offset * scale_factor)
+		# A standing animal that is perfectly still reads as frozen, so idle and
+		# eat breathe. Walking already has the leg cycle and needs no help.
+		if _idle_bob_px > 0.0 and (animation_id == "idle" or animation_id == "eat"):
+			point.y += sin(float(_phase.get(agent.id, 0.0)) * TAU) * _idle_bob_px
+		multimesh.set_instance_transform_2d(index, Transform2D(
+			Vector2(facing * scale_factor, 0.0),
+			Vector2(0.0, scale_factor),
+			point
+		))
+		multimesh.set_instance_custom_data(index, Color(frame.x, frame.y, 0.0, 0.0))
+
+
+## Walk and run advance by ground actually covered rather than by wall clock, so
+## feet stop sliding when an animal speeds up, when the simulation runs at a
+## speed multiplier, or when it is pushed instead of walking. Standing still is
+## the same statement: no ground, no step. Idle and eat keep a fixed rate,
+## offset per agent so a herd does not breathe in unison.
+func _advance_frame(agent, animations: Dictionary, stride: float, delta: float, animation_id: String) -> Vector2:
+	var spec: Dictionary = animations.get(animation_id, {})
+	if spec.is_empty():
+		return Vector2.ZERO
+	var frames: int = maxi(1, int(spec.get("frames", 1)))
+	var row: float = float(spec.get("row", 0))
+	if frames <= 1:
+		return Vector2(0.0, row)
+	if animation_id == "walk" or animation_id == "run":
+		# Accumulated per tick in `_advance_histories()`, which is also why a
+		# paused simulation holds its pose instead of marching on the spot.
+		var covered: float = float(_gait_distance.get(agent.id, 0.0))
+		var gait: float = covered / stride * float(frames) + float(agent.id) * _phase_step
+		return Vector2(float(int(gait) % frames), row)
+	var phase: float = float(_phase.get(agent.id, float(agent.id) * _phase_step))
+	phase += float(spec.get("fps", 4.0)) * delta
+	_phase[agent.id] = fmod(phase, float(frames) * 1024.0)
+	return Vector2(float(int(phase) % frames), row)
+
+
+func _get_visible_world_rect(world_bounds: Rect2) -> Rect2:
+	var camera := get_viewport().get_camera_2d()
+	if camera is GameCamera:
+		return WorldProjection.world_rect_covering(camera.get_visible_screen_rect())
+	return world_bounds

@@ -194,6 +194,34 @@ Utility actions inside `alive`:
 
 ## UI Layer
 
+### `WorldProjection`
+
+- Single seam between simulation space and screen space, currently the identity transform
+- Everything that draws a simulation position goes through `to_screen()`; mouse picking, view
+  culling and the LOD focus rect come back through `to_world()` / `world_rect_covering()`
+- Exists so an isometric view stays a change to this file plus the tile shape
+
+### `TerrainTileRenderer`
+
+- Paints the terrain grid into two `TileMapLayer` children, biomes below obstacles
+- Builds its `TileSet` at runtime from `visuals.json` instead of a `.tres`, so swapping an art
+  pack needs no resource kept in sync
+- Reads `TerrainSystem` only; repainted on bind and on restart
+
+### `AgentSpriteRenderer`
+
+- One `MultiMeshInstance2D` per species plus one for carcasses; the animation frame travels per
+  instance in custom data and is resolved by `shaders/agent_atlas.gdshader`
+- Frames are derived from existing agent fields (state, action, velocity, id) and the simulation
+  clock, so no visual state is stored on `AgentBase` and headless runs stay bit-identical
+- Depth sorting is exact within a species but not across them: predators draw above herbivores,
+  carcasses below both
+
+### `WorldView`
+
+- World-space input (click to select) plus the world border, selection ring and state labels
+- Terrain and agent drawing moved to the two renderers above
+
 ### `MainController`
 
 - Binds simulation, camera, overlays, charts, minimap, and HUD
@@ -263,23 +291,129 @@ On skipped ticks, distant agents still:
 - die from starvation, thirst, or old age
 - advance by inertia without full perception or decision-making
 
+The LOD window's `near_margin` / `mid_margin` default from `world.simulation_lod`
+(`near_sector_margin` / `mid_sector_margin`), which `presets.json` scales per map size, so
+the active window grows with the map. `debug.json` may override them, but does not by
+default — when it did, the per-size values were dead and a tripled map kept a fixed-width
+active window, which pushed nearly every sector into dormancy.
+
+### Dormant sectors: the coarse ecology
+
+A sector whose agents are all `LOD2` sleeps: its agents are replaced by per-species,
+per-group aggregates carrying a count and mean hunger / thirst / energy / age. Both species
+must be able to complete their whole loop in this abstraction, or the abstraction becomes a
+one-way sink. Two invariants keep the two paths honest:
+
+- **Kills are single-sourced.** `_resolve_dormant_predation()` is the only place a dormant
+  kill happens. Each removed herbivore adds exactly `balance.carcass.meat_total` to the
+  sector's meat pool, and no meat exists without a matching death. Predation is
+  deliberately absent from `_apply_dormant_metabolism_to_aggregate()`.
+- **Intake goes through the same ledgers and knobs as the live path.** Dormant scavenging
+  debits the real carcass via `consume_carcass()`, so a dormant aggregate and a live
+  predator can never eat the same meat. Meat converts to hunger and energy through
+  `carcass_nutrition_gain` / `carcass_energy_gain`, exactly as `Predator._scavenge_or_feed()`
+  does.
+
+Kill volume and death rates accumulate as float debts on the sector and the aggregate
+rather than rounding per step: rounding per step needed four co-located predators to
+produce a single kill, so dormant predation was silently always zero, and it also forced at
+least one death per step on any saturated aggregate regardless of its size.
+
+This path uses no `rng` calls, so it cannot perturb the shared RNG stream that determinism
+depends on.
+
 ## Configuration Notes
 
 ### `world.json`
 
 - controls world size, tick rate, water, terrain generation, navigation limits, and spawn counts
 
+- `climate` drives seasons and the day/night cycle. It is read by `Climate`
+  (`scripts/world/climate.gd`), which is a **pure function of `simulation_time`** rather than
+  accumulated state - `SaveSystem` already round-trips `simulation_time`, so the clock costs
+  no save-format change and `SAVE_VERSION` stays at 1. Anything that starts accumulating here
+  has to move the version with it.
+  Shipped shape: a day is 120 s, a season is one day, a year is 480 s (8 minutes at 1x).
+  Each season declares `regrowth_multiplier`, `metabolism_multiplier` and
+  `perception_multiplier`; `day` declares the night versions of the same three plus the light
+  ramp. Season and night compose **multiplicatively**.
+  Two properties the code depends on:
+  - `start_day_phase: 0.5` and `start_season_index: 0` make every multiplier exactly 1.0 at
+    `simulation_time == 0`. Four test suites rely on that neutrality; `ClimateTests` asserts
+    it directly.
+  - `season_transition_fraction` holds each season's declared values for the first 65% and
+    eases into the next over the last 35%. A consequence worth knowing when reading charts:
+    the *value* leads the *label*, so the last third of autumn already carries winter's
+    regrowth. Weather runs ahead of the calendar.
+  The multipliers reach the world from `WorldState.step()`, which samples the clock once per
+  tick. Three consumers: `ResourceSystem.step()` takes the regrowth scale as a parameter;
+  `AgentBase.update_needs()` takes the metabolism scale, and
+  `_apply_dormant_metabolism_to_aggregate()` mirrors it for dormant sectors - **these two must
+  change together**, or sleeping herds survive winters that kill active ones, invisibly,
+  wherever the camera is not; `WorldState.perception_radius()` scales eyesight only, never the
+  water and grass search radii, which stand in for memory rather than sight.
+
+- `simulation_lod.dormant_travel_reference_sector_size` scales dormant travel speed with
+  sector size. `dormant_speed_scale` is fixed, but sector size grows with the map, so
+  without this an aggregate has to cover three times the distance per unit of hunger on the
+  large map and cross-sector travel becomes lethal rather than merely slow. Speed is clamped
+  to `sprint_speed` so a coarse aggregate never outruns a real animal.
+- `navigation.prey_pressure_refresh_ticks` throttles the sector-level herbivore census that
+  is the simulation's only long-range prey signal. Both the dormant goal selector and the
+  live predator patrol read it.
+
 ### `species.json`
 
 - tunes each species independently without code changes
+- Predator nutrition comes from carcasses only: a kill grants no nutrition by itself, so the
+  energy-per-kill knobs are `feeding.food_restore` (the first bite taken at the kill site,
+  debited through `consume_carcass()`), `feeding.carcass_consume_rate`,
+  `feeding.carcass_nutrition_gain`, `feeding.carcass_energy_gain`, and
+  `balance.carcass.meat_total`.
+- `feeding.gorge_below_energy_threshold` lets a feeding predator keep eating past the point
+  its hunger is satisfied, until it has covered `reproduction.energy_threshold`. Without it
+  meat intake is capped by the hunger the predator arrived with, which capped energy income
+  below the cost of the hunger cycle that earned the kill and made breeding unreachable.
+- `movement.patrol_wander_jitter` is the heading jitter used when patrolling with no prey
+  known anywhere in range. It is an order of magnitude smaller than the herding
+  `wander_jitter`, because that one decorrelates heading in under a second and diffuses in
+  place instead of covering ground.
 
 ### `balance.json`
 
 - tunes cross-species rules, shared lifecycle thresholds, selector thresholds, and utility evaluator weights
+- `dormant_ecology` holds the coarse-path rates: `kill_rate_per_prey_per_second` (break-even
+  for a lone dormant predator is `hunger_rate / carcass.meat_total`),
+  `predator_thirst_trigger_ratio`, and `idle_recovery_energy_ratio`. The last one caps how
+  far resting alone can carry a dormant aggregate, as a fraction of its own
+  `reproduction.energy_threshold`: high enough to leave chase energy for when the sector
+  wakes, low enough that a litter still has to be paid for with food. It is deliberately
+  expressed against the breeding reserve rather than the shared `rest_energy_resume`, which
+  is scaled for the herbivore's smaller maximum and left predators with only a few seconds
+  of chase energy.
+- Feeding beats pair bonding whenever the two conflict: the mate leash
+  (`hunt_rules.kin_chase_break_radius`) is skipped entirely for a predator that is hungry
+  enough to feed. Every predator carries a kin centre from the initial pairing, so applying
+  it unconditionally made a mate's position one of the largest single causes of lost hunts.
+- `prey_isolation` sets the radius and reference count behind how exposed a prey animal is
+  judged to be. The radius must sit outside the herd's own `separation_radius`, or every
+  animal reads as fully sheltered and both `attack.prey_isolation_bonus` and
+  `hunt_weights.isolation` become inert.
+- The idle predator actions (`patrol`, `pair_cohesion`, `investigate_water`) veto rather than
+  compete once the predator is hungry and has prey or a carcass in reach. Their scores are
+  derived from the absence of exactly those signals, so on raw score they outrank hunting;
+  a veto also bypasses `selector.stickiness_bonus` and `selector.switch_threshold_delta`,
+  which would otherwise pin whichever of them is incumbent.
 
 ### `debug.json`
 
 - controls HUD defaults, overlay defaults, UI refresh frequency, and LOD settings
+
+### `visuals.json`
+
+- maps biomes and obstacles onto terrain atlas coordinates
+- declares per-species sprite atlases, frame size, draw scale, and the animation rows
+- holds the speed thresholds that pick between idle, walk and run
 
 ## Built-In Tests
 
@@ -296,7 +430,7 @@ Current suites cover:
 ## Known Gaps
 
 - No authored scenarios or scenario editor
-- No save/load or replay flow
-- No genetics or seasonal systems
+- No replay flow (save/load exists; see `SaveSystem`)
+- No genetics
 - One prey species and one predator species only
 - Debug rendering is functional, not art-driven

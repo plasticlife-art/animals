@@ -23,6 +23,14 @@ func has_target(action_name: StringName) -> bool:
 
 
 func with_state(new_state_name: StringName) -> Variant:
+	# Called twice per decision - once by the agent, once again inside
+	# `select_action()` on the context the agent already scoped - so the second
+	# call is normally asking for the state it is already in. Nothing mutates a
+	# context after `build_context()` fills it, so handing back the same object
+	# is indistinguishable from a copy and saves an allocation plus two
+	# dictionary copies on every decision of every agent.
+	if new_state_name == state_name:
+		return self
 	# Runs on every predator tick, so it avoids a runtime load() and deep copies.
 	# `values` holds only floats, and target dictionaries are read-only downstream,
 	# so shallow copies are enough to keep the two contexts independent.

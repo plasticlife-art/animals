@@ -1,0 +1,555 @@
+{
+  "_comment": "Setup-screen option groups. Each option is a config patch, deep-merged over the base configs in `order`, so later groups win. An empty patch means the base configs already describe that option.",
+  "order": [
+    "style",
+    "map_size",
+    "mix",
+    "scenario",
+    "rules",
+    "difficulty"
+  ],
+  "groups": {
+    "style": {
+      "label": "Стиль",
+      "default": "topdown_kenney",
+      "options": {
+        "isometric_craftpix": {
+          "label": "Изометрия",
+          "patch": {}
+        },
+        "topdown_kenney": {
+          "label": "Вид сверху",
+          "patch": {
+            "visuals": {
+              "projection": "orthogonal",
+              "tile_px": 16,
+              "terrain": {
+                "atlas": "res://assets/tiles/kenney_terrain_atlas.png",
+                "subdivisions": 2,
+                "variants": 4
+              },
+              "props": {
+                "atlas": "res://assets/tiles/kenney_props_atlas.png",
+                "cell_px": [
+                  16,
+                  32
+                ],
+                "columns": 8,
+                "scale": 2.0,
+                "groups": {
+                  "tree_large": [
+                    0,
+                    1,
+                    2,
+                    3
+                  ],
+                  "tree_small": [
+                    4,
+                    5,
+                    6
+                  ],
+                  "bush": [
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    12
+                  ],
+                  "meadow": [
+                    13,
+                    14,
+                    15,
+                    16
+                  ],
+                  "drought": [
+                    17,
+                    18,
+                    19,
+                    20
+                  ],
+                  "swamp": [
+                    24,
+                    25,
+                    26
+                  ],
+                  "stone": [
+                    21,
+                    22,
+                    23
+                  ]
+                },
+                "group_scale": {
+                  "tree_large": 1.8,
+                  "tree_small": 1.5,
+                  "bush": 0.6,
+                  "meadow": 0.4,
+                  "drought": 0.5,
+                  "swamp": 0.45,
+                  "stone": 0.55
+                }
+              }
+            },
+            "world": {
+              "terrain": {
+                "height": {
+                  "levels": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "map_size": {
+      "label": "Размер карты",
+      "default": "large",
+      "options": {
+        "small": {
+          "label": "Малая",
+          "patch": {
+            "world": {
+              "world_size": {
+                "x": 4800.0,
+                "y": 2700.0
+              },
+              "spatial_cell_size": 42.7,
+              "grass": {
+                "cell_size": 32.0
+              },
+              "terrain": {
+                "cell_size": 32.0,
+                "generation": {
+                  "swamp_water_radius": 80.0,
+                  "biome_frequency": 0.009,
+                  "moisture_frequency": 0.006,
+                  "drought_frequency": 0.00798
+                },
+                "height": {
+                  "frequency": 0.006
+                }
+              },
+              "simulation_lod": {
+                "sector_size": 512.0,
+                "near_sector_margin": 192.0,
+                "mid_sector_margin": 960.0,
+                "headless_active_radius": 960.0
+              },
+              "water_generation": {
+                "radius_min": 60.0,
+                "radius_max": 93.3
+              }
+            },
+            "species": {
+              "herbivore": {
+                "perception": {
+                  "danger_radius": 40.0,
+                  "water_search_radius": 640.0,
+                  "grass_search_radius": 360.0,
+                  "neighbor_radius": 63.3,
+                  "separation_radius": 28.0,
+                  "mate_search_radius": 42.7
+                },
+                "movement": {
+                  "body_radius": 6.0
+                },
+                "feeding": {
+                  "eat_distance": 12.0,
+                  "drink_distance": 16.7
+                },
+                "reproduction": {
+                  "safe_radius": 40.0,
+                  "offspring_spawn_radius": 18.0
+                }
+              },
+              "predator": {
+                "perception": {
+                  "vision_radius": 160.0,
+                  "water_search_radius": 480.0,
+                  "attack_radius": 20.0,
+                  "chase_break_radius": 172.8,
+                  "mate_search_radius": 160.0
+                },
+                "movement": {
+                  "body_radius": 5.0
+                },
+                "feeding": {
+                  "feed_distance": 7.3
+                },
+                "reproduction": {
+                  "offspring_spawn_radius": 20.0
+                },
+                "metabolism": {
+                  "hunger_rate": 1.95,
+                  "thirst_rate": 1.55
+                }
+              }
+            },
+            "balance": {
+              "state_thresholds": {
+                "rejoin_distance": 45.0
+              }
+            }
+          }
+        },
+        "medium": {
+          "label": "Средняя",
+          "patch": {
+            "world": {
+              "world_size": {
+                "x": 9600.0,
+                "y": 5400.0
+              },
+              "spatial_cell_size": 85.3,
+              "grass": {
+                "cell_size": 64.0
+              },
+              "terrain": {
+                "cell_size": 64.0,
+                "generation": {
+                  "swamp_water_radius": 160.0,
+                  "biome_frequency": 0.0045,
+                  "moisture_frequency": 0.003,
+                  "drought_frequency": 0.00399
+                },
+                "height": {
+                  "frequency": 0.003
+                }
+              },
+              "simulation_lod": {
+                "sector_size": 1024.0,
+                "near_sector_margin": 384.0,
+                "mid_sector_margin": 1920.0,
+                "headless_active_radius": 1920.0
+              },
+              "water_generation": {
+                "radius_min": 120.0,
+                "radius_max": 186.7
+              }
+            },
+            "species": {
+              "herbivore": {
+                "perception": {
+                  "danger_radius": 80.0,
+                  "water_search_radius": 1280.0,
+                  "grass_search_radius": 720.0,
+                  "neighbor_radius": 126.7,
+                  "separation_radius": 56.0,
+                  "mate_search_radius": 85.3
+                },
+                "movement": {
+                  "body_radius": 12.0
+                },
+                "feeding": {
+                  "eat_distance": 24.0,
+                  "drink_distance": 33.3
+                },
+                "reproduction": {
+                  "safe_radius": 80.0,
+                  "offspring_spawn_radius": 36.0
+                }
+              },
+              "predator": {
+                "perception": {
+                  "vision_radius": 320.0,
+                  "water_search_radius": 960.0,
+                  "attack_radius": 40.0,
+                  "chase_break_radius": 345.6,
+                  "mate_search_radius": 320.0
+                },
+                "movement": {
+                  "body_radius": 10.0
+                },
+                "feeding": {
+                  "feed_distance": 14.7
+                },
+                "reproduction": {
+                  "offspring_spawn_radius": 40.0
+                },
+                "metabolism": {
+                  "hunger_rate": 1.5,
+                  "thirst_rate": 1.2
+                }
+              }
+            },
+            "balance": {
+              "state_thresholds": {
+                "rejoin_distance": 90.0
+              }
+            }
+          }
+        },
+        "large": {
+          "label": "Большая",
+          "patch": {}
+        },
+        "huge": {
+          "label": "Огромная",
+          "patch": {
+            "world": {
+              "world_size": {
+                "x": 21600.0,
+                "y": 12150.0
+              },
+              "spatial_cell_size": 192.0,
+              "grass": {
+                "cell_size": 144.0
+              },
+              "terrain": {
+                "cell_size": 144.0,
+                "generation": {
+                  "swamp_water_radius": 360.0,
+                  "biome_frequency": 0.002,
+                  "moisture_frequency": 0.001333,
+                  "drought_frequency": 0.001773
+                },
+                "height": {
+                  "frequency": 0.001333
+                }
+              },
+              "simulation_lod": {
+                "sector_size": 2304.0,
+                "near_sector_margin": 864.0,
+                "mid_sector_margin": 4320.0,
+                "headless_active_radius": 4320.0
+              },
+              "water_generation": {
+                "radius_min": 270.0,
+                "radius_max": 420.0
+              }
+            },
+            "species": {
+              "herbivore": {
+                "perception": {
+                  "danger_radius": 180.0,
+                  "water_search_radius": 2880.0,
+                  "grass_search_radius": 1620.0,
+                  "neighbor_radius": 285.0,
+                  "separation_radius": 126.0,
+                  "mate_search_radius": 192.0
+                },
+                "movement": {
+                  "body_radius": 27.0
+                },
+                "feeding": {
+                  "eat_distance": 54.0,
+                  "drink_distance": 75.0
+                },
+                "reproduction": {
+                  "safe_radius": 180.0,
+                  "offspring_spawn_radius": 81.0
+                }
+              },
+              "predator": {
+                "perception": {
+                  "vision_radius": 720.0,
+                  "water_search_radius": 2160.0,
+                  "attack_radius": 90.0,
+                  "chase_break_radius": 777.6,
+                  "mate_search_radius": 720.0
+                },
+                "movement": {
+                  "body_radius": 22.4
+                },
+                "feeding": {
+                  "feed_distance": 33.0
+                },
+                "reproduction": {
+                  "offspring_spawn_radius": 90.0
+                },
+                "metabolism": {
+                  "hunger_rate": 1.0,
+                  "thirst_rate": 0.8
+                }
+              }
+            },
+            "balance": {
+              "state_thresholds": {
+                "rejoin_distance": 202.5
+              }
+            }
+          }
+        }
+      }
+    },
+    "mix": {
+      "label": "Состав",
+      "default": "balanced",
+      "options": {
+        "balanced": {
+          "label": "Сбалансированный",
+          "patch": {}
+        },
+        "few_predators": {
+          "label": "Мало хищников",
+          "patch": {
+            "world": {
+              "spawns": {
+                "herbivore_count": 240,
+                "predator_count": 8,
+                "herbivore_group_count": 12
+              }
+            }
+          }
+        },
+        "many_predators": {
+          "label": "Много хищников",
+          "patch": {
+            "world": {
+              "spawns": {
+                "herbivore_count": 240,
+                "predator_count": 60,
+                "herbivore_group_count": 12
+              }
+            }
+          }
+        },
+        "large_herds": {
+          "label": "Крупные стада",
+          "patch": {
+            "world": {
+              "spawns": {
+                "herbivore_count": 300,
+                "predator_count": 24,
+                "herbivore_group_count": 6
+              }
+            }
+          }
+        },
+        "small_herds": {
+          "label": "Мелкие стада",
+          "patch": {
+            "world": {
+              "spawns": {
+                "herbivore_count": 240,
+                "predator_count": 24,
+                "herbivore_group_count": 30
+              }
+            }
+          }
+        }
+      }
+    },
+    "scenario": {
+      "label": "Среда",
+      "default": "normal",
+      "options": {
+        "normal": {
+          "label": "Обычная",
+          "patch": {}
+        },
+        "lush": {
+          "label": "Изобилие",
+          "patch": {
+            "world": {
+              "grass": {
+                "regrowth_rate": 10.8
+              },
+              "water_generation": {
+                "sources_per_million_units": 2.363
+              }
+            }
+          }
+        },
+        "drought": {
+          "label": "Засуха",
+          "patch": {
+            "world": {
+              "grass": {
+                "regrowth_rate": 2.7
+              },
+              "water_generation": {
+                "sources_per_million_units": 0.695
+              }
+            }
+          }
+        },
+        "highlands": {
+          "label": "Нагорье",
+          "patch": {
+            "world": {
+              "terrain": {
+                "height": {
+                  "levels": 6
+                },
+                "obstacles": {
+                  "cliff_count": 20
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rules": {
+      "label": "Правила",
+      "default": "normal",
+      "options": {
+        "normal": {
+          "label": "Обычные",
+          "patch": {}
+        },
+        "no_predators": {
+          "label": "Без хищников",
+          "patch": {
+            "world": {
+              "spawns": {
+                "herbivore_count": 240,
+                "predator_count": 0,
+                "herbivore_group_count": 12
+              }
+            }
+          }
+        },
+        "predator_pressure": {
+          "label": "Давление хищников",
+          "patch": {
+            "species": {
+              "predator": {
+                "perception": {
+                  "vision_radius": 720.0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "difficulty": {
+      "label": "Сложность",
+      "default": "normal",
+      "options": {
+        "easy": {
+          "label": "Лёгкая",
+          "patch": {
+            "species": {
+              "herbivore": {
+                "metabolism": {
+                  "hunger_rate": 1.4,
+                  "thirst_rate": 1.05
+                }
+              }
+            }
+          }
+        },
+        "normal": {
+          "label": "Обычная",
+          "patch": {}
+        },
+        "hard": {
+          "label": "Суровая",
+          "patch": {
+            "species": {
+              "herbivore": {
+                "metabolism": {
+                  "hunger_rate": 2.8,
+                  "thirst_rate": 2.1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

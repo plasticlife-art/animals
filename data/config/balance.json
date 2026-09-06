@@ -20,15 +20,16 @@
     "flee": 2.4
   },
   "hunt_weights": {
-    "distance": 2.4,
-    "isolation": 0.75,
-    "energy": 0.35,
-    "age_stage": 0.35
+    "distance": 1.0,
+    "isolation": 1.35,
+    "energy": 0.45,
+    "age_stage": 0.65
   },
   "hunt_rules": {
-    "max_chase_duration": 10.0,
-    "kin_chase_break_radius": 500.0,
-    "critical_hunger_kin_break_multiplier": 1.75
+    "max_chase_duration": 14.0,
+    "kin_chase_break_radius": 1200.0,
+    "critical_hunger_kin_break_multiplier": 1.75,
+    "patrol_goal_refresh_ticks": 27
   },
   "attack": {
     "base_success_chance": 0.38,
@@ -75,12 +76,14 @@
           "low_threat_weight": 0.1,
           "hunger_penalty": 0.18,
           "thirst_penalty": 0.22,
-          "threat_penalty": 0.35
+          "threat_penalty": 0.35,
+          "night_weight": 0.3
         },
         "explore": {
           "low_urgency_weight": 0.45,
           "scarcity_weight": 0.35,
-          "low_threat_weight": 0.2
+          "low_threat_weight": 0.2,
+          "night_penalty": 0.3
         },
         "join_herd": {
           "isolation_weight": 0.35,
@@ -104,7 +107,9 @@
           "prey_quality_weight": 0.35,
           "prey_proximity_weight": 0.15,
           "energy_weight": 0.15,
-          "low_energy_penalty": 0.12
+          "low_energy_penalty": 0.12,
+          "critical_hunger_ratio": 0.6,
+          "critical_hunger_weight": 0.45
         },
         "scavenge_carcass": {
           "hunger_weight": 0.35,
@@ -137,7 +142,8 @@
         "pair_cohesion": {
           "separation_weight": 0.45,
           "mate_available_weight": 0.25,
-          "low_urgency_weight": 0.3
+          "low_urgency_weight": 0.3,
+          "hunger_penalty": 0.35
         },
         "patrol": {
           "base_score": 0.15,
@@ -152,7 +158,16 @@
     "thirst_death_threshold": 100.0
   },
   "stats": {
-    "sample_interval_ticks": 5,
+    "sample_interval_ticks": 18,
     "history_limit": 720
+  },
+  "prey_isolation": {
+    "neighbor_radius": 126.0,
+    "reference_neighbor_count": 10.0
+  },
+  "dormant_ecology": {
+    "kill_rate_per_prey_per_second": 0.006,
+    "predator_thirst_trigger_ratio": 0.6,
+    "idle_recovery_energy_ratio": 0.75
   }
 }

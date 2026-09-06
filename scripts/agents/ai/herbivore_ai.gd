@@ -58,7 +58,10 @@ func build_context(agent, world, snapshot = null):
 	if snapshot == null:
 		snapshot = world.build_herbivore_snapshot(agent)
 	var neighbors: Array = snapshot.group_neighbors
-	var danger_radius := float(agent.perception.get("danger_radius", 120.0))
+	# Scaled in step with the snapshot query in `build_herbivore_snapshot`: if the
+	# search shrinks at night and this normalizer does not, every predator found
+	# divides down to "right on top of me".
+	var danger_radius: float = world.perception_radius(agent, "danger_radius", 120.0)
 	var predators: Array = snapshot.predators
 	var water_target: Dictionary = snapshot.water_target
 	var grass_target: Dictionary = snapshot.grass_target
@@ -96,7 +99,13 @@ func build_context(agent, world, snapshot = null):
 			agent.position.distance_to(grass_target.get("center", agent.position)),
 			float(agent.perception.get("grass_search_radius", 180.0))
 		)
-		food_biomass = clampf(float(grass_target.get("biomass", 0.0)) / 100.0, 0.0, 1.0)
+		# Normalized against the configured cap, not a literal 100. The cap scales
+		# with cell area, so a hardcoded divisor silently saturates on a coarse
+		# grid and reports every patch as equally rich.
+		var biomass_cap := 100.0
+		if world.resource_system != null:
+			biomass_cap = maxf(1.0, world.resource_system.max_biomass)
+		food_biomass = clampf(float(grass_target.get("biomass", 0.0)) / biomass_cap, 0.0, 1.0)
 
 	var water_proximity := 0.0
 	if not water_target.is_empty():
@@ -143,6 +152,7 @@ func build_context(agent, world, snapshot = null):
 		"open_area_ratio": UtilityContextFactory.bool_ratio(UtilityContextFactory.is_open_area_biome(biome_id)),
 		"safe_biome_score": UtilityContextFactory.safe_biome_score(biome_id),
 		"low_urgency": low_urgency,
+		"night_ratio": world.climate.night_ratio,
 		"resource_scarcity": resource_scarcity,
 		"safe_zone_proximity": safe_zone_proximity,
 	}

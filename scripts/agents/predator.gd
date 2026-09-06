@@ -13,6 +13,8 @@ var _ai_controller
 var _cached_isolation_prey_id: int = -1
 var _cached_prey_isolation: float = 0.0
 var _last_water_memory_tick: int = -9999
+var _patrol_goal: Variant = null
+var _patrol_goal_tick: int = -9999
 
 
 func configure(
@@ -34,7 +36,7 @@ func configure(
 
 
 func tick(world, delta: float) -> void:
-	update_needs(delta)
+	update_needs(delta, world.climate.metabolism_multiplier)
 	_maybe_drink(world)
 	if apply_survival_checks(world, delta):
 		set_ai_state(AgentAIState.DEAD)
@@ -115,6 +117,19 @@ func export_runtime_state() -> Dictionary:
 	return state_data
 
 
+## The water-investigation cooldown is a real twelve-second timer, and it is the
+## one predator field that sector sleep loses on purpose but a save must not.
+func export_save_state() -> Dictionary:
+	var state_data: Dictionary = super.export_save_state()
+	state_data["last_water_memory_tick"] = _last_water_memory_tick
+	return state_data
+
+
+func apply_save_state(state_data: Dictionary) -> void:
+	super.apply_save_state(state_data)
+	_last_water_memory_tick = int(state_data.get("last_water_memory_tick", _last_water_memory_tick))
+
+
 func apply_runtime_state(state_data: Dictionary) -> void:
 	super.apply_runtime_state(state_data)
 	preferred_mate_id = int(state_data.get("preferred_mate_id", preferred_mate_id))
@@ -157,7 +172,11 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		fail_reason = "timeout"
 	elif energy <= min_chase_energy and distance > attack_radius * 1.5:
 		fail_reason = "low_energy"
-	elif last_known_kin_center != null:
+	elif last_known_kin_center != null and not _is_hungry_enough_to_feed(true):
+		# The leash only applies to a predator that does not need the meal. Every predator
+		# carries a kin centre from the initial pairing, so applying it while hungry made the
+		# mate's position abort chases outright - it was one of the largest single causes of
+		# lost hunts. Feeding first, reuniting after, matches the evaluator veto.
 		var allowed_kin_gap := kin_break_radius
 		if hunger >= critical_hunger:
 			allowed_kin_gap *= critical_hunger_multiplier
@@ -180,7 +199,7 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	spend_energy(float(metabolism.get("chase_energy_cost", 5.0)) * delta)
 	target_position = prey.position
 	if distance <= attack_radius:
-		return _attack(world, prey)
+		return _attack(world, prey, delta)
 
 	set_state("chase", world.current_tick)
 	var chase_waypoint: Vector2 = world.get_next_waypoint(position, prey.position, id)
@@ -197,18 +216,25 @@ func _hunt(world, delta: float, prey = null) -> bool:
 	if prey == null:
 		return false
 	release_carcass_target(world)
+	# A new target gets a fresh clock. Carrying the previous chase's elapsed time over
+	# is what made a freshly acquired prey abort as a timeout on the first tick.
+	var switched_target: bool = target_agent_id != prey.id
 	target_agent_id = prey.id
 	target_position = prey.position
 	set_state("seek_prey", world.current_tick)
 	var prey_waypoint: Vector2 = world.get_next_waypoint(position, prey.position, id)
 	move_with_vector(world, Steering.seek(position, prey_waypoint), float(movement.get("max_speed", 84.0)), delta)
-	chase_timer = maxf(chase_timer, delta)
+	chase_timer = delta if switched_target else maxf(chase_timer, delta)
 	return true
 
 
-func _attack(world, prey) -> bool:
+func _attack(world, prey, delta: float) -> bool:
 	if attack_cooldown > 0.0:
+		# Standing still here handed the prey a free second: it sprints away at
+		# `sprint_speed`, and closing that gap again at the ~16 units/s net closure
+		# rate ate most of `max_chase_duration`, leaving one attack roll per chase.
 		set_state("attack", world.current_tick)
+		move_with_vector(world, Steering.seek(position, prey.position), float(movement.get("sprint_speed", 128.0)), delta)
 		return true
 
 	set_state("attack", world.current_tick)
@@ -233,9 +259,14 @@ func _attack(world, prey) -> bool:
 		world.kill_agent(prey, "predation", id)
 		var carcass: Dictionary = world.find_carcass_by_source_agent(prey.id)
 		target_agent_id = -1
+		# `clear_targets()` is the only other thing that zeroes this, and the kill path
+		# does not go through it. Leaving it set made `_hunt`'s `maxf` carry the spent
+		# time into the next chase, which then aborted immediately as a timeout.
+		chase_timer = 0.0
 		if not carcass.is_empty():
 			target_carcass_id = int(carcass.get("id", -1))
 			target_position = carcass["position"]
+			_consume_kill_bite(world)
 		else:
 			target_carcass_id = -1
 			target_position = prey.position
@@ -248,6 +279,20 @@ func _attack(world, prey) -> bool:
 			"isolation": isolation,
 		})
 	return true
+
+
+## `feeding.food_restore` is the size of the first bite taken at the kill site. It is
+## debited through `consume_carcass()`, the single meat ledger, so it cannot conjure
+## nutrition that no carcass paid for - the key used to be read by nothing at all.
+func _consume_kill_bite(world) -> void:
+	var bite: float = float(feeding.get("food_restore", 0.0))
+	if bite <= 0.0 or target_carcass_id == -1:
+		return
+	var consumed: float = world.consume_carcass(target_carcass_id, bite, id)
+	if consumed <= 0.0:
+		return
+	reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)))
+	restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
 
 
 func _rest(world, delta: float) -> void:
@@ -279,7 +324,8 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	_set_mutual_preferred_mate(chosen_mate)
 	target_agent_id = chosen_mate.id
 	target_position = chosen_mate.position
-	if position.distance_squared_to(chosen_mate.position) > 18.0 * 18.0:
+	var contact_distance: float = mate_contact_distance(chosen_mate)
+	if position.distance_squared_to(chosen_mate.position) > contact_distance * contact_distance:
 		set_state("reproduce", world.current_tick)
 		var mate_waypoint: Vector2 = world.get_next_waypoint(position, chosen_mate.position, id)
 		move_with_vector(world, Steering.seek(position, mate_waypoint), float(movement.get("max_speed", 84.0)), delta)
@@ -358,7 +404,51 @@ func _patrol(world, delta: float) -> void:
 	set_state("patrol", world.current_tick)
 	clear_targets(world)
 	_update_water_memory(world)
-	move_with_vector(world, Steering.wander(self, world.rng), float(movement.get("max_speed", 84.0)) * 0.85, delta)
+	var patrol_goal: Variant = _resolve_patrol_goal(world)
+	if patrol_goal != null:
+		var patrol_waypoint: Vector2 = world.get_next_waypoint(position, patrol_goal, id)
+		move_with_vector(world, Steering.seek(position, patrol_waypoint), float(movement.get("max_speed", 84.0)), delta)
+		return
+	# Nothing anywhere in range holds prey, so fall back to covering ground. The jitter
+	# is far smaller than the herding one for the reason documented on `Steering.wander`.
+	var jitter := float(movement.get("patrol_wander_jitter", 0.06))
+	move_with_vector(world, Steering.wander(self, world.rng, jitter), float(movement.get("max_speed", 84.0)) * 0.85, delta)
+	if stuck_timer > 0.0:
+		# A low-jitter walker grinds along terrain it cannot enter. Turn it around
+		# rather than letting it sit against the obstacle for its whole patrol.
+		wander_angle += PI + world.rng.randf_range(-0.4, 0.4)
+
+
+## Where to patrol towards: the nearest sector that actually holds herbivores.
+##
+## Patrol used to be an undirected random walk. With prey clumped into a dozen herds
+## roughly 3100 units apart on the large map and vision reaching 480, a predator that
+## lost sight of prey diffused rather than travelled and could not cross the gap inside
+## its ~62 s hunger budget - which is why prey abundance never translated into meals.
+## The sector census this reads already existed for the dormant path.
+##
+## The radius is what the hunger clock can still pay for, so a fed predator ranges wide
+## to pre-position while a starving one stays with what it can still reach.
+func _resolve_patrol_goal(world) -> Variant:
+	var refresh_ticks: int = maxi(1, int(balance.get("hunt_rules", {}).get("patrol_goal_refresh_ticks", 27)))
+	if world.current_tick - _patrol_goal_tick < refresh_ticks:
+		return _patrol_goal
+	_patrol_goal_tick = world.current_tick
+	_patrol_goal = null
+	var starvation_threshold := float(balance.get("lifecycle", {}).get("starvation_death_threshold", need_max))
+	var hunger_headroom := maxf(1.0, starvation_threshold - hunger) / maxf(0.01, float(metabolism.get("hunger_rate", 1.6)))
+	var reach := maxf(hunger_headroom * float(movement.get("max_speed", 84.0)) * 0.6, float(perception.get("vision_radius", 240.0)) * 2.0)
+	var goal: Dictionary = world.find_prey_pressure_goal(position, reach)
+	if goal.is_empty():
+		return null
+	# The goal is a sector centre, and a sector is far wider than vision. Standing on the
+	# centre while seeing nothing means the herd is elsewhere in the sector, so sweep it
+	# instead of milling on the spot - `_patrol`'s low-jitter wander covers ground.
+	var goal_position: Vector2 = goal["goal_position"]
+	if position.distance_to(goal_position) <= float(perception.get("vision_radius", 240.0)):
+		return null
+	_patrol_goal = goal_position
+	return _patrol_goal
 
 
 func _maybe_drink(world) -> void:
@@ -381,11 +471,14 @@ func _maybe_drink(world) -> void:
 
 
 func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
+	# One radius for both the query and the `distance_score` normalizer below.
+	# Scaling only one of them would make edge-of-range prey score zero.
+	var vision_radius: float = world.perception_radius(self, "vision_radius", 240.0)
 	if prey_candidates.is_empty():
 		prey_candidates = Perception.get_nearby_agents(
 			world,
 			position,
-			float(perception.get("vision_radius", 240.0)),
+			vision_radius,
 			SPECIES_HERBIVORE,
 			id
 		)
@@ -393,7 +486,17 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 		return null
 
 	var weights: Dictionary = balance.get("hunt_weights", {})
-	var vision_radius: float = float(perception.get("vision_radius", 240.0))
+	# Scoring a candidate costs a neighbourhood count for its isolation term, so
+	# the work here is predators x visible prey - the fastest-growing cost in the
+	# tick once herds get dense. Only the nearest few are worth ranking: distance
+	# is a scored term itself, so far-off prey rarely won anyway.
+	var evaluation_limit: int = maxi(1, int(perception.get("prey_evaluation_limit", 10)))
+	if prey_candidates.size() > evaluation_limit:
+		var by_distance: Array = prey_candidates.duplicate()
+		var origin: Vector2 = position
+		by_distance.sort_custom(func(a, b):
+			return origin.distance_squared_to(a.position) < origin.distance_squared_to(b.position))
+		prey_candidates = by_distance.slice(0, evaluation_limit)
 	var best_score: float = -INF
 	var best_prey: AgentBase = null
 	for prey in prey_candidates:
@@ -422,9 +525,23 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 	return best_prey
 
 
+## Scored once per prey candidate per predator per tick, and a predator sees far
+## with a 480 vision radius, so this is the most-called query in the sim. Only
+## the count matters, so it goes through `count_agents()` and never builds the
+## neighbour array.
+## How exposed a prey animal is, as 1.0 for a lone straggler down to 0.0 deep inside a
+## herd. The radius used to be a hardcoded 72 against a divisor of 6, but herds hold
+## `separation_radius` 84 with ~20 members, so six neighbours were always inside 72 and
+## this returned a flat 0 for every animal in the world - which silently killed both
+## `attack.prey_isolation_bonus` and `hunt_weights.isolation`. Measuring just outside
+## the herd's own spacing, against a divisor near a real herd size, makes it discriminate
+## between the edge of a herd and its centre again.
 func _prey_isolation(world, prey) -> float:
-	var neighbors: Array = world.query_agents(prey.position, 72.0, SPECIES_HERBIVORE, prey.id)
-	return clampf(1.0 - (float(neighbors.size()) / 6.0), 0.0, 1.0)
+	var isolation_config: Dictionary = balance.get("prey_isolation", {})
+	var radius: float = float(isolation_config.get("neighbor_radius", 126.0))
+	var reference_count: float = maxf(1.0, float(isolation_config.get("reference_neighbor_count", 10.0)))
+	var neighbor_count: int = world.count_agents(prey.position, radius, SPECIES_HERBIVORE, prey.id)
+	return clampf(1.0 - (float(neighbor_count) / reference_count), 0.0, 1.0)
 
 
 ## `_choose_prey` already scored isolation for every candidate, including the winner.
@@ -682,8 +799,28 @@ func can_continue_feeding() -> bool:
 	return current_action in [AgentAction.HUNT_PREY, AgentAction.SCAVENGE_CARCASS] or state in ["seek_prey", "chase", "attack", "seek_carcass", "feed_carcass"]
 
 
+## Predators gorge. A carcass holds `balance.carcass.meat_total` (150) but hunger
+## alone caps intake at `hunger - feed_stop_hunger_floor`, so a predator arriving at
+## hunger 60 could take only ~56 and left the rest to rot inside the 30 s TTL. That
+## capped energy income below the cost of the hunger cycle that earned the kill, which
+## pinned energy at 0 and put `reproduction.energy_threshold` permanently out of reach.
+## While already at a meal, keep eating until the breeding reserve is covered.
+##
+## Deliberately gated on `continuing`: this finishes a carcass the predator is already
+## at, it does not send a sated predator hunting for energy alone.
 func _is_hungry_enough_to_feed(continuing: bool = false) -> bool:
-	return is_hunger_above_floor(get_feed_hunger_floor(), "feed_stop_hunger_floor", continuing)
+	if is_hunger_above_floor(get_feed_hunger_floor(), "feed_stop_hunger_floor", continuing):
+		return true
+	if not continuing or not bool(feeding.get("gorge_below_energy_threshold", true)):
+		return false
+	return energy < float(reproduction.get("energy_threshold", 0.0))
+
+
+## The AI context has to ask the same question the execution path does, gorging
+## included, or the selector drops HUNT_PREY/SCAVENGE_CARCASS the moment hunger is
+## sated and walks the predator away from a carcass it is still gaining energy from.
+func is_feeding_allowed() -> bool:
+	return _is_hungry_enough_to_feed(can_continue_feeding())
 
 
 func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> bool:
@@ -745,7 +882,7 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 	var herbivores: Array = Perception.get_nearby_agents(
 		world,
 		source_position,
-		float(perception.get("vision_radius", 240.0)),
+		world.perception_radius(self, "vision_radius", 240.0),
 		SPECIES_HERBIVORE,
 		-1
 	)
