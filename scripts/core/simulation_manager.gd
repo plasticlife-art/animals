@@ -16,6 +16,14 @@ const MAX_SIMULATION_STEPS_PER_FRAME := 2
 
 var _worker = null
 var _worker_thread: Thread = null
+## Set once the view has finished coming up. Until then no tick is threaded:
+## the frames right after `enable_interactive_worker()` are where the main
+## thread compiles `scene_sprite_batch.gd`, builds the themes and loads the
+## atlases, and a worker stepping through that window reads instances whose
+## script is mid-initialisation. The symptom is not a crash but a method that
+## briefly does not exist - `is_alive` missing from a `Herbivore`, `is_threat`
+## from the registry - a different set of them on every run.
+var _worker_stepping: bool = false
 var _presentation_alpha: float = 0.0
 var config_bundle: Dictionary = {}
 var event_bus
@@ -394,6 +402,15 @@ func enable_interactive_worker() -> void:
 	event_bus.clear()
 	stats_system.counters = _worker.stats.counters.duplicate()
 	_presentation_alpha = 0.0
+	_worker_stepping = false
+
+
+## Begin threading ticks. Separate from `enable_interactive_worker()` on purpose:
+## that has to run early, because it replaces `world_state` and everything that
+## binds to the manager must bind to the final object. Stepping has to start late,
+## once nothing is still being loaded on the main thread. The caller owns the gap.
+func begin_interactive_stepping() -> void:
+	_worker_stepping = true
 
 
 func _process_worker(delta: float) -> void:
@@ -419,7 +436,7 @@ func _process_worker(delta: float) -> void:
 		actual_speed = _speed_sim / _speed_wall
 		_speed_wall = 0.0
 		_speed_sim = 0.0
-	if _worker_thread == null and not paused and (accumulator >= tick_duration or _single_step_requested):
+	if _worker_stepping and _worker_thread == null and not paused and (accumulator >= tick_duration or _single_step_requested):
 		accumulator = maxf(0.0, accumulator - tick_duration)
 		_worker_thread = Thread.new()
 		_worker_thread.start(_worker.step.bind(tick_duration, current_tick, simulation_time, _build_lod_context().duplicate(true), selected_agent_id))

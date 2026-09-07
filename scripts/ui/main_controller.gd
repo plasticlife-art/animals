@@ -122,6 +122,10 @@ func _adopt_running_simulation() -> void:
 	_autosave_interval = maxi(0, int(simulation_manager.config_bundle
 		.get("debug", {}).get("autosave_interval_ticks", 0)))
 	_hide_start_menu()
+	# Last, once the renderers, themes and atlases above have finished loading.
+	# The worker steps on its own thread and reads the same scripts this bring-up
+	# is still compiling.
+	simulation_manager.begin_interactive_stepping()
 
 
 func _show_start_menu(continue_available: bool) -> void:
