@@ -1,12 +1,21 @@
 class_name WorldState
 extends RefCounted
 
-# Agents are instantiated through `SpeciesRegistry`, from the `role.script` path in
-# species.json, so nothing here names a species any more. These preloads stay because
-# a path read out of JSON is not a static dependency: without them an export build has
-# no reason to package the agent scripts at all.
+# Agents are dispatched through `SpeciesRegistry`, from the `role.script` path in
+# species.json, so no branch here names a species any more. This table is not
+# dispatch - it is linkage, and every species script has to appear in it.
+#
+# A path read out of JSON is not a static dependency, so without an entry here the
+# script is resolved by `load()` at run time. That is late enough to race: the
+# interactive worker builds a second `WorldState` on its own thread, and a class
+# still being compiled when the other side reaches it resolves to a half-built
+# base. The symptom is not a missing file but `super.export_runtime_state()`
+# reporting no such function, `Steering.wander` vanishing, and a `Scavenger` that
+# answers to none of `AgentBase` - intermittently, a different set each run.
+# It also gives an export build a reason to package the scripts at all.
 const HerbivoreScript = preload("res://scripts/agents/herbivore.gd")
 const PredatorScript = preload("res://scripts/agents/predator.gd")
+const ScavengerScript = preload("res://scripts/agents/scavenger.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_perception_snapshot.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
