@@ -249,7 +249,8 @@
     "sector_grass_refresh_ticks": 18,
     "grass_local_reach_cells": 3,
     "grass_target_refresh_ticks": 6,
-    "prey_pressure_refresh_ticks": 9
+    "prey_pressure_refresh_ticks": 9,
+    "local_path_budget_per_tick": 6
   },
   "simulation_lod": {
     "sector_size": 1536.0,
@@ -361,7 +362,10 @@
   "spawns": {
     "herbivore_count": 240,
     "predator_count": 24,
-    "herbivore_group_count": 12
+    "herbivore_group_count": 12,
+    "scavenger_count": 72,
+    "scavenger_group_count": 12,
+    "initial_carcass_count": 40
   },
   "water_generation": {
     "sources_per_million_units": 0.45,
@@ -369,5 +373,53 @@
     "radius_max": 280.0,
     "jitter": 0.42,
     "seed": 3
+  },
+  "scenery": {
+    "enabled": true,
+    "close_detection_cells": 0.65,
+    "placement": {
+      "forest": {
+        "groups": [
+          "tree_small",
+          "bush"
+        ],
+        "chance": 0.22
+      },
+      "meadow": {
+        "groups": [
+          "meadow"
+        ],
+        "chance": 0.07
+      },
+      "drought": {
+        "groups": [
+          "drought",
+          "stone"
+        ],
+        "chance": 0.06
+      },
+      "swamp": {
+        "groups": [
+          "swamp"
+        ],
+        "chance": 0.11
+      }
+    },
+    "types": {
+      "tree_large": {
+        "radius_cells": 0.13
+      },
+      "tree_small": {
+        "radius_cells": 0.09
+      },
+      "stone": {
+        "radius_cells": 0.13
+      },
+      "bush": {
+        "cover_radius_cells": 0.32,
+        "opacity": 0.55,
+        "move_cost": 1.4
+      }
+    }
   }
 }

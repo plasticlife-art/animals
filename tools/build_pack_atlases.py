@@ -42,11 +42,23 @@ ANIMATIONS = [
     ("eat", "Idle"),
     ("dead", "Death"),
 ]
-SPECIES = {"herbivore": "Deer", "predator": "Fox"}
+SPECIES = {"herbivore": "Deer", "predator": "Fox", "scavenger": "Black_grouse"}
+
+# Not every animal in the pack has every sheet. The grouse has no Run - it takes
+# off instead - so its run rows come from Flight, which is what a startled bird
+# does anyway.
+ANIMATION_OVERRIDES = {"scavenger": {"run": "Flight"}}
+
+
+def animations_for(species):
+    overrides = ANIMATION_OVERRIDES.get(species, {})
+    return [(key, overrides.get(key, name)) for key, name in ANIMATIONS]
 
 # (animal, sheet) -> source row for each output direction. Absent means identity.
-# Fox_Run has west and east swapped relative to every other Fox sheet.
+# Fox_Run has west and east swapped relative to every other Fox sheet, and
+# Black_grouse_Flight disagrees with the rest of the grouse's the same way.
 SHEET_DIRECTION_ORDER = {
+    ("Black_grouse", "Flight"): [0, 1, 3, 2],
     ("Fox", "Run"): [0, 1, 3, 2],
 }
 
@@ -109,10 +121,11 @@ def check_direction_order(animal, sheets):
 
 
 def build_species(species, animal):
+    animations = animations_for(species)
     sheets = [(key, name, Image.open(find_sheet(animal, name)).convert("RGBA"))
-              for key, name in ANIMATIONS]
+              for key, name in animations]
     columns = max(sheet.width // FRAME for _, _, sheet in sheets)
-    rows = len(ANIMATIONS) * DIRECTIONS
+    rows = len(animations) * DIRECTIONS
     atlas = Image.new("RGBA", (columns * FRAME, rows * FRAME), (0, 0, 0, 0))
 
     meta = {}
