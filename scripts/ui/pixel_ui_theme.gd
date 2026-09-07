@@ -49,6 +49,9 @@ const BAR_TRACK := Color(0.20, 0.13, 0.08, 0.24)
 const TAG_BACKDROP := Color(0.10, 0.09, 0.07, 0.84)
 const TAG_INK := Color(0.94, 0.91, 0.84)
 const TAG_INK_DIM := Color(0.94, 0.91, 0.84, 0.66)
+## Dark enough to read as a grip against the parchment without competing with
+## the ink of the text it sits beside.
+const SCROLL_GRABBER := Color(0.20, 0.13, 0.08, 0.62)
 
 
 ## `compact` trades the menu's generous padding for the density the HUD needs.
@@ -117,7 +120,32 @@ static func build(compact: bool = false) -> Theme:
 	theme.set_color("font_disabled_color", "CheckBox", INK_DIM)
 	theme.set_color("font_color", "OptionButton", BUTTON_INK)
 	theme.set_color("default_color", "RichTextLabel", INK)
+
+	# The pack has no scrollbar art, and both the HUD panel and the help screen
+	# scroll. Flat boxes in the palette above read as part of the parchment;
+	# Godot's untouched default is a slab of grey that does not.
+	# The grabber sets the bar's width, so it is the thicker of the two: at the
+	# track's width the whole thing reads as a hairline rather than a control.
+	for bar in ["VScrollBar", "HScrollBar"]:
+		theme.set_stylebox("scroll", bar, _bar_box(BAR_TRACK, 3.0))
+		theme.set_stylebox("scroll_focus", bar, _bar_box(BAR_TRACK, 3.0))
+		theme.set_stylebox("grabber", bar, _bar_box(SCROLL_GRABBER, 6.0))
+		theme.set_stylebox("grabber_highlight", bar, _bar_box(INK, 6.0))
+		theme.set_stylebox("grabber_pressed", bar, _bar_box(INK, 6.0))
 	return theme
+
+
+## `thickness` is a margin on every side, so it sets both the bar's width and
+## the grabber's inset from the track.
+static func _bar_box(color: Color, thickness: float) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = color
+	box.set_corner_radius_all(3)
+	box.content_margin_left = thickness
+	box.content_margin_right = thickness
+	box.content_margin_top = thickness
+	box.content_margin_bottom = thickness
+	return box
 
 
 static func _stretched(path: String, left: int, right: int, top: int, bottom: int) -> StyleBoxTexture:

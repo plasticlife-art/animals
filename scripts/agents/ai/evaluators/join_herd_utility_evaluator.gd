@@ -17,8 +17,8 @@ func evaluate(_agent, context) -> Dictionary:
 	score += herd_proximity * get_weight("herd_weight", 0.25)
 	score += herd_available * get_weight("availability_weight", 0.20)
 	score += threat * get_weight("threat_weight", 0.20)
-	return result(score, [
+	return result(score, ([
 		reason_if("alone", isolation),
 		reason_if("herd", herd_proximity),
 		reason_if("threat", threat, 0.22),
-	])
+	] if context.diagnostics else []))

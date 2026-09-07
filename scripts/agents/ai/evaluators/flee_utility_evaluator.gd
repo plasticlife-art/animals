@@ -19,8 +19,8 @@ func evaluate(_agent, context) -> Dictionary:
 	score += open_area * get_weight("open_area_weight", 0.10)
 	score += low_energy * get_weight("low_energy_weight", 0.10)
 	score += safe_zone * get_weight("safe_zone_weight", 0.10)
-	return result(score, [
+	return result(score, ([
 		reason_if("threat", threat),
 		reason_if("predator", predator_visible),
 		reason_if("open", open_area, 0.2),
-	])
+	] if context.diagnostics else []))

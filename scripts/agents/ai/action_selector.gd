@@ -69,7 +69,7 @@ func select(
 
 	var chosen_action: StringName = best_action
 	var did_switch := current_action != StringName() and current_action != best_action
-	var reason := _build_base_reason(best_action, best_score, reasons_by_action)
+	var reason := _build_base_reason(best_action, best_score, reasons_by_action) if context.diagnostics else String(best_action)
 	if vetoed_actions.has(current_action) and chosen_action != current_action:
 		reason = "dropped %s (%s); %s" % [
 			String(current_action),

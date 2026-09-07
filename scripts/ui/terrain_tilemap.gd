@@ -80,7 +80,7 @@ func rebuild() -> void:
 		_rebuild_isometric(terrain)
 	elif _biome_layer != null:
 		_rebuild_orthogonal(terrain)
-	_rebuild_props(terrain)
+	# Scenery is rendered by the common scene sprite batch.
 
 
 func _rebuild_orthogonal(terrain: TerrainSystem) -> void:
@@ -277,7 +277,7 @@ func _build_layers() -> void:
 		_build_orthogonal_layers(visuals, terrain_config)
 	else:
 		_build_isometric_layer(visuals, terrain_config)
-	_build_props_layer(visuals)
+	# Shared scene batch owns props, so they interleave with animals.
 
 
 func _build_orthogonal_layers(visuals: Dictionary, terrain_config: Dictionary) -> void:

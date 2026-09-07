@@ -14,6 +14,9 @@ const TelemetryLoggerScript = preload("res://scripts/stats/telemetry_logger.gd")
 
 const MAX_SIMULATION_STEPS_PER_FRAME := 2
 
+var _worker = null
+var _worker_thread: Thread = null
+var _presentation_alpha: float = 0.0
 var config_bundle: Dictionary = {}
 var event_bus
 var world_state: WorldState
@@ -36,6 +39,13 @@ var _single_step_requested: bool = false
 var lod_enabled: bool = false
 var lod_settings: Dictionary = {}
 var lod_focus_rect: Rect2 = Rect2()
+var frame_times = preload("res://scripts/stats/performance_window.gd").new()
+var tick_times = preload("res://scripts/stats/performance_window.gd").new()
+var render_times = preload("res://scripts/stats/performance_window.gd").new()
+var actual_speed: float = 0.0
+var dropped_simulation_seconds: float = 0.0
+var _speed_wall: float = 0.0
+var _speed_sim: float = 0.0
 
 
 func _ready() -> void:
@@ -43,6 +53,8 @@ func _ready() -> void:
 
 
 func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> void:
+	if _worker != null:
+		shutdown()
 	config_bundle = config_override if not config_override.is_empty() else ConfigLoaderScript.load_config_bundle()
 	seed = seed_override if seed_override >= 0 else int(config_bundle.get("world", {}).get("seed", 1337))
 	rng.seed = seed
@@ -89,12 +101,18 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 func _process(delta: float) -> void:
 	if world_state == null:
 		return
+	if _worker != null:
+		_process_worker(delta)
+		return
 	if paused and not _single_step_requested:
 		return
 
+	frame_times.add(delta * 1000.0)
+	_speed_wall += delta
 	accumulator += delta * speed_multiplier
 	var max_accumulator := tick_duration * float(MAX_SIMULATION_STEPS_PER_FRAME)
 	if accumulator > max_accumulator:
+		dropped_simulation_seconds += accumulator - max_accumulator
 		accumulator = max_accumulator
 
 	var steps_this_frame := 0
@@ -102,18 +120,33 @@ func _process(delta: float) -> void:
 		accumulator -= tick_duration
 		step_once()
 		steps_this_frame += 1
+		_speed_sim += tick_duration
 		if _single_step_requested:
 			_single_step_requested = false
 			paused = true
 			break
+
+	if _speed_wall >= 1.0:
+		actual_speed = _speed_sim / _speed_wall
+		_speed_wall = 0.0
+		_speed_sim = 0.0
+
+
+func get_performance_summary() -> Dictionary:
+	return {"frame_ms": frame_times.summary(), "tick_ms": tick_times.summary(),
+		"render_cpu_ms": render_times.summary(), "actual_speed": actual_speed,
+		"requested_speed": speed_multiplier, "dropped_simulation_seconds": dropped_simulation_seconds}
 
 
 func step_once() -> void:
 	if world_state == null:
 		return
 	var started_at_usec := Time.get_ticks_usec()
+	world_state.inspected_agent_id = selected_agent_id
 	world_state.step(tick_duration, current_tick, simulation_time, _build_lod_context())
-	stats_system.record_step_duration(float(Time.get_ticks_usec() - started_at_usec) / 1000.0)
+	var tick_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
+	stats_system.record_step_duration(tick_ms)
+	tick_times.add(tick_ms)
 	current_tick += 1
 	simulation_time += tick_duration
 	if selected_agent_id != -1 and world_state.get_agent(selected_agent_id) == null:
@@ -150,6 +183,8 @@ func set_debug_flag(flag_name: String, enabled: bool) -> void:
 ## to the last one. The speed multiplier is already folded into `accumulator`,
 ## so this stays correct at 4x and 10x without further work.
 func get_tick_alpha() -> float:
+	if _worker != null:
+		return _presentation_alpha
 	if tick_duration <= 0.0:
 		return 0.0
 	return clampf(accumulator / tick_duration, 0.0, 1.0)
@@ -243,6 +278,7 @@ func export_telemetry() -> Dictionary:
 	var paths := telemetry_logger.export_all(seed, stats_system, event_bus, {
 		"tick": current_tick,
 		"time_seconds": simulation_time,
+		"performance": get_performance_summary(),
 	})
 	export_completed.emit(paths)
 	return paths
@@ -263,6 +299,12 @@ func run_headless(total_ticks: int, export_on_finish: bool = true) -> Dictionary
 
 
 func shutdown() -> void:
+	if _worker_thread != null:
+		_worker_thread.wait_to_finish()
+		_worker_thread = null
+	if _worker != null:
+		_worker.shutdown()
+		_worker = null
 	if is_instance_valid(self):
 		set_process(false)
 	if stats_system != null and stats_system.has_method("shutdown"):
@@ -329,3 +371,116 @@ func _refresh_lod_assignments() -> void:
 	if world_state == null:
 		return
 	world_state.refresh_lod_assignments(_build_lod_context())
+
+
+func enable_interactive_worker() -> void:
+	if _worker != null or world_state == null:
+		return
+	_worker = preload("res://scripts/core/simulation_worker.gd").new()
+	_worker.configure(world_state, stats_system, event_bus, rng)
+	var initial: Dictionary = world_state.export_state()
+	event_bus = EventBusScript.new()
+	event_bus.initialize(config_bundle.debug)
+	stats_system = StatsSystemScript.new()
+	stats_system.initialize(config_bundle, event_bus)
+	stats_system.counters = _worker.stats.counters.duplicate()
+	stats_system.latest_snapshot = _worker.stats.get_snapshot()
+	world_state = WorldStateScript.new()
+	var view_rng := RandomNumberGenerator.new()
+	view_rng.seed = seed
+	world_state.initialize(config_bundle, event_bus, view_rng)
+	world_state.import_state(initial)
+	# Initialisation events belong to construction, not to the running ecology.
+	event_bus.clear()
+	stats_system.counters = _worker.stats.counters.duplicate()
+	_presentation_alpha = 0.0
+
+
+func _process_worker(delta: float) -> void:
+	frame_times.add(delta * 1000.0)
+	if not paused:
+		_speed_wall += delta
+		accumulator += delta * speed_multiplier
+		_presentation_alpha = minf(1.0, _presentation_alpha + delta * speed_multiplier / tick_duration)
+	var cap := tick_duration * float(MAX_SIMULATION_STEPS_PER_FRAME)
+	if accumulator > cap:
+		dropped_simulation_seconds += accumulator - cap
+		accumulator = cap
+	if _worker_thread != null and not _worker_thread.is_alive():
+		var result: Dictionary = _worker_thread.wait_to_finish()
+		_worker_thread = null
+		_apply_worker_frame(result)
+		_speed_sim += tick_duration
+		_presentation_alpha = 0.0
+		if _single_step_requested:
+			_single_step_requested = false
+			paused = true
+	if _speed_wall >= 1.0:
+		actual_speed = _speed_sim / _speed_wall
+		_speed_wall = 0.0
+		_speed_sim = 0.0
+	if _worker_thread == null and not paused and (accumulator >= tick_duration or _single_step_requested):
+		accumulator = maxf(0.0, accumulator - tick_duration)
+		_worker_thread = Thread.new()
+		_worker_thread.start(_worker.step.bind(tick_duration, current_tick, simulation_time, _build_lod_context().duplicate(true), selected_agent_id))
+
+
+func _apply_worker_frame(data: Dictionary) -> void:
+	current_tick = int(data.tick)
+	simulation_time = float(data.time)
+	tick_times.add(float(data.tick_ms))
+	var previous_agents: Dictionary = world_state.agents
+	var next_agents := {}
+	world_state.living_agents.clear()
+	for record in data.agents:
+		var agent = previous_agents.get(int(record.id))
+		if agent == null:
+			agent = world_state._restore_agent_record(record)
+		else:
+			agent.apply_runtime_state(record)
+		agent.last_action_reason = record.get("last_action_reason", agent.last_action_reason)
+		agent.last_action_scores = record.get("last_action_scores", agent.last_action_scores)
+		agent.last_action_raw_scores = record.get("last_action_raw_scores", agent.last_action_raw_scores)
+		next_agents[agent.id] = agent
+		world_state.living_agents.append(agent)
+	for id in previous_agents:
+		if not next_agents.has(id):
+			previous_agents[id].is_alive = false
+	world_state.agents = next_agents
+	world_state.carcasses = data.carcasses
+	world_state.resource_system._cells = data.grass
+	world_state.resource_system.total_biomass = float(data.biomass)
+	world_state.resource_system._biomass_totals_by_biome = data.biomes
+	world_state._sector_states = data.sectors
+	world_state._group_state_cache = data.groups
+	world_state.lod_counts = data.lod_counts
+	world_state.performance_counters = data.performance
+	world_state.current_tick = current_tick - 1
+	world_state.current_time = simulation_time - tick_duration
+	world_state.climate.sample(world_state.current_time)
+	world_state.spatial_grid.rebuild(world_state.living_agents)
+	for event in data.events:
+		event_bus.emit_event(event)
+	stats_system.counters = data.counters
+	if stats_system.latest_snapshot.get("tick", -1) != data.metrics.get("tick", -1):
+		stats_system.time_series.append(data.metrics)
+		if stats_system.time_series.size() > stats_system.history_limit:
+			stats_system.time_series.pop_front()
+	stats_system.latest_snapshot = data.metrics
+	if selected_agent_id != -1 and world_state.get_agent(selected_agent_id) == null:
+		selected_agent_id = -1
+		selection_changed.emit(-1)
+		clear_focus()
+	tick_completed.emit(current_tick, data.metrics)
+
+
+## Called only for an explicit save/load boundary, never by the frame renderer.
+func synchronize_worker() -> void:
+	if _worker_thread != null:
+		var result: Dictionary = _worker_thread.wait_to_finish()
+		_worker_thread = null
+		_apply_worker_frame(result)
+
+func export_simulation_state() -> Dictionary:
+	synchronize_worker()
+	return world_state.export_state() if _worker == null else _worker.world.export_state()

@@ -34,11 +34,7 @@ func _build_profile_override() -> Dictionary:
 	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle().duplicate(true)
 	match benchmark_profile:
 		"current":
-			bundle["world"]["spawns"] = {
-				"herbivore_count": 220,
-				"predator_count": 18,
-				"herbivore_group_count": 12,
-			}
+			pass
 		"750":
 			bundle["world"]["spawns"] = {
 				"herbivore_count": 690,

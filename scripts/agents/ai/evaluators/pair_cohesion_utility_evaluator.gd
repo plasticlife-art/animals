@@ -12,7 +12,7 @@ func evaluate(_agent, context) -> Dictionary:
 	# Regrouping with a mate peaks around 0.70 with a distant partner, which also
 	# outranks hunting. Feeding comes first; the pair can reunite once fed.
 	if has_feeding_opportunity(context):
-		return veto(["prey in reach"])
+		return veto((["prey in reach"] if context.diagnostics else []))
 	var separation := float(context.get_value("kin_separation", 0.0))
 	var mate_available := float(context.get_value("mate_available", 0.0))
 	var low_urgency := float(context.get_value("low_urgency", 0.0))
@@ -23,7 +23,7 @@ func evaluate(_agent, context) -> Dictionary:
 	# patrol at moderate hunger, so a hungry predator was pulled back to its partner
 	# instead of setting off towards prey. The pair can reunite once it has eaten.
 	score -= float(context.get_value("hunger", 0.0)) * get_weight("hunger_penalty", 0.35)
-	return result(score, [
+	return result(score, ([
 		reason_if("separation", separation),
 		reason_if("mate", mate_available),
-	])
+	] if context.diagnostics else []))

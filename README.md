@@ -61,7 +61,11 @@ python3 tools/generate_placeholder_atlases.py
 
 1. Open the project in Godot.
 2. Run the project, or open `res://scenes/main/main.tscn`.
-3. Press `Tab` to show or hide the HUD. The HUD starts hidden by default.
+3. The main menu opens first. `Новая симуляция` reveals the setup options,
+   `Продолжить` resumes the latest autosave, and `Помощь` describes the controls
+   and the mechanics. Nothing is simulated until a run is started.
+4. Press `Tab` to show or hide the HUD. The HUD starts hidden by default and
+   scrolls when its contents outgrow the window.
 
 ### Headless Scene
 
@@ -96,8 +100,11 @@ pipeline instead, which reports success even when tests fail:
 
 - `Tab`: toggle HUD visibility
 - `Esc`: open or close the pause menu
+- `F1`: open or close the help screen
+- `F`: toggle follow on the selected agent
 - `W`, `A`, `S`, `D`: pan camera
 - Mouse wheel / trackpad pinch: zoom
+- Mouse wheel over the debug panel: scroll the panel
 - Middle mouse drag / trackpad pan: pan camera
 - Left click on world: select nearest agent and switch follow mode to `Agent`
 - Drag or click on minimap: move camera
@@ -139,6 +146,12 @@ The summary includes population metrics, death causes, hunt success, carcass met
   Shared thresholds, herd weights, hunt rules, carcass behavior, lifecycle rules, AI selector tuning, evaluator weights, stats sampling
 - `data/config/debug.json`
   HUD defaults, UI refresh cadence, overlays, export directory, interactive LOD tuning
+- `data/config/presets.json`
+  Setup-screen option groups. Each option is a config patch deep-merged over the base
+  configs, so adding a group here adds a row to the setup screen with no code change
+- `data/config/help.json`
+  Sections of the in-game help screen, as BBCode. Adding a section here adds a button
+  to that screen with no code change
 
 ## Project Structure
 
