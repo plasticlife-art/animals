@@ -23,6 +23,10 @@ func request_refresh() -> void:
 ## Padding around the panel's contents, and the gap between the two charts.
 const PADDING := 14.0
 const CHART_GAP := 10.0
+## The trend lines, named once so the curve and its legend entry cannot drift.
+const BIRTHS_COLOR := Color(0.39, 0.82, 1.0)
+const DEATHS_COLOR := Color(1.0, 0.5, 0.65)
+const LEGEND_GAP := 12.0
 
 
 func _draw() -> void:
@@ -80,21 +84,39 @@ func _draw() -> void:
 	var population_max := _series_max(series, population_keys)
 	for index in range(population_keys.size()):
 		_draw_series_line(series, population_rect, population_keys[index], population_colors[index], population_max)
-	_draw_combined_line(series, trends_rect, birth_keys, Color(0.39, 0.82, 1.0))
-	_draw_combined_line(series, trends_rect, death_keys, Color(1.0, 0.5, 0.65))
+	_draw_combined_line(series, trends_rect, birth_keys, BIRTHS_COLOR)
+	_draw_combined_line(series, trends_rect, death_keys, DEATHS_COLOR)
 
 	var latest: Dictionary = series[-1]
 	var ink := Color(0.88, 0.9, 0.92)
 	var stats_baseline: float = size.y - PADDING
 	var legend_baseline: float = stats_baseline - line_height
-	var legend_parts: Array[String] = []
+	# Each name in the colour of its own line. The legend used to name the colour
+	# in words - "H green  P orange" - which stopped saying anything once it was
+	# generated from the species registry instead of written out by hand, leaving
+	# a row of bare names and no way to tell which curve was which.
+	var legend: Array = []
 	for entry in _species_entries():
-		legend_parts.append(String(entry["label"]))
-	legend_parts.append("Births blue")
-	legend_parts.append("Deaths pink")
-	draw_string(font, Vector2(PADDING, legend_baseline),
-		"  ".join(legend_parts),
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
+		legend.append([String(entry["label"]), entry["color"]])
+	legend.append(["Births", BIRTHS_COLOR])
+	legend.append(["Deaths", DEATHS_COLOR])
+	# The tick counter shares this baseline from the right, so the legend stops
+	# rather than running underneath it - with a fourth species and a five-digit
+	# tick the two would otherwise meet in the middle.
+	var tick_text := "Tick %d" % int(latest.get("tick", 0))
+	var tick_width: float = font.get_string_size(
+		tick_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+	var legend_limit: float = size.x - PADDING - tick_width - LEGEND_GAP
+	var legend_x: float = PADDING
+	for item in legend:
+		var text: String = item[0]
+		var text_width: float = font.get_string_size(
+			text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+		if legend_x + text_width > legend_limit:
+			break
+		draw_string(font, Vector2(legend_x, legend_baseline), text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, item[1])
+		legend_x += text_width + LEGEND_GAP
 	draw_string(font, Vector2(PADDING, stats_baseline),
 		"Avg energy %.1f  Avg hunger %.1f  Hunt %.2f" % [
 			float(latest.get("average_energy", 0.0)),
@@ -103,10 +125,8 @@ func _draw() -> void:
 		],
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
 	# Right-aligned from its measured width rather than a guessed offset, so a
-	# five-digit tick cannot run off the panel or into the line beside it.
-	var tick_text := "Tick %d" % int(latest.get("tick", 0))
-	var tick_width: float = font.get_string_size(
-		tick_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+	# five-digit tick cannot run off the panel or into the line beside it. Both
+	# measured above, where the legend needs the same number to know where to stop.
 	draw_string(font, Vector2(size.x - PADDING - tick_width, legend_baseline), tick_text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
 
