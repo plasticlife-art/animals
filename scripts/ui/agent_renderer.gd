@@ -35,14 +35,15 @@ const _DRAWN_STEP_EPSILON_SQ := 0.0025
 const _GAIT_WRAP_PX := 1048576.0
 const SHADOW_Z := -2
 const CARCASS_Z := -1
-const HERBIVORE_Z := 0
-const PREDATOR_Z := 1
+# Draw layer per species now comes from `visuals.json -> species.<id>.z`, beside
+# the atlas it belongs to. A hardcoded table here meant a new species silently
+# shared layer 0 with the herbivores and sorted against them by accident.
+const DEFAULT_SPECIES_Z := 0
 
-const SPECIES_Z := {
-	"herbivore": HERBIVORE_Z,
-	"predator": PREDATOR_Z,
-}
-
+var scene_batch = null
+var _needs_refresh: bool = true
+var _last_camera_rect := Rect2()
+var _render_positions: Dictionary = {}
 var simulation_manager: SimulationManager
 
 var _batches: Dictionary = {}
@@ -104,6 +105,10 @@ func bind_manager(manager: SimulationManager) -> void:
 ## style preset that swaps atlases, frame sizes or animation rows needs this.
 ## Repainting is not enough - the geometry itself changed.
 func rebuild_batches() -> void:
+	if scene_batch != null:
+		remove_child(scene_batch)
+		scene_batch.queue_free()
+		scene_batch = null
 	for child in [_shadow_node]:
 		if child != null:
 			remove_child(child)
@@ -176,7 +181,9 @@ func _fill_species(species_id: String, agents: Array) -> void:
 	var multimesh: MultiMesh = batch["multimesh"]
 	if agents.is_empty():
 		multimesh.visible_instance_count = 0
+		batch["node"].visible = false
 		return
+	batch["node"].visible = true
 
 	# Painter's algorithm: a MultiMesh draws in instance order and has no y-sort
 	# of its own, so the order is established here. Only the culled subset is
@@ -251,7 +258,9 @@ func _fill_carcasses(world, visible_rect: Rect2) -> void:
 
 	if visible_carcasses.is_empty():
 		multimesh.visible_instance_count = 0
+		_carcass_batch["node"].visible = false
 		return
+	_carcass_batch["node"].visible = true
 
 	_ensure_capacity(multimesh, visible_carcasses.size())
 	for index in range(visible_carcasses.size()):
@@ -415,10 +424,11 @@ func _build_batches() -> void:
 			var spec: Dictionary = animations[animation_id]
 			rows = maxi(rows, int(spec.get("row", 0)) + species_directions)
 			columns = maxi(columns, int(spec.get("frames", 1)))
-		var node := _make_batch_node(config, columns, rows, int(SPECIES_Z.get(species_id, 0)))
+		var node := _make_batch_node(config, columns, rows, int(config.get("z", DEFAULT_SPECIES_Z)))
 		if node == null:
 			continue
 		_batches[str(species_id)] = {
+			"node": node,
 			"multimesh": node.multimesh,
 			"animations": animations,
 			"ground_offset": _ground_offset(config),
@@ -436,10 +446,15 @@ func _build_batches() -> void:
 		var carcass_node := _make_batch_node(carcass_config, stages, 1, CARCASS_Z)
 		if carcass_node != null:
 			_carcass_batch = {
+				"node": carcass_node,
 				"multimesh": carcass_node.multimesh,
 				"stages": stages,
 				"ground_offset": _ground_offset(carcass_config),
 			}
+
+	scene_batch = preload("res://scripts/ui/scene_sprite_batch.gd").new()
+	scene_batch.configure(self, visuals)
+	add_child(scene_batch)
 
 
 ## Half the drawn sprite height, or zero while the projection is the identity -
@@ -542,24 +557,37 @@ func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
 	if simulation_manager == null or simulation_manager.world_state == null:
 		return
 	_advance_histories(simulation_manager.world_state)
-	refresh()
+	_needs_refresh = true
 
 
 ## Positions, facings and animation frames are written every drawn frame, not
 ## every tick: that is what turns a 18 Hz simulation into smooth motion.
 func _process(delta: float) -> void:
-	if simulation_manager == null or _batches.is_empty():
+	if simulation_manager == null or simulation_manager.world_state == null or _batches.is_empty():
 		return
+	var started := Time.get_ticks_usec()
+	var view := _get_visible_world_rect(simulation_manager.world_state.bounds)
+	if _needs_refresh or view != _last_camera_rect:
+		refresh()
+		_needs_refresh = false
+		_last_camera_rect = view
+	_render_positions.clear()
 	var alpha: float = simulation_manager.get_tick_alpha()
+	if simulation_manager.paused:
+		delta = 0.0
 	if simulation_manager.selected_agent_id != -1:
 		_marker_phase += delta
 		queue_redraw()
 	_animate_shadows(alpha)
 	for species_id in _batches.keys():
 		_animate_species(_batches[species_id], alpha, delta)
+	if scene_batch != null:
+		scene_batch.render(self, alpha)
+	simulation_manager.render_times.add(float(Time.get_ticks_usec() - started) / 1000.0)
 
 
 func _advance_histories(world) -> void:
+	_render_positions.clear()
 	var seen := {}
 	var tick_duration: float = maxf(0.0001, simulation_manager.tick_duration)
 	for agent in world.get_living_agents():
@@ -570,7 +598,7 @@ func _advance_histories(world) -> void:
 		var samples = _history.get(id)
 		# A fresh agent, or one that jumped further than any tick could carry it,
 		# starts flat instead of sweeping a curve across the map.
-		if samples == null or samples[3].distance_squared_to(agent.position) > _teleport_distance_sq:
+		if samples == null or samples[3].distance_squared_to(agent.position) > minf(_teleport_distance_sq, pow(float(agent.movement.get("sprint_speed", 128.0)) * tick_duration * 3.0, 2.0)):
 			_history[id] = PackedVector2Array([agent.position, agent.position, agent.position, agent.position])
 			_drawn_speed[id] = 0.0
 			continue
@@ -605,6 +633,13 @@ func _advance_histories(world) -> void:
 ## about 55 ms, imperceptible - and buys a curve with real neighbours on both
 ## sides instead of a straight line whose corners are as sharp as the steering.
 func _curve_position(agent, alpha: float) -> Vector2:
+	if _render_positions.has(agent.id):
+		return _render_positions[agent.id]
+	var point := _safe_curve_position(agent, alpha)
+	_render_positions[agent.id] = point
+	return point
+
+func _safe_curve_position(agent, alpha: float) -> Vector2:
 	var samples = _history.get(agent.id)
 	if samples == null:
 		return agent.position
@@ -612,12 +647,19 @@ func _curve_position(agent, alpha: float) -> Vector2:
 	var p1: Vector2 = samples[1]
 	var p2: Vector2 = samples[2]
 	var p3: Vector2 = samples[3]
+	if p0 == p1 and p1 == p2 and p2 == p3:
+		return p1
 	var t2: float = alpha * alpha
 	var t3: float = t2 * alpha
-	return 0.5 * ((2.0 * p1)
+	var curved: Vector2 = 0.5 * ((2.0 * p1)
 		+ (p2 - p0) * alpha
 		+ (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
 		+ (p3 - p0 + 3.0 * (p1 - p2)) * t3)
+	var scenery = simulation_manager.world_state.scenery
+	if scenery.segment_clear(p1, curved, agent.get_body_radius()):
+		return curved
+	var linear := p1.lerp(p2, alpha)
+	return scenery.resolve_motion(p1, linear, agent.get_body_radius())
 
 
 ## World-space displacement across the segment `_curve_position()` is currently

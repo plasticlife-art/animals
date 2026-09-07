@@ -127,6 +127,7 @@ func build_context(agent, world, snapshot = null):
 	var low_urgency := clampf(1.0 - maxf(hunger, maxf(thirst, fatigue)), 0.0, 1.0)
 	var no_targets_score := clampf(1.0 - maxf(prey_quality, maxf(carcass_proximity, investigation_signal)), 0.0, 1.0)
 	var context = UtilityContextScript.new()
+	context.diagnostics = bool(world.config_bundle.get("debug", {}).get("ai_diagnostics", false)) or agent.id == world.inspected_agent_id
 	context.species_type = agent.species_type
 	context.state_name = AgentAIState.ALIVE
 	context.values = {
@@ -144,6 +145,8 @@ func build_context(agent, world, snapshot = null):
 		"prey_scarcity": clampf(1.0 - maxf(prey_quality, prey_proximity), 0.0, 1.0),
 		"water_proximity": water_proximity,
 		"feeding_allowed": UtilityContextFactory.bool_ratio(agent.is_feeding_allowed() if agent.has_method("is_feeding_allowed") else agent.hunger >= feeding_hunger_floor),
+		"drinking_allowed": UtilityContextFactory.bool_ratio(agent.is_drinking_allowed()),
+		"resting_allowed": UtilityContextFactory.bool_ratio(agent.is_energy_below_rest_floor()),
 		"investigation_signal": investigation_signal,
 		"kin_separation": kin_separation,
 		"mate_available": UtilityContextFactory.bool_ratio(mate != null),

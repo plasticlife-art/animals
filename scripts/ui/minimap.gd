@@ -7,8 +7,11 @@ const MAP_BACKGROUND_COLOR := Color(0.1, 0.13, 0.12, 1.0)
 const MAP_BORDER_COLOR := Color(0.9, 0.95, 0.98, 0.2)
 const WATER_FILL_COLOR := Color(0.26, 0.52, 0.92, 0.72)
 const WATER_OUTLINE_COLOR := Color(0.82, 0.93, 1.0, 0.95)
-const HERBIVORE_COLOR := Color(0.88, 0.93, 0.62, 0.95)
-const PREDATOR_COLOR := Color(0.95, 0.42, 0.33, 0.98)
+## Fallback only. Real per-species colours and dot sizes come from
+## `visuals.json -> species.<id>.ui_color` / `.minimap_radius`; anything that is
+## not "predator" used to be drawn as a herbivore, so a third species would have
+## been invisible as itself on the overview map.
+const UNKNOWN_SPECIES_COLOR := Color(0.82, 0.86, 0.9, 0.95)
 const SELECTED_COLOR := Color(1.0, 1.0, 1.0, 0.96)
 const CAMERA_FILL_COLOR := Color(1.0, 1.0, 1.0, 0.08)
 const CAMERA_BORDER_COLOR := Color(1.0, 1.0, 1.0, 0.88)
@@ -16,8 +19,9 @@ const PANEL_PADDING := 10.0
 const MAP_PADDING := 8.0
 const MIN_CAMERA_RECT_SIZE := 4.0
 
-@export var herbivore_radius: float = 1.5
-@export var predator_radius: float = 2.0
+## Built once per bind from `visuals.json`, because this runs per agent per
+## redraw and must not parse config in the loop.
+var _species_dots: Dictionary = {}
 @export var selected_radius: float = 5.0
 
 var simulation_manager: SimulationManager
@@ -44,12 +48,29 @@ func _ready() -> void:
 	queue_redraw()
 
 
+## Per-species dot colour and size, read straight out of the art config so the
+## overview map cannot drift from what the sprites look like.
+func _rebuild_species_dots() -> void:
+	_species_dots.clear()
+	if simulation_manager == null:
+		return
+	var species_visuals: Dictionary = simulation_manager.config_bundle.get("visuals", {}).get("species", {})
+	for species_id in species_visuals.keys():
+		var config: Dictionary = species_visuals[species_id]
+		var rgb: Array = config.get("ui_color", [0.82, 0.86, 0.9])
+		_species_dots[str(species_id)] = {
+			"radius": float(config.get("minimap_radius", 1.5)),
+			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2]), 0.96),
+		}
+
+
 func bind_manager(manager: SimulationManager) -> void:
 	if simulation_manager != manager:
 		_disconnect_manager()
 		simulation_manager = manager
 		_connect_manager()
 	_last_camera_rect = Rect2()
+	_rebuild_species_dots()
 	_rebuild_static_cache()
 	queue_redraw()
 
@@ -159,12 +180,12 @@ func _draw_agents(map_rect: Rect2) -> void:
 		var point := _world_to_map_point(agent.position, map_rect)
 		if not map_rect.has_point(point):
 			continue
-		var radius := herbivore_radius
-		var color := HERBIVORE_COLOR
-		if agent.species_type == "predator":
-			radius = predator_radius
-			color = PREDATOR_COLOR
-		draw_circle(point, radius, color)
+		var dot: Dictionary = _species_dots.get(agent.species_type, {})
+		draw_circle(
+			point,
+			float(dot.get("radius", 1.5)),
+			dot.get("color", UNKNOWN_SPECIES_COLOR)
+		)
 
 
 func _draw_selected_agent(map_rect: Rect2) -> void:

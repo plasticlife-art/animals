@@ -90,7 +90,11 @@ func query(position: Vector2, radius: float, species_filter: String = "", exclud
 	return results
 
 
-func query_into(results: Array, position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1) -> void:
+## `species_set` is the several-species form of `species_filter`: a Dictionary used
+## as a set, so a predator that hunts more than one species walks the grid once
+## instead of once per prey species. The registry hands these out pre-built; do not
+## construct one per tick. `species_filter` wins when both are given.
+func query_into(results: Array, position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1, species_set: Dictionary = {}) -> void:
 	results.clear()
 	var radius_sq := radius * radius
 	var center := _to_cell(position)
@@ -99,6 +103,7 @@ func query_into(results: Array, position: Vector2, radius: float, species_filter
 	# covers 81 cells - so misses have to be free. `get()` without a default
 	# returns null instead of building a throwaway Array for every empty cell.
 	var has_species_filter := species_filter != ""
+	var has_species_set := not species_set.is_empty()
 	for x in range(center.x - cell_radius, center.x + cell_radius + 1):
 		for y in range(center.y - cell_radius, center.y + cell_radius + 1):
 			var bucket = _cells.get(Vector2i(x, y))
@@ -109,7 +114,10 @@ func query_into(results: Array, position: Vector2, radius: float, species_filter
 					continue
 				if not agent.is_alive:
 					continue
-				if has_species_filter and agent.species_type != species_filter:
+				if has_species_filter:
+					if agent.species_type != species_filter:
+						continue
+				elif has_species_set and not species_set.has(agent.species_type):
 					continue
 				if agent.position.distance_squared_to(position) <= radius_sq:
 					results.append(agent)

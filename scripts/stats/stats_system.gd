@@ -5,26 +5,14 @@ var event_bus
 var sample_interval_ticks: int = 5
 var history_limit: int = 720
 var counters := {
-	"births_herbivore": 0,
-	"births_predator": 0,
-	"deaths_herbivore": 0,
-	"deaths_predator": 0,
+	"hunts_started": 0,
+	"chases_failed": 0,
+	"attack_attempts": 0,
+	"hunt_fail_lost_sight": 0,
 	"deaths_starvation": 0,
 	"deaths_thirst": 0,
 	"deaths_predation": 0,
 	"deaths_old_age": 0,
-	# Split by species, and for predators also by whether the death happened in the
-	# coarse dormant path. Without this split a predator die-off is indistinguishable
-	# from a herbivore one, and a dormant-ecology regression is invisible.
-	"deaths_starvation_herbivore": 0,
-	"deaths_starvation_predator": 0,
-	"deaths_thirst_herbivore": 0,
-	"deaths_thirst_predator": 0,
-	"deaths_old_age_herbivore": 0,
-	"deaths_old_age_predator": 0,
-	"deaths_starvation_predator_dormant": 0,
-	"deaths_thirst_predator_dormant": 0,
-	"deaths_predation_herbivore": 0,
 	"water_events": 0,
 	"grass_events": 0,
 	"hunt_success": 0,
@@ -52,6 +40,31 @@ var _step_duration_lifetime_total_ms: float = 0.0
 var _step_duration_lifetime_samples: int = 0
 var _step_duration_peak_ms: float = 0.0
 var _sample_accumulators: Dictionary = {}
+## Species ids in registry order, so the snapshot keys come out in a stable order
+## run after run. Seeded from the config, not from a hardcoded pair.
+var _species_ids: Array = []
+
+
+## Death and birth tallies are split by species, and by whether the death happened
+## in the coarse dormant path. Without the split a predator die-off is
+## indistinguishable from a herbivore one, and a dormant-ecology regression is
+## invisible. Seeding the keys up front rather than creating them on first use is
+## what keeps the snapshot schema - and therefore the CSV columns - fixed for a
+## whole run even before anything of a given species has died.
+func _seed_species_counters(species_config: Dictionary) -> void:
+	_species_ids = species_config.keys()
+	_species_ids.sort_custom(func(a, b):
+		return int(species_config[a].get("role", {}).get("slot", 0)) < int(species_config[b].get("role", {}).get("slot", 0)))
+	for species_id in _species_ids:
+		counters["births_%s" % species_id] = 0
+		counters["deaths_%s" % species_id] = 0
+		for cause in ["starvation", "thirst", "predation", "old_age"]:
+			counters["deaths_%s_%s" % [cause, species_id]] = 0
+			counters["deaths_%s_%s_dormant" % [cause, species_id]] = 0
+
+
+func _bump(key: String) -> void:
+	counters[key] = int(counters.get(key, 0)) + 1
 
 
 func initialize(config_bundle: Dictionary, new_event_bus) -> void:
@@ -59,6 +72,7 @@ func initialize(config_bundle: Dictionary, new_event_bus) -> void:
 	var balance_config: Dictionary = config_bundle.get("balance", {})
 	var stats_config: Dictionary = balance_config.get("stats", {})
 	var debug_config: Dictionary = config_bundle.get("debug", {})
+	_seed_species_counters(config_bundle.get("species", {}))
 	sample_interval_ticks = int(stats_config.get("sample_interval_ticks", 5))
 	history_limit = int(debug_config.get("chart_history_limit", stats_config.get("history_limit", 720)))
 	event_bus.event_emitted.connect(_on_event_emitted)
@@ -126,25 +140,10 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		"day_phase": float(climate_values.get("day_phase", 0.5)),
 		"is_night": bool(climate_values.get("is_night", false)),
 		"climate_regrowth_multiplier": float(climate_values.get("climate_regrowth_multiplier", 1.0)),
-		"herbivore_population": herbivore_count,
-		"predator_population": predator_count,
-		"births_herbivore": counters["births_herbivore"],
-		"births_predator": counters["births_predator"],
-		"deaths_herbivore": counters["deaths_herbivore"],
-		"deaths_predator": counters["deaths_predator"],
 		"deaths_starvation": counters["deaths_starvation"],
 		"deaths_thirst": counters["deaths_thirst"],
 		"deaths_predation": counters["deaths_predation"],
 		"deaths_old_age": counters["deaths_old_age"],
-		"deaths_starvation_herbivore": counters["deaths_starvation_herbivore"],
-		"deaths_starvation_predator": counters["deaths_starvation_predator"],
-		"deaths_thirst_herbivore": counters["deaths_thirst_herbivore"],
-		"deaths_thirst_predator": counters["deaths_thirst_predator"],
-		"deaths_old_age_herbivore": counters["deaths_old_age_herbivore"],
-		"deaths_old_age_predator": counters["deaths_old_age_predator"],
-		"deaths_starvation_predator_dormant": counters["deaths_starvation_predator_dormant"],
-		"deaths_thirst_predator_dormant": counters["deaths_thirst_predator_dormant"],
-		"deaths_predation_herbivore": counters["deaths_predation_herbivore"],
 		"average_hunger": 0.0 if living_count == 0 else hunger_sum / living_count,
 		"average_energy": 0.0 if living_count == 0 else energy_sum / living_count,
 		"active_herbivore_count": active_herbivore_count,
@@ -215,6 +214,33 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		"grass_consumed_total": float(_sample_accumulators.get("grass_consumed_total", 0.0)),
 		"herbivore_hunger_reduced_total": float(_sample_accumulators.get("herbivore_hunger_reduced_total", 0.0)),
 	}
+	# The per-species half of the snapshot, built from the same ids the counters
+	# were seeded with. Names match what the two hand-written species produced, so
+	# the charts, the HUD, the CSV and check_save.gd all keep reading what they read.
+	for species_id in _species_ids:
+		snapshot["%s_population" % species_id] = int(population_metrics.get("%s_count" % species_id, 0))
+		snapshot["births_%s" % species_id] = counters.get("births_%s" % species_id, 0)
+		snapshot["deaths_%s" % species_id] = counters.get("deaths_%s" % species_id, 0)
+		for cause in ["starvation", "thirst", "predation", "old_age"]:
+			var detail_key: String = "deaths_%s_%s" % [cause, species_id]
+			snapshot[detail_key] = counters.get(detail_key, 0)
+			snapshot["%s_dormant" % detail_key] = counters.get("%s_dormant" % detail_key, 0)
+		for field in ["active_%s_count", "dormant_%s_count", "active_%s_hunger_sum",
+				"dormant_%s_hunger_sum", "dormant_%s_thirst_sum", "dormant_%s_energy_sum",
+				"starvation_risk_%s_count"]:
+			var key: String = field % species_id
+			snapshot[key] = population_metrics.get(key, 0)
+		var active: int = int(population_metrics.get("active_%s_count" % species_id, 0))
+		var dormant: int = int(population_metrics.get("dormant_%s_count" % species_id, 0))
+		snapshot["active_%s_avg_hunger" % species_id] = 0.0 if active == 0 else float(population_metrics.get("active_%s_hunger_sum" % species_id, 0.0)) / active
+		snapshot["dormant_%s_avg_hunger" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_hunger_sum" % species_id, 0.0)) / dormant
+		snapshot["dormant_%s_avg_thirst" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_thirst_sum" % species_id, 0.0)) / dormant
+		snapshot["dormant_%s_avg_energy" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_energy_sum" % species_id, 0.0)) / dormant
+	for key in ["hunts_started", "chases_failed", "attack_attempts", "hunt_fail_lost_sight"]:
+		snapshot[key] = counters[key]
+	snapshot["chase_success_rate"] = float(counters.hunt_success) / maxf(1.0, float(counters.hunt_success + counters.chases_failed))
+	for key in ["visibility_checks", "local_path_searches", "stuck_agents"]:
+		snapshot[key] = perf.get(key, 0)
 	latest_snapshot = snapshot
 	time_series.append(snapshot)
 	while time_series.size() > history_limit:
@@ -277,15 +303,12 @@ func _on_event_emitted(event: Dictionary) -> void:
 		"AgentBorn":
 			if str(data.get("reason", "")) == "initial":
 				return
-			if species == "herbivore":
-				counters["births_herbivore"] += 1
-			elif species == "predator":
-				counters["births_predator"] += 1
+			# Keyed by species instead of matched against two names. The old
+			# if/elif had no else, so a third species' births were counted
+			# nowhere at all and nothing said so.
+			_bump("births_%s" % species)
 		"AgentDied":
-			if species == "herbivore":
-				counters["deaths_herbivore"] += 1
-			elif species == "predator":
-				counters["deaths_predator"] += 1
+			_bump("deaths_%s" % species)
 			var cause := str(data.get("cause", ""))
 			match cause:
 				"starvation":
@@ -297,10 +320,16 @@ func _on_event_emitted(event: Dictionary) -> void:
 				"old_age":
 					counters["deaths_old_age"] += 1
 			_count_death_detail(cause, species, bool(data.get("dormant", false)))
+		"HuntStarted":
+			counters["hunts_started"] += 1
+		"AttackAttempt":
+			counters["attack_attempts"] += 1
 		"PredationSuccess":
 			counters["hunt_success"] += 1
 		"PredationFailed":
 			counters["hunt_fail"] += 1
+			if str(data.get("reason", "")) != "miss":
+				counters["chases_failed"] += 1
 			var fail_key := "hunt_fail_%s" % str(data.get("reason", ""))
 			if counters.has(fail_key):
 				counters[fail_key] += 1

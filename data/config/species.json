@@ -1,5 +1,17 @@
 {
   "herbivore": {
+    "role": {
+      "label": "Herbivore",
+      "slot": 0,
+      "diet": "grass",
+      "eats_species": [],
+      "is_threat": false,
+      "leaves_carcass": true,
+      "carcass_meat_multiplier": 1.0,
+      "social": "herd",
+      "script": "res://scripts/agents/herbivore.gd",
+      "ai": "res://scripts/agents/ai/herbivore_ai.gd"
+    },
     "movement": {
       "max_speed": 70.0,
       "sprint_speed": 112.0,
@@ -7,7 +19,9 @@
       "drag": 3.5,
       "wander_jitter": 0.85,
       "max_turn_rate_degrees": 240.0,
-      "body_radius": 18.0
+      "body_radius": 18.0,
+      "fatigue_energy_ratio": 0.25,
+      "exhausted_speed_ratio": 0.55
     },
     "perception": {
       "danger_radius": 120.0,
@@ -16,7 +30,10 @@
       "grass_search_radius": 1080.0,
       "neighbor_radius": 190.0,
       "separation_radius": 84.0,
-      "mate_search_radius": 128.0
+      "mate_search_radius": 128.0,
+      "threat_memory_seconds": 2.0,
+      "escape_refresh_ticks": 12,
+      "escape_distance_cells": 2.5
     },
     "metabolism": {
       "max_energy": 100.0,
@@ -24,7 +41,8 @@
       "rest_recovery": 9.0,
       "hunger_rate": 2.0,
       "thirst_rate": 1.5,
-      "dehydration_energy_penalty": 4.8
+      "dehydration_energy_penalty": 4.8,
+      "sprint_energy_cost": 2.0
     },
     "feeding": {
       "eat_distance": 36.0,
@@ -51,6 +69,22 @@
     }
   },
   "predator": {
+    "role": {
+      "label": "Predator",
+      "slot": 1,
+      "diet": "prey",
+      "eats_species": [
+        "herbivore",
+        "scavenger"
+      ],
+      "is_threat": true,
+      "leaves_carcass": true,
+      "carcass_meat_multiplier": 0.55,
+      "social": "pair",
+      "script": "res://scripts/agents/predator.gd",
+      "ai": "res://scripts/agents/ai/predator_ai.gd",
+      "carrion_max_age_seconds": 12.0
+    },
     "movement": {
       "max_speed": 95.0,
       "sprint_speed": 128.0,
@@ -59,7 +93,9 @@
       "wander_jitter": 0.75,
       "max_turn_rate_degrees": 260.0,
       "body_radius": 14.94,
-      "patrol_wander_jitter": 0.055
+      "patrol_wander_jitter": 0.055,
+      "fatigue_energy_ratio": 0.25,
+      "exhausted_speed_ratio": 0.55
     },
     "perception": {
       "vision_radius": 480.0,
@@ -91,7 +127,10 @@
       "gorge_below_energy_threshold": true
     },
     "hunt": {
-      "min_chase_energy": 4.0
+      "min_chase_energy": 4.0,
+      "lost_sight_search_seconds": 3.0,
+      "retry_cooldown_seconds": 2.0,
+      "contact_slack": 5.0
     },
     "reproduction": {
       "maturity_age": 20.0,
@@ -109,6 +148,77 @@
       "max_age": 260.0,
       "old_age_start": 215.0,
       "old_age_death_chance_per_second": 0.018
+    }
+  },
+  "scavenger": {
+    "role": {
+      "label": "Scavenger",
+      "slot": 2,
+      "diet": "carrion",
+      "eats_species": [],
+      "is_threat": false,
+      "leaves_carcass": true,
+      "carcass_meat_multiplier": 0.3,
+      "social": "herd",
+      "script": "res://scripts/agents/scavenger.gd",
+      "ai": "res://scripts/agents/ai/scavenger_ai.gd"
+    },
+    "movement": {
+      "max_speed": 84.0,
+      "sprint_speed": 132.0,
+      "acceleration": 230.0,
+      "drag": 3.6,
+      "wander_jitter": 0.9,
+      "max_turn_rate_degrees": 300.0,
+      "body_radius": 9.0,
+      "fatigue_energy_ratio": 0.25,
+      "exhausted_speed_ratio": 0.6
+    },
+    "perception": {
+      "danger_radius": 260.0,
+      "water_search_radius": 1440.0,
+      "water_memory_duration_seconds": 120.0,
+      "neighbor_radius": 160.0,
+      "separation_radius": 56.0,
+      "mate_search_radius": 120.0,
+      "threat_memory_seconds": 2.0,
+      "escape_refresh_ticks": 12,
+      "escape_distance_cells": 2.5
+    },
+    "metabolism": {
+      "max_energy": 90.0,
+      "energy_decay": 1.4,
+      "rest_recovery": 9.5,
+      "hunger_rate": 0.5,
+      "thirst_rate": 1.2,
+      "dehydration_energy_penalty": 4.0,
+      "sprint_energy_cost": 1.6
+    },
+    "feeding": {
+      "feed_distance": 20.0,
+      "eat_distance": 20.0,
+      "eat_duration": 0.5,
+      "carcass_consume_rate": 11.0,
+      "carcass_nutrition_gain": 1.0,
+      "carcass_energy_gain": 1.0,
+      "drink_distance": 44.0,
+      "drink_restore": 48.0,
+      "drink_duration": 0.3,
+      "gorge_below_energy_threshold": true
+    },
+    "reproduction": {
+      "maturity_age": 18.0,
+      "energy_threshold": 50.0,
+      "cooldown": 40.0,
+      "birth_energy_cost": 12.0,
+      "mate_contact_slack": 4.0,
+      "safe_radius": 100.0,
+      "offspring_spawn_radius": 40.0
+    },
+    "aging": {
+      "max_age": 210.0,
+      "old_age_start": 170.0,
+      "old_age_death_chance_per_second": 0.03
     }
   }
 }

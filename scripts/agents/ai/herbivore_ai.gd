@@ -25,26 +25,46 @@ var target_invalid_interrupt_ticks: int = 2
 func _init(balance_config: Dictionary = {}) -> void:
 	var ai_config: Dictionary = balance_config.get("ai", {})
 	var selector_config: Dictionary = ai_config.get("selector", {})
-	var herbivore_config: Dictionary = ai_config.get("herbivore", {})
-	var evaluator_config: Dictionary = herbivore_config.get("evaluators", {})
+	var species_config: Dictionary = ai_config.get(_config_key(), {})
+	var evaluator_config: Dictionary = species_config.get("evaluators", {})
 	selector = ActionSelectorScript.new(selector_config)
-	panic_threat_threshold = float(herbivore_config.get("panic_threat_threshold", 0.55))
+	panic_threat_threshold = float(species_config.get("panic_threat_threshold", 0.55))
 	target_invalid_interrupt_ticks = maxi(1, int(selector_config.get("target_invalid_interrupt_ticks", 2)))
 	policies = {
-		AgentAIState.ALIVE: _build_policy(AgentAIState.ALIVE, [
-			AgentAction.GRAZE,
-			AgentAction.DRINK,
-			AgentAction.REST,
-			AgentAction.EXPLORE,
-			AgentAction.JOIN_HERD,
-		]),
+		AgentAIState.ALIVE: _build_policy(AgentAIState.ALIVE, _alive_actions()),
 		AgentAIState.PANIC: _build_policy(AgentAIState.PANIC, [
 			AgentAction.FLEE_TO_SAFE_AREA,
 			AgentAction.JOIN_HERD,
 		]),
 		AgentAIState.DEAD: _build_policy(AgentAIState.DEAD, []),
 	}
-	evaluators = {
+	evaluators = _build_evaluators(evaluator_config)
+
+
+## --- Seams for herd behaviours that are not grazers -------------------------
+##
+## Everything a herd animal does apart from finding food is shared: fleeing,
+## drinking, resting, regrouping, exploring, and the whole panic state. A
+## subclass swaps its food source through these rather than restating the rest.
+
+
+## Which `balance.json -> ai.<key>` block tunes this behaviour.
+func _config_key() -> String:
+	return "herbivore"
+
+
+func _alive_actions() -> Array:
+	return [
+		AgentAction.GRAZE,
+		AgentAction.DRINK,
+		AgentAction.REST,
+		AgentAction.EXPLORE,
+		AgentAction.JOIN_HERD,
+	]
+
+
+func _build_evaluators(evaluator_config: Dictionary) -> Dictionary:
+	return {
 		AgentAction.GRAZE: GrazeUtilityEvaluatorScript.new(evaluator_config.get("graze", {})),
 		AgentAction.DRINK: DrinkUtilityEvaluatorScript.new(evaluator_config.get("drink", {})),
 		AgentAction.REST: RestUtilityEvaluatorScript.new(evaluator_config.get("rest", {})),
@@ -54,9 +74,41 @@ func _init(balance_config: Dictionary = {}) -> void:
 	}
 
 
+## This behaviour's food, normalized. `proximity` and `quality` are 0..1 and feed
+## the shared `resource_scarcity` term; `target` is what the feeding action aims at.
+func _food_values(agent, world, snapshot) -> Dictionary:
+	var grass: Dictionary = snapshot.grass_target
+	if grass.is_empty():
+		return {"proximity": 0.0, "quality": 0.0, "target": {}}
+	# Normalized against the configured cap, not a literal 100. The cap scales
+	# with cell area, so a hardcoded divisor silently saturates on a coarse
+	# grid and reports every patch as equally rich.
+	var biomass_cap := 100.0
+	if world.resource_system != null:
+		biomass_cap = maxf(1.0, world.resource_system.max_biomass)
+	return {
+		"proximity": UtilityContextFactory.proximity_ratio(
+			agent.position.distance_to(grass.get("center", agent.position)),
+			float(agent.perception.get("grass_search_radius", 180.0))),
+		"quality": clampf(float(grass.get("biomass", 0.0)) / biomass_cap, 0.0, 1.0),
+		"target": grass,
+	}
+
+
+## Whether the feeding action is allowed at all, before any scoring.
+func _feeding_allowed(agent) -> bool:
+	var floor_value: float = agent.get_graze_hunger_floor() if agent.has_method("get_graze_hunger_floor") else float(agent.balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0))
+	return agent.hunger >= floor_value
+
+
+## Last word on the context, for values and targets only this behaviour needs.
+func _augment_context(_context, _agent, _world, _snapshot) -> void:
+	pass
+
+
 func build_context(agent, world, snapshot = null):
 	if snapshot == null:
-		snapshot = world.build_herbivore_snapshot(agent)
+		snapshot = agent._build_snapshot(world)
 	var neighbors: Array = snapshot.group_neighbors
 	# Scaled in step with the snapshot query in `build_herbivore_snapshot`: if the
 	# search shrinks at night and this normalizer does not, every predator found
@@ -64,11 +116,9 @@ func build_context(agent, world, snapshot = null):
 	var danger_radius: float = world.perception_radius(agent, "danger_radius", 120.0)
 	var predators: Array = snapshot.predators
 	var water_target: Dictionary = snapshot.water_target
-	var grass_target: Dictionary = snapshot.grass_target
 	var group_center = snapshot.group_center
 	var biome_id: String = str(world.get_biome_at_position(agent.position))
 	var max_energy := float(agent.metabolism.get("max_energy", 100.0))
-	var graze_hunger_floor: float = agent.get_graze_hunger_floor() if agent.has_method("get_graze_hunger_floor") else float(agent.balance.get("state_thresholds", {}).get("graze_hunger_floor", 20.0))
 	var hunger := UtilityContextFactory.need_ratio(agent.hunger, agent.need_max)
 	var thirst := UtilityContextFactory.need_ratio(agent.thirst, agent.need_max)
 	var energy_ratio := UtilityContextFactory.energy_ratio(agent.energy, max_energy)
@@ -92,20 +142,9 @@ func build_context(agent, world, snapshot = null):
 	if UtilityContextFactory.is_open_area_biome(biome_id):
 		threat = clampf(threat + 0.08, 0.0, 1.0)
 
-	var food_proximity := 0.0
-	var food_biomass := 0.0
-	if not grass_target.is_empty():
-		food_proximity = UtilityContextFactory.proximity_ratio(
-			agent.position.distance_to(grass_target.get("center", agent.position)),
-			float(agent.perception.get("grass_search_radius", 180.0))
-		)
-		# Normalized against the configured cap, not a literal 100. The cap scales
-		# with cell area, so a hardcoded divisor silently saturates on a coarse
-		# grid and reports every patch as equally rich.
-		var biomass_cap := 100.0
-		if world.resource_system != null:
-			biomass_cap = maxf(1.0, world.resource_system.max_biomass)
-		food_biomass = clampf(float(grass_target.get("biomass", 0.0)) / biomass_cap, 0.0, 1.0)
+	var food: Dictionary = _food_values(agent, world, snapshot)
+	var food_proximity := float(food["proximity"])
+	var food_biomass := float(food["quality"])
 
 	var water_proximity := 0.0
 	if not water_target.is_empty():
@@ -131,6 +170,7 @@ func build_context(agent, world, snapshot = null):
 	var low_urgency := clampf(1.0 - maxf(hunger, maxf(thirst, fatigue)), 0.0, 1.0)
 	var resource_scarcity := clampf(1.0 - maxf(food_proximity * maxf(food_biomass, 0.35), water_proximity), 0.0, 1.0)
 	var context = UtilityContextScript.new()
+	context.diagnostics = bool(world.config_bundle.get("debug", {}).get("ai_diagnostics", false)) or agent.id == world.inspected_agent_id
 	context.species_type = agent.species_type
 	context.state_name = AgentAIState.ALIVE
 	context.values = {
@@ -145,7 +185,10 @@ func build_context(agent, world, snapshot = null):
 		"food_proximity": food_proximity,
 		"food_biomass": food_biomass,
 		"water_proximity": water_proximity,
-		"graze_allowed": UtilityContextFactory.bool_ratio(agent.hunger >= graze_hunger_floor),
+		"graze_allowed": UtilityContextFactory.bool_ratio(_feeding_allowed(agent)),
+		"drinking_allowed": UtilityContextFactory.bool_ratio(agent.is_drinking_allowed()),
+		"resting_allowed": UtilityContextFactory.bool_ratio(agent.is_energy_below_rest_floor()),
+		"feeding_allowed": UtilityContextFactory.bool_ratio(_feeding_allowed(agent)),
 		"herd_proximity": herd_proximity,
 		"herd_available": herd_available,
 		"isolation": clampf(1.0 - minf(float(neighbors.size()) / 5.0, 1.0), 0.0, 1.0),
@@ -157,11 +200,12 @@ func build_context(agent, world, snapshot = null):
 		"safe_zone_proximity": safe_zone_proximity,
 	}
 	context.targets = {
-		AgentAction.GRAZE: grass_target,
+		AgentAction.GRAZE: food["target"],
 		AgentAction.DRINK: water_target,
 		AgentAction.JOIN_HERD: {} if group_center == null else {"position": group_center},
 		AgentAction.FLEE_TO_SAFE_AREA: escape_target,
 	}
+	_augment_context(context, agent, world, snapshot)
 	return context
 
 
