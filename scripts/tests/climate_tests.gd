@@ -285,8 +285,8 @@ func _test_species_metabolism_is_never_mutated(asserts) -> void:
 ## every existing autosave is discarded on load - so the version check is part
 ## of the assertion, not decoration.
 func _test_clock_survives_a_save_round_trip(asserts) -> void:
-	asserts.equal(SaveSystem.SAVE_VERSION, 1,
-		"a derived clock needs no save-format change; bumping this means something started accumulating")
+	asserts.equal(SaveSystem.SAVE_VERSION, 2,
+		"save v2 includes persistent perception memory")
 
 	var manager = _seasonal_manager(97, 0, 0.4)
 	# Far enough to cross into another season and out of the neutral start.
@@ -297,7 +297,7 @@ func _test_clock_survives_a_save_round_trip(asserts) -> void:
 	var expected_year: int = before.year
 	asserts.is_true(expected_season != 0, "the fixture should have left the starting season")
 
-	var path := "user://climate_round_trip_test.dat"
+	var path := "/private/tmp/animals-climate-round-trip.dat"
 	asserts.is_true(SaveSystem.save(manager, {}, path), "save should succeed")
 	TestHelpers.destroy_manager(manager)
 

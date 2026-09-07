@@ -35,6 +35,8 @@ static func build_policy(state_name: StringName, allowed_actions: Array, is_lock
 static func build_test_bundle(seed: int = 17) -> Dictionary:
 	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle().duplicate(true)
 	bundle["world"]["seed"] = seed
+	bundle["world"]["scenery"] = {"enabled": false}
+	bundle["balance"]["ai"]["decision_interval_ticks"] = 1
 	bundle["world"]["tick_rate"] = 12.0
 	bundle["world"]["world_size"] = {"x": 256.0, "y": 256.0}
 	bundle["world"]["spatial_cell_size"] = 64.0
@@ -105,28 +107,43 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# past the ten ticks the dormant-metrics fixtures run, and they silently read
 	# a stale tick-0 snapshot instead of the window they meant to assert on.
 	bundle["balance"]["stats"]["sample_interval_ticks"] = 5
-	bundle["world"]["spawns"] = {
-		"herbivore_count": 0,
-		"predator_count": 0,
-		"herbivore_group_count": 1,
-	}
+	# Every species, not two named ones. `_spawn_initial_agents()` reads
+	# `<species>_count` off the registry, so a new entry in species.json with a
+	# non-zero count in world.json would otherwise seed itself into every
+	# behavioural fixture and into the determinism trace.
+	var spawns: Dictionary = {}
+	for species_id in bundle.get("species", {}).keys():
+		spawns["%s_count" % species_id] = 0
+		spawns["%s_group_count" % species_id] = 1
+	bundle["world"]["spawns"] = spawns
 	return bundle
 
 
 static func create_manager(seed: int = 17):
+	return create_manager_with(build_test_bundle(seed), seed)
+
+
+## For fixtures that need to reshape the world first - a map wide enough that a
+## predator cannot see across it, say. `build_test_bundle()` then edits, then this.
+static func create_manager_with(bundle: Dictionary, seed: int = 17):
 	var manager = SimulationManagerScript.new()
-	manager.initialize(build_test_bundle(seed), seed)
+	manager.initialize(bundle, seed)
 	return manager
 
 
 static func create_benchmark_manager(seed: int = 17, herbivore_count: int = 220, predator_count: int = 18, herbivore_group_count: int = 12):
 	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle().duplicate(true)
 	bundle["world"]["seed"] = seed
-	bundle["world"]["spawns"] = {
-		"herbivore_count": herbivore_count,
-		"predator_count": predator_count,
-		"herbivore_group_count": herbivore_group_count,
-	}
+	bundle["world"]["scenery"] = {"enabled": false}
+	bundle["balance"]["ai"]["decision_interval_ticks"] = 1
+	var spawns: Dictionary = {}
+	for species_id in bundle.get("species", {}).keys():
+		spawns["%s_count" % species_id] = 0
+		spawns["%s_group_count" % species_id] = 1
+	spawns["herbivore_count"] = herbivore_count
+	spawns["predator_count"] = predator_count
+	spawns["herbivore_group_count"] = herbivore_group_count
+	bundle["world"]["spawns"] = spawns
 	var manager = SimulationManagerScript.new()
 	manager.initialize(bundle, seed)
 	return manager
@@ -142,6 +159,17 @@ static func destroy_manager(manager) -> void:
 		return
 	manager.shutdown()
 	manager.free()
+
+
+## For species without a named helper. The two below stay because they also pin
+## age and cooldown, which most fixtures want.
+static func spawn_species(world, species_id: String, position: Vector2, group_id: int = -1, sex: String = AgentBaseScript.SEX_FEMALE):
+	var agent = world.spawn_agent(species_id, position, group_id, sex, {"reason": "test"})
+	if agent != null:
+		agent.age = 30.0
+		agent.reproduction_cooldown = 999.0
+	_refresh_spatial_queries(world)
+	return agent
 
 
 static func spawn_herbivore(world, position: Vector2, group_id: int = 0):

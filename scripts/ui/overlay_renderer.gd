@@ -284,7 +284,7 @@ func _draw_target_lines(world, visible_rect: Rect2) -> void:
 
 func _draw_chase_lines(world, visible_rect: Rect2) -> void:
 	for agent in world.get_living_agents():
-		if agent.species_type != "predator":
+		if world.species_registry.diet(agent.species_type) != "prey":
 			continue
 		if agent.state not in ["seek_prey", "chase", "attack"]:
 			continue
@@ -307,10 +307,12 @@ func _draw_selected_agent_radius() -> void:
 	# A herbivore's `vision_radius` is a dead key - nothing but this ring ever
 	# read it - and its real predator detection runs on `danger_radius`.
 	var world = simulation_manager.world_state
-	var key := "danger_radius" if agent.species_type == AgentBase.SPECIES_HERBIVORE else "vision_radius"
-	var radius: float = float(agent.perception.get(key, 0.0))
-	if world != null:
-		radius = world.perception_radius(agent, key, 0.0)
+	if world == null:
+		return
+	# What an animal watches for: a hunter scans for prey, everything else for what
+	# hunts it. Reading the role keeps this right for a species that does neither.
+	var key := "vision_radius" if world.species_registry.diet(agent.species_type) == "prey" else "danger_radius"
+	var radius: float = world.perception_radius(agent, key, 0.0)
 	_draw_world_ring(agent.position, radius, Color(0.85, 0.9, 1.0, 0.7), 1.5, 48)
 
 

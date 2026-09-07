@@ -17,14 +17,18 @@ extends Node2D
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
 @onready var start_menu = $CanvasLayer/StartMenu
+@onready var help_screen = $CanvasLayer/HelpScreen
 @onready var resume_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/ResumeButton
+@onready var help_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/HelpButton
 @onready var restart_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/RestartButton
 @onready var exit_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/ExitButton
 
-## Where the selection card sits with the HUD down, and where it moves to when the
-## debug panel claims the left edge. Both match the offsets in `main.tscn`.
+## Where the selection card sits with the HUD down, and how far it clears the
+## debug panel when the HUD is up. The panel's width is measured rather than
+## hard-coded: it is a Container sized to its content, so the font metrics of the
+## widest overlay label decide it, and a duplicated constant here would drift.
 const SELECTION_CARD_X := 12.0
-const SELECTION_CARD_SHIFTED_X := 404.0
+const SELECTION_CARD_GAP := 12.0
 const SELECTION_CARD_WIDTH := 332.0
 
 var hud_visible: bool = false;
@@ -35,6 +39,9 @@ var _bound: bool = false
 var _selection: Dictionary = {}
 ## 0 disables autosaving. Read from debug.json at each start.
 var _autosave_interval: int = 0
+## Where `_close_help()` goes back to: "start", "pause", "game", or "" when the
+## help screen is down.
+var _help_return: String = ""
 
 
 ## Nothing is simulated until the setup screen says so.
@@ -48,6 +55,13 @@ func _ready() -> void:
 	_set_pause_menu_visible(false)
 	start_menu.start_requested.connect(_on_start_requested)
 	start_menu.continue_requested.connect(_on_continue_requested)
+	# Help needs no simulation behind it, so unlike the rest of the pause menu it
+	# is wired here rather than in `_bind_view()`, which only runs once a world
+	# exists. That is what lets the setup screen offer it before the first start.
+	start_menu.help_requested.connect(_open_help.bind("start"))
+	start_menu.exit_requested.connect(_exit_game)
+	help_button.pressed.connect(_open_help.bind("pause"))
+	help_screen.closed.connect(_close_help)
 	_show_start_menu(SaveSystem.latest_slot() != "")
 
 
@@ -87,6 +101,7 @@ func _start_simulation(selection: Dictionary, seed_value: int) -> void:
 ## Brings the view up to a simulation the manager has already initialized,
 ## whether that came from the setup screen or from a save.
 func _adopt_running_simulation() -> void:
+	simulation_manager.enable_interactive_worker()
 	_configure_projection()
 	if _bound:
 		# A new bundle may have changed the atlas, the tile size and whether the
@@ -111,8 +126,12 @@ func _adopt_running_simulation() -> void:
 
 func _show_start_menu(continue_available: bool) -> void:
 	start_menu.set_continue_available(continue_available)
+	# Always back to the front page: reopening this screen means "I want the
+	# menu", not "put me back in the options I was half-way through changing".
+	start_menu.show_root()
 	start_menu.visible = true
-	pause_blur.visible = true
+	help_screen.visible = false
+	_help_return = ""
 	minimap.visible = false
 	climate_indicator.visible = false
 	selection_tag.visible = false
@@ -127,7 +146,9 @@ func _show_start_menu(continue_available: bool) -> void:
 
 func _hide_start_menu() -> void:
 	start_menu.visible = false
-	pause_blur.visible = false
+	help_screen.visible = false
+	_help_return = ""
+	_sync_overlay_blur()
 	minimap.visible = true
 	climate_indicator.visible = true
 	selection_tag.visible = true
@@ -187,7 +208,8 @@ func _sync_day_night_tint() -> void:
 	# The world behind the start menu is a presentation, not the simulation, and
 	# a night tint under the pause blur makes it unreadable. This guard also
 	# covers the pre-bind case, where there is no world yet.
-	if not _bound or start_menu.visible or simulation_manager.world_state == null:
+	if not _bound or start_menu.visible or help_screen.visible \
+			or simulation_manager.world_state == null:
 		day_night_tint.color = Color.WHITE
 		return
 	var display_time: float = simulation_manager.simulation_time \
@@ -245,12 +267,30 @@ func _unhandled_input(event: InputEvent) -> void:
 	var toggle_hud_pressed := event.is_action_pressed("toggle_hud")
 	var cancel_pressed := event.is_action_pressed("ui_cancel")
 	var toggle_follow_pressed := event.is_action_pressed("toggle_follow")
+	var toggle_help_pressed := event.is_action_pressed("toggle_help")
 	if event is InputEventKey and event.pressed and not event.echo:
 		toggle_hud_pressed = toggle_hud_pressed or event.keycode == KEY_TAB
 		cancel_pressed = cancel_pressed or event.keycode == KEY_ESCAPE
 		toggle_follow_pressed = toggle_follow_pressed or event.keycode == KEY_F
+		toggle_help_pressed = toggle_help_pressed or event.keycode == KEY_F1
 
-	if toggle_hud_pressed:
+	# Help is answered before anything else: while it is up both Esc and F1 mean
+	# "go back", and Tab and F have nothing behind it to act on.
+	if help_screen.visible:
+		if cancel_pressed or toggle_help_pressed:
+			_close_help()
+			get_viewport().set_input_as_handled()
+		return
+
+	if toggle_help_pressed:
+		if start_menu.visible:
+			_open_help("start")
+		elif _pause_menu_open:
+			_open_help("pause")
+		elif _bound:
+			_open_help("game")
+		get_viewport().set_input_as_handled()
+	elif toggle_hud_pressed:
 		if not _pause_menu_open:
 			set_hud_visible(not hud_visible)
 		get_viewport().set_input_as_handled()
@@ -268,6 +308,21 @@ func toggle_pause_menu() -> void:
 		resume_game()
 		return
 
+	_enter_menu_overlay()
+	_set_pause_menu_visible(true)
+	resume_button.grab_focus()
+
+
+func resume_game() -> void:
+	if not _pause_menu_open:
+		return
+	_exit_menu_overlay()
+
+
+## Shared by the pause menu and by F1 over a running world. Both stop time, put
+## the HUD away and take input off the world; both have to hand all of it back
+## exactly as it was, including a pause the user had set themselves.
+func _enter_menu_overlay() -> void:
 	_hud_visible_before_pause = hud_visible
 	_paused_before_pause_menu = simulation_manager.paused
 	_pause_menu_open = true
@@ -277,14 +332,9 @@ func toggle_pause_menu() -> void:
 	world_view.set_input_enabled(false)
 	world_camera.set_input_enabled(false)
 	minimap.set_input_enabled(false)
-	_set_pause_menu_visible(true)
-	resume_button.grab_focus()
 
 
-func resume_game() -> void:
-	if not _pause_menu_open:
-		return
-
+func _exit_menu_overlay() -> void:
 	_pause_menu_open = false
 	simulation_manager.set_paused(_paused_before_pause_menu)
 	debug_panel.set_paused_state(_paused_before_pause_menu)
@@ -293,6 +343,38 @@ func resume_game() -> void:
 	world_camera.set_input_enabled(true)
 	minimap.set_input_enabled(true)
 	_set_pause_menu_visible(false)
+
+
+## Help opens from three places and has to return to the one it came from: the
+## setup screen, the pause menu, or straight back into a running world. Only the
+## last one has to stop time on the way in - the other two are already stopped.
+func _open_help(from: String) -> void:
+	if help_screen.visible:
+		return
+	_help_return = from
+	if from == "game":
+		_enter_menu_overlay()
+	start_menu.visible = false
+	pause_menu.visible = false
+	help_screen.visible = true
+	help_screen.reset()
+	_sync_overlay_blur()
+
+
+func _close_help() -> void:
+	if not help_screen.visible:
+		return
+	help_screen.visible = false
+	var came_from := _help_return
+	_help_return = ""
+	match came_from:
+		"start":
+			_show_start_menu(SaveSystem.latest_slot() != "")
+		"pause":
+			_set_pause_menu_visible(true)
+			resume_button.grab_focus()
+		_:
+			_exit_menu_overlay()
 
 
 ## The pause menu's second button reopens the setup screen rather than silently
@@ -317,12 +399,21 @@ func set_hud_visible(value: bool) -> void:
 	hud_visible = value
 	debug_panel.visible = value
 	charts_panel.visible = value
-	# The debug panel occupies the left edge down to y=888, so the card has to step
-	# out of its way rather than sit underneath it.
-	selection_card.offset_left = SELECTION_CARD_SHIFTED_X if value else SELECTION_CARD_X
+	selection_card.offset_left = _selection_card_left(value)
 	selection_card.offset_right = selection_card.offset_left + SELECTION_CARD_WIDTH
 	if value:
 		charts_panel.request_refresh()
+
+
+## The debug panel occupies the full left edge, so the card has to step out of its
+## way rather than sit underneath it. `size` is what the panel actually got laid
+## out at; the minimum covers the first call, which happens before any layout.
+func _selection_card_left(hud_up: bool) -> float:
+	if not hud_up:
+		return SELECTION_CARD_X
+	return debug_panel.position.x \
+		+ maxf(debug_panel.size.x, debug_panel.get_combined_minimum_size().x) \
+		+ SELECTION_CARD_GAP
 
 
 ## The projection has to know the tallest terrain level before anything culls
@@ -342,7 +433,7 @@ func _apply_ui_theme() -> void:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact
-	for path in ["CanvasLayer/PauseMenu", "CanvasLayer/StartMenu"]:
+	for path in ["CanvasLayer/PauseMenu", "CanvasLayer/StartMenu", "CanvasLayer/HelpScreen"]:
 		var menu_node := get_node_or_null(path)
 		if menu_node is Control:
 			menu_node.theme = roomy
@@ -371,8 +462,15 @@ func _apply_debug_configuration() -> void:
 
 
 func _set_pause_menu_visible(value: bool) -> void:
-	pause_blur.visible = value
 	pause_menu.visible = value
+	_sync_overlay_blur()
+
+
+## The blur backs every full-screen overlay - setup screen, pause menu, help -
+## so it is derived from all three rather than owned by any one of them. Setting
+## it per screen used to mean whichever ran last won, and the setup screen lost.
+func _sync_overlay_blur() -> void:
+	pause_blur.visible = start_menu.visible or pause_menu.visible or help_screen.visible
 
 
 func _sync_lod_focus_rect() -> void:

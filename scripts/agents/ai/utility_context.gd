@@ -1,6 +1,7 @@
 class_name UtilityContext
 extends RefCounted
 
+var diagnostics: bool = true
 var species_type: String = ""
 var state_name: StringName = StringName()
 var values: Dictionary = {}
@@ -35,6 +36,7 @@ func with_state(new_state_name: StringName) -> Variant:
 	# `values` holds only floats, and target dictionaries are read-only downstream,
 	# so shallow copies are enough to keep the two contexts independent.
 	var next_context = get_script().new()
+	next_context.diagnostics = diagnostics
 	next_context.species_type = species_type
 	next_context.state_name = new_state_name
 	next_context.values = values.duplicate()

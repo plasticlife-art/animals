@@ -34,5 +34,6 @@
     "show_lod_overlay": false,
     "show_minimap_water": false
   },
-  "autosave_interval_ticks": 600
+  "autosave_interval_ticks": 600,
+  "ai_diagnostics": false
 }

@@ -35,6 +35,8 @@ func _initialize() -> void:
 		profile = str(args[0])
 	if args.size() >= 2:
 		total_ticks = maxi(1, int(args[1]))
+	var warmup := int(args[3]) if args.size() > 3 else 180
+	var run_seed := int(args[4]) if args.size() > 4 else 3
 	var force_dormant := false
 	if args.size() >= 3:
 		var lod_arg := str(args[2]).to_lower()
@@ -43,7 +45,12 @@ func _initialize() -> void:
 
 	var simulation_manager = SimulationManagerScript.new()
 	root.add_child(simulation_manager)
-	simulation_manager.initialize(_build_profile_bundle(profile, lod_enabled, force_dormant), -1)
+	simulation_manager.initialize(_build_profile_bundle(profile, lod_enabled, force_dormant), run_seed)
+	var warmup_start := Time.get_ticks_usec()
+	for i in warmup:
+		simulation_manager.step_once()
+	print("warmup_ticks=%d warmup_ms=%.2f" % [warmup, (Time.get_ticks_usec() - warmup_start) / 1000.0])
+	simulation_manager.tick_times.samples.clear()
 
 	var timings: Dictionary = {}
 	var counts: Dictionary = {}
@@ -53,6 +60,7 @@ func _initialize() -> void:
 		_accumulate(simulation_manager.world_state.get_performance_counters(), timings, counts)
 	var elapsed_ms: float = float(Time.get_ticks_usec() - started_at_usec) / 1000.0
 
+	print("tick_percentiles=%s" % JSON.stringify(simulation_manager.tick_times.summary()))
 	_report(profile, total_ticks, lod_enabled, elapsed_ms, timings, counts,
 		simulation_manager.world_state, simulation_manager.stats_system.get_snapshot())
 
@@ -119,14 +127,15 @@ func _sorted_entries(bucket: Dictionary) -> Array:
 
 
 func _build_profile_bundle(profile: String, lod_enabled: bool, force_dormant: bool = false) -> Dictionary:
-	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle().duplicate(true)
+	var selection := {}
+	for part in profile.split(","):
+		var pair := part.split("=")
+		if pair.size() == 2:
+			selection[pair[0]] = pair[1]
+	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle(selection).duplicate(true)
 	match profile:
 		"current":
-			bundle["world"]["spawns"] = {
-				"herbivore_count": 220,
-				"predator_count": 18,
-				"herbivore_group_count": 12,
-			}
+			pass
 		"750":
 			bundle["world"]["spawns"] = {
 				"herbivore_count": 690,
@@ -140,7 +149,8 @@ func _build_profile_bundle(profile: String, lod_enabled: bool, force_dormant: bo
 				"herbivore_group_count": 40,
 			}
 		_:
-			push_error("Unknown benchmark profile: %s" % profile)
+			if selection.is_empty():
+				push_error("Unknown benchmark profile: %s" % profile)
 	var debug_config: Dictionary = bundle.get("debug", {})
 	var lod_config: Dictionary = debug_config.get("lod", {})
 	lod_config["enabled"] = lod_enabled

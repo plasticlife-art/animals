@@ -21,9 +21,9 @@ func evaluate(_agent, context) -> Dictionary:
 	score += resource_scarcity * get_weight("scarcity_weight", 0.35)
 	score += (1.0 - threat) * get_weight("low_threat_weight", 0.20)
 	score -= night * get_weight("night_penalty", 0.0)
-	return result(score, [
+	return result(score, ([
 		reason_if("calm", low_urgency),
 		reason_if("scarcity", resource_scarcity),
 		reason_if("threat", threat, 0.24),
 		reason_if("night", night, 0.2),
-	])
+	] if context.diagnostics else []))

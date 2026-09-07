@@ -3,6 +3,7 @@ extends Node
 const TestAssertScript := preload("res://scripts/tests/test_assert.gd")
 
 const SUITES := [
+	{"name": "MovementEcologyTests", "script": preload("res://scripts/tests/movement_ecology_tests.gd")},
 	{"name": "EvaluatorTests", "script": preload("res://scripts/tests/evaluator_tests.gd")},
 	{"name": "SelectorTests", "script": preload("res://scripts/tests/selector_tests.gd")},
 	{"name": "StateTests", "script": preload("res://scripts/tests/state_tests.gd")},

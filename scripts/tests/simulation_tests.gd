@@ -13,6 +13,13 @@ func run(asserts) -> void:
 	_test_scavenging_predator(asserts)
 	_test_sated_predator_does_not_scavenge(asserts)
 	_test_sated_predator_stops_forced_scavenge(asserts)
+	_test_starving_predator_walks_towards_distant_prey(asserts)
+	_test_starving_predator_prefers_carcass_over_distant_hunt(asserts)
+	_test_scavenger_feeds_on_carcass(asserts)
+	_test_scavenger_is_not_a_threat_to_the_herd(asserts)
+	_test_every_species_gets_counted(asserts)
+	_test_stale_carrion_is_the_scavengers_alone(asserts)
+	_test_scavenger_eats_what_the_predator_refused(asserts)
 	_test_far_lod_panic_interrupt(asserts)
 	_test_sector_dormancy_and_wake(asserts)
 	_test_dormant_materializes_updated_position(asserts)
@@ -137,6 +144,166 @@ func _test_sated_predator_stops_forced_scavenge(asserts) -> void:
 	TestHelpers.run_ticks(manager, 1)
 	asserts.is_true(predator.state != "feed_carcass", "forced scavenging should stop once predator is no longer hungry")
 	asserts.equal(predator.target_carcass_id, -1, "sated predator should release carcass target instead of staying engaged")
+	TestHelpers.destroy_manager(manager)
+
+
+## A starving predator used to lose its patrol goal exactly when it needed one.
+## `Predator._resolve_patrol_goal()` scaled the search radius by the hunger clock,
+## so past roughly hunger 65 no herd on a large map was still inside it, the goal
+## came back empty, and patrol fell through to an undirected wander for the last
+## half minute of the animal's life. Prey far beyond what the clock can pay for
+## still has to produce a direction.
+func _test_starving_predator_walks_towards_distant_prey(asserts) -> void:
+	var bundle: Dictionary = TestHelpers.build_test_bundle(91)
+	# Wide enough that the herd sits outside both vision (480) and the reach floor
+	# (vision x 2), which is what the old code fell back to.
+	bundle["world"]["world_size"] = {"x": 2048.0, "y": 512.0}
+	bundle["world"]["simulation_lod"]["sector_size"] = 256.0
+	# The census this reads is per sector, and dormancy would replace the herd with
+	# an aggregate; the fixture is about the live path.
+	bundle["debug"]["lod"]["enabled"] = false
+	var manager = TestHelpers.create_manager_with(bundle, 91)
+	for index in range(8):
+		TestHelpers.spawn_herbivore(manager.world_state, Vector2(1800.0 + float(index) * 12.0, 256.0), 0)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(200.0, 256.0))
+	predator.hunger = 92.0
+	predator.thirst = 0.0
+	predator.energy = 120.0
+	var start_x: float = predator.position.x
+	TestHelpers.run_ticks(manager, 60)
+	asserts.is_true(predator.position.x > start_x + 100.0,
+		"starving predator should walk towards the only herd on the map instead of wandering")
+	TestHelpers.destroy_manager(manager)
+
+
+## `hunt_prey` carried a critical-hunger knee and `scavenge_carcass` did not, so
+## crossing the starvation line raised the score of the 0.38-chance chase and left
+## the certain meal underfoot untouched - and `stickiness_bonus` then held the
+## predator on it.
+func _test_starving_predator_prefers_carcass_over_distant_hunt(asserts) -> void:
+	var manager = TestHelpers.create_manager(77)
+	var predator = TestHelpers.spawn_predator(manager.world_state, Vector2(112.0, 112.0))
+	predator.hunger = 96.0
+	predator.thirst = 0.0
+	predator.energy = 120.0
+	TestHelpers.spawn_carcass(manager.world_state, Vector2(124.0, 112.0))
+	# In sight, but further off than the carcass.
+	TestHelpers.spawn_herbivore(manager.world_state, Vector2(112.0, 208.0), 0)
+	TestHelpers.run_ticks(manager, 1)
+	asserts.equal(predator.current_action, AgentAction.SCAVENGE_CARCASS,
+		"starving predator should take the carcass at its feet over a more distant chase")
+	TestHelpers.destroy_manager(manager)
+
+
+## The scavenger runs the herd behaviour with a different food source, so this is
+## really asking whether `AgentBase.scavenge_or_feed()` reaches a species that is
+## not the predator it was written for.
+func _test_scavenger_feeds_on_carcass(asserts) -> void:
+	var manager = TestHelpers.create_manager(412)
+	var scavenger = TestHelpers.spawn_species(manager.world_state, "scavenger", Vector2(112.0, 112.0))
+	scavenger.hunger = 80.0
+	scavenger.thirst = 0.0
+	var carcass_id := TestHelpers.spawn_carcass(manager.world_state, Vector2(120.0, 112.0), 90.0)
+	var meat_before: float = float(manager.world_state.get_carcass(carcass_id).get("meat_remaining", 0.0))
+	var hunger_before: float = scavenger.hunger
+	TestHelpers.run_ticks(manager, 6)
+	asserts.equal(scavenger.current_action, AgentAction.SCAVENGE_CARCASS,
+		"a hungry scavenger beside a carcass should choose to scavenge")
+	asserts.is_true(float(manager.world_state.get_carcass(carcass_id).get("meat_remaining", 0.0)) < meat_before,
+		"scavenging should actually consume meat from the shared carcass ledger")
+	asserts.is_true(scavenger.hunger < hunger_before, "eating should reduce the scavenger's hunger")
+	TestHelpers.destroy_manager(manager)
+
+
+## `_register_sector_presence()` filed anything that was not a herbivore as a
+## predator, threat score included, so a scavenger would have stampeded the herds
+## it feeds beside. The rule is now `role.is_threat`.
+func _test_scavenger_is_not_a_threat_to_the_herd(asserts) -> void:
+	var manager = TestHelpers.create_manager(413)
+	var world = manager.world_state
+	var herbivore = TestHelpers.spawn_herbivore(world, Vector2(112.0, 112.0), 0)
+	herbivore.hunger = 40.0
+	herbivore.thirst = 4.0
+	herbivore.energy = 80.0
+	TestHelpers.spawn_species(world, "scavenger", Vector2(120.0, 112.0))
+	TestHelpers.run_ticks(manager, 1)
+	var sector_state: Dictionary = world._sector_states.get(world._get_sector_key(herbivore.position), {})
+	asserts.equal(float(sector_state.get("threat_score", -1.0)), 0.0,
+		"a scavenger must not raise the sector threat score")
+	asserts.is_true(herbivore.current_action != AgentAction.FLEE_TO_SAFE_AREA,
+		"a herbivore should not panic at a scavenger standing next to it")
+	TestHelpers.destroy_manager(manager)
+
+
+## The births/deaths tallies used to be an if/elif over two names with no else, so
+## a third species was counted nowhere and nothing reported it.
+func _test_every_species_gets_counted(asserts) -> void:
+	var manager = TestHelpers.create_manager(414)
+	var world = manager.world_state
+	for species_id in world.species_registry.ids():
+		asserts.is_true(manager.stats_system.counters.has("deaths_%s" % species_id),
+			"stats should carry a death counter for %s" % species_id)
+		var agent = TestHelpers.spawn_species(world, species_id, Vector2(112.0, 112.0))
+		var before: int = int(manager.stats_system.counters["deaths_%s" % species_id])
+		world.kill_agent(agent, "starvation")
+		TestHelpers.run_ticks(manager, 1)
+		asserts.equal(int(manager.stats_system.counters["deaths_%s" % species_id]), before + 1,
+			"a %s death should reach the counters" % species_id)
+	TestHelpers.destroy_manager(manager)
+
+
+## The two carrion eaters are separated by freshness, not by distance or speed.
+## Sharing one pool meant the bigger, faster predator won every body, so raising
+## `carcass.ttl_seconds` to feed the flock fed the predator boom instead - the
+## measured result was 292 predators against 193 at the same moment.
+func _test_stale_carrion_is_the_scavengers_alone(asserts) -> void:
+	var manager = TestHelpers.create_manager(415)
+	var world = manager.world_state
+	var carcass_id := TestHelpers.spawn_carcass(world, Vector2(120.0, 112.0), 90.0)
+	# Older than the predator's `role.carrion_max_age_seconds`, still inside the
+	# fixture carcass's own long TTL, so it is present but stale.
+	world.carcasses[carcass_id]["created_at"] = world.current_time - 60.0
+
+	var predator = TestHelpers.spawn_predator(world, Vector2(112.0, 112.0))
+	predator.hunger = 96.0
+	predator.thirst = 0.0
+	predator.energy = 120.0
+	# Far enough not to panic: `predator.role.eats_species` now lists the flock, so
+	# a bird beside a fox flees rather than eats, and this fixture is about the
+	# freshness rule rather than about that.
+	var scavenger = TestHelpers.spawn_species(world, "scavenger", Vector2(900.0, 900.0))
+	scavenger.hunger = 96.0
+	scavenger.thirst = 0.0
+
+	asserts.is_true(not predator.accepts_carcass(world, world.get_carcass(carcass_id)),
+		"a predator should refuse carrion past its freshness limit")
+	asserts.is_true(scavenger.accepts_carcass(world, world.get_carcass(carcass_id)),
+		"a scavenger should accept carrion of any age")
+
+	TestHelpers.run_ticks(manager, 4)
+	asserts.is_true(predator.state != "feed_carcass",
+		"a predator should not feed on carrion it has refused")
+	asserts.equal(predator.target_carcass_id, -1,
+		"a predator should hold no target on a body it will not eat")
+	TestHelpers.destroy_manager(manager)
+
+
+## The other half of the same rule, in a world with no fox in it: the body the
+## predator walked away from is still a meal for the bird.
+func _test_scavenger_eats_what_the_predator_refused(asserts) -> void:
+	var manager = TestHelpers.create_manager(416)
+	var world = manager.world_state
+	var carcass_id := TestHelpers.spawn_carcass(world, Vector2(120.0, 112.0), 90.0)
+	world.carcasses[carcass_id]["created_at"] = world.current_time - 60.0
+	var scavenger = TestHelpers.spawn_species(world, "scavenger", Vector2(112.0, 112.0))
+	scavenger.hunger = 96.0
+	scavenger.thirst = 0.0
+	var meat_before: float = float(world.get_carcass(carcass_id).get("meat_remaining", 0.0))
+	TestHelpers.run_ticks(manager, 6)
+	asserts.equal(scavenger.current_action, AgentAction.SCAVENGE_CARCASS,
+		"the scavenger should take a body too stale for any predator")
+	asserts.is_true(float(world.get_carcass(carcass_id).get("meat_remaining", 0.0)) < meat_before,
+		"stale carrion should actually feed the scavenger")
 	TestHelpers.destroy_manager(manager)
 
 
@@ -619,10 +786,20 @@ func _test_hungry_predator_hunts_herd_member(asserts) -> void:
 	# used to outscore `hunt_prey` until hunger was within a point or two of lethal.
 	for index in range(6):
 		TestHelpers.spawn_herbivore(manager.world_state, Vector2(118.0 + float(index) * 4.0, 100.0), 0)
-	predator.hunger = 20.0
+	# Above `state_thresholds.feed_hunger_floor`. The floor was 12, which had predators
+	# opening a chase at a tenth of their hunger budget; the sibling assertion below is
+	# the other half of that rule.
+	predator.hunger = 40.0
 	predator.energy = 140.0
 	TestHelpers.run_ticks(manager, 1)
-	asserts.equal(predator.current_action, AgentAction.HUNT_PREY, "a mildly hungry predator should hunt a healthy herd animal")
+	asserts.equal(predator.current_action, AgentAction.HUNT_PREY, "a hungry predator should hunt a healthy herd animal")
+
+	var idle_predator = TestHelpers.spawn_predator(manager.world_state, Vector2(104.0, 108.0))
+	idle_predator.hunger = 20.0
+	idle_predator.energy = 140.0
+	TestHelpers.run_ticks(manager, 1)
+	asserts.is_true(idle_predator.current_action != AgentAction.HUNT_PREY,
+		"a predator below the feed floor should not open a chase it does not need")
 	TestHelpers.destroy_manager(manager)
 
 

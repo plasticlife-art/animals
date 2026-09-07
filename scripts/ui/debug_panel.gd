@@ -193,13 +193,52 @@ func _on_export_completed(paths: Dictionary) -> void:
 	])
 
 
+## The population and birth/death lines, one entry per species out of the
+## snapshot rather than two spelled-out names. Labels come from
+## `species.json -> role.label`, so a new species appears here by existing.
+func _species_population_line(snapshot: Dictionary) -> String:
+	var parts: Array[String] = []
+	for entry in _species_entries():
+		parts.append("[b]%s[/b] %d" % [entry["label"], int(snapshot.get("%s_population" % entry["id"], 0))])
+	return "    ".join(parts)
+
+
+func _species_vital_line(snapshot: Dictionary) -> String:
+	var births: Array[String] = []
+	var deaths: Array[String] = []
+	for entry in _species_entries():
+		var initial: String = String(entry["label"]).substr(0, 1)
+		births.append("%s:%d" % [initial, int(snapshot.get("births_%s" % entry["id"], 0))])
+		deaths.append("%s:%d" % [initial, int(snapshot.get("deaths_%s" % entry["id"], 0))])
+	return "[b]Births[/b] %s    [b]Deaths[/b] %s" % [" ".join(births), " ".join(deaths)]
+
+
+func _species_entries() -> Array:
+	var entries: Array = []
+	if simulation_manager == null:
+		return entries
+	var species_config: Dictionary = simulation_manager.config_bundle.get("species", {})
+	var ids: Array = species_config.keys()
+	ids.sort_custom(func(a, b):
+		return int(species_config[a].get("role", {}).get("slot", 0)) < int(species_config[b].get("role", {}).get("slot", 0)))
+	for species_id in ids:
+		entries.append({
+			"id": str(species_id),
+			"label": str(species_config[species_id].get("role", {}).get("label", species_id)),
+		})
+	return entries
+
+
 func _refresh_summary(snapshot: Dictionary) -> void:
 	if summary_label == null:
 		return
 	if snapshot.is_empty():
 		summary_label.text = "No simulation data yet."
 		return
+	var perf: Dictionary = simulation_manager.get_performance_summary()
 	summary_label.text = "\n".join([
+		"[b]Frame p95/p99[/b] %.1f / %.1f ms    [b]Render CPU p95[/b] %.1f ms" % [perf.frame_ms.p95, perf.frame_ms.p99, perf.render_cpu_ms.p95],
+		"[b]Actual speed[/b] %.2fx / %.1fx    [b]Tick p95[/b] %.1f ms" % [perf.actual_speed, perf.requested_speed, perf.tick_ms.p95],
 		"[b]Tick[/b] %d    [b]Time[/b] %.1fs    [b]Seed[/b] %d" % [
 			int(snapshot.get("tick", 0)),
 			float(snapshot.get("time_seconds", 0.0)),
@@ -215,16 +254,8 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 			],
 			float(snapshot.get("climate_regrowth_multiplier", 1.0)),
 		],
-		"[b]Herbivores[/b] %d    [b]Predators[/b] %d" % [
-			int(snapshot.get("herbivore_population", 0)),
-			int(snapshot.get("predator_population", 0)),
-		],
-		"[b]Births[/b] H:%d P:%d    [b]Deaths[/b] H:%d P:%d" % [
-			int(snapshot.get("births_herbivore", 0)),
-			int(snapshot.get("births_predator", 0)),
-			int(snapshot.get("deaths_herbivore", 0)),
-			int(snapshot.get("deaths_predator", 0)),
-		],
+		_species_population_line(snapshot),
+		_species_vital_line(snapshot),
 		"[b]Starvation[/b] %d    [b]Thirst[/b] %d    [b]Predation[/b] %d    [b]Old age[/b] %d" % [
 			int(snapshot.get("deaths_starvation", 0)),
 			int(snapshot.get("deaths_thirst", 0)),

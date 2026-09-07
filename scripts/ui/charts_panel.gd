@@ -65,17 +65,35 @@ func _draw() -> void:
 	_draw_season_bands(series, population_rect)
 	_draw_season_bands(series, trends_rect)
 
-	_draw_series_line(series, population_rect, "herbivore_population", Color(0.61, 0.88, 0.52))
-	_draw_series_line(series, population_rect, "predator_population", Color(0.98, 0.45, 0.2))
-	_draw_combined_line(series, trends_rect, ["births_herbivore", "births_predator"], Color(0.39, 0.82, 1.0))
-	_draw_combined_line(series, trends_rect, ["deaths_herbivore", "deaths_predator"], Color(1.0, 0.5, 0.65))
+	# One shared vertical scale for the population lines. Normalizing each against
+	# its own maximum made a herd of 300 and a flock of 30 draw the same height,
+	# which is exactly the comparison this chart exists to show.
+	var population_keys: Array = []
+	var population_colors: Array = []
+	var birth_keys: Array = []
+	var death_keys: Array = []
+	for entry in _species_entries():
+		population_keys.append("%s_population" % entry["id"])
+		population_colors.append(entry["color"])
+		birth_keys.append("births_%s" % entry["id"])
+		death_keys.append("deaths_%s" % entry["id"])
+	var population_max := _series_max(series, population_keys)
+	for index in range(population_keys.size()):
+		_draw_series_line(series, population_rect, population_keys[index], population_colors[index], population_max)
+	_draw_combined_line(series, trends_rect, birth_keys, Color(0.39, 0.82, 1.0))
+	_draw_combined_line(series, trends_rect, death_keys, Color(1.0, 0.5, 0.65))
 
 	var latest: Dictionary = series[-1]
 	var ink := Color(0.88, 0.9, 0.92)
 	var stats_baseline: float = size.y - PADDING
 	var legend_baseline: float = stats_baseline - line_height
+	var legend_parts: Array[String] = []
+	for entry in _species_entries():
+		legend_parts.append(String(entry["label"]))
+	legend_parts.append("Births blue")
+	legend_parts.append("Deaths pink")
 	draw_string(font, Vector2(PADDING, legend_baseline),
-		"H green  P orange  Births blue  Deaths pink",
+		"  ".join(legend_parts),
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
 	draw_string(font, Vector2(PADDING, stats_baseline),
 		"Avg energy %.1f  Avg hunger %.1f  Hunt %.2f" % [
@@ -143,10 +161,40 @@ func _draw_chart_background(rect: Rect2, label: String, font, font_size: int) ->
 		draw_string(font, rect.position + Vector2(8.0, 18.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.92, 0.94, 0.95))
 
 
-func _draw_series_line(series: Array, rect: Rect2, key: String, color: Color) -> void:
+## Species in registry order, with the colour and name the rest of the interface
+## uses for them. Read from `visuals.json` so the chart, the minimap and the
+## sprites cannot disagree about what a species looks like.
+func _species_entries() -> Array:
+	var entries: Array = []
+	if simulation_manager == null:
+		return entries
+	var species_visuals: Dictionary = simulation_manager.config_bundle.get("visuals", {}).get("species", {})
+	var species_config: Dictionary = simulation_manager.config_bundle.get("species", {})
+	var ids: Array = species_config.keys()
+	ids.sort_custom(func(a, b):
+		return int(species_config[a].get("role", {}).get("slot", 0)) < int(species_config[b].get("role", {}).get("slot", 0)))
+	for species_id in ids:
+		var rgb: Array = species_visuals.get(species_id, {}).get("ui_color", [0.8, 0.8, 0.8])
+		entries.append({
+			"id": str(species_id),
+			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2])),
+			"label": str(species_config[species_id].get("role", {}).get("label", species_id)),
+		})
+	return entries
+
+
+func _series_max(series: Array, keys: Array) -> float:
 	var max_value := 0.0
 	for row in series:
-		max_value = maxf(max_value, float(row.get(key, 0.0)))
+		for key in keys:
+			max_value = maxf(max_value, float(row.get(key, 0.0)))
+	return maxf(max_value, 1.0)
+
+
+func _draw_series_line(series: Array, rect: Rect2, key: String, color: Color, max_value: float = 0.0) -> void:
+	if max_value <= 0.0:
+		for row in series:
+			max_value = maxf(max_value, float(row.get(key, 0.0)))
 	if max_value <= 0.0:
 		max_value = 1.0
 

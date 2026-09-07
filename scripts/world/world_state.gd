@@ -1,6 +1,10 @@
 class_name WorldState
 extends RefCounted
 
+# Agents are instantiated through `SpeciesRegistry`, from the `role.script` path in
+# species.json, so nothing here names a species any more. These preloads stay because
+# a path read out of JSON is not a static dependency: without them an export build has
+# no reason to package the agent scripts at all.
 const HerbivoreScript = preload("res://scripts/agents/herbivore.gd")
 const PredatorScript = preload("res://scripts/agents/predator.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
@@ -8,6 +12,7 @@ const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_percep
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const ClimateScript = preload("res://scripts/world/climate.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
+const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
 const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
 
 const LOD_TIER_0 := 0
@@ -34,6 +39,9 @@ var pending_carcass_removals: Array = []
 var water_sources: Array = []
 var next_agent_id: int = 1
 var next_carcass_id: int = 1
+var scenery = preload("res://scripts/world/scenery_system.gd").new()
+var _local_path_budget: int = 6
+var inspected_agent_id: int = -1
 var config_bundle: Dictionary = {}
 var event_bus
 var rng: RandomNumberGenerator
@@ -41,6 +49,13 @@ var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
 var climate: Climate
 var spatial_grid: SpatialGrid
+## Which species exist and what each one eats, is eaten by, and leaves behind.
+## Immutable once built, so the worker thread's world and the presentation copy
+## can each hold one. See scripts/core/species_registry.gd.
+var species_registry
+## Derived from the registry at initialize() so the tick never walks roles.
+var _prey_species_ids: Array = []
+var _threat_species_ids: Array = []
 var navigation_config: Dictionary = {}
 var simulation_lod_config: Dictionary = {}
 var current_tick: int = 0
@@ -83,6 +98,14 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	config_bundle = new_config_bundle
 	event_bus = new_event_bus
 	rng = new_rng
+	species_registry = SpeciesRegistryScript.from_config(config_bundle.get("species", {}))
+	_prey_species_ids = []
+	_threat_species_ids = []
+	for species_id in species_registry.ids():
+		if not species_registry.predator_set(species_id).is_empty():
+			_prey_species_ids.append(species_id)
+		if species_registry.is_threat(species_id):
+			_threat_species_ids.append(species_id)
 	agents.clear()
 	carcasses.clear()
 	pending_spawns.clear()
@@ -116,6 +139,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 
 	terrain_system = TerrainSystemScript.new()
 	terrain_system.initialize(world_config, rng, water_sources)
+	scenery.initialize(world_config, config_bundle.get("visuals", {}), terrain_system, int(rng.seed))
 
 	resource_system = ResourceSystemScript.new()
 	resource_system.initialize(world_config, rng, terrain_system)
@@ -150,6 +174,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_prey_pressure_refresh_tick = -9999
 	_reset_performance_counters()
 	_spawn_initial_agents()
+	_spawn_initial_carcasses()
 	_rebuild_group_state_cache()
 	_update_lod_assignments({"enabled": false})
 
@@ -159,6 +184,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	current_time = time_seconds
 	climate.sample(current_time)
 	_reset_performance_counters()
+	scenery.visibility_checks = 0
+	scenery.local_searches = 0
 	_prepare_navigation_budget()
 	var phase_started_usec: int = Time.get_ticks_usec()
 	resource_system.step(delta, climate.regrowth_multiplier)
@@ -174,7 +201,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	performance_counters["phase_sectors_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 
 	phase_started_usec = Time.get_ticks_usec()
-	for agent in living_agents:
+	for offset in living_agents.size():
+		var agent = living_agents[(offset + current_tick) % living_agents.size()]
 		if agent == null or not agent.is_alive:
 			continue
 		var lod_tier: int = _resolve_lod_tier(agent, active_lod_context)
@@ -187,6 +215,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 			performance_counters["agents_maintenance_tick"] += 1
 			agent.tick_maintenance(self, delta)
 		_track_agent_runtime_position(agent, previous_position)
+		if agent.stuck_timer > 0.75:
+			performance_counters["stuck_agents"] += 1
 
 	_resolve_agent_overlap(delta)
 	performance_counters["phase_agents_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
@@ -203,6 +233,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	performance_counters["pathfind_calls"] += int(path_stats.get("queries", 0))
 	performance_counters["path_cache_hits"] += int(path_stats.get("cache_hits", 0))
 	performance_counters["grass_cells_scanned"] += resource_system.take_cells_scanned()
+	performance_counters["visibility_checks"] = scenery.visibility_checks
+	performance_counters["local_path_searches"] = scenery.local_searches
 	_update_lod_assignments(active_lod_context, true)
 
 
@@ -224,6 +256,7 @@ func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, se
 		rng,
 		group_id
 	)
+	agent.position = scenery.nearest_free(agent.position, agent.get_body_radius())
 	agent.lod_tier = LOD_TIER_0
 	agents[next_agent_id] = agent
 	_register_living_agent(agent)
@@ -272,38 +305,42 @@ func get_living_agents() -> Array:
 	return living_agents
 
 
+## Per-species population and need totals, live and dormant.
+##
+## Keys are built from the species id - `herbivore_count`, `dormant_predator_hunger_sum`
+## and so on - rather than enumerated, so a new species in species.json reaches the
+## stats snapshot, the charts and the HUD without a line of code here. The names are
+## exactly the ones the two hand-written species produced before, so every existing
+## reader keeps working.
 func get_population_metrics() -> Dictionary:
-	var herbivore_count := 0
-	var predator_count := 0
 	var hunger_sum := 0.0
 	var energy_sum := 0.0
 	var living_count := 0
-	var active_herbivore_count := 0
-	var dormant_herbivore_count := 0
-	var active_herbivore_hunger_sum := 0.0
-	var dormant_herbivore_hunger_sum := 0.0
-	var active_predator_count := 0
-	var dormant_predator_count := 0
-	var dormant_predator_hunger_sum := 0.0
-	var dormant_predator_thirst_sum := 0.0
-	var dormant_predator_energy_sum := 0.0
 	var critical_hunger := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("critical_hunger", 60.0))
-	var starvation_risk_herbivore_count := 0
+
+	var per_species: Dictionary = {}
+	for species_id in species_registry.ids():
+		per_species[species_id] = {
+			"active": 0, "dormant": 0,
+			"active_hunger": 0.0, "dormant_hunger": 0.0,
+			"dormant_thirst": 0.0, "dormant_energy": 0.0,
+			"starvation_risk": 0,
+		}
+
 	for agent in living_agents:
 		if agent == null or not agent.is_alive:
 			continue
 		living_count += 1
 		hunger_sum += agent.hunger
 		energy_sum += agent.energy
-		if agent.species_type == AgentBaseScript.SPECIES_HERBIVORE:
-			herbivore_count += 1
-			active_herbivore_count += 1
-			active_herbivore_hunger_sum += agent.hunger
-			if agent.hunger >= critical_hunger:
-				starvation_risk_herbivore_count += 1
-		elif agent.species_type == AgentBaseScript.SPECIES_PREDATOR:
-			predator_count += 1
-			active_predator_count += 1
+		var totals = per_species.get(agent.species_type, null)
+		if totals == null:
+			continue
+		totals["active"] += 1
+		totals["active_hunger"] += agent.hunger
+		if agent.hunger >= critical_hunger:
+			totals["starvation_risk"] += 1
+
 	for sector_state in _sector_states.values():
 		if not bool(sector_state.get("dormant", false)):
 			continue
@@ -313,38 +350,36 @@ func get_population_metrics() -> Dictionary:
 			var count: int = int(species_state.get("count", 0))
 			if count <= 0:
 				continue
+			var avg_hunger := float(species_state.get("avg_hunger", 0.0))
 			living_count += count
-			hunger_sum += float(species_state.get("avg_hunger", 0.0)) * count
+			hunger_sum += avg_hunger * count
 			energy_sum += float(species_state.get("avg_energy", 0.0)) * count
-			if species_key == AgentBaseScript.SPECIES_HERBIVORE:
-				herbivore_count += count
-				dormant_herbivore_count += count
-				dormant_herbivore_hunger_sum += float(species_state.get("avg_hunger", 0.0)) * count
-				if float(species_state.get("avg_hunger", 0.0)) >= critical_hunger:
-					starvation_risk_herbivore_count += count
-			elif species_key == AgentBaseScript.SPECIES_PREDATOR:
-				predator_count += count
-				dormant_predator_count += count
-				dormant_predator_hunger_sum += float(species_state.get("avg_hunger", 0.0)) * count
-				dormant_predator_thirst_sum += float(species_state.get("avg_thirst", 0.0)) * count
-				dormant_predator_energy_sum += float(species_state.get("avg_energy", 0.0)) * count
-	return {
-		"herbivore_count": herbivore_count,
-		"predator_count": predator_count,
+			var totals = per_species.get(species_key, null)
+			if totals == null:
+				continue
+			totals["dormant"] += count
+			totals["dormant_hunger"] += avg_hunger * count
+			totals["dormant_thirst"] += float(species_state.get("avg_thirst", 0.0)) * count
+			totals["dormant_energy"] += float(species_state.get("avg_energy", 0.0)) * count
+			if avg_hunger >= critical_hunger:
+				totals["starvation_risk"] += count
+
+	var metrics: Dictionary = {
 		"hunger_sum": hunger_sum,
 		"energy_sum": energy_sum,
 		"living_count": living_count,
-		"active_herbivore_count": active_herbivore_count,
-		"dormant_herbivore_count": dormant_herbivore_count,
-		"active_herbivore_hunger_sum": active_herbivore_hunger_sum,
-		"dormant_herbivore_hunger_sum": dormant_herbivore_hunger_sum,
-		"starvation_risk_herbivore_count": starvation_risk_herbivore_count,
-		"active_predator_count": active_predator_count,
-		"dormant_predator_count": dormant_predator_count,
-		"dormant_predator_hunger_sum": dormant_predator_hunger_sum,
-		"dormant_predator_thirst_sum": dormant_predator_thirst_sum,
-		"dormant_predator_energy_sum": dormant_predator_energy_sum,
 	}
+	for species_id in species_registry.ids():
+		var totals: Dictionary = per_species[species_id]
+		metrics["%s_count" % species_id] = int(totals["active"]) + int(totals["dormant"])
+		metrics["active_%s_count" % species_id] = totals["active"]
+		metrics["dormant_%s_count" % species_id] = totals["dormant"]
+		metrics["active_%s_hunger_sum" % species_id] = totals["active_hunger"]
+		metrics["dormant_%s_hunger_sum" % species_id] = totals["dormant_hunger"]
+		metrics["dormant_%s_thirst_sum" % species_id] = totals["dormant_thirst"]
+		metrics["dormant_%s_energy_sum" % species_id] = totals["dormant_energy"]
+		metrics["starvation_risk_%s_count" % species_id] = totals["starvation_risk"]
+	return metrics
 
 
 func get_lod_counts() -> Dictionary:
@@ -384,6 +419,8 @@ func get_total_carcass_meat_remaining() -> float:
 
 
 func shutdown() -> void:
+	for agent in living_agents:
+		agent.clear_decision_cache()
 	agents.clear()
 	carcasses.clear()
 	pending_spawns.clear()
@@ -416,6 +453,27 @@ func refresh_lod_assignments(lod_context: Dictionary = {}) -> void:
 func query_agents(position: Vector2, radius: float, species_filter: String = "", exclude_id: int = -1) -> Array:
 	performance_counters["agent_query_calls"] += 1
 	return spatial_grid.query(position, radius, species_filter, exclude_id)
+
+
+## Agents of any of several species, in one grid walk. `species_set` comes from
+## `SpeciesRegistry.prey_set()` / `predator_set()` and is already built - passing a
+## freshly constructed Dictionary here would allocate once per agent per tick.
+func query_agents_multi(position: Vector2, radius: float, species_set: Dictionary, exclude_id: int = -1) -> Array:
+	performance_counters["agent_query_calls"] += 1
+	if species_set.is_empty():
+		return []
+	var results: Array = []
+	spatial_grid.query_into(results, position, radius, "", exclude_id, species_set)
+	return results
+
+
+## `visible_agents()` over a species set.
+func visible_agents_multi(observer, radius: float, species_set: Dictionary) -> Array:
+	var result: Array = []
+	for candidate in query_agents_multi(observer.position, radius, species_set, observer.id):
+		if can_see(observer, candidate, radius):
+			result.append(candidate)
+	return result
 
 
 ## Neighbour count without materialising the agents. Same filter as
@@ -472,7 +530,10 @@ func build_herbivore_snapshot(agent) -> Variant:
 	snapshot.built_at_time = current_time
 	var started_usec: int = Time.get_ticks_usec()
 	var neighbor_radius := float(agent.perception.get("neighbor_radius", 90.0))
-	snapshot.species_neighbors = query_agents(agent.position, neighbor_radius, AgentBaseScript.SPECIES_HERBIVORE, agent.id)
+	# The agent's own species, not the literal "herbivore" this used to pass. With one
+	# prey species the two are the same; with two, every animal would have herded with
+	# the other variant as readily as with its own.
+	snapshot.species_neighbors = query_agents(agent.position, neighbor_radius, agent.species_type, agent.id)
 	if agent.group_id == -1:
 		snapshot.group_neighbors = snapshot.species_neighbors
 	else:
@@ -482,7 +543,7 @@ func build_herbivore_snapshot(agent) -> Variant:
 		if snapshot.group_neighbors.is_empty():
 			snapshot.group_neighbors = snapshot.species_neighbors
 	var danger_radius := perception_radius(agent, "danger_radius", 120.0)
-	snapshot.predators = query_agents(agent.position, danger_radius, AgentBaseScript.SPECIES_PREDATOR, agent.id)
+	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type))
 	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
@@ -497,15 +558,55 @@ func build_herbivore_snapshot(agent) -> Variant:
 	return snapshot
 
 
+## Perception for a carrion feeder: the herd fields a flocking animal needs, plus
+## the carcass fields the feeding action needs, and no grass search at all - which
+## is the expensive half of the herbivore snapshot.
+func build_scavenger_snapshot(agent) -> Variant:
+	var snapshot = AgentPerceptionSnapshotScript.new()
+	snapshot.built_at_tick = current_tick
+	snapshot.built_at_time = current_time
+	var started_usec: int = Time.get_ticks_usec()
+	var neighbor_radius := float(agent.perception.get("neighbor_radius", 90.0))
+	snapshot.species_neighbors = query_agents(agent.position, neighbor_radius, agent.species_type, agent.id)
+	if agent.group_id == -1:
+		snapshot.group_neighbors = snapshot.species_neighbors
+	else:
+		for neighbor in snapshot.species_neighbors:
+			if neighbor.group_id == agent.group_id:
+				snapshot.group_neighbors.append(neighbor)
+		if snapshot.group_neighbors.is_empty():
+			snapshot.group_neighbors = snapshot.species_neighbors
+	# Empty while nothing hunts this species, which is the intended phase-one state:
+	# adding it to some predator's `role.eats_species` is all it takes to turn the
+	# inherited panic behaviour on.
+	var danger_radius := perception_radius(agent, "danger_radius", 120.0)
+	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type))
+	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
+	snapshot.group_center = get_group_center(agent.group_id, agent.species_type, agent.id)
+	performance_counters["snapshot_group_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
+	snapshot.water_target = _resolve_water_source(agent.position, float(agent.perception.get("water_search_radius", 260.0)))
+	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+	started_usec = Time.get_ticks_usec()
+	snapshot.carcasses = query_carcasses(agent.position, float(agent.balance.get("carcass", {}).get("search_radius", 420.0)))
+	snapshot.carcass_target = agent.choose_carcass(self, snapshot.carcasses)
+	performance_counters["snapshot_carcass_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
+	return snapshot
+
+
 func build_predator_snapshot(agent) -> Variant:
 	var snapshot = AgentPerceptionSnapshotScript.new()
 	snapshot.built_at_tick = current_tick
 	snapshot.built_at_time = current_time
 	var started_usec: int = Time.get_ticks_usec()
 	var vision_radius := perception_radius(agent, "vision_radius", 240.0)
-	snapshot.prey_candidates = query_agents(agent.position, vision_radius, AgentBaseScript.SPECIES_HERBIVORE, agent.id)
+	snapshot.prey_candidates = visible_agents_multi(agent, vision_radius, species_registry.prey_set(agent.species_type))
 	var mate_radius := float(agent.perception.get("mate_search_radius", 80.0))
-	var mates := query_agents(agent.position, mate_radius, AgentBaseScript.SPECIES_PREDATOR, agent.id)
+	var mates := query_agents(agent.position, mate_radius, agent.species_type, agent.id)
 	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
@@ -521,7 +622,7 @@ func build_predator_snapshot(agent) -> Variant:
 	snapshot.mate_target = agent._find_viable_mate(self, false, mates)
 	snapshot.kin_center = agent.last_known_kin_center
 	snapshot.prey_target = agent._choose_prey(self, snapshot.prey_candidates)
-	snapshot.carcass_target = agent._choose_carcass(self, snapshot.carcasses)
+	snapshot.carcass_target = agent.choose_carcass(self, snapshot.carcasses)
 	performance_counters["snapshot_predator_choice_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 	snapshot.values["water_has_herbivore"] = false
 	return snapshot
@@ -629,7 +730,7 @@ func get_biome_at_position(position: Vector2) -> String:
 func get_move_cost_at_position(position: Vector2) -> float:
 	if terrain_system == null:
 		return 1.0
-	return terrain_system.get_move_cost_at_position(position)
+	return terrain_system.get_move_cost_at_position(position) * scenery.movement_cost(position)
 
 
 func is_walkable_position(position: Vector2) -> bool:
@@ -657,20 +758,44 @@ func get_nearest_walkable_position(position: Vector2) -> Vector2:
 	return terrain_system.get_cell_center(nearest_index)
 
 
-func resolve_movement_position(from_position: Vector2, to_position: Vector2) -> Vector2:
-	var clamped_target: Vector2 = clamp_position(to_position)
-	if terrain_system == null or terrain_system.is_walkable_position(clamped_target):
-		return clamped_target
+func resolve_movement_position(from_position: Vector2, to_position: Vector2, radius: float = 0.0) -> Vector2:
+	return scenery.resolve_motion(from_position, clamp_position(to_position), radius)
 
-	var slide_x: Vector2 = clamp_position(Vector2(clamped_target.x, from_position.y))
-	if terrain_system.is_walkable_position(slide_x):
-		return slide_x
 
-	var slide_y: Vector2 = clamp_position(Vector2(from_position.x, clamped_target.y))
-	if terrain_system.is_walkable_position(slide_y):
-		return slide_y
+func can_see(observer, target, radius: float) -> bool:
+	return target != null and target.is_alive and scenery.visible(observer.position, target.position, radius)
 
-	return get_nearest_walkable_position(from_position)
+
+func visible_agents(observer, radius: float, species: String) -> Array:
+	var result: Array = []
+	for candidate in query_agents(observer.position, radius, species, observer.id):
+		if can_see(observer, candidate, radius):
+			result.append(candidate)
+	return result
+
+
+func local_waypoint(agent, target: Vector2) -> Vector2:
+	var radius: float = agent.get_body_radius()
+	if scenery.segment_clear(agent.position, target, radius):
+		agent.local_path = PackedVector2Array()
+		return target
+	if agent.local_path_goal.distance_squared_to(target) > terrain_system.cell_size * terrain_system.cell_size or agent.stuck_timer > 0.75:
+		agent.local_path = PackedVector2Array()
+	if agent.local_path.is_empty():
+		if _local_path_budget <= 0 or current_tick < agent.local_retry_tick:
+			return agent.position
+		_local_path_budget -= 1
+		agent.local_retry_tick = current_tick + 12
+		agent.local_path = scenery.local_path(agent.position, target, radius)
+		agent.local_path_goal = target
+	# Look ahead only across a swept, body-sized clear segment.
+	while agent.local_path.size() > 1 and scenery.segment_clear(agent.position, agent.local_path[1], radius):
+		agent.local_path.remove_at(0)
+	if agent.local_path.is_empty():
+		return agent.position
+	if agent.position.distance_squared_to(agent.local_path[0]) < 4.0:
+		agent.local_path.remove_at(0)
+	return agent.position if agent.local_path.is_empty() else agent.local_path[0]
 
 
 func random_point() -> Vector2:
@@ -864,7 +989,7 @@ func _resolve_agent_overlap(delta: float) -> void:
 		if correction.length() > limit:
 			correction = correction.normalized() * limit
 		var previous: Vector2 = agent.position
-		agent.position = resolve_movement_position(previous, previous + correction)
+		agent.position = resolve_movement_position(previous, previous + correction, agent.get_body_radius())
 		_track_agent_runtime_position(agent, previous)
 
 
@@ -960,6 +1085,8 @@ func _restore_agent_record(record: Dictionary):
 		int(record.get("group_id", -1))
 	)
 	agent.apply_save_state(record)
+	agent.position = scenery.nearest_free(agent.position, agent.get_body_radius())
+	agent.clear_navigation()
 	return agent
 
 
@@ -1021,8 +1148,7 @@ func _import_sector_states(data) -> void:
 		if bool(state.get("dormant", false)):
 			continue
 		state["agent_ids"] = []
-		state["herbivore_count"] = 0
-		state["predator_count"] = 0
+		state["species_counts"] = {}
 	for agent in living_agents:
 		if agent != null:
 			_register_sector_presence(agent)
@@ -1156,6 +1282,16 @@ func _find_local_grass_target(position: Vector2, start_index: int, radius: float
 
 
 func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false) -> Vector2:
+	var agent = get_agent(agent_id)
+	if agent == null:
+		return from_position
+	var target := scenery.nearest_free(to_position, agent.get_body_radius())
+	if scenery.segment_clear(from_position, target, agent.get_body_radius()):
+		return target
+	return local_waypoint(agent, _coarse_waypoint(from_position, target, agent_id, force_repath))
+
+
+func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false) -> Vector2:
 	var agent: AgentBase = get_agent(agent_id)
 	if agent == null:
 		return clamp_position(to_position)
@@ -1198,7 +1334,7 @@ func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: i
 		agent.last_repath_tick = current_tick
 		agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
 		if agent.path_cells.is_empty():
-			return target
+			return from_position
 
 	var waypoint_radius_sq: float = pow(terrain_system.cell_size * 0.42, 2.0)
 	while agent.path_index < agent.path_cells.size():
@@ -1289,12 +1425,16 @@ func _emit_dormant_death(species_type: String, position: Vector2, cause: String)
 
 
 func _maybe_spawn_carcass(agent, cause: String) -> void:
-	if agent == null or agent.species_type != AgentBaseScript.SPECIES_HERBIVORE:
+	# Which species leave a body is `role.leaves_carcass` in species.json, not a
+	# name test. `role.carcass_meat_multiplier` then sizes it, so a small animal
+	# does not feed a sector the way a large one does.
+	if agent == null or not species_registry.leaves_carcass(agent.species_type):
 		return
 	if cause not in ["predation", "old_age", "starvation", "thirst"]:
 		return
 	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
-	var meat_total := maxf(0.0, float(carcass_config.get("meat_total", 84.0)))
+	var meat_total := maxf(0.0, float(carcass_config.get("meat_total", 84.0))
+		* species_registry.carcass_meat_multiplier(agent.species_type))
 	if meat_total <= 0.0:
 		return
 	var carcass_id := next_carcass_id
@@ -1394,63 +1534,133 @@ func _is_carcass_available(carcass: Dictionary) -> bool:
 	return current_time - float(carcass.get("created_at", current_time)) < ttl_seconds
 
 
+## The starting population, one species at a time in `role.slot` order.
+##
+## Counts stay flat keys - `<species>_count`, `<species>_group_count` - so the
+## map-size presets, the benchmark profiles and the test fixtures that already
+## write them keep working, and a new species only has to add its own. A species
+## with no count spawns nothing, which is what keeps the test bundles empty.
+##
+## Order matters beyond tidiness: the seeded generator places herds, offsets, sexes
+## and the initial stagger, so iterating species in any other order would move every
+## animal in the world and break the determinism fixtures.
 func _spawn_initial_agents() -> void:
-	var world_config: Dictionary = config_bundle.get("world", {})
-	var spawn_config: Dictionary = world_config.get("spawns", {})
-	var herbivore_count: int = int(spawn_config.get("herbivore_count", 120))
-	var predator_count: int = int(spawn_config.get("predator_count", 12))
-	var group_count: int = maxi(1, int(spawn_config.get("herbivore_group_count", 8)))
+	var spawn_config: Dictionary = config_bundle.get("world", {}).get("spawns", {})
+	for species_id in species_registry.ids():
+		var count: int = int(spawn_config.get("%s_count" % species_id, 0))
+		if count <= 0:
+			continue
+		match species_registry.social(species_id):
+			SpeciesRegistryScript.SOCIAL_PAIR:
+				_spawn_initial_pairs(species_id, count)
+			SpeciesRegistryScript.SOCIAL_SOLITARY:
+				_spawn_initial_solitary(species_id, count)
+			_:
+				_spawn_initial_herd(species_id, count, maxi(1, int(spawn_config.get("%s_group_count" % species_id, 8))))
 
+
+## `role.social == "herd"`: a few centres, members dealt round-robin so no group
+## is left short.
+func _spawn_initial_herd(species_id: String, count: int, group_count: int) -> void:
 	var herd_centers: Array = []
-	for index in range(group_count):
+	for _index in range(group_count):
 		herd_centers.append(random_point())
-
-	for index in range(herbivore_count):
+	for index in range(count):
 		var center: Vector2 = herd_centers[index % group_count]
-		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(center + Vector2(rng.randf_range(-60.0, 60.0), rng.randf_range(-60.0, 60.0))))
-		var herbivore = spawn_agent(AgentBaseScript.SPECIES_HERBIVORE, spawn_position, index % group_count, "", {"reason": "initial"})
-		_stagger_initial_agent(herbivore)
+		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(
+			center + Vector2(rng.randf_range(-60.0, 60.0), rng.randf_range(-60.0, 60.0))))
+		_stagger_initial_agent(spawn_agent(species_id, spawn_position, index % group_count, "", {"reason": "initial"}))
 
-	var predator_pair_count: int = maxi(1, int(ceil(float(predator_count) / 2.0)))
-	var predator_centers: Array = []
-	for _index in range(predator_pair_count):
-		predator_centers.append(random_point())
 
-	for pair_index in range(predator_pair_count):
-		var pair_center: Vector2 = predator_centers[pair_index]
+## `role.social == "pair"`: a male and a female per centre, pointed at each other
+## so the pair-cohesion flow has someone to hold from tick zero.
+func _spawn_initial_pairs(species_id: String, count: int) -> void:
+	var pair_count: int = maxi(1, int(ceil(float(count) / 2.0)))
+	var pair_centers: Array = []
+	for _index in range(pair_count):
+		pair_centers.append(random_point())
+
+	for pair_index in range(pair_count):
+		var pair_center: Vector2 = pair_centers[pair_index]
 		var male_offset: Vector2 = Vector2(rng.randf_range(-28.0, 28.0), rng.randf_range(-28.0, 28.0))
 		var female_offset: Vector2 = Vector2(rng.randf_range(-28.0, 28.0), rng.randf_range(-28.0, 28.0))
-		var male_predator = null
-		var female_predator = null
+		var male = null
+		var female = null
 
 		var male_index: int = pair_index * 2
-		if male_index < predator_count:
-			male_predator = spawn_agent(
-				AgentBaseScript.SPECIES_PREDATOR,
+		if male_index < count:
+			male = spawn_agent(
+				species_id,
 				get_nearest_walkable_position(clamp_position(pair_center + male_offset)),
 				-1,
 				AgentBaseScript.SEX_MALE,
 				{"reason": "initial"}
 			)
 
-		var female_index: int = male_index + 1
-		if female_index < predator_count:
-			female_predator = spawn_agent(
-				AgentBaseScript.SPECIES_PREDATOR,
+		if male_index + 1 < count:
+			female = spawn_agent(
+				species_id,
 				get_nearest_walkable_position(clamp_position(pair_center + female_offset)),
 				-1,
 				AgentBaseScript.SEX_FEMALE,
 				{"reason": "initial"}
 			)
 
-		_stagger_initial_agent(male_predator)
-		_stagger_initial_agent(female_predator)
+		_stagger_initial_agent(male)
+		_stagger_initial_agent(female)
 
-		if male_predator != null and female_predator != null:
-			if male_predator.has_method("set_preferred_mate_id"):
-				male_predator.call("set_preferred_mate_id", female_predator.id)
-			if female_predator.has_method("set_preferred_mate_id"):
-				female_predator.call("set_preferred_mate_id", male_predator.id)
+		if male != null and female != null:
+			if male.has_method("set_preferred_mate_id"):
+				male.call("set_preferred_mate_id", female.id)
+			if female.has_method("set_preferred_mate_id"):
+				female.call("set_preferred_mate_id", male.id)
+
+
+## Carrion the world starts with.
+##
+## Generation makes grass, water and living animals, and no dead ones at all, so
+## a species that eats only carrion begins in a world with nothing in it: the
+## first bodies appear when herbivores start dying, tens of seconds in, and the
+## whole starting flock starved before then - 24 spawned, 24 dead of hunger, in
+## every run regardless of how long bodies lasted. A world that has been running
+## before the simulation opens has old kills lying in it.
+func _spawn_initial_carcasses() -> void:
+	var count: int = int(config_bundle.get("world", {}).get("spawns", {}).get("initial_carcass_count", 0))
+	if count <= 0 or species_registry.carcass_source_ids().is_empty():
+		return
+	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
+	var ttl := maxf(0.0, float(carcass_config.get("ttl_seconds", 90.0)))
+	var meat_total := maxf(0.0, float(carcass_config.get("meat_total", 84.0)))
+	if meat_total <= 0.0:
+		return
+	var source_species: String = str(species_registry.carcass_source_ids()[0])
+	for _index in range(count):
+		var carcass_id := next_carcass_id
+		next_carcass_id += 1
+		# Aged across the whole span, so some are fresh enough for a hunter and
+		# some are already the scavenger's alone - the same spread a running
+		# world would have.
+		var age: float = rng.randf() * ttl
+		carcasses[carcass_id] = {
+			"id": carcass_id,
+			"position": get_nearest_walkable_position(clamp_position(random_point())),
+			"created_at": current_time - age,
+			"ttl_seconds": ttl,
+			"source_species": source_species,
+			"death_cause": "initial",
+			"meat_total": meat_total,
+			"meat_remaining": meat_total * (1.0 - age / maxf(1.0, ttl)),
+			"max_feeders": maxi(1, int(carcass_config.get("max_feeders", 2))),
+			"active_feeder_ids": [],
+			"source_agent_id": -1,
+		}
+
+
+## `role.social == "solitary"`: scattered singles, no groups and no pairing.
+func _spawn_initial_solitary(species_id: String, count: int) -> void:
+	for _index in range(count):
+		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(random_point()))
+		_stagger_initial_agent(spawn_agent(species_id, spawn_position, -1, "", {"reason": "initial"}))
 
 
 ## Spreads the starting cohort's needs and ages.
@@ -1551,11 +1761,12 @@ func _should_run_full_tick(agent: AgentBase, lod_tier: int, lod_context: Diction
 func should_run_decision_tick(agent: AgentBase) -> bool:
 	if agent == null or not agent.is_alive:
 		return false
-	if agent.lod_tier == LOD_TIER_0:
+	if agent.target_agent_id != -1 and get_agent(agent.target_agent_id) == null:
 		return true
-	if _is_priority_lod_agent(agent):
-		return true
-	var interval: int = _mid_decision_interval_ticks if agent.lod_tier == LOD_TIER_1 else _far_decision_interval_ticks
+	var interval: int = int(config_bundle.get("balance", {}).get("ai", {}).get("decision_interval_ticks", 3))
+	if agent.lod_tier != LOD_TIER_0:
+		interval = _mid_decision_interval_ticks if agent.lod_tier == LOD_TIER_1 else _far_decision_interval_ticks
+	interval = maxi(1, interval)
 	if agent.cached_snapshot == null:
 		return true
 	return current_tick % interval == agent.id % interval
@@ -1601,6 +1812,7 @@ func _update_lod_assignments(lod_context: Dictionary, reuse_agent_tiers: bool = 
 func _reset_performance_counters() -> void:
 	performance_counters = {
 		"agents_full_tick": 0,
+		"stuck_agents": 0,
 		"agents_maintenance_tick": 0,
 		"ai_context_build_ms": 0.0,
 		"action_select_ms": 0.0,
@@ -1643,6 +1855,7 @@ func _reset_performance_counters() -> void:
 
 
 func _prepare_navigation_budget() -> void:
+	_local_path_budget = maxi(1, int(navigation_config.get("local_path_budget_per_tick", 6)))
 	_path_budget_remaining = maxi(1, int(navigation_config.get("path_budget_per_tick", 64)))
 	_new_path_budget_remaining = maxi(1, int(navigation_config.get("max_new_paths_per_tick", 18)))
 
@@ -1723,12 +1936,41 @@ func _sector_key_to_rect(sector_key: Vector2i) -> Rect2:
 	return Rect2(Vector2(sector_key.x, sector_key.y) * _sector_size, Vector2.ONE * _sector_size)
 
 
+## Heads of the given species in a sector.
+##
+## `species_counts` holds live agents while the sector is awake and is overwritten
+## from `dormant_species` the moment it sleeps, so one read covers both paths - and
+## that is also why nothing here adds the dormant tally on top. The old readers did
+## add it, which was right for a sector that had only just fallen asleep and wrong
+## from its first dormant step onwards - `_apply_dormant_sector_step()` copies the
+## same census into the flat counts, and from then on the sector reported twice the
+## prey it held and outbid live ones for every hunting predator.
+func _sector_species_count(sector_state: Dictionary, species_ids: Array) -> int:
+	var counts: Dictionary = sector_state.get("species_counts", {})
+	if counts.is_empty():
+		return 0
+	var total: int = 0
+	for species_id in species_ids:
+		total += int(counts.get(species_id, 0))
+	return total
+
+
+## Mirrors a sleeping sector's aggregate census back onto the flat per-species
+## counts, which is what the census, the wake rules and `threat_score` all read.
+func _project_dormant_counts_onto_sector(sector_state: Dictionary) -> void:
+	var dormant_species: Dictionary = sector_state.get("dormant_species", {})
+	var counts: Dictionary = {}
+	for species_id in dormant_species.keys():
+		counts[species_id] = int((dormant_species[species_id] as Dictionary).get("count", 0))
+	sector_state["species_counts"] = counts
+	sector_state["threat_score"] = float(_sector_species_count(sector_state, _threat_species_ids))
+
+
 func _get_or_create_sector_state(sector_key: Vector2i) -> Dictionary:
 	if not _sector_states.has(sector_key):
 		_sector_states[sector_key] = {
 			"agent_ids": [],
-			"herbivore_count": 0,
-			"predator_count": 0,
+			"species_counts": {},
 			"dormant_count": 0,
 			"carcass_ids": [],
 			"water": false,
@@ -1757,10 +1999,13 @@ func _register_sector_presence(agent) -> void:
 	if not agent_ids.has(agent.id):
 		agent_ids.append(agent.id)
 	sector_state["agent_ids"] = agent_ids
-	if agent.species_type == AgentBaseScript.SPECIES_HERBIVORE:
-		sector_state["herbivore_count"] = int(sector_state.get("herbivore_count", 0)) + 1
-	else:
-		sector_state["predator_count"] = int(sector_state.get("predator_count", 0)) + 1
+	var species_counts: Dictionary = sector_state.get("species_counts", {})
+	species_counts[agent.species_type] = int(species_counts.get(agent.species_type, 0)) + 1
+	sector_state["species_counts"] = species_counts
+	# Only species that actually hunt something frighten anyone. This used to be the
+	# `else` of a herbivore test, so any third species would have been filed as a
+	# predator here and driven the herds off a scavenger.
+	if species_registry.is_threat(agent.species_type):
 		sector_state["threat_score"] = float(sector_state.get("threat_score", 0.0)) + 1.0
 	sector_state["water"] = sector_state.get("water", false) or _sector_has_water(sector_key)
 	sector_state["dirty_grass"] = true
@@ -1779,10 +2024,10 @@ func _unregister_sector_presence(agent) -> void:
 		var agent_ids: Array = sector_state.get("agent_ids", [])
 		agent_ids.erase(agent.id)
 		sector_state["agent_ids"] = agent_ids
-		if agent.species_type == AgentBaseScript.SPECIES_HERBIVORE:
-			sector_state["herbivore_count"] = maxi(0, int(sector_state.get("herbivore_count", 0)) - 1)
-		else:
-			sector_state["predator_count"] = maxi(0, int(sector_state.get("predator_count", 0)) - 1)
+		var species_counts: Dictionary = sector_state.get("species_counts", {})
+		species_counts[agent.species_type] = maxi(0, int(species_counts.get(agent.species_type, 0)) - 1)
+		sector_state["species_counts"] = species_counts
+		if species_registry.is_threat(agent.species_type):
 			sector_state["threat_score"] = maxf(0.0, float(sector_state.get("threat_score", 0.0)) - 1.0)
 		sector_state["dirty_grass"] = true
 		if agent_ids.is_empty() and not bool(sector_state.get("water", false)) and not bool(sector_state.get("dormant", false)):
@@ -1819,7 +2064,7 @@ func _sector_has_water(sector_key: Vector2i) -> bool:
 ## `"%s:%d"` format ran once per agent per tick in the rebuild and again on every
 ## lookup, which is several hundred throwaway Strings a tick.
 func _group_cache_key(species_type: String, group_id: int) -> Vector2i:
-	return Vector2i(0 if species_type == AgentBaseScript.SPECIES_HERBIVORE else 1, group_id)
+	return Vector2i(species_registry.slot(species_type), group_id)
 
 
 func _rebuild_group_state_cache() -> void:
@@ -2061,6 +2306,7 @@ func _sleep_sector(sector_key: Vector2i) -> void:
 	sector_state["dormant_aggregates"] = _build_dormant_aggregates(records, sector_key)
 	sector_state["dormant_count"] = records.size()
 	sector_state["agent_ids"] = []
+	_project_dormant_counts_onto_sector(sector_state)
 	_sector_states[sector_key] = sector_state
 
 
@@ -2069,10 +2315,16 @@ func _wake_sector(sector_key: Vector2i) -> void:
 	if sector_state.is_empty() or not bool(sector_state.get("dormant", false)):
 		return
 	var records: Array = _materialize_dormant_records(sector_state)
+	# Before the restores: `_register_living_agent()` adds each one back to
+	# `species_counts`, which still holds the aggregate census standing in for them.
+	sector_state["species_counts"] = {}
+	sector_state["threat_score"] = 0.0
+	_sector_states[sector_key] = sector_state
 	for record in records:
 		var agent = _restore_dormant_agent(record)
 		if agent != null:
 			_register_living_agent(agent)
+	sector_state = _get_or_create_sector_state(sector_key)
 	sector_state["dormant"] = false
 	sector_state["dormant_records"] = []
 	sector_state["dormant_species"] = {}
@@ -2217,8 +2469,7 @@ func _refresh_dormant_sector_state(sector_key: Vector2i, preserve_existing: bool
 		sector_state["dormant_species"] = {}
 		sector_state["dormant_aggregates"] = []
 		sector_state["dormant_count"] = 0
-		sector_state["herbivore_count"] = 0
-		sector_state["predator_count"] = 0
+		sector_state["species_counts"] = {}
 		sector_state["threat_score"] = 0.0
 		sector_state["dormant"] = false
 		if sector_state.get("agent_ids", []).is_empty() and sector_state.get("carcass_ids", []).is_empty() and not bool(sector_state.get("water", false)):
@@ -2230,9 +2481,7 @@ func _refresh_dormant_sector_state(sector_key: Vector2i, preserve_existing: bool
 	sector_state["dormant_species"] = _build_dormant_species_state(records)
 	sector_state["dormant_aggregates"] = _build_dormant_aggregates(records, sector_key, previous_map)
 	sector_state["dormant_count"] = records.size()
-	sector_state["herbivore_count"] = int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
-	sector_state["predator_count"] = int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_PREDATOR, {}).get("count", 0))
-	sector_state["threat_score"] = float(sector_state.get("predator_count", 0))
+	_project_dormant_counts_onto_sector(sector_state)
 	_sector_states[sector_key] = sector_state
 
 
@@ -2290,8 +2539,7 @@ func _refresh_prey_pressure_sectors() -> void:
 	var entries: Array = []
 	for sector_key in _sector_states.keys():
 		var sector_state: Dictionary = _sector_states[sector_key]
-		var pressure: int = int(sector_state.get("herbivore_count", 0)) \
-			+ int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
+		var pressure: int = _sector_species_count(sector_state, _prey_species_ids)
 		if pressure <= 0:
 			continue
 		entries.append({
@@ -2331,7 +2579,9 @@ func _find_dormant_prey_goal(position: Vector2, radius: float) -> Dictionary:
 	return find_prey_pressure_goal(position, radius)
 
 
-func _find_dormant_carcass_goal(sector_key: Vector2i, position: Vector2, radius: float) -> Dictionary:
+## `max_age` mirrors `AgentBase.accepts_carcass()`, so a sleeping aggregate is
+## not sent to a body its live counterpart would refuse as too old.
+func _find_dormant_carcass_goal(sector_key: Vector2i, position: Vector2, radius: float, max_age: float = INF) -> Dictionary:
 	var sector_radius: int = maxi(1, int(ceil(radius / _sector_size)))
 	var best: Dictionary = {}
 	var best_distance_sq: float = INF
@@ -2344,6 +2594,8 @@ func _find_dormant_carcass_goal(sector_key: Vector2i, position: Vector2, radius:
 			for carcass_id in sector_state.get("carcass_ids", []):
 				var carcass: Dictionary = get_carcass(int(carcass_id))
 				if carcass.is_empty():
+					continue
+				if max_age != INF and current_time - float(carcass.get("created_at", 0.0)) > max_age:
 					continue
 				var carcass_position: Vector2 = carcass.get("position", _sector_key_to_rect(candidate_sector).get_center())
 				var distance_sq: float = position.distance_squared_to(carcass_position)
@@ -2421,7 +2673,8 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	var dormant_config: Dictionary = config_bundle.get("balance", {}).get("dormant_ecology", {})
 	var critical_thirst := float(thresholds.get("critical_thirst", 65.0))
 	var graze_hunger_floor := float(thresholds.get("graze_hunger_floor", 20.0))
-	if species_key == AgentBaseScript.SPECIES_HERBIVORE:
+	var diet: String = species_registry.diet(species_key)
+	if diet == SpeciesRegistryScript.DIET_GRASS:
 		if float(aggregate.get("avg_thirst", 0.0)) >= critical_thirst:
 			var water_goal: Dictionary = _find_nearest_water_goal(center)
 			if not water_goal.is_empty():
@@ -2453,19 +2706,25 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	# 143 hunger points of travel - more than the scale has - so predators committed to
 	# goals they could never reach and starved en route.
 	var carcass_ttl := float(config_bundle.get("balance", {}).get("carcass", {}).get("ttl_seconds", 30.0))
-	var carcass_goal: Dictionary = _find_dormant_carcass_goal(sector_key, center, maxf(carcass_ttl * travel_speed * 0.8, _sector_size))
+	var carcass_goal: Dictionary = _find_dormant_carcass_goal(
+		sector_key, center, maxf(carcass_ttl * travel_speed * 0.8, _sector_size),
+		species_registry.carrion_max_age(species_key))
 	if not carcass_goal.is_empty():
 		return carcass_goal
 	var predator_hunger := float(aggregate.get("avg_hunger", 0.0))
 	# Hunt from the same floor the live path uses via `_is_hungry_enough_to_feed`, not
 	# from `critical_hunger * 0.9`: at 54 hunger only 27.5 s of travel remained, less
 	# than the width of one sector.
+	# A carrion eater takes the same water-then-carcass route above and stops there:
+	# it has no hunt to fall through to, so it wanders on to the next body instead.
+	if diet != SpeciesRegistryScript.DIET_PREY:
+		return _resolve_dormant_wander_goal(sector_key, aggregate)
 	if predator_hunger >= graze_hunger_floor:
 		# Already standing among prey: hunt here. Without this the goal refresh that fires
 		# on arrival could send the aggregate off to another sector, so it spent most of its
 		# time travelling between herds rather than beside one - and a dormant kill can only
 		# resolve while predator and prey share a sector.
-		if _get_sector_herbivore_pressure(sector_key) > 0:
+		if _get_sector_prey_pressure(sector_key) > 0:
 			return {
 				"goal_kind": "hunt",
 				"goal_position": center,
@@ -2477,7 +2736,7 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 		# aggregate dither its whole travel budget away.
 		if str(aggregate.get("goal_kind", "")) == "hunt" \
 				and not _dormant_aggregate_reached_goal(sector_key, aggregate) \
-				and _get_sector_herbivore_pressure(Vector2i(aggregate.get("goal_sector", sector_key))) > 0:
+				and _get_sector_prey_pressure(Vector2i(aggregate.get("goal_sector", sector_key))) > 0:
 			return {
 				"goal_kind": "hunt",
 				"goal_position": aggregate.get("goal_position", center),
@@ -2582,19 +2841,35 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	if pool > 0.0:
 		pool = maxf(0.0, pool - pool * minf(1.0, elapsed / ttl))
 
+	# Who counts as prey here depends on who is hunting, so the hunters are gathered
+	# first and their `role.eats_species` decides the rest. Two passes over a handful
+	# of per-sector aggregates.
 	var prey_aggregates: Array = []
 	var local_prey: int = 0
 	var hunting_predators: int = 0
+	var hunter_species: String = ""
+	var hunted_species: Dictionary = {}
 	for aggregate in aggregates:
-		var count: int = int(aggregate.get("count", 0))
-		if count <= 0:
+		if int(aggregate.get("count", 0)) <= 0:
 			continue
 		var species_key := str(aggregate.get("species_type", ""))
-		if species_key == AgentBaseScript.SPECIES_HERBIVORE:
-			prey_aggregates.append(aggregate)
-			local_prey += count
-		elif species_key == AgentBaseScript.SPECIES_PREDATOR and str(aggregate.get("goal_kind", "")) == "hunt":
-			hunting_predators += count
+		if species_registry.diet(species_key) != SpeciesRegistryScript.DIET_PREY:
+			continue
+		if str(aggregate.get("goal_kind", "")) != "hunt":
+			continue
+		hunting_predators += int(aggregate.get("count", 0))
+		if hunter_species == "":
+			hunter_species = species_key
+		for prey_id in species_registry.prey_set(species_key).keys():
+			hunted_species[prey_id] = true
+	if hunting_predators > 0:
+		for aggregate in aggregates:
+			var count: int = int(aggregate.get("count", 0))
+			if count <= 0:
+				continue
+			if hunted_species.has(str(aggregate.get("species_type", ""))):
+				prey_aggregates.append(aggregate)
+				local_prey += count
 
 	if hunting_predators > 0:
 		performance_counters["dormant_hunting_predator_steps"] += hunting_predators
@@ -2625,9 +2900,10 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 			aggregate["count"] = int(aggregate.get("count", 0)) - taken
 			remaining -= taken
 			var position: Vector2 = aggregate.get("center", death_position)
+			var prey_species := str(aggregate.get("species_type", ""))
 			for _index in range(taken):
-				_emit_dormant_death(AgentBaseScript.SPECIES_HERBIVORE, position, "predation")
-				emit_population_event("PredationSuccess", AgentBaseScript.SPECIES_PREDATOR, position, {"dormant": true})
+				_emit_dormant_death(prey_species, position, "predation")
+				emit_population_event("PredationSuccess", hunter_species, position, {"dormant": true})
 		kills -= remaining
 		pool += float(kills) * meat_total
 		performance_counters["dormant_predation_kills"] += kills
@@ -2875,13 +3151,13 @@ func _sector_adjacent_to_active_ring(sector_key: Vector2i, lod_context: Dictiona
 func _dormant_sector_should_force_wake(sector_key: Vector2i, sector_state: Dictionary, lod_context: Dictionary) -> bool:
 	if _dormant_sector_should_wake_for_neighboring_threat(sector_key, lod_context):
 		return true
-	var predator_count := int(sector_state.get("predator_count", 0))
-	var herbivore_count := int(sector_state.get("herbivore_count", 0))
-	if predator_count > 0 and herbivore_count > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
+	var threat_count := _sector_species_count(sector_state, _threat_species_ids)
+	var prey_count := _sector_species_count(sector_state, _prey_species_ids)
+	if threat_count > 0 and prey_count > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
 		return true
-	if not sector_state.get("carcass_ids", []).is_empty() and predator_count > 0:
+	if not sector_state.get("carcass_ids", []).is_empty() and threat_count > 0:
 		return true
-	if bool(sector_state.get("water", false)) and predator_count > 0 and herbivore_count > 0:
+	if bool(sector_state.get("water", false)) and threat_count > 0 and prey_count > 0:
 		return true
 	return false
 
@@ -2896,12 +3172,11 @@ func _dormant_aggregate_reached_goal(sector_key: Vector2i, aggregate: Dictionary
 	return center.distance_to(goal_position) <= proximity
 
 
-func _get_sector_herbivore_pressure(sector_key: Vector2i) -> int:
+func _get_sector_prey_pressure(sector_key: Vector2i) -> int:
 	var sector_state: Dictionary = _sector_states.get(sector_key, {})
 	if sector_state.is_empty():
 		return 0
-	var dormant_species: Dictionary = sector_state.get("dormant_species", {})
-	return int(sector_state.get("herbivore_count", 0)) + int(dormant_species.get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
+	return _sector_species_count(sector_state, _prey_species_ids)
 
 
 ## Meat to hunger and energy, per head, using exactly the knobs the live
@@ -2925,7 +3200,8 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 		var species_key := str(aggregate.get("species_type", ""))
 		var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 		var feeding: Dictionary = species_config.get("feeding", {})
-		if species_key == AgentBaseScript.SPECIES_HERBIVORE:
+		var diet: String = species_registry.diet(species_key)
+		if diet == SpeciesRegistryScript.DIET_GRASS:
 			if str(aggregate.get("goal_kind", "")) == "water" and _dormant_aggregate_reached_goal(sector_key, aggregate):
 				var drink_duration := maxf(0.1, float(feeding.get("drink_duration", 0.6)))
 				var thirst_restore := float(feeding.get("drink_restore", 35.0)) * minf(1.0, elapsed / drink_duration)
@@ -2950,7 +3226,9 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 				var max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
 				aggregate["avg_energy"] = minf(max_energy, float(aggregate.get("avg_energy", 0.0)) + consumed_per_agent * 0.18)
 			continue
-		if species_key != AgentBaseScript.SPECIES_PREDATOR:
+		# Meat eaters, hunters and carrion feeders alike: the `water` and `seek_carcass`
+		# arms below serve both, and only a hunter is ever handed a `hunt` goal.
+		if diet != SpeciesRegistryScript.DIET_PREY and diet != SpeciesRegistryScript.DIET_CARRION:
 			continue
 		# The predator side of the coarse ecology. Without these branches a dormant
 		# predator could reach prey, water or a carcass and still take nothing from any
@@ -2976,7 +3254,7 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 					continue
 				_apply_dormant_meat_to_predator(aggregate, feeding, carcass_meat / float(head_count), predator_max_energy)
 			"hunt":
-				var prey_pressure := _get_sector_herbivore_pressure(Vector2i(aggregate.get("goal_sector", sector_key)))
+				var prey_pressure := _get_sector_prey_pressure(Vector2i(aggregate.get("goal_sector", sector_key)))
 				if prey_pressure <= 0:
 					aggregate["last_goal_refresh_time"] = -INF
 				# Draw from the meat this sector's kills produced in
@@ -3044,9 +3322,7 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 	sector_state["dormant_species"] = _build_dormant_species_state(sector_state.get("dormant_records", []))
 	sector_state["dormant_aggregates"] = _build_dormant_aggregates(sector_state.get("dormant_records", []), sector_key, _build_dormant_aggregate_previous_map(next_aggregates))
 	sector_state["dormant_count"] = sector_state.get("dormant_records", []).size()
-	sector_state["herbivore_count"] = int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_HERBIVORE, {}).get("count", 0))
-	sector_state["predator_count"] = int(sector_state.get("dormant_species", {}).get(AgentBaseScript.SPECIES_PREDATOR, {}).get("count", 0))
-	sector_state["threat_score"] = float(sector_state.get("predator_count", 0))
+	_project_dormant_counts_onto_sector(sector_state)
 
 
 func _find_dormant_record_template(records: Array, species_key: String) -> Dictionary:
@@ -3106,6 +3382,8 @@ func _restore_dormant_agent(record: Dictionary):
 		int(record.get("group_id", -1))
 	)
 	agent.apply_runtime_state(record)
+	agent.position = scenery.nearest_free(agent.position, agent.get_body_radius())
+	agent.clear_navigation()
 	agents[record_id] = agent
 	next_agent_id = maxi(next_agent_id, record_id + 1)
 	return agent
@@ -3120,7 +3398,7 @@ func _dormant_sector_has_agent(sector_state: Dictionary, agent_id: int) -> bool:
 
 func _dormant_sector_should_wake_for_neighboring_threat(sector_key: Vector2i, lod_context: Dictionary) -> bool:
 	var sector_state: Dictionary = _sector_states.get(sector_key, {})
-	if int(sector_state.get("predator_count", 0)) > 0 and int(sector_state.get("herbivore_count", 0)) > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
+	if _sector_species_count(sector_state, _threat_species_ids) > 0 and _sector_species_count(sector_state, _prey_species_ids) > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
 		return true
 	for x in range(sector_key.x - 1, sector_key.x + 2):
 		for y in range(sector_key.y - 1, sector_key.y + 2):
@@ -3138,14 +3416,7 @@ func _dormant_sector_should_wake_for_neighboring_threat(sector_key: Vector2i, lo
 
 
 func _create_agent(species_type: String):
-	match species_type:
-		AgentBaseScript.SPECIES_HERBIVORE:
-			return HerbivoreScript.new()
-		AgentBaseScript.SPECIES_PREDATOR:
-			return PredatorScript.new()
-		_:
-			push_error("Unknown species type: %s" % species_type)
-			return null
+	return species_registry.make_agent(species_type)
 
 
 func _random_sex() -> String:
@@ -3177,11 +3448,13 @@ func _flush_spawns() -> void:
 		)
 		if child == null:
 			continue
-		if child.species_type == AgentBaseScript.SPECIES_PREDATOR:
+		# Kin links are what the pair-cohesion flow and the chase leash read, so they
+		# belong to any species that lives in pairs rather than to predators by name.
+		if species_registry.social(child.species_type) == SpeciesRegistryScript.SOCIAL_PAIR:
 			for parent_key in ["parent_a_id", "parent_b_id"]:
 				var parent_id := int(request[parent_key])
 				var parent = get_agent(parent_id)
-				if parent == null or not parent.is_alive or parent.species_type != AgentBaseScript.SPECIES_PREDATOR:
+				if parent == null or not parent.is_alive or parent.species_type != child.species_type:
 					continue
 				if child.has_method("add_kin_id"):
 					child.call("add_kin_id", parent_id)

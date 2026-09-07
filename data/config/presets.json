@@ -138,6 +138,9 @@
               "water_generation": {
                 "radius_min": 60.0,
                 "radius_max": 93.3
+              },
+              "spawns": {
+                "initial_carcass_count": 5
               }
             },
             "species": {
@@ -183,6 +186,22 @@
                   "hunger_rate": 1.95,
                   "thirst_rate": 1.55
                 }
+              },
+              "scavenger": {
+                "perception": {
+                  "danger_radius": 86.7,
+                  "water_search_radius": 480.0,
+                  "neighbor_radius": 53.3,
+                  "separation_radius": 18.7,
+                  "mate_search_radius": 40.0
+                },
+                "movement": {
+                  "body_radius": 3.0
+                },
+                "feeding": {
+                  "feed_distance": 6.7,
+                  "drink_distance": 14.7
+                }
               }
             },
             "balance": {
@@ -225,6 +244,9 @@
               "water_generation": {
                 "radius_min": 120.0,
                 "radius_max": 186.7
+              },
+              "spawns": {
+                "initial_carcass_count": 18
               }
             },
             "species": {
@@ -269,6 +291,22 @@
                 "metabolism": {
                   "hunger_rate": 1.5,
                   "thirst_rate": 1.2
+                }
+              },
+              "scavenger": {
+                "perception": {
+                  "danger_radius": 173.3,
+                  "water_search_radius": 960.0,
+                  "neighbor_radius": 106.7,
+                  "separation_radius": 37.3,
+                  "mate_search_radius": 80.0
+                },
+                "movement": {
+                  "body_radius": 6.0
+                },
+                "feeding": {
+                  "feed_distance": 13.3,
+                  "drink_distance": 29.3
                 }
               }
             },
@@ -316,6 +354,9 @@
               "water_generation": {
                 "radius_min": 270.0,
                 "radius_max": 420.0
+              },
+              "spawns": {
+                "initial_carcass_count": 90
               }
             },
             "species": {
@@ -361,6 +402,22 @@
                   "hunger_rate": 1.0,
                   "thirst_rate": 0.8
                 }
+              },
+              "scavenger": {
+                "perception": {
+                  "danger_radius": 390.0,
+                  "water_search_radius": 2160.0,
+                  "neighbor_radius": 240.0,
+                  "separation_radius": 84.0,
+                  "mate_search_radius": 180.0
+                },
+                "movement": {
+                  "body_radius": 13.5
+                },
+                "feeding": {
+                  "feed_distance": 30.0,
+                  "drink_distance": 66.0
+                }
               }
             },
             "balance": {
@@ -387,7 +444,9 @@
               "spawns": {
                 "herbivore_count": 240,
                 "predator_count": 8,
-                "herbivore_group_count": 12
+                "herbivore_group_count": 12,
+                "scavenger_count": 40,
+                "scavenger_group_count": 12
               }
             }
           }
@@ -399,7 +458,9 @@
               "spawns": {
                 "herbivore_count": 240,
                 "predator_count": 60,
-                "herbivore_group_count": 12
+                "herbivore_group_count": 12,
+                "scavenger_count": 110,
+                "scavenger_group_count": 12
               }
             }
           }
@@ -411,7 +472,9 @@
               "spawns": {
                 "herbivore_count": 300,
                 "predator_count": 24,
-                "herbivore_group_count": 6
+                "herbivore_group_count": 6,
+                "scavenger_count": 72,
+                "scavenger_group_count": 12
               }
             }
           }
@@ -423,7 +486,9 @@
               "spawns": {
                 "herbivore_count": 240,
                 "predator_count": 24,
-                "herbivore_group_count": 30
+                "herbivore_group_count": 30,
+                "scavenger_count": 72,
+                "scavenger_group_count": 12
               }
             }
           }
@@ -496,7 +561,18 @@
               "spawns": {
                 "herbivore_count": 240,
                 "predator_count": 0,
-                "herbivore_group_count": 12
+                "herbivore_group_count": 12,
+                "initial_carcass_count": 90
+              }
+            }
+          }
+        },
+        "no_scavengers": {
+          "label": "Без падальщиков",
+          "patch": {
+            "world": {
+              "spawns": {
+                "scavenger_count": 0
               }
             }
           }

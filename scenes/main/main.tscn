@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scripts/ui/selection_tag.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/ui/selection_card.gd" id="14"]
 [ext_resource type="Script" path="res://scripts/ui/climate_indicator.gd" id="15"]
+[ext_resource type="Script" path="res://scripts/ui/help_screen.gd" id="16"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -72,11 +73,14 @@ script = ExtResource("13")
 
 [node name="DebugPanel" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=1059450527]
 unique_name_in_owner = true
-layout_mode = 0
+layout_mode = 1
+anchors_preset = 9
+anchor_bottom = 1.0
 offset_left = 12.0
 offset_top = 12.0
-offset_right = 392.0
-offset_bottom = 888.0
+offset_right = 416.0
+offset_bottom = -12.0
+grow_vertical = 2
 script = ExtResource("5")
 
 [node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/HUD/DebugPanel" unique_id=239327197]
@@ -86,167 +90,173 @@ theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 10
 theme_override_constants/margin_bottom = 10
 
-[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer" unique_id=166485953]
+[node name="ScrollContainer" type="ScrollContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer" unique_id=166485952]
 layout_mode = 2
+follow_focus = true
+horizontal_scroll_mode = 0
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer" unique_id=166485953]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="ControlsRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=742677137]
+[node name="ControlsRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=742677137]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="PauseButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=420614205]
+[node name="PauseButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=420614205]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Pause"
 
-[node name="StepButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=1106000441]
+[node name="StepButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=1106000441]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Step"
 
-[node name="SpeedOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=2143489183]
+[node name="SpeedOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=2143489183]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="ExportButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/ControlsRow" unique_id=1239879424]
+[node name="ExportButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=1239879424]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Export"
 
-[node name="FocusRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=113504811]
+[node name="FocusRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=113504811]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="FocusLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/FocusRow" unique_id=166006314]
+[node name="FocusLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/FocusRow" unique_id=166006314]
 layout_mode = 2
 text = "Follow"
 
-[node name="FocusModeOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/FocusRow" unique_id=210001313]
+[node name="FocusModeOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/FocusRow" unique_id=210001313]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="SummaryLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1266242578]
+[node name="SummaryLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1266242578]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 156)
 layout_mode = 2
 bbcode_enabled = true
 fit_content = true
 scroll_active = false
 
-[node name="LodEnabledCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1800317812]
+[node name="LodEnabledCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1800317812]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Enable LOD"
 
-[node name="OverlayLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=901544959]
+[node name="OverlayLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=901544959]
 layout_mode = 2
 text = "Overlays"
 
-[node name="OverlayGrid" type="GridContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=106828282]
+[node name="OverlayGrid" type="GridContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=106828282]
 layout_mode = 2
 columns = 2
 
-[node name="BiomesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1953019121]
+[node name="BiomesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1953019121]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Biomes"
 
-[node name="ObstaclesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=847103551]
+[node name="ObstaclesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=847103551]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Obstacles"
 
-[node name="StateLabelsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=441133833]
+[node name="StateLabelsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=441133833]
 unique_name_in_owner = true
 layout_mode = 2
 text = "State labels"
 
-[node name="TargetLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=894795768]
+[node name="TargetLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=894795768]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Target lines"
 
-[node name="VisionRadiusCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1679789139]
+[node name="VisionRadiusCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1679789139]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Vision radius"
 
-[node name="HerdRelationsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=432432603]
+[node name="HerdRelationsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=432432603]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Herd relation"
 
-[node name="ChaseLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=859592048]
+[node name="ChaseLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=859592048]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Chase lines"
 
-[node name="GrassDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=2030533667]
+[node name="GrassDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=2030533667]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Grass density"
 
-[node name="PopulationDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=579245789]
+[node name="PopulationDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=579245789]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Population density"
 
-[node name="WaterOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1487088393]
+[node name="WaterOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1487088393]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Water overlay"
 
-[node name="CarcassesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=115483721]
+[node name="CarcassesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=115483721]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Carcasses"
 
-[node name="SelectedPathCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=1063190875]
+[node name="SelectedPathCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1063190875]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Selected path"
 
-[node name="LodOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=399522519]
+[node name="LodOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=399522519]
 unique_name_in_owner = true
 layout_mode = 2
 text = "LOD tiers"
 
-[node name="MinimapWaterCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox/OverlayGrid" unique_id=399522520]
+[node name="MinimapWaterCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=399522520]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Water on minimap"
 
-[node name="InspectorLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=156126296]
+[node name="InspectorLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=156126296]
 layout_mode = 2
 text = "Selected Agent"
 
-[node name="InspectorText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1410902342]
+[node name="InspectorText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1410902342]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 150)
 layout_mode = 2
 bbcode_enabled = true
 fit_content = true
+scroll_active = false
 
-[node name="EventLogLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=923282622]
+[node name="EventLogLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=923282622]
 layout_mode = 2
 text = "Event Log"
 
-[node name="EventLogText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1067215429]
+[node name="EventLogText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1067215429]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 240)
 layout_mode = 2
+fit_content = true
+scroll_active = false
 
-[node name="StatusLabelTitle" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1614298046]
+[node name="StatusLabelTitle" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1614298046]
 layout_mode = 2
 text = "Status"
 
-[node name="StatusLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/VBox" unique_id=1419031012]
+[node name="StatusLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1419031012]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 90)
 layout_mode = 2
 fit_content = true
+scroll_active = false
 
 [node name="ChartsPanel" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=1094959041]
 unique_name_in_owner = true
@@ -392,6 +402,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Resume"
 
+[node name="HelpButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=640338194]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Помощь"
+
 [node name="RestartButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=640338193]
 unique_name_in_owner = true
 layout_mode = 2
@@ -401,3 +416,12 @@ text = "Новая симуляция"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Exit"
+
+[node name="HelpScreen" type="CenterContainer" parent="CanvasLayer" unique_id=317745002]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("16")

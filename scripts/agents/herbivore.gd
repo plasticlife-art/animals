@@ -8,6 +8,26 @@ const HerbivoreAIScript := preload("res://scripts/agents/ai/herbivore_ai.gd")
 var _ai_controller
 var _escape_target_tick: int = -1
 var _escape_target_position: Vector2 = Vector2.ZERO
+var threat_memory_until: float = -1.0
+var last_threat_position: Vector2 = Vector2.ZERO
+var _escape_heading: Vector2 = Vector2.ZERO
+
+func export_runtime_state() -> Dictionary:
+	var data := super.export_runtime_state()
+	data["threat_memory_until"] = threat_memory_until
+	data["last_threat_position"] = last_threat_position
+	data["escape_target"] = _escape_target_position
+	data["escape_target_tick"] = _escape_target_tick
+	data["escape_heading"] = _escape_heading
+	return data
+
+func apply_runtime_state(data: Dictionary) -> void:
+	super.apply_runtime_state(data)
+	threat_memory_until = float(data.get("threat_memory_until", -1.0))
+	last_threat_position = data.get("last_threat_position", position)
+	_escape_target_position = data.get("escape_target", position)
+	_escape_target_tick = int(data.get("escape_target_tick", -1))
+	_escape_heading = data.get("escape_heading", Vector2.ZERO)
 
 
 func configure(
@@ -31,20 +51,34 @@ func tick(world, delta: float) -> void:
 		set_ai_state(AgentAIState.DEAD)
 		return
 
+	var predators: Array = world.visible_agents_multi(
+		self,
+		world.perception_radius(self, "danger_radius", 120.0),
+		world.species_registry.predator_set(species_type)
+	)
+	if not predators.is_empty():
+		last_threat_position = predators[0].position
+		threat_memory_until = world.current_time + float(perception.get("threat_memory_seconds", 2.0))
+	if not predators.is_empty() or world.current_time < threat_memory_until:
+		interaction_timer = 0.0
+		set_ai_state(AgentAIState.PANIC)
+		force_current_action(AgentAction.FLEE_TO_SAFE_AREA, "danger or recent threat", world.current_tick)
+		var neighbors: Array = [] if cached_snapshot == null else cached_snapshot.group_neighbors
+		_flee(world, delta, predators, neighbors)
+		return
+	if ai_state == AgentAIState.PANIC:
+		clear_decision_cache()
+		clear_navigation()
+		set_ai_state(AgentAIState.ALIVE)
 	if interaction_timer > 0.0:
 		stop_motion(delta)
 		return
-
 	var should_decide: bool = world.should_run_decision_tick(self)
-	var predators: Array = []
-	if not should_decide:
-		predators = world.query_agents(position, world.perception_radius(self, "danger_radius", 120.0), SPECIES_PREDATOR, id)
-		should_decide = not predators.is_empty()
 	var snapshot = cached_snapshot
 	var context = cached_context
 	if should_decide or snapshot == null or context == null:
 		var context_started_at_usec := Time.get_ticks_usec()
-		snapshot = world.build_herbivore_snapshot(self)
+		snapshot = _build_snapshot(world)
 		context = _ai_controller.build_context(self, world, snapshot)
 		world.record_ai_context_ms(float(Time.get_ticks_usec() - context_started_at_usec) / 1000.0)
 		var next_ai_state: StringName = _ai_controller.resolve_state(self, context)
@@ -73,6 +107,13 @@ func tick(world, delta: float) -> void:
 	_execute_selected_action(world, delta, snapshot.group_neighbors, predators, current_action, snapshot)
 
 
+## Which perception snapshot this behaviour runs on. The forage loop below is
+## shared with any herd animal; only its food differs, and that is what a
+## subclass overrides here.
+func _build_snapshot(world):
+	return world.build_herbivore_snapshot(self)
+
+
 func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {}) -> bool:
 	if water.is_empty():
 		water = _resolve_water_target(world)
@@ -82,6 +123,11 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 	target_position = water["position"]
 	var drink_distance: float = float(feeding.get("drink_distance", 28.0)) + float(water.get("radius", 0.0))
 	if position.distance_squared_to(water["position"]) <= drink_distance * drink_distance:
+		# Arriving is not a reason to drink. Without this an animal that merely
+		# grazed its way to the shore took a mouthful, and the herd standing by
+		# the water never had a reason to leave it.
+		if not is_drinking_allowed():
+			return false
 		set_state("drink", world.current_tick)
 		clear_navigation()
 		interaction_timer = float(feeding.get("drink_duration", 0.6))
@@ -198,31 +244,35 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 ## tick, and each computation costs several pathfinds. Memoize it per tick so a panicking
 ## herd asks the navigation budget once per agent instead of twice.
 func get_escape_destination(world, flee_vector: Vector2, base_distance: float) -> Vector2:
-	if _escape_target_tick == world.current_tick:
+	var refresh_ticks := maxi(1, int(perception.get("escape_refresh_ticks", 12)))
+	var changed := _escape_heading.dot(flee_vector) < 0.5
+	var arrived := position.distance_to(_escape_target_position) < get_body_radius() + 8.0
+	if _escape_target_tick >= 0 and world.current_tick - _escape_target_tick < refresh_ticks and not changed and not arrived and stuck_timer < 0.75:
 		return _escape_target_position
 	_escape_target_tick = world.current_tick
+	_escape_heading = flee_vector
 	_escape_target_position = world.choose_escape_destination(position, flee_vector, base_distance)
 	return _escape_target_position
 
 
-func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
+func _flee(world, delta: float, predators: Array, _neighbors: Array) -> void:
 	set_state("flee", world.current_tick)
-	clear_targets()
-
+	target_agent_id = -1
 	var flee_vector := Vector2.ZERO
 	for predator in predators:
-		flee_vector += Steering.flee(position, predator.position)
+		var offset: Vector2 = position - predator.position
+		flee_vector += offset / maxf(1.0, offset.length_squared())
+	if flee_vector.is_zero_approx():
+		flee_vector = position - last_threat_position
+	if flee_vector.is_zero_approx():
+		flee_vector = direction
 	flee_vector = flee_vector.normalized()
-
-	var herd_weights: Dictionary = balance.get("herd_weights", {})
-	var escape_target: Vector2 = get_escape_destination(world, flee_vector, 168.0)
+	var escape_target := get_escape_destination(world, flee_vector, world.terrain_system.cell_size * float(perception.get("escape_distance_cells", 2.5)))
 	target_position = escape_target
-	var waypoint: Vector2 = world.get_next_waypoint(position, escape_target, id, true)
-	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, waypoint), "weight": float(herd_weights.get("flee", 2.4))},
-		{"vector": _herd_vector(world, neighbors, false), "weight": 0.35},
-	])
-	move_with_vector(world, move_vector, float(movement.get("sprint_speed", 115.0)), delta)
+	var waypoint: Vector2 = world.get_next_waypoint(position, escape_target, id)
+	move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("sprint_speed", 115.0)), delta)
+	if velocity.length_squared() > 1.0:
+		spend_energy(float(metabolism.get("sprint_energy_cost", 2.0)) * delta)
 
 
 func _should_regroup(world, group_center = null) -> bool:
@@ -257,7 +307,7 @@ func _regroup(world, delta: float, neighbors: Array, group_center = null) -> voi
 func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array = []) -> bool:
 	var safe_radius := float(reproduction.get("safe_radius", 100.0))
 	if predators.is_empty():
-		predators = Perception.get_nearby_agents(world, position, safe_radius, SPECIES_PREDATOR, id)
+		predators = world.query_agents_multi(position, safe_radius, world.species_registry.predator_set(species_type), id)
 	if not predators.is_empty():
 		return false
 
@@ -265,7 +315,7 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 		world,
 		position,
 		float(perception.get("mate_search_radius", 70.0)),
-		SPECIES_HERBIVORE,
+		species_type,
 		id
 	)
 	var chosen_mate = null
@@ -300,7 +350,7 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 	var spawn_center: Vector2 = position.lerp(chosen_mate.position, 0.5)
 	var spawn_offset: Vector2 = world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 18.0))
 	var child_position: Vector2 = world.clamp_position(spawn_center + spawn_offset)
-	world.queue_spawn_agent(SPECIES_HERBIVORE, child_position, group_id, self, chosen_mate)
+	world.queue_spawn_agent(species_type, child_position, group_id, self, chosen_mate)
 
 	set_state("reproduce", world.current_tick)
 	chosen_mate.set_state("reproduce", world.current_tick)
@@ -392,7 +442,7 @@ func _get_group_neighbors(world) -> Array:
 		world,
 		position,
 		float(perception.get("neighbor_radius", 90.0)),
-		SPECIES_HERBIVORE,
+		species_type,
 		id
 	)
 	if group_id == -1:

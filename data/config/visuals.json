@@ -94,7 +94,14 @@
           "frames": 7,
           "fps": 0.0
         }
-      }
+      },
+      "z": 0,
+      "ui_color": [
+        0.88,
+        0.93,
+        0.62
+      ],
+      "minimap_radius": 1.5
     },
     "predator": {
       "atlas": "res://assets/sprites/predator_atlas.png",
@@ -117,6 +124,54 @@
           "row": 8,
           "frames": 6,
           "fps": 13.0
+        },
+        "eat": {
+          "row": 12,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "dead": {
+          "row": 16,
+          "frames": 6,
+          "fps": 0.0
+        }
+      },
+      "z": 2,
+      "ui_color": [
+        0.95,
+        0.42,
+        0.33
+      ],
+      "minimap_radius": 2.0
+    },
+    "scavenger": {
+      "atlas": "res://assets/sprites/scavenger_atlas.png",
+      "frame_px": 32,
+      "sprite_scale": 0.7,
+      "stride_length": 18.0,
+      "directions": 4,
+      "z": 1,
+      "ui_color": [
+        0.72,
+        0.45,
+        0.95
+      ],
+      "minimap_radius": 1.6,
+      "animations": {
+        "idle": {
+          "row": 0,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "walk": {
+          "row": 4,
+          "frames": 6,
+          "fps": 9.0
+        },
+        "run": {
+          "row": 8,
+          "frames": 6,
+          "fps": 14.0
         },
         "eat": {
           "row": 12,

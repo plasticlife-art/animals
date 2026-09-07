@@ -29,10 +29,9 @@ const ACTION_LABELS := {
 	"reproduce": "Mating",
 }
 
-const SPECIES_LABELS := {
-	"herbivore": "Herbivore",
-	"predator": "Predator",
-}
+## Fallback only. The real label is `species.json -> role.label`, which the
+## selection card passes in; this covers a species that omits one.
+const SPECIES_LABELS := {}
 
 const SEX_GLYPHS := {
 	"female": "♀",

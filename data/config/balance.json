@@ -8,8 +8,10 @@
     "rejoin_distance": 135.0,
     "graze_hunger_floor": 12.0,
     "graze_stop_hunger_floor": 4.0,
-    "feed_hunger_floor": 12.0,
-    "feed_stop_hunger_floor": 4.0
+    "feed_hunger_floor": 28.0,
+    "feed_stop_hunger_floor": 4.0,
+    "drink_thirst_floor": 40.0,
+    "drink_stop_thirst_floor": 8.0
   },
   "herd_weights": {
     "cohesion": 0.75,
@@ -38,7 +40,7 @@
     "prey_escape_penalty": 0.16
   },
   "carcass": {
-    "ttl_seconds": 30.0,
+    "ttl_seconds": 90.0,
     "meat_total": 150.0,
     "max_feeders": 5,
     "search_radius": 420.0
@@ -115,7 +117,9 @@
           "hunger_weight": 0.35,
           "carcass_proximity_weight": 0.25,
           "carcass_meat_weight": 0.25,
-          "prey_scarcity_weight": 0.15
+          "prey_scarcity_weight": 0.15,
+          "critical_hunger_ratio": 0.6,
+          "critical_hunger_weight": 0.75
         },
         "drink": {
           "thirst_weight": 0.5,
@@ -149,6 +153,56 @@
           "base_score": 0.15,
           "low_urgency_weight": 0.55,
           "no_targets_weight": 0.3
+        }
+      }
+    },
+    "decision_interval_ticks": 3,
+    "scavenger": {
+      "panic_threat_threshold": 0.55,
+      "evaluators": {
+        "scavenge_carcass": {
+          "hunger_weight": 0.45,
+          "carcass_proximity_weight": 0.3,
+          "carcass_meat_weight": 0.2,
+          "prey_scarcity_weight": 0.05,
+          "critical_hunger_ratio": 0.6,
+          "critical_hunger_weight": 0.5
+        },
+        "drink": {
+          "thirst_weight": 0.6,
+          "water_weight": 0.4,
+          "safety_weight": 0.08,
+          "water_threat_penalty": 0.35,
+          "ambient_threat_penalty": 0.12,
+          "hunger_penalty": 0.08
+        },
+        "rest": {
+          "fatigue_weight": 0.45,
+          "safe_biome_weight": 0.25,
+          "low_threat_weight": 0.1,
+          "hunger_penalty": 0.18,
+          "thirst_penalty": 0.22,
+          "threat_penalty": 0.35,
+          "night_weight": 0.3
+        },
+        "explore": {
+          "low_urgency_weight": 0.45,
+          "scarcity_weight": 0.35,
+          "low_threat_weight": 0.2,
+          "night_penalty": 0.3
+        },
+        "join_herd": {
+          "isolation_weight": 0.35,
+          "herd_weight": 0.25,
+          "availability_weight": 0.2,
+          "threat_weight": 0.2
+        },
+        "flee_to_safe_area": {
+          "threat_weight": 0.5,
+          "predator_visible_weight": 0.2,
+          "open_area_weight": 0.1,
+          "low_energy_weight": 0.1,
+          "safe_zone_weight": 0.1
         }
       }
     }

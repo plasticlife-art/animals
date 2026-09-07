@@ -10,6 +10,7 @@ const CONFIG_FILES := {
 }
 
 const OPTIONS_FILE := "res://data/config/presets.json"
+const HELP_FILE := "res://data/config/help.json"
 
 
 ## Loads every config file and overlays the chosen setup options.
@@ -48,6 +49,30 @@ static func list_option_groups() -> Array:
 			"label": str(group.get("label", group_id)),
 			"default": str(group.get("default", options[0]["id"])),
 			"options": options,
+		})
+	return listed
+
+
+## The help screen's sections, in the file's declared order.
+##
+## Returns `[{id, label, body}]` with `body` as BBCode. Kept out of
+## `CONFIG_FILES` on purpose: help text is prose for the reader, not a knob the
+## simulation reads, and a headless run has no business loading it.
+static func list_help_sections() -> Array:
+	var parsed: Dictionary = _load_json(HELP_FILE)
+	var sections: Dictionary = parsed.get("sections", {})
+	var order: Array = parsed.get("order", [])
+	if order.is_empty():
+		order = sections.keys()
+	var listed: Array = []
+	for section_id in order:
+		if not sections.has(section_id):
+			continue
+		var section: Dictionary = sections[section_id]
+		listed.append({
+			"id": str(section_id),
+			"label": str(section.get("label", section_id)),
+			"body": str(section.get("body", "")),
 		})
 	return listed
 

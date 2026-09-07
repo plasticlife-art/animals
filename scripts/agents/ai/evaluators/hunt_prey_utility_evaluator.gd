@@ -11,7 +11,7 @@ func _init(new_config: Dictionary = {}) -> void:
 func evaluate(_agent, context) -> Dictionary:
 	var feeding_allowed := float(context.get_value("feeding_allowed", 1.0))
 	if feeding_allowed < 0.5:
-		return veto(["below hunger floor"])
+		return veto((["below hunger floor"] if context.diagnostics else []))
 	var hunger := float(context.get_value("hunger", 0.0))
 	var prey_quality := float(context.get_value("prey_quality", 0.0))
 	var prey_proximity := float(context.get_value("prey_proximity", 0.0))
@@ -27,9 +27,9 @@ func evaluate(_agent, context) -> Dictionary:
 	var knee := get_weight("critical_hunger_ratio", 0.6)
 	var urgency := clampf((hunger - knee) / maxf(0.01, 1.0 - knee), 0.0, 1.0)
 	score += urgency * get_weight("critical_hunger_weight", 0.45)
-	return result(score, [
+	return result(score, ([
 		reason_if("hunger", hunger),
 		reason_if("prey", prey_quality),
 		reason_if("range", prey_proximity),
 		reason_if("urgent", urgency),
-	])
+	] if context.diagnostics else []))
