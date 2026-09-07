@@ -22,6 +22,9 @@ var is_alive: bool = true
 var sex: String = SEX_FEMALE
 var reproduction_cooldown: float = 0.0
 var target_agent_id: int = -1
+## The carcass this agent has claimed, or -1. Lives here rather than on the
+## meat eaters because `WorldState` releases it on death for every species.
+var target_carcass_id: int = -1
 var target_position = null
 var group_id: int = -1
 var last_state_change_tick: int = 0
@@ -44,6 +47,9 @@ var path_cells: Array = []
 var path_index: int = 0
 var path_goal_cell: int = -1
 var last_repath_tick: int = -9999
+var local_retry_tick: int = -9999
+var local_path := PackedVector2Array()
+var local_path_goal := Vector2.ZERO
 var stuck_timer: float = 0.0
 var last_decision_tick: int = -9999
 var cached_snapshot = null
@@ -199,6 +205,46 @@ func is_hunger_above_floor(start_floor: float, stop_floor_key: String, continuin
 	return hunger >= float(thresholds.get(stop_floor_key, minf(start_floor, 4.0)))
 
 
+## The thirst twin of `is_hunger_above_floor()`, and the reason it now exists:
+## eating had a start/stop band and drinking had none at all. An animal standing
+## near water would go and drink at any thirst whatsoever, because the drink
+## score paid for water being close rather than for the animal being thirsty, so
+## a herd that wandered past a lake stayed there.
+func is_thirst_above_floor(start_floor: float, stop_floor_key: String, continuing: bool) -> bool:
+	if not continuing:
+		return thirst >= start_floor
+	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	return thirst >= float(thresholds.get(stop_floor_key, minf(start_floor, 4.0)))
+
+
+## `state_thresholds.rest_energy` / `rest_energy_resume` existed and were read by
+## the HUD and the dormant path, but never by the live rest evaluator - so rest
+## had no energy floor and a calm animal in a meadow scored it on circumstance
+## alone. The resume value is the hysteresis: start resting below the first,
+## carry on until the second.
+func is_energy_below_rest_floor() -> bool:
+	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	if state == "rest" or current_action == &"rest":
+		return energy <= float(thresholds.get("rest_energy_resume", 34.0))
+	return energy <= float(thresholds.get("rest_energy", 26.0))
+
+
+func get_drink_thirst_floor() -> float:
+	return float(balance.get("state_thresholds", {}).get("drink_thirst_floor", 40.0))
+
+
+## Mid-drink, so that arriving at the water and taking the first mouthful does
+## not immediately fall below the start floor and abandon the trip.
+func can_continue_drinking() -> bool:
+	return current_action == &"drink" or state in ["seek_water", "drink"]
+
+
+## Asked by both the evaluator and the execution path, so the selector cannot
+## send an animal to water the execution path will then refuse to drink from.
+func is_drinking_allowed() -> bool:
+	return is_thirst_above_floor(get_drink_thirst_floor(), "drink_stop_thirst_floor", can_continue_drinking())
+
+
 ## `metabolism_scale` is the climate multiplier - winter costs more, night costs
 ## less. It is applied at the read sites and never written back: `metabolism` is
 ## a reference to the species.json sub-dictionary, shared by every agent of the
@@ -257,6 +303,9 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 		var local_move_cost := maxf(1.0, world.get_move_cost_at_position(position))
 		effective_speed = desired_speed / local_move_cost
 		desired_velocity = move_vector.normalized() * effective_speed
+	var fatigue_threshold := float(movement.get("fatigue_energy_ratio", 0.25)) * float(metabolism.get("max_energy", 100.0))
+	var fatigue_scale := lerpf(float(movement.get("exhausted_speed_ratio", 0.55)), 1.0, clampf(energy / maxf(1.0, fatigue_threshold), 0.0, 1.0))
+	desired_velocity *= fatigue_scale
 	var acceleration := float(movement.get("acceleration", 140.0))
 	var previous_position := position
 	velocity = velocity.move_toward(desired_velocity, acceleration * delta)
@@ -264,7 +313,8 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 	if effective_speed > 0.0 and velocity.length() > effective_speed:
 		velocity = velocity.normalized() * effective_speed
 	velocity = _damp_turn(velocity, delta)
-	position = world.resolve_movement_position(position, position + velocity * delta)
+	position = world.resolve_movement_position(position, position + velocity * delta, get_body_radius())
+	velocity = (position - previous_position) / maxf(delta, 0.00001)
 	if position.distance_squared_to(previous_position) <= 0.04 and desired_velocity.length_squared() > 0.001:
 		stuck_timer += delta
 	else:
@@ -300,7 +350,7 @@ func _damp_turn(new_velocity: Vector2, delta: float) -> Vector2:
 func advance_inertia(world, delta: float) -> void:
 	var previous_position := position
 	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
-	position = world.resolve_movement_position(position, position + velocity * delta)
+	position = world.resolve_movement_position(position, position + velocity * delta, get_body_radius())
 	if position.distance_squared_to(previous_position) <= 0.04:
 		stuck_timer = maxf(0.0, stuck_timer - delta)
 	if velocity.length_squared() > 0.001:
@@ -353,6 +403,7 @@ func clear_targets() -> void:
 
 
 func clear_navigation() -> void:
+	local_path = PackedVector2Array()
 	path_cells.clear()
 	path_index = 0
 	path_goal_cell = -1
@@ -518,6 +569,169 @@ func mate_contact_distance(mate: AgentBase) -> float:
 ## and an agent that loses its grass target immediately re-searches. Measured:
 ## restoring without these had the loaded world eating twenty-seven times as
 ## much grass in its first ten ticks as the run it was supposed to continue.
+## --- Feeding on carrion ---------------------------------------------------
+##
+## This lived on `Predator` until a second carrion eater needed it. Nothing in it
+## is predator-specific: the intake rates are `feeding.carcass_*` out of
+## species.json, and `WorldState`'s reservation ledger never asked what species a
+## feeder was - only its name said "predator".
+
+
+## Whether feeding is worth starting, or worth continuing once started.
+##
+## Predators gorge. A carcass holds `balance.carcass.meat_total` but hunger alone
+## caps intake at `hunger - feed_stop_hunger_floor`, so an animal arriving at
+## hunger 60 could take only ~56 and leave the rest to rot inside the TTL. That
+## capped energy income below the cost of the hunger cycle that earned the kill.
+## While already at a meal, keep eating until the breeding reserve is covered.
+##
+## Deliberately gated on `continuing`: this finishes a carcass the animal is
+## already at, it does not send a sated one hunting for energy alone.
+func is_hungry_enough_to_feed(continuing: bool = false) -> bool:
+	if is_hunger_above_floor(get_feed_hunger_floor(), "feed_stop_hunger_floor", continuing):
+		return true
+	if not continuing or not bool(feeding.get("gorge_below_energy_threshold", true)):
+		return false
+	return energy < float(reproduction.get("energy_threshold", 0.0))
+
+
+func get_feed_hunger_floor() -> float:
+	var thresholds: Dictionary = balance.get("state_thresholds", {})
+	return float(thresholds.get("feed_hunger_floor", thresholds.get("graze_hunger_floor", 12.0)))
+
+
+## Whether the animal is mid-meal. Overridden per species, because which actions
+## and execution states count as "already feeding" differs.
+func can_continue_feeding() -> bool:
+	return false
+
+
+## The AI context has to ask the same question the execution path does, gorging
+## included, or the selector drops the feeding action the moment hunger is sated
+## and walks the animal away from a carcass it is still gaining energy from.
+func is_feeding_allowed() -> bool:
+	return is_hungry_enough_to_feed(can_continue_feeding())
+
+
+func release_carcass_target(world) -> void:
+	if world != null and target_carcass_id != -1:
+		world.release_carcass_feeder(target_carcass_id, id)
+	target_carcass_id = -1
+
+
+func on_carcass_removed(carcass_id: int) -> void:
+	if carcass_id != target_carcass_id:
+		return
+	target_carcass_id = -1
+	if state == "feed_carcass" or state == "seek_carcass":
+		target_position = null
+		clear_navigation()
+
+
+## Walk to the claimed carcass, then eat it. Returns false when there is nothing
+## to feed on, which every caller treats as "fall back to your idle behaviour".
+func scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -> bool:
+	if not is_hungry_enough_to_feed(can_continue_feeding()):
+		release_carcass_target(world)
+		target_position = null
+		return false
+	var carcass: Dictionary = resolve_carcass_target(world, preferred_carcass)
+	if carcass.is_empty():
+		return false
+
+	target_agent_id = -1
+	target_position = carcass["position"]
+	var feed_distance := float(feeding.get("feed_distance", feeding.get("eat_distance", 18.0)))
+	if position.distance_squared_to(carcass["position"]) <= feed_distance * feed_distance:
+		if not world.reserve_carcass_feeder(target_carcass_id, id):
+			# Full. Divert to the next body rather than queueing, which is what turns
+			# a kill into a scattered group instead of a stack of waiting animals.
+			var alternate: Dictionary = choose_carcass(world)
+			if alternate.is_empty() or int(alternate.get("id", -1)) == target_carcass_id:
+				return false
+			target_carcass_id = int(alternate.get("id", -1))
+			target_position = alternate["position"]
+			set_state("seek_carcass", world.current_tick)
+			var alternate_waypoint: Vector2 = world.get_next_waypoint(position, alternate["position"], id)
+			move_with_vector(world, Steering.seek(position, alternate_waypoint), float(movement.get("max_speed", 84.0)), delta)
+			return true
+
+		set_state("feed_carcass", world.current_tick)
+		clear_navigation()
+		stop_motion(delta)
+		var consumed: float = world.consume_carcass(
+			target_carcass_id,
+			float(feeding.get("carcass_consume_rate", 24.0)) * delta,
+			id
+		)
+		if consumed <= 0.0:
+			release_carcass_target(world)
+			target_position = null
+			return false
+		reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)))
+		restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
+		var updated: Dictionary = world.get_carcass(target_carcass_id)
+		if updated.is_empty() or float(updated.get("meat_remaining", 0.0)) <= 0.0:
+			release_carcass_target(world)
+		return true
+
+	set_state("seek_carcass", world.current_tick)
+	var carcass_waypoint: Vector2 = world.get_next_waypoint(position, carcass["position"], id)
+	move_with_vector(world, Steering.seek(position, carcass_waypoint), float(movement.get("max_speed", 84.0)), delta)
+	return true
+
+
+## Whether this species will still eat a body of that age. A hunter walks away
+## from carrion past `role.carrion_max_age_seconds`; a carrion feeder never does.
+func accepts_carcass(world, carcass: Dictionary) -> bool:
+	if carcass.is_empty():
+		return false
+	var max_age: float = world.species_registry.carrion_max_age(species_type)
+	if max_age == INF:
+		return true
+	return world.current_time - float(carcass.get("created_at", 0.0)) <= max_age
+
+
+func resolve_carcass_target(world, preferred_carcass: Dictionary = {}) -> Dictionary:
+	if target_carcass_id != -1:
+		var current_target: Dictionary = world.get_carcass(target_carcass_id)
+		# Also drops a body that went stale during the walk over to it, so a
+		# predator does not stand at a carcass it has decided is too old to eat.
+		if not current_target.is_empty() and accepts_carcass(world, current_target):
+			return current_target
+		release_carcass_target(world)
+		target_position = null
+
+	var carcass: Dictionary = preferred_carcass if not preferred_carcass.is_empty() else choose_carcass(world)
+	if carcass.is_empty():
+		return {}
+	target_carcass_id = int(carcass.get("id", -1))
+	return carcass
+
+
+## Nearest carcass that still has room, breaking ties on remaining meat.
+func choose_carcass(world, carcasses: Array = []) -> Dictionary:
+	var search_radius := float(balance.get("carcass", {}).get("search_radius", perception.get("vision_radius", 240.0)))
+	var best_carcass := {}
+	var best_distance_sq := INF
+	var best_meat := -INF
+	if carcasses.is_empty():
+		carcasses = world.query_carcasses(position, search_radius)
+	for carcass in carcasses:
+		if not accepts_carcass(world, carcass):
+			continue
+		var active_feeders: Array = carcass.get("active_feeder_ids", [])
+		if not active_feeders.has(id) and active_feeders.size() >= int(carcass.get("max_feeders", 1)):
+			continue
+		var distance_sq := position.distance_squared_to(carcass["position"])
+		var meat_remaining := float(carcass.get("meat_remaining", 0.0))
+		if distance_sq < best_distance_sq or (is_equal_approx(distance_sq, best_distance_sq) and meat_remaining > best_meat):
+			best_distance_sq = distance_sq
+			best_meat = meat_remaining
+			best_carcass = carcass
+	return best_carcass
+
+
 func export_save_state() -> Dictionary:
 	var state_data: Dictionary = export_runtime_state()
 	state_data["last_decision_tick"] = last_decision_tick
@@ -539,6 +753,7 @@ func export_runtime_state() -> Dictionary:
 	return {
 		"id": id,
 		"species_type": species_type,
+		"target_carcass_id": target_carcass_id,
 		"position": position,
 		"velocity": velocity,
 		"direction": direction,
@@ -576,6 +791,7 @@ func export_runtime_state() -> Dictionary:
 
 func apply_runtime_state(state_data: Dictionary) -> void:
 	position = state_data.get("position", position)
+	target_carcass_id = int(state_data.get("target_carcass_id", target_carcass_id))
 	velocity = state_data.get("velocity", velocity)
 	direction = state_data.get("direction", direction)
 	energy = float(state_data.get("energy", energy))
