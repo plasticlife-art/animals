@@ -75,6 +75,11 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 		"cliff_gap_radius_cells": 0.0,
 		"border_clearance_cells": 0,
 	}
+	# `WorldState.initialize()` reads `water_sources` only while `water_generation`
+	# is empty, and world.json ships generation on. Left in place it put a single
+	# pond of radius ~251 on this 256-unit map, so every thirst fixture stood in
+	# water wherever it was placed and the two sources below were never used.
+	bundle["world"].erase("water_generation")
 	bundle["world"]["water_sources"] = [
 		{"x": 64.0, "y": 64.0, "radius": 18.0},
 		{"x": 192.0, "y": 192.0, "radius": 18.0},
