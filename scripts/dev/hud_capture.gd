@@ -1,4 +1,11 @@
 extends SceneTree
+
+## HUD screenshot harness. Not part of the game.
+##
+##   OUT=/tmp/hud.png Godot --path . --script res://scripts/dev/hud_capture.gd
+##
+## Set PAUSE=1 to capture with the pause menu open.
+
 func _initialize() -> void:
 	var main = load("res://scenes/main/main.tscn").instantiate()
 	root.add_child(main)

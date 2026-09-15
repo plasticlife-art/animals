@@ -20,7 +20,20 @@ const MAX_SIMULATION_STEPS_PER_FRAME := 2
 const MAX_SIMULATION_BACKLOG_STEPS := 8
 
 var _worker = null
+## One long-lived thread runs every interactive tick. It used to be a new `Thread`
+## per tick - eighteen thread creations a second - and nothing joined it when the
+## tree went away, so quitting could unload scripts under a tick still running.
+## A job goes in through `_job_semaphore` and its result comes back through
+## `_done_semaphore`; `_worker_mutex` guards the two hand-off slots.
 var _worker_thread: Thread = null
+var _worker_mutex: Mutex = Mutex.new()
+var _job_semaphore: Semaphore = Semaphore.new()
+var _done_semaphore: Semaphore = Semaphore.new()
+var _worker_job: Dictionary = {}
+var _worker_result: Dictionary = {}
+var _worker_quit: bool = false
+## Main thread only: a job has been posted and its result not yet applied.
+var _job_in_flight: bool = false
 ## Set once the view has finished coming up. Until then no tick is threaded:
 ## the frames right after `enable_interactive_worker()` are where the main
 ## thread compiles `scene_sprite_batch.gd`, builds the themes and loads the
@@ -77,6 +90,12 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 
+## Quitting frees the scripts the worker is executing. Joining here, while the
+## tree is still whole, stops a tick from running into a half-unloaded agent.
+func _exit_tree() -> void:
+	_stop_worker_thread()
+
+
 func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> void:
 	if _worker != null:
 		shutdown()
@@ -126,7 +145,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	speed_multiplier = float(speeds[default_index])
 
 	stats_system.record_sample(world_state, current_tick, simulation_time)
-	tick_completed.emit(current_tick, stats_system.get_snapshot())
+	tick_completed.emit(current_tick, stats_system.get_snapshot_view())
 
 
 func _process(delta: float) -> void:
@@ -229,7 +248,7 @@ func step_once() -> void:
 		selection_changed.emit(selected_agent_id)
 		clear_focus()
 	stats_system.record_sample(world_state, current_tick, simulation_time)
-	tick_completed.emit(current_tick, stats_system.get_snapshot())
+	tick_completed.emit(current_tick, stats_system.get_snapshot_view())
 
 
 func set_paused(value: bool) -> void:
@@ -404,9 +423,7 @@ func run_headless(total_ticks: int, export_on_finish: bool = true) -> Dictionary
 
 
 func shutdown() -> void:
-	if _worker_thread != null:
-		_worker_thread.wait_to_finish()
-		_worker_thread = null
+	_stop_worker_thread()
 	_worker_started_usec = 0
 	if _worker != null:
 		_worker.shutdown()
@@ -515,7 +532,7 @@ func enable_interactive_worker() -> void:
 	stats_system = StatsSystemScript.new()
 	stats_system.initialize(config_bundle, event_bus)
 	stats_system.counters = _worker.stats.counters.duplicate()
-	stats_system.latest_snapshot = _worker.stats.get_snapshot()
+	stats_system.latest_snapshot = _worker.stats.get_snapshot_view()
 	world_state = WorldStateScript.new()
 	var view_rng := RandomNumberGenerator.new()
 	view_rng.seed = seed
@@ -546,9 +563,8 @@ func _process_worker(delta: float) -> void:
 	if accumulator > cap:
 		dropped_simulation_seconds += accumulator - cap
 		accumulator = cap
-	if _worker_thread != null and not _worker_thread.is_alive():
-		var result: Dictionary = _worker_thread.wait_to_finish()
-		_worker_thread = null
+	if _job_in_flight and _done_semaphore.try_wait():
+		var result: Dictionary = _take_worker_result()
 		if _worker_started_usec > 0:
 			worker_cycle_times.add(float(Time.get_ticks_usec() - _worker_started_usec) / 1000.0)
 		_worker_started_usec = 0
@@ -565,13 +581,83 @@ func _process_worker(delta: float) -> void:
 		actual_speed = _speed_sim / _speed_wall
 		_speed_wall = 0.0
 		_speed_sim = 0.0
-	if _worker_stepping and _worker_thread == null and not paused and (accumulator >= tick_duration or _single_step_requested):
+	if _worker_stepping and not _job_in_flight and not paused and (accumulator >= tick_duration or _single_step_requested):
 		accumulator = maxf(0.0, accumulator - tick_duration)
+		_post_worker_job()
+
+
+## True while a posted tick has not been applied yet. The thread stays up between
+## ticks, so `_worker_thread` no longer says whether a tick is in flight.
+func is_worker_tick_in_flight() -> bool:
+	return _job_in_flight
+
+
+## Hands the next tick to the worker thread, starting the thread on first use.
+## The LOD context is built fresh for the job, so the worker owns it outright.
+func _post_worker_job() -> void:
+	if _worker == null or _job_in_flight:
+		return
+	if _worker_thread == null:
+		_worker_quit = false
 		_worker_thread = Thread.new()
-		_worker_started_usec = Time.get_ticks_usec()
-		_worker_thread.start(_worker.step.bind(tick_duration, current_tick, simulation_time,
-			_build_lod_context().duplicate(true), selected_agent_id,
-			bool(debug_flags.get("show_grass_density", false))))
+		_worker_thread.start(_worker_loop)
+	_worker_mutex.lock()
+	_worker_job = {"delta": tick_duration, "tick": current_tick, "time": simulation_time,
+		"lod": _build_lod_context(), "inspected": selected_agent_id,
+		"include_grass": bool(debug_flags.get("show_grass_density", false))}
+	_worker_mutex.unlock()
+	_worker_started_usec = Time.get_ticks_usec()
+	_job_in_flight = true
+	_job_semaphore.post()
+
+
+func _worker_loop() -> void:
+	while true:
+		_job_semaphore.wait()
+		_worker_mutex.lock()
+		var stopping := _worker_quit
+		var job: Dictionary = _worker_job
+		_worker_job = {}
+		_worker_mutex.unlock()
+		if stopping:
+			return
+		if job.is_empty():
+			continue
+		var result: Dictionary = _worker.step(float(job.delta), int(job.tick), float(job.time),
+			job.lod, int(job.inspected), bool(job.include_grass))
+		_worker_mutex.lock()
+		_worker_result = result
+		_worker_mutex.unlock()
+		_done_semaphore.post()
+
+
+func _take_worker_result() -> Dictionary:
+	_worker_mutex.lock()
+	var result: Dictionary = _worker_result
+	_worker_result = {}
+	_worker_mutex.unlock()
+	_job_in_flight = false
+	return result
+
+
+## Joins the worker. A tick already running finishes and its result is dropped:
+## whoever stops the thread is discarding this simulation anyway, and
+## `synchronize_worker()` is the path that keeps a result.
+func _stop_worker_thread() -> void:
+	if _worker_thread == null:
+		return
+	_worker_mutex.lock()
+	_worker_quit = true
+	_worker_mutex.unlock()
+	_job_semaphore.post()
+	_worker_thread.wait_to_finish()
+	_worker_thread = null
+	_worker_quit = false
+	_job_in_flight = false
+	_worker_job = {}
+	_worker_result = {}
+	while _done_semaphore.try_wait():
+		pass
 
 
 func _apply_worker_frame(data: Dictionary) -> void:
@@ -686,9 +772,9 @@ func _apply_worker_frame(data: Dictionary) -> void:
 
 ## Called only for an explicit save/load boundary, never by the frame renderer.
 func synchronize_worker() -> void:
-	if _worker_thread != null:
-		var result: Dictionary = _worker_thread.wait_to_finish()
-		_worker_thread = null
+	if _job_in_flight:
+		_done_semaphore.wait()
+		var result: Dictionary = _take_worker_result()
 		if _worker_started_usec > 0:
 			worker_cycle_times.add(float(Time.get_ticks_usec() - _worker_started_usec) / 1000.0)
 		_worker_started_usec = 0

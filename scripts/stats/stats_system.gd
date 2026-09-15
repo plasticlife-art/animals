@@ -132,7 +132,9 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 
 	var hunt_total: int = int(counters["hunt_success"]) + int(counters["hunt_fail"])
 	var lod_counts: Dictionary = world.get_lod_counts()
-	var grass_biomass_by_biome: Dictionary = world.resource_system.get_biomass_totals_by_biome()
+	# Copied, so the frozen, shared snapshot never holds a dictionary the resource
+	# system still owns.
+	var grass_biomass_by_biome: Dictionary = world.resource_system.get_biomass_totals_by_biome().duplicate()
 	# Always present, even without a clock, so the charts and the HUD never have
 	# to branch on whether the climate is running.
 	var climate_values: Dictionary = {} if world.climate == null else world.climate.snapshot_values()
@@ -252,6 +254,10 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 	snapshot["chase_success_rate"] = float(counters.hunt_success) / maxf(1.0, float(counters.hunt_success + counters.chases_failed))
 	for key in ["visibility_checks", "local_path_searches", "stuck_agents"]:
 		snapshot[key] = perf.get(key, 0)
+	# Frozen: one snapshot is shared by the charts, the HUD, the time series and,
+	# in the interactive build, both threads. Code that wants to edit one takes
+	# `get_snapshot()`.
+	snapshot.make_read_only()
 	latest_snapshot = snapshot
 	time_series.append(snapshot)
 	while time_series.size() > history_limit:
@@ -259,8 +265,16 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 	_reset_sample_accumulators()
 
 
+## An editable copy. Deep, because the snapshot nests dictionaries.
 func get_snapshot() -> Dictionary:
 	return latest_snapshot.duplicate(true)
+
+
+## The live snapshot itself, read-only. For the per-tick signal and the worker
+## hand-off, which used to deep-copy about a hundred and fifty keys eighteen
+## times a second for listeners that only read.
+func get_snapshot_view() -> Dictionary:
+	return latest_snapshot
 
 
 func get_series() -> Array:
@@ -272,7 +286,8 @@ func shutdown() -> void:
 		event_bus.event_emitted.disconnect(_on_event_emitted)
 	event_bus = null
 	time_series.clear()
-	latest_snapshot.clear()
+	# Replaced, not cleared: it is read-only, and the other thread may still hold it.
+	latest_snapshot = {}
 	_reset_sample_accumulators()
 
 

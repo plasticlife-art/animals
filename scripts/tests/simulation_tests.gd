@@ -2,6 +2,7 @@ extends RefCounted
 
 const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
 const TestHelpers := preload("res://scripts/tests/test_helpers.gd")
+const TelemetryLoggerScript := preload("res://scripts/stats/telemetry_logger.gd")
 
 
 func run(asserts) -> void:
@@ -45,6 +46,11 @@ func run(asserts) -> void:
 	_test_grass_budget_miss_counted_when_local_grass_is_gone(asserts)
 	_test_perf_snapshot_fields(asserts)
 	_test_determinism(asserts)
+	_test_determinism_with_lod_and_dormancy(asserts)
+	_test_dormant_path_leaves_rng_untouched(asserts)
+	_test_worker_ticks_match_inline_ticks(asserts)
+	_test_snapshot_is_shared_read_only(asserts)
+	_test_metrics_csv_keeps_columns(asserts)
 
 
 func _test_thirsty_herbivore(asserts) -> void:
@@ -904,3 +910,121 @@ func _test_dormant_aggregate_rebuild_keeps_accumulators(asserts) -> void:
 	asserts.equal(float(rebuilt[0].get("starvation_debt", -1.0)), 0.3, "starvation debt should survive an aggregate rebuild")
 	asserts.equal(int(rebuilt[0].get("carcass_id", -1)), 11, "the carcass a goal refers to should survive an aggregate rebuild")
 	TestHelpers.destroy_manager(manager)
+
+
+## The small determinism trace above never sleeps a sector. This one runs a real
+## map through dormancy, then widens the active window so everything wakes, and
+## demands the same world twice.
+func _test_determinism_with_lod_and_dormancy(asserts) -> void:
+	var fingerprints: Array = []
+	var most_dormant: Array = []
+	for _run in range(2):
+		var manager = TestHelpers.create_benchmark_manager(61, 80, 8, 8)
+		manager.lod_enabled = true
+		manager.lod_settings["headless_active_radius"] = 120.0
+		manager.lod_settings["near_margin"] = 0.0
+		manager.lod_settings["mid_margin"] = 280.0
+		var dormant_peak := 0
+		for tick in range(180):
+			if tick == 120:
+				manager.lod_settings["headless_active_radius"] = 4000.0
+				manager.lod_settings["mid_margin"] = 4000.0
+			manager.step_once()
+			dormant_peak = maxi(dormant_peak, manager.world_state.get_dormant_sector_count())
+		fingerprints.append(TestHelpers.world_fingerprint(manager))
+		most_dormant.append(dormant_peak)
+		TestHelpers.destroy_manager(manager)
+	asserts.is_true(int(most_dormant[0]) > 0, "the replay must actually put sectors to sleep, or it proves nothing")
+	asserts.equal(fingerprints[0], fingerprints[1], "same seed and LOD context must replay identically through sleep and wake")
+
+
+func _test_dormant_path_leaves_rng_untouched(asserts) -> void:
+	var manager = TestHelpers.create_manager(62)
+	var world = manager.world_state
+	var herd_position := Vector2(20.0, 220.0)
+	for index in range(4):
+		TestHelpers.spawn_herbivore(world, herd_position + Vector2(float(index) * 3.0, 0.0), 0)
+	var sector_key: Vector2i = world._get_sector_key(herd_position)
+	world._sleep_sector(sector_key)
+	var dormant_state: Dictionary = world._sector_states.get(sector_key, {})
+	var aggregates: Array = dormant_state.get("dormant_aggregates", [])
+	asserts.is_true(not aggregates.is_empty(), "a sleeping herd should produce an aggregate to grow")
+	if aggregates.is_empty():
+		TestHelpers.destroy_manager(manager)
+		return
+	aggregates[0]["count"] = int(aggregates[0].get("count", 0)) + 6
+	var state_before: int = world.rng.state
+	world._sync_dormant_records_with_aggregates(sector_key, dormant_state)
+	asserts.equal(world.rng.state, state_before, "dormant births must not draw from the shared random stream")
+	var records: Array = dormant_state.get("dormant_records", [])
+	asserts.equal(records.size(), 10, "every member of the grown aggregate should have a record")
+	var male_newborns := 0
+	for record in records:
+		if str(record.get("sex", "")) == TestHelpers.AgentBaseScript.SEX_MALE:
+			male_newborns += 1
+	asserts.is_true(male_newborns > 0, "sexes derived from ids should not all come out female")
+	world._sector_states[sector_key] = dormant_state
+	state_before = world.rng.state
+	world._wake_sector(sector_key)
+	asserts.equal(world.rng.state, state_before, "waking a sector must not draw from the shared random stream")
+	asserts.equal(world.get_dormant_sector_count(), 0, "the sector should be awake again")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_worker_ticks_match_inline_ticks(asserts) -> void:
+	var inline = _build_worker_fixture(63)
+	var threaded = _build_worker_fixture(63)
+	threaded.enable_interactive_worker()
+	threaded.begin_interactive_stepping()
+	for _tick in range(36):
+		inline.step_once()
+		threaded._post_worker_job()
+		threaded.synchronize_worker()
+	asserts.equal(threaded.current_tick, inline.current_tick, "the worker should have run every posted tick")
+	asserts.is_true(threaded._worker_thread != null, "one worker thread should stay up between ticks")
+	asserts.equal(threaded.rng.state, inline.rng.state, "the worker should consume the random stream exactly as an inline tick does")
+	asserts.equal(
+		"\n".join(TestHelpers.agent_state_lines(threaded.world_state)),
+		"\n".join(TestHelpers.agent_state_lines(inline.world_state)),
+		"the view of a worker tick must match the same tick run inline"
+	)
+	TestHelpers.destroy_manager(threaded)
+	TestHelpers.destroy_manager(inline)
+
+
+static func _build_worker_fixture(seed: int):
+	var manager = TestHelpers.create_manager(seed)
+	var world = manager.world_state
+	var grazer = TestHelpers.spawn_herbivore(world, Vector2(90.0, 90.0), 0)
+	grazer.hunger = 40.0
+	var drinker = TestHelpers.spawn_herbivore(world, Vector2(110.0, 96.0), 0)
+	drinker.thirst = 55.0
+	var hunter = TestHelpers.spawn_predator(world, Vector2(180.0, 150.0))
+	hunter.hunger = 70.0
+	return manager
+
+
+func _test_snapshot_is_shared_read_only(asserts) -> void:
+	var manager = TestHelpers.create_manager(64)
+	TestHelpers.spawn_herbivore(manager.world_state, Vector2(96.0, 96.0), 0)
+	TestHelpers.run_ticks(manager, 5)
+	asserts.is_true(manager.stats_system.get_snapshot_view().is_read_only(), "the shared snapshot should be frozen against edits")
+	asserts.is_true(not manager.stats_system.get_snapshot().is_read_only(), "get_snapshot() should still hand out an editable copy")
+	TestHelpers.destroy_manager(manager)
+
+
+func _test_metrics_csv_keeps_columns(asserts) -> void:
+	asserts.equal(TelemetryLoggerScript.csv_field(12.5), "12.5", "plain numbers stay unquoted")
+	# `JSON.stringify()` sorts keys, so the cell reads alphabetically.
+	asserts.equal(TelemetryLoggerScript.csv_field({"meadow": 1, "forest": 2}),
+		"\"{\"\"forest\"\":2,\"\"meadow\"\":1}\"", "nested values are written as quoted JSON")
+	var path := "user://csv_columns_test.csv"
+	var logger = TelemetryLoggerScript.new()
+	logger._write_metrics_csv(path, [{"tick": 5, "grass_biomass_by_biome": {"meadow": 1.5, "swamp": 2.0}, "time_seconds": 0.5}])
+	var file := FileAccess.open(path, FileAccess.READ)
+	var header := file.get_csv_line()
+	var row := file.get_csv_line()
+	file.close()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	asserts.equal(row.size(), header.size(), "a nested value must not add columns to its row")
+	asserts.equal(row[header.find("tick")], "5", "cells after a nested value must stay in their own column")

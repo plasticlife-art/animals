@@ -239,3 +239,29 @@ static func capture_trace(manager, agent_ids: Array, ticks: int) -> Array:
 
 static func _refresh_spatial_queries(world) -> void:
 	world.spatial_grid.rebuild(world.get_living_agents())
+
+
+## Everything a replay has to reproduce, as one string: each living agent's
+## identity, position, needs and action, the dormant census, and the state of the
+## shared random stream.
+static func world_fingerprint(manager) -> String:
+	var world = manager.world_state
+	var lines: Array = ["tick=%d rng=%d" % [manager.current_tick, world.rng.state]]
+	lines.append_array(agent_state_lines(world))
+	lines.append("dormant_agents=%d dormant_sectors=%d" % [world.get_dormant_agent_count(), world.get_dormant_sector_count()])
+	return "\n".join(lines)
+
+
+## One line per living agent, in id order.
+static func agent_state_lines(world) -> Array:
+	var ids: Array = []
+	for agent in world.get_living_agents():
+		ids.append(agent.id)
+	ids.sort()
+	var lines: Array = []
+	for agent_id in ids:
+		var agent = world.get_agent(int(agent_id))
+		lines.append("%d %s %s %.4f,%.4f h%.4f t%.4f e%.4f %s %s" % [agent.id, agent.species_type, agent.sex,
+			agent.position.x, agent.position.y, agent.hunger, agent.thirst, agent.energy,
+			agent.state, String(agent.current_action)])
+	return lines

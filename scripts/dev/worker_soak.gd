@@ -72,7 +72,7 @@ func _process(_delta: float) -> bool:
 		var lod_counts: Dictionary = manager.world_state.lod_counts
 		samples.append({"elapsed_seconds": elapsed, "tick": manager.current_tick,
 			"sequence": manager._worker_sequence,
-			"worker_in_flight": manager._worker_thread != null,
+			"worker_in_flight": manager.is_worker_tick_in_flight(),
 			"living_count": manager.world_state.get_population_metrics().living_count,
 			"lod0_agents": int(lod_counts.get("lod0_agents", 0)),
 			"lod1_agents": int(lod_counts.get("lod1_agents", 0)),
@@ -142,7 +142,7 @@ func _process(_delta: float) -> bool:
 		"orphan_node_count_tail_growth": final_orphans - tail_start_orphans,
 		"sequence_regressions": sequence_regressions,
 		"final_sequence": manager._worker_sequence,
-		"worker_in_flight_after_sync": manager._worker_thread != null,
+		"worker_in_flight_after_sync": manager.is_worker_tick_in_flight(),
 		"performance": manager.get_performance_summary(), "samples": samples,
 		"accepted": measured_actual_speed >= 0.98 and sequence_regressions == 0
 			and dropped_tail_growth <= manager.tick_duration

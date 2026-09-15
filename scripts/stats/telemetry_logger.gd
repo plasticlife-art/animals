@@ -59,11 +59,14 @@ func _write_metrics_csv(path: String, rows: Array) -> void:
 
 	var headers: Array = rows[0].keys()
 	headers.sort()
-	file.store_line(",".join(PackedStringArray(headers)))
+	var header_fields := PackedStringArray()
+	for header in headers:
+		header_fields.append(csv_field(header))
+	file.store_line(",".join(header_fields))
 	for row in rows:
 		var values := PackedStringArray()
 		for header in headers:
-			values.append(str(row.get(header, "")))
+			values.append(csv_field(row.get(header, "")))
 		file.store_line(",".join(values))
 
 
@@ -87,7 +90,18 @@ func _write_events_csv(path: String, rows: Array) -> void:
 		file.store_line(",".join(csv_row))
 
 
-func _escape_csv(value: String) -> String:
+## One CSV cell. Nested values are written as JSON, and anything carrying a
+## comma, quote or line break is quoted. `str()` on the nested
+## `grass_biomass_by_biome` used to spill its commas into the row and shift every
+## later column, so no standard reader could parse a metrics export.
+static func csv_field(value) -> String:
+	var text: String = JSON.stringify(value) if (value is Dictionary or value is Array) else str(value)
+	if text.contains(",") or text.contains("\"") or text.contains("\n") or text.contains("\r"):
+		return _escape_csv(text)
+	return text
+
+
+static func _escape_csv(value: String) -> String:
 	return "\"%s\"" % value.replace("\"", "\"\"")
 
 

@@ -4,9 +4,9 @@ extends "res://scripts/agents/ai/herbivore_ai.gd"
 ## A herd animal whose food is carrion.
 ##
 ## Everything that is not "where is my next meal" is inherited: flocking,
-## drinking, resting, exploring, and the panic state that a second phase can turn
-## on by listing this species in some predator's `role.eats_species`. Only the
-## food source, the action that pursues it and the values that score it live here.
+## drinking, resting, exploring, and the panic state - live, because the predator
+## lists this species in its `role.eats_species`. Only the food source, the
+## action that pursues it and the values that score it live here.
 ##
 ## The evaluators are the existing ones. `scavenge_carcass` was written for the
 ## predator and reads nothing predator-specific - `hunger`, `carcass_proximity`,

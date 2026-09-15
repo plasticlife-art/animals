@@ -8,19 +8,20 @@ extends RefCounted
 ## coordinates. Nothing below this line ever changes what the simulation
 ## computes - the projection only decides where those coordinates get drawn.
 ##
-## Two modes. `ORTHOGONAL` is the identity transform and is the default, so the
-## view keeps working while the isometric tile set and overlays are still being
-## built. `ISOMETRIC` turns the world 45 degrees and halves it vertically, and
-## adds a vertical offset per terrain elevation level.
+## Two modes. `ORTHOGONAL` is the identity transform. `ISOMETRIC` turns the world
+## 45 degrees and halves it vertically, and adds a vertical offset per terrain
+## elevation level. The mode follows `visuals.projection`, which the default
+## style preset sets to orthogonal.
 ##
 ## Anything that turns a simulation position into something drawn goes through
 ## `to_screen()`. Anything that turns a screen position back into simulation
 ## space - mouse picking, view culling, the LOD focus rect - goes through
 ## `to_world()` or `world_rect_covering()`.
 ##
-## Known gap: `overlay_renderer.gd` culls through this seam but still issues its
-## `draw_*` calls in raw simulation coordinates. Correct under ORTHOGONAL, wrong
-## under ISOMETRIC - roughly forty call sites still to convert.
+## Known gaps under ISOMETRIC: click picking in `world_view.gd` calls `to_world()`
+## once, without the height correction described below, so a click on raised
+## ground can pick the wrong animal; and the minimap draws the camera as an
+## axis-aligned rectangle rather than the diamond the view actually covers.
 
 enum Mode { ORTHOGONAL, ISOMETRIC }
 

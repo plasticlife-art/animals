@@ -711,9 +711,8 @@ func build_scavenger_snapshot(agent, known_predators = null) -> Variant:
 				snapshot.group_neighbors.append(neighbor)
 		if snapshot.group_neighbors.is_empty():
 			snapshot.group_neighbors = snapshot.species_neighbors
-	# Empty while nothing hunts this species, which is the intended phase-one state:
-	# adding it to some predator's `role.eats_species` is all it takes to turn the
-	# inherited panic behaviour on.
+	# Whichever species list this one in `role.eats_species`. For the scavenger that
+	# is the predator, so the panic behaviour it inherits is live.
 	var danger_radius := perception_radius(agent, "danger_radius", 120.0)
 	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type)) \
 		if known_predators == null else known_predators
@@ -3599,7 +3598,7 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 				record = template.duplicate(true)
 				record["id"] = next_agent_id
 				next_agent_id += 1
-				record["sex"] = _random_sex()
+				record["sex"] = _deterministic_sex(int(record["id"]))
 				record["age"] = 0.0
 				is_newborn = true
 			else:
@@ -3914,14 +3913,23 @@ func _restore_dormant_agent(record: Dictionary):
 		return null
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_type, {})
 	var record_id := int(record.get("id", next_agent_id))
+	var sex := str(record.get("sex", ""))
+	if sex == "":
+		sex = _deterministic_sex(record_id)
+	# Waking follows the camera, so nothing here may draw from `rng`. The default
+	# argument used to call `_random_sex()` on every wake whether or not the record
+	# had a sex, and `configure()` rolls a wander angle. The throwaway generator
+	# takes that roll, and `apply_runtime_state()` restores the real angle below.
+	var restore_rng := RandomNumberGenerator.new()
+	restore_rng.seed = record_id
 	agent.configure(
 		record_id,
 		species_type,
 		Vector2(record.get("position", bounds.get_center())),
-		str(record.get("sex", _random_sex())),
+		sex,
 		species_config,
 		config_bundle.get("balance", {}),
-		rng,
+		restore_rng,
 		int(record.get("group_id", -1))
 	)
 	agent.apply_runtime_state(record)
@@ -3964,6 +3972,16 @@ func _create_agent(species_type: String):
 
 func _random_sex() -> String:
 	return AgentBaseScript.SEX_MALE if rng.randf() > 0.5 else AgentBaseScript.SEX_FEMALE
+
+
+## Sex for an animal the dormant path creates, from its id alone. The coarse
+## ecology runs wherever the camera is not, so a roll from `rng` here would make
+## every later draw in the world depend on where the player had been looking.
+static func _deterministic_sex(agent_id: int) -> String:
+	var mixed: int = agent_id * 0x9E3779B1
+	mixed = (mixed ^ (mixed >> 15)) * 0x85EBCA77
+	mixed = mixed ^ (mixed >> 13)
+	return AgentBaseScript.SEX_MALE if (mixed & 1) == 1 else AgentBaseScript.SEX_FEMALE
 
 
 func _flush_removals() -> void:

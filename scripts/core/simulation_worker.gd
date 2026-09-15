@@ -2,7 +2,8 @@ class_name SimulationWorker
 extends RefCounted
 
 ## Exclusive owner of mutable simulation state while an interactive tick runs.
-## Only value snapshots cross back to the main thread; no live agents are shared.
+## `step()` runs on the manager's one persistent worker thread. Only value
+## snapshots cross back to the main thread; no live agents are shared.
 var world: WorldState
 var stats: StatsSystem
 var events: EventBus
@@ -112,6 +113,8 @@ func _presentation_state(inspected_id: int, full: bool, include_grass: bool, ful
 		grass_delta = world.resource_system.take_dirty_cells()
 	else:
 		grass_delta = {"indices": PackedInt32Array(), "values": PackedFloat32Array()}
+	# `metrics` is the frozen stats snapshot, handed over by reference: the stats
+	# system replaces it on each sample rather than editing it.
 	var result := {"full": full, "agents": records,
 		"agent_removals": agent_removals,
 		"carcass_upserts": carcass_delta.upserts,
@@ -122,7 +125,7 @@ func _presentation_state(inspected_id: int, full: bool, include_grass: bool, ful
 		"sector_upserts": sector_delta.upserts, "sector_removals": sector_delta.removals,
 		"group_upserts": group_delta.upserts, "group_removals": group_delta.removals,
 		"lod_counts": world.lod_counts.duplicate(), "performance": world.performance_counters.duplicate(),
-		"metrics": stats.get_snapshot(), "counters": stats.counters.duplicate(),
+		"metrics": stats.get_snapshot_view(), "counters": stats.counters.duplicate(),
 		"events": pending_events.duplicate(true)}
 	result["snapshot_counts"] = {"agents": records.size(),
 		"agent_removals": agent_removals.size(),

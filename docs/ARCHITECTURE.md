@@ -45,6 +45,14 @@ Key behavior:
   `simulation_lod.headless_active_radius` box at the world center. Agents outside it drop to the
   coarse tiers and their sectors can go dormant, which means headless benchmarks measure the LOD
   path, not full-fidelity simulation. Disable `simulation_lod.enabled` for a full-fidelity run.
+- Interactive ticks run on one persistent worker thread, `_worker_loop()`. A job goes in through
+  one semaphore and its presentation delta comes back through another, and
+  `is_worker_tick_in_flight()` reports a posted tick that has not been applied yet.
+  `synchronize_worker()` blocks for that tick at save and load boundaries, and `_exit_tree()` joins
+  the thread before the scripts it runs are unloaded.
+- The stats snapshot is frozen with `make_read_only()` when it is written. `tick_completed` and the
+  worker hand-off pass that dictionary by reference; `StatsSystem.get_snapshot()` still returns an
+  editable copy.
 
 ### `WorldState`
 
@@ -365,13 +373,22 @@ produce a single kill, so dormant predation was silently always zero, and it als
 least one death per step on any saturated aggregate regardless of its size.
 
 This path uses no `rng` calls, so it cannot perturb the shared RNG stream that determinism
-depends on.
+depends on. That covers waking too: a dormant newborn's sex comes from `_deterministic_sex()` on
+its id, and `_restore_dormant_agent()` hands `configure()` a throwaway generator for the wander
+angle it rolls. `SimulationTests._test_dormant_path_leaves_rng_untouched` pins both.
+
+Determinism therefore holds for the same seed and the same LOD context. Which agents run a full
+tick follows the camera, and full ticks do draw from `rng` - wander, attack rolls - so a run
+watched differently diverges. `_test_determinism_with_lod_and_dormancy` replays one fixed headless
+context through sleep and wake.
 
 ## Configuration Notes
 
 ### `world.json`
 
 - controls world size, tick rate, water, terrain generation, navigation limits, and spawn counts
+- `water_sources` is read only when `water_generation` is absent. The shipped config generates
+  sources from map area, so it carries no hand-placed list
 
 - `climate` drives seasons and the day/night cycle. It is read by `Climate`
   (`scripts/world/climate.gd`), which is a **pure function of `simulation_time`** rather than
@@ -475,11 +492,15 @@ Current suites cover:
 - state-policy expectations
 - small simulation regression scenarios
 - deterministic action/state traces across repeated seeded runs
+- full-world replays through sector sleep and wake, and a shared random stream the dormant path
+  never touches
+- worker-thread ticks matching the same ticks run inline
+- metrics CSV cells that stay in their own columns
 
 ## Known Gaps
 
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics
-- One prey species and one predator species only
-- Debug rendering is functional, not art-driven
+- Three species, with no variation between animals of the same species
+- Terrain, carcass and shadow art are placeholders

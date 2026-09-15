@@ -7,3 +7,18 @@
 # (Nearest filtering for the pixel art) and the resource UID, so the ones that
 # belong to committed art must be tracked.
 !assets/**/*.import
+
+# CraftPix source packs. The license lets the game use the art but forbids
+# redistributing the source files, so they stay out of the repository and only
+# the atlases composited from them are tracked. Each folder keeps a SOURCE.md
+# naming the pack to download, and a .gdignore so Godot neither imports nor
+# exports the raw files.
+assets/craftpix/*
+!assets/craftpix/SOURCE.md
+!assets/craftpix/.gdignore
+assets/craftpix-net-200380-free-pixel-art-plants-for-farm/*
+!assets/craftpix-net-200380-free-pixel-art-plants-for-farm/SOURCE.md
+!assets/craftpix-net-200380-free-pixel-art-plants-for-farm/.gdignore
+assets/craftpix-net-255216-free-basic-pixel-art-ui-for-rpg/*
+!assets/craftpix-net-255216-free-basic-pixel-art-ui-for-rpg/SOURCE.md
+!assets/craftpix-net-255216-free-basic-pixel-art-ui-for-rpg/.gdignore

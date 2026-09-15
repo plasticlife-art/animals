@@ -25,7 +25,6 @@ extends Node2D
 ##   front could never draw over a high cell behind it.
 
 const BIOME_LAYER_Z := 0
-const PROP_Z := 2
 const OBSTACLE_LAYER_Z := 1
 
 var simulation_manager: SimulationManager
@@ -39,7 +38,6 @@ var _obstacle_coords: Dictionary = {}
 var _iso_rows: Dictionary = {}
 var _iso_skirt_levels: int = 4
 var _iso_level_lift: int = 16
-var _props: MultiMeshInstance2D = null
 var _subdivisions: int = 1
 var _variants: int = 1
 
@@ -56,14 +54,13 @@ func bind_manager(manager: SimulationManager) -> void:
 ## changes the atlas, the tile size and whether the grid is square or diamond,
 ## none of which repainting can express, so the layers themselves are replaced.
 func rebuild_layers() -> void:
-	for layer in [_biome_layer, _obstacle_layer, _iso_layer, _props]:
+	for layer in [_biome_layer, _obstacle_layer, _iso_layer]:
 		if layer != null:
 			remove_child(layer)
 			layer.queue_free()
 	_biome_layer = null
 	_obstacle_layer = null
 	_iso_layer = null
-	_props = null
 	_build_layers()
 	rebuild()
 
@@ -141,134 +138,13 @@ func _rebuild_isometric(terrain: TerrainSystem) -> void:
 		_iso_layer.set_cell(coords, _source_id, Vector2i(column, int(_iso_rows[surface])), level)
 
 
-## Scenery: trees, bushes, tufts and stones scattered over the terrain.
-##
-## Static, so it is written once per world rather than per frame. Placement is
-## derived from the cell index by a plain integer hash, not from the world RNG -
-## decoration must never be able to shift the simulation's random stream.
-##
-## Obstacle cells are always dressed. That is the point of the layer: a cell the
-## simulation refuses to walk through should look like a thicket or a boulder
-## field, not like open ground.
-func _rebuild_props(terrain: TerrainSystem) -> void:
-	if _props == null:
-		return
-	var visuals: Dictionary = simulation_manager.config_bundle.get("visuals", {})
-	var config: Dictionary = visuals.get("props", {})
-	var groups: Dictionary = config.get("groups", {})
-	var obstacle_rules: Dictionary = config.get("obstacles", {})
-	var biome_rules: Dictionary = config.get("biomes", {})
-	var columns: int = maxi(1, int(config.get("columns", 8)))
-	var group_scale: Dictionary = config.get("group_scale", {})
-
-	var placements: Array = []
-	var cols: int = terrain.cols
-	for index in range(terrain.get_cell_count()):
-		var noise: int = _cell_hash(index)
-		var slots: Array = []
-		var chance: float = 0.0
-		var group_name: String = ""
-		var obstacle_id: String = terrain.get_obstacle_at_index(index)
-		if obstacle_id != "" and obstacle_rules.has(obstacle_id):
-			var rule: Dictionary = obstacle_rules[obstacle_id]
-			group_name = str(rule.get("group", ""))
-			slots = groups.get(group_name, [])
-			chance = float(rule.get("chance", 0.0))
-		elif terrain.is_walkable_index(index):
-			var biome_id: String = terrain.get_biome_at_index(index)
-			if biome_rules.has(biome_id):
-				var rule2: Dictionary = biome_rules[biome_id]
-				var names: Array = rule2.get("groups", [])
-				group_name = str(names[_cell_hash(index + 17) % maxi(1, names.size())]) if not names.is_empty() else ""
-				slots = groups.get(group_name, [])
-				chance = float(rule2.get("chance", 0.0))
-		if slots.is_empty() or float(noise % 1000) / 1000.0 >= chance:
-			continue
-		@warning_ignore("integer_division")
-		var coords := Vector2i(index % cols, index / cols)
-		var centre := Vector2((float(coords.x) + 0.5) * terrain.cell_size,
-			(float(coords.y) + 0.5) * terrain.cell_size)
-		# Nudged off the exact centre so a field of props does not read as a grid.
-		var jitter := Vector2(
-			float((noise / 1000) % 100) / 100.0 - 0.5,
-			float((noise / 100000) % 100) / 100.0 - 0.5) * terrain.cell_size * 0.45
-		placements.append({
-			"position": centre + jitter,
-			"slot": int(slots[(noise / 7) % slots.size()]),
-			"level": terrain.get_height_at_index(index),
-			"scale": float(group_scale.get(group_name, 1.0)),
-		})
-
-	var multimesh: MultiMesh = _props.multimesh
-	if placements.is_empty():
-		multimesh.visible_instance_count = 0
-		return
-	# Drawn back to front: a MultiMesh has no depth sorting of its own.
-	placements.sort_custom(func(a, b):
-		return WorldProjection.depth_sort_key(a["position"], a["level"]) \
-			< WorldProjection.depth_sort_key(b["position"], b["level"]))
-	multimesh.instance_count = placements.size()
-	var half_height: float = _props.multimesh.mesh.size.y * 0.5
-	for i in range(placements.size()):
-		var entry: Dictionary = placements[i]
-		var point: Vector2 = WorldProjection.to_screen(entry["position"], int(entry["level"]))
-		# Scaled about its base, not its centre, so a shrunk prop stays planted
-		# on the ground instead of floating above it.
-		var factor: float = float(entry["scale"])
-		multimesh.set_instance_transform_2d(i, Transform2D(
-			Vector2(factor, 0.0), Vector2(0.0, factor),
-			point - Vector2(0.0, half_height * factor)))
-		# The shader multiplies the sampled texel by the instance colour, and an
-		# unset colour is transparent black - which draws nothing at all.
-		multimesh.set_instance_color(i, Color.WHITE)
-		multimesh.set_instance_custom_data(i, Color(
-			float(int(entry["slot"]) % columns), float(int(entry["slot"]) / columns), 0.0, 0.0))
-	multimesh.visible_instance_count = placements.size()
-
-
-## Deterministic per-cell noise. Deliberately not `world.rng`: pulling from the
-## simulation's stream to decide where a bush goes would make the ecology depend
-## on the decoration.
+## Deterministic per-cell noise, used to pick terrain tile variants. Deliberately
+## not `world.rng`: decoration must never be able to shift the simulation's
+## random stream.
 func _cell_hash(index: int) -> int:
 	var value: int = index * 374761393 + 668265263
 	value = (value ^ (value >> 13)) * 1274126177
 	return absi(value ^ (value >> 16))
-
-
-func _build_props_layer(visuals: Dictionary) -> void:
-	var config: Dictionary = visuals.get("props", {})
-	if config.is_empty():
-		return
-	var texture: Texture2D = _load_atlas(config.get("atlas", ""))
-	if texture == null:
-		return
-	var cell: Vector2i = _config_vector(config.get("cell_px", [52, 66]), Vector2i(52, 66))
-	var columns: int = maxi(1, int(config.get("columns", 8)))
-	var rows: int = maxi(1, int(texture.get_height() / maxi(1, cell.y)))
-	var scale_factor: float = float(config.get("scale", 0.8)) * _cell_size() / 32.0
-
-	var quad := QuadMesh.new()
-	quad.size = Vector2(float(cell.x), float(cell.y)) * scale_factor
-
-	var multimesh := MultiMesh.new()
-	multimesh.transform_format = MultiMesh.TRANSFORM_2D
-	multimesh.use_colors = true
-	multimesh.use_custom_data = true
-	multimesh.mesh = quad
-	multimesh.instance_count = 0
-
-	var material := ShaderMaterial.new()
-	material.shader = preload("res://shaders/agent_atlas.gdshader")
-	material.set_shader_parameter("frame_size_uv",
-		Vector2(1.0 / float(columns), 1.0 / float(rows)))
-
-	_props = MultiMeshInstance2D.new()
-	_props.multimesh = multimesh
-	_props.texture = texture
-	_props.material = material
-	_props.z_index = PROP_Z
-	_props.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	add_child(_props)
 
 
 func _build_layers() -> void:

@@ -187,16 +187,16 @@ func _test_worker_pause_and_single_step(a) -> void:
 	manager.begin_interactive_stepping()
 	manager.set_paused(true)
 	manager._process_worker(0.1)
-	a.is_true(manager._worker_thread == null, "a paused worker does not launch a tick")
+	a.is_true(not manager.is_worker_tick_in_flight(), "a paused worker does not launch a tick")
 	var before: int = manager.current_tick
 	manager.request_single_step()
 	manager._process_worker(0.0)
-	a.is_true(manager._worker_thread != null, "single step launches exactly one worker result")
+	a.is_true(manager.is_worker_tick_in_flight(), "single step launches exactly one worker result")
 	manager.synchronize_worker()
 	a.equal(manager.current_tick, before + 1, "single step advances exactly one tick")
 	a.is_true(manager.paused and not manager._single_step_requested, "single step returns the worker to paused state")
 	manager._process_worker(0.1)
-	a.is_true(manager._worker_thread == null, "no second worker tick starts after a single step")
+	a.is_true(not manager.is_worker_tick_in_flight(), "no second worker tick starts after a single step")
 	Helpers.destroy_manager(manager)
 
 
@@ -224,9 +224,9 @@ func _test_worker_load_and_shutdown_boundaries(a) -> void:
 	manager.enable_interactive_worker()
 	manager.begin_interactive_stepping()
 	manager._process_worker(0.1)
-	a.is_true(manager._worker_thread != null, "load fixture starts with a worker tick in flight")
+	a.is_true(manager.is_worker_tick_in_flight(), "load fixture starts with a worker tick in flight")
 	var world_data: Dictionary = manager.export_simulation_state()
-	a.is_true(manager._worker_thread == null, "export synchronizes the in-flight worker before save")
+	a.is_true(not manager.is_worker_tick_in_flight(), "export synchronizes the in-flight worker before save")
 	var saved_tick: int = manager.current_tick
 	var data := {"version": 2, "selection": {}, "config_bundle": manager.config_bundle.duplicate(true),
 		"seed": manager.seed, "tick": saved_tick, "simulation_time": manager.simulation_time,
@@ -240,7 +240,7 @@ func _test_worker_load_and_shutdown_boundaries(a) -> void:
 	manager.enable_interactive_worker()
 	manager.begin_interactive_stepping()
 	manager._process_worker(0.1)
-	a.is_true(manager._worker_thread != null, "shutdown fixture has an active worker")
+	a.is_true(manager.is_worker_tick_in_flight(), "shutdown fixture has an active worker")
 	manager.shutdown()
 	a.is_true(manager._worker_thread == null and manager._worker == null,
 		"shutdown joins and releases the worker")
