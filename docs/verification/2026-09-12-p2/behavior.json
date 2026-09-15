@@ -1,0 +1,24 @@
+{
+	"escape": {
+		"body_clear": true,
+		"breaks_all_sight": true,
+		"inside_bounds": true,
+		"minimum_distance_at_target": 147.512710571289,
+		"minimum_distance_before": 71.5541763305664,
+		"passed": true,
+		"start": "(112.0, 128.0)",
+		"target": "(192.0, 128.0)"
+	},
+	"last_seen_search": {
+		"expired": true,
+		"hidden_position_ignored": true,
+		"hunt_started": true,
+		"lost_sight_failures": 1,
+		"passed": true,
+		"search_continued": true,
+		"search_expired_count": 1,
+		"search_started_count": 1
+	},
+	"passed": true,
+	"seed": 2201
+}

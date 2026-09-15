@@ -18,6 +18,13 @@ This document describes the current structure of `Engine of Ecosystem`, the main
    - `StatsSystem` samples the world and emits snapshots to the UI.
 5. The UI listens to `tick_completed`, `selection_changed`, `focus_mode_changed`, and `export_completed`.
 
+Interactive runs transfer ownership of the mutable simulation to `SimulationWorker`.
+The initial state and explicit save/load boundaries use a full presentation snapshot;
+normal ticks send sequenced deltas with compact active-agent records, changed carcasses,
+grass cells, sectors, groups, metrics, and events. The presentation world updates its
+spatial index only for added, removed, and moved agents. A missing sequence forces a
+full resynchronization before another delta is applied.
+
 ## Core Subsystems
 
 ### `SimulationManager`
@@ -28,6 +35,8 @@ Responsibilities:
 - Applies a per-frame catch-up cap to avoid simulation spiral-of-death
 - Tracks pause state, speed multiplier, selected agent, follow mode, and LOD focus rect
 - Bridges world state to UI and telemetry
+- Measures worker step, snapshot construction, main-thread apply, render phases,
+  actual simulation speed, and dropped simulation time independently
 
 Key behavior:
 
@@ -54,6 +63,13 @@ Important world queries:
 - water source lookup
 - carcass lookup and reservation
 - group center lookup for herd/flock logic
+
+Escape destination selection evaluates seven headings against all currently
+visible threats. It rejects invalid body positions, ranks sight breaks and
+minimum predator distance before route cost, and submits only the three best
+terrain candidates to the persistent fair navigation queue. The chosen target
+is retained until arrival, blockage, a material threat-direction change, or the
+configured refresh interval.
 
 Grass target resolution is deliberately two-stage:
 
@@ -86,6 +102,16 @@ Current terrain features:
 - biome-dependent forage initialization and regrowth multipliers
 - obstacle blocking and chokepoint creation
 
+### `ScenerySystem`
+
+- Owns deterministic prop records with stable IDs, base positions, physical
+  radius, cover radius, opacity, movement cost and render metadata
+- Indexes those records spatially for rendering, swept body collision and sight
+- Treats tree canopies as visual extent only: trunks and stones block, bushes
+  slow movement and attenuate sight, and minor biome decoration stays passable
+- Refines terrain routes on a body-sized local grid and slides collision-limited
+  movement along a clear tangent
+
 ### `ResourceSystem`
 
 Responsibilities:
@@ -117,6 +143,8 @@ Current snapshot categories:
 - carcass totals
 - blocked terrain ratio
 - LOD counts
+- search starts, prey reacquisitions, search expirations, and average completed
+  chase duration
 
 ## Agent Model
 
@@ -225,12 +253,14 @@ Utility actions inside `alive`:
 
 ### `AgentSpriteRenderer`
 
-- One `MultiMeshInstance2D` per species plus one for carcasses; the animation frame travels per
-  instance in custom data and is resolved by `shaders/agent_atlas.gdshader`
+- Keeps one metadata `MultiMeshInstance2D` per species while `SceneSpriteBatch`
+  packs species, carcass and prop atlases into one visible MultiMesh
 - Frames are derived from existing agent fields (state, action, velocity, id) and the simulation
   clock, so no visual state is stored on `AgentBase` and headless runs stay bit-identical
-- Depth sorting is exact within a species but not across them: predators draw above herbivores,
-  carcasses below both
+- Depth sorting uses every object's projected base across species, carcasses and
+  scenery; equal-depth ties put carcasses below animals and passable cover above
+- Interpolated positions are accepted only through a body-clear corridor; the
+  sprite, shadow, selection marker and follow camera read the same render position
 
 ### `WorldView`
 
@@ -346,7 +376,8 @@ depends on.
 - `climate` drives seasons and the day/night cycle. It is read by `Climate`
   (`scripts/world/climate.gd`), which is a **pure function of `simulation_time`** rather than
   accumulated state - `SaveSystem` already round-trips `simulation_time`, so the clock costs
-  no save-format change and `SAVE_VERSION` stays at 1. Anything that starts accumulating here
+  no save-format change by itself. Save version 2 stores agent perception memory and the
+  resolved configuration bundle; version 1 is migrated on read. Anything that starts accumulating here
   has to move the version with it.
   Shipped shape: a day is 120 s, a season is one day, a year is 480 s (8 minutes at 1x).
   Each season declares `regrowth_multiplier`, `metabolism_multiplier` and
@@ -436,6 +467,9 @@ The project includes an internal headless test runner in `scenes/tests/test_runn
 
 Current suites cover:
 
+- swept-radius obstacles, sliding, local route refinement and map boundaries
+- bush movement/visibility rules and stable scenery identity
+- common prop/animal/carcass depth ordering and collision-safe interpolation
 - evaluator dominance checks
 - selector stickiness and threshold behavior
 - state-policy expectations

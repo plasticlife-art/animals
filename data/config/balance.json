@@ -41,9 +41,9 @@
   },
   "carcass": {
     "ttl_seconds": 90.0,
-    "meat_total": 150.0,
+    "meat_total": 240.0,
     "max_feeders": 5,
-    "search_radius": 420.0
+    "search_radius": 840.0
   },
   "ai": {
     "selector": {
@@ -223,5 +223,14 @@
     "kill_rate_per_prey_per_second": 0.006,
     "predator_thirst_trigger_ratio": 0.6,
     "idle_recovery_energy_ratio": 0.75
+  },
+  "population_regulation": {
+    "enabled": true,
+    "default_capacity_multiplier": 1.75,
+    "capacity_multipliers": {
+      "herbivore": 1.75,
+      "predator": 2.0,
+      "scavenger": 1.75
+    }
   }
 }

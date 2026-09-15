@@ -30,7 +30,7 @@ func select(
 	var switch_threshold_delta := float(config.get("switch_threshold_delta", 0.15))
 	var minimum_commitment_ticks := maxi(0, int(config.get("minimum_commitment_ticks", 6)))
 
-	var raw_scores := {}
+	var raw_scores: Dictionary = {}
 	var final_scores := {}
 	var reasons_by_action := {}
 	var vetoed_actions := {}
@@ -42,8 +42,10 @@ func select(
 		if evaluator != null and evaluator.has_method("evaluate"):
 			evaluation = evaluator.evaluate(agent, context)
 		var raw_score := float(evaluation.get("score", 0.0))
-		raw_scores[action_name] = raw_score
-		reasons_by_action[action_name] = evaluation.get("reasons", [])
+		if context.diagnostics:
+			raw_scores[action_name] = raw_score
+		if context.diagnostics:
+			reasons_by_action[action_name] = evaluation.get("reasons", [])
 		var is_vetoed := bool(evaluation.get("vetoed", false))
 		var final_score := raw_score + float(policy.get_state_modifier(action_name, context))
 		if is_vetoed:
@@ -70,7 +72,7 @@ func select(
 	var chosen_action: StringName = best_action
 	var did_switch := current_action != StringName() and current_action != best_action
 	var reason := _build_base_reason(best_action, best_score, reasons_by_action) if context.diagnostics else String(best_action)
-	if vetoed_actions.has(current_action) and chosen_action != current_action:
+	if context.diagnostics and vetoed_actions.has(current_action) and chosen_action != current_action:
 		reason = "dropped %s (%s); %s" % [
 			String(current_action),
 			_first_reason(reasons_by_action.get(current_action, [])),
@@ -83,36 +85,38 @@ func select(
 			if ticks_in_current_action < minimum_commitment_ticks:
 				chosen_action = current_action
 				did_switch = false
-				reason = "kept %s during minimum commitment (%d/%d ticks)" % [
-					String(current_action),
-					ticks_in_current_action,
-					minimum_commitment_ticks,
-				]
+				if context.diagnostics:
+					reason = "kept %s during minimum commitment (%d/%d ticks)" % [
+						String(current_action),
+						ticks_in_current_action,
+						minimum_commitment_ticks,
+					]
 			elif best_score <= current_score + switch_threshold_delta:
 				chosen_action = current_action
 				did_switch = false
-				reason = "kept %s because %.2f does not beat %.2f + %.2f" % [
-					String(current_action),
-					best_score,
-					current_score,
-					switch_threshold_delta,
-				]
+				if context.diagnostics:
+					reason = "kept %s because %.2f does not beat %.2f + %.2f" % [
+						String(current_action),
+						best_score,
+						current_score,
+						switch_threshold_delta,
+					]
 		elif current_action == best_action:
 			did_switch = false
-			reason = "kept %s as top action" % String(current_action)
-	elif force_interrupt and chosen_action != current_action:
+			if context.diagnostics:
+				reason = "kept %s as top action" % String(current_action)
+	elif context.diagnostics and force_interrupt and chosen_action != current_action:
 		reason = "forced interrupt to %s; %s" % [String(chosen_action), reason]
 
 	var target_data: Dictionary = context.get_target(chosen_action)
 	var decision = ActionDecisionScript.new()
 	decision.selected_action = chosen_action
-	# Both maps are flat StringName -> float, so a deep copy walked the same
-	# values a shallow one does. Identical result, one allocation pass instead
-	# of a recursive one, on every decision of every agent.
-	decision.raw_scores = raw_scores.duplicate()
-	decision.final_scores = final_scores.duplicate()
-	decision.reason = reason
-	decision.target_data = target_data.duplicate(true)
+	# These dictionaries are owned by this completed decision. The agent adopts
+	# them immediately, so copying would only duplicate short-lived diagnostics.
+	decision.raw_scores = raw_scores if context.diagnostics else {}
+	decision.final_scores = final_scores if context.diagnostics else {}
+	decision.reason = reason if context.diagnostics else String(chosen_action)
+	decision.target_data = target_data
 	decision.switched = did_switch
 	return decision
 

@@ -61,6 +61,7 @@ var _cached_walkable_neighbor_costs: Array = []
 var _path_cache: Dictionary = {}
 var _path_cache_order: Array = []
 var _path_cache_limit: int = 768
+var _path_searches: Dictionary = {}
 var _path_query_count: int = 0
 var _path_cache_hit_count: int = 0
 
@@ -100,6 +101,7 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_cached_walkable_neighbor_costs.clear()
 	_path_cache.clear()
 	_path_cache_order.clear()
+	_path_searches.clear()
 	_path_cache_limit = maxi(32, int(world_config.get("navigation", {}).get("path_cache_limit", 768)))
 	_path_query_count = 0
 	_path_cache_hit_count = 0
@@ -281,52 +283,62 @@ func find_path(from_position: Vector2, to_position: Vector2) -> Dictionary:
 ## every single return, which cost an Array duplication per query even on the
 ## ~94% of queries that hit the cache.
 func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
+	# Synchronous callers retain the original contract. Simulation requests use
+	# step_path_between_indices() to spread this same deterministic search over
+	# several ticks.
+	while true:
+		var step := step_path_between_indices(start_index, goal_index,
+			maxi(64, int(navigation_config.get("max_search_cells", 2800))))
+		if bool(step.get("complete", false)):
+			return step.get("result", {})
+	return {}
+
+
+func step_path_between_indices(start_index: int, goal_index: int, expansion_budget: int) -> Dictionary:
 	if start_index == -1 or goal_index == -1:
-		return {
-			"cells": [],
-			"cost": INF,
-			"reachable": false,
-			"start_index": start_index,
-			"goal_index": goal_index,
-		}
+		return {"complete": true, "result": {
+			"cells": [], "cost": INF, "reachable": false,
+			"start_index": start_index, "goal_index": goal_index}}
 	if start_index == goal_index:
-		return {
-			"cells": [start_index],
-			"cost": 0.0,
-			"reachable": true,
-			"start_index": start_index,
-			"goal_index": goal_index,
-		}
+		return {"complete": true, "result": {
+			"cells": [start_index], "cost": 0.0, "reachable": true,
+			"start_index": start_index, "goal_index": goal_index}}
 
 	var cache_key := Vector2i(start_index, goal_index)
-	_path_query_count += 1
 	if _path_cache.has(cache_key):
 		_path_cache_hit_count += 1
-		return _path_cache[cache_key]
+		return {"complete": true, "result": _path_cache[cache_key]}
 
 	var max_search_cells: int = maxi(64, int(navigation_config.get("max_search_cells", 2800)))
-	var open_heap: Array = []
-	var came_from: Dictionary = {}
-	var g_score: Dictionary = {}
-	g_score[start_index] = 0.0
-	var f_score: Dictionary = {}
-	f_score[start_index] = _heuristic_cost(start_index, goal_index)
-	var best_index: int = start_index
-	var best_heuristic: float = _heuristic_cost(start_index, goal_index)
-	var visited: int = 0
-	_heap_push(open_heap, {
-		"index": start_index,
-		"priority": float(f_score[start_index]),
-	})
+	var state: Dictionary = _path_searches.get(cache_key, {})
+	if state.is_empty():
+		_path_query_count += 1
+		var first_heuristic := _heuristic_cost(start_index, goal_index)
+		var initial_heap: Array[Vector2] = []
+		_heap_push(initial_heap, Vector2(start_index, first_heuristic))
+		state = {"open_heap": initial_heap, "came_from": {},
+			"g_score": {start_index: 0.0}, "f_score": {start_index: first_heuristic},
+			"best_index": start_index, "best_heuristic": first_heuristic, "visited": 0}
+		_path_searches[cache_key] = state
 
-	while not open_heap.is_empty() and visited < max_search_cells:
-		var current_node: Dictionary = _heap_pop(open_heap)
-		var current_index: int = int(current_node.get("index", -1))
-		var queued_priority: float = float(current_node.get("priority", INF))
+	var open_heap: Array = state.open_heap
+	var came_from: Dictionary = state.came_from
+	var g_score: Dictionary = state.g_score
+	var f_score: Dictionary = state.f_score
+	var best_index: int = int(state.best_index)
+	var best_heuristic: float = float(state.best_heuristic)
+	var visited: int = int(state.visited)
+	var expanded := 0
+	var slice_limit := maxi(1, expansion_budget)
+	while not open_heap.is_empty() and visited < max_search_cells and expanded < slice_limit:
+		var current_node: Vector2 = _heap_pop(open_heap)
+		var current_index: int = int(current_node.x)
+		var queued_priority: float = current_node.y
 		var current_priority: float = float(f_score.get(current_index, INF))
 		if current_index == -1 or queued_priority > current_priority:
 			continue
 		visited += 1
+		expanded += 1
 
 		var current_heuristic: float = _heuristic_cost(current_index, goal_index)
 		if current_heuristic < best_heuristic:
@@ -334,15 +346,12 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 			best_index = current_index
 
 		if current_index == goal_index:
-			var result := {
-				"cells": _reconstruct_path(current_index, came_from),
-				"cost": float(g_score.get(current_index, 0.0)),
-				"reachable": true,
-				"start_index": start_index,
-				"goal_index": goal_index,
-			}
+			var result := {"cells": _reconstruct_path(current_index, came_from),
+				"cost": float(g_score.get(current_index, 0.0)), "reachable": true,
+				"start_index": start_index, "goal_index": goal_index}
+			_path_searches.erase(cache_key)
 			_store_path_cache_entry(cache_key, result)
-			return result
+			return {"complete": true, "result": result}
 
 		var neighbor_indices: Array = get_walkable_neighbors(current_index)
 		var neighbor_costs: Array = _get_walkable_neighbor_costs(current_index)
@@ -355,30 +364,29 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 			g_score[neighbor_index] = tentative_cost
 			var total_cost: float = tentative_cost + _heuristic_cost(neighbor_index, goal_index)
 			f_score[neighbor_index] = total_cost
-			_heap_push(open_heap, {
-				"index": neighbor_index,
-				"priority": total_cost,
-			})
+			_heap_push(open_heap, Vector2(neighbor_index, total_cost))
 
+	state.best_index = best_index
+	state.best_heuristic = best_heuristic
+	state.visited = visited
+	if not open_heap.is_empty() and visited < max_search_cells:
+		return {"complete": false, "result": {}}
+
+	_path_searches.erase(cache_key)
 	if best_index == start_index:
-		var failed_result := {
-			"cells": [start_index],
-			"cost": INF,
-			"reachable": false,
-			"start_index": start_index,
-			"goal_index": goal_index,
-		}
+		var failed_result := {"cells": [start_index], "cost": INF,
+			"reachable": false, "start_index": start_index, "goal_index": goal_index}
 		_store_path_cache_entry(cache_key, failed_result)
-		return failed_result
-	var partial_result := {
-		"cells": _reconstruct_path(best_index, came_from),
-		"cost": float(g_score.get(best_index, INF)),
-		"reachable": false,
-		"start_index": start_index,
-		"goal_index": goal_index,
-	}
+		return {"complete": true, "result": failed_result}
+	var partial_result := {"cells": _reconstruct_path(best_index, came_from),
+		"cost": float(g_score.get(best_index, INF)), "reachable": false,
+		"start_index": start_index, "goal_index": goal_index}
 	_store_path_cache_entry(cache_key, partial_result)
-	return partial_result
+	return {"complete": true, "result": partial_result}
+
+
+func cancel_path_search(start_index: int, goal_index: int) -> void:
+	_path_searches.erase(Vector2i(start_index, goal_index))
 
 
 func has_cached_path_between_indices(start_index: int, goal_index: int) -> bool:
@@ -830,23 +838,23 @@ func _get_water_influence(position: Vector2, water_sources: Array, radius: float
 	return best
 
 
-func _heap_push(heap: Array, value: Dictionary) -> void:
+func _heap_push(heap: Array[Vector2], value: Vector2) -> void:
 	heap.append(value)
 	var index := heap.size() - 1
 	while index > 0:
 		var parent := int((index - 1) / 2)
-		if float(heap[parent].get("priority", INF)) <= float(value.get("priority", INF)):
+		if heap[parent].y <= value.y:
 			break
 		heap[index] = heap[parent]
 		index = parent
 	heap[index] = value
 
 
-func _heap_pop(heap: Array) -> Dictionary:
+func _heap_pop(heap: Array[Vector2]) -> Vector2:
 	if heap.is_empty():
-		return {}
-	var result: Dictionary = heap[0]
-	var tail: Dictionary = heap.pop_back()
+		return Vector2(-1.0, INF)
+	var result: Vector2 = heap[0]
+	var tail: Vector2 = heap.pop_back()
 	if heap.is_empty():
 		return result
 	var index := 0
@@ -857,9 +865,9 @@ func _heap_pop(heap: Array) -> Dictionary:
 			break
 		var right := left + 1
 		var best_child := left
-		if right < heap_size and float(heap[right].get("priority", INF)) < float(heap[left].get("priority", INF)):
+		if right < heap_size and heap[right].y < heap[left].y:
 			best_child = right
-		if float(heap[best_child].get("priority", INF)) >= float(tail.get("priority", INF)):
+		if heap[best_child].y >= tail.y:
 			break
 		heap[index] = heap[best_child]
 		index = best_child
@@ -868,7 +876,15 @@ func _heap_pop(heap: Array) -> Dictionary:
 
 
 func _heuristic_cost(from_index: int, to_index: int) -> float:
-	return get_cell_center(from_index).distance_to(get_cell_center(to_index))
+	# Avoid constructing and looking up two world-space vectors for every A*
+	# neighbor. Cell coordinates are sufficient because all cells share one size.
+	var from_x := from_index % cols
+	var from_y := int(from_index / cols)
+	var to_x := to_index % cols
+	var to_y := int(to_index / cols)
+	var delta_x := float(from_x - to_x)
+	var delta_y := float(from_y - to_y)
+	return sqrt(delta_x * delta_x + delta_y * delta_y) * cell_size
 
 
 func _step_cost(from_index: int, to_index: int) -> float:
@@ -912,6 +928,3 @@ func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary) -> void:
 	if _path_cache_order.size() > _path_cache_limit:
 		var oldest_key: Vector2i = _path_cache_order.pop_front()
 		_path_cache.erase(oldest_key)
-
-
-

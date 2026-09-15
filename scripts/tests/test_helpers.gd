@@ -107,6 +107,10 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# past the ten ticks the dormant-metrics fixtures run, and they silently read
 	# a stale tick-0 snapshot instead of the window they meant to assert on.
 	bundle["balance"]["stats"]["sample_interval_ticks"] = 5
+	# Population caps are an ecology-scale rule. Tiny behavioural fixtures spawn
+	# their own agents after initialization and would otherwise have a capacity of
+	# zero because their preset intentionally starts empty.
+	bundle["balance"]["population_regulation"]["enabled"] = false
 	# Every species, not two named ones. `_spawn_initial_agents()` reads
 	# `<species>_count` off the registry, so a new entry in species.json with a
 	# non-zero count in world.json would otherwise seed itself into every
@@ -204,6 +208,7 @@ static func spawn_carcass(world, position: Vector2, meat_remaining: float = 80.0
 		"active_feeder_ids": [],
 		"source_agent_id": -1,
 	}
+	world._register_carcass_sector(carcass_id, position)
 	return carcass_id
 
 

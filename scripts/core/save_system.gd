@@ -22,6 +22,7 @@ extends RefCounted
 ## individual trajectories eventually do not.
 
 const SAVE_VERSION := 2
+const MIN_READABLE_VERSION := 1
 const SAVE_DIR := "user://saves"
 const SLOTS := ["autosave_a.dat", "autosave_b.dat"]
 
@@ -44,7 +45,7 @@ static func latest_slot() -> String:
 		if not FileAccess.file_exists(path):
 			continue
 		var header := _read_header(path)
-		if header.is_empty() or int(header.get("version", 0)) != SAVE_VERSION:
+		if header.is_empty() or not _is_readable_version(int(header.get("version", 0))):
 			continue
 		var tick := int(header.get("tick", -1))
 		if tick > newest_tick:
@@ -106,16 +107,58 @@ static func read(path: String) -> Dictionary:
 	if typeof(data) != TYPE_DICTIONARY:
 		push_error("Save file is not a dictionary: %s" % path)
 		return {}
-	# Only the current version. Version 1 predates the per-species sector census:
-	# its sector states carry `herbivore_count` / `predator_count` and no
-	# `species_counts`, so it would load without complaint and then report an
-	# empty world to every prey-pressure and threat lookup - predators would
-	# quietly stop finding herds. Rejected rather than migrated; the caller
-	# already falls back to starting a fresh simulation.
-	if int(data.get("version", 0)) != SAVE_VERSION:
-		push_error("Save file version %s, expected %d: %s"
-			% [data.get("version", 0), SAVE_VERSION, path])
+	var version := int(data.get("version", 0))
+	if not _is_readable_version(version):
+		push_error("Save file version %s is outside the supported range %d-%d: %s"
+			% [data.get("version", 0), MIN_READABLE_VERSION, SAVE_VERSION, path])
 		return {}
+	if version == 1:
+		data = _migrate_v1_to_v2(data)
+	return data
+
+
+static func _is_readable_version(version: int) -> bool:
+	return version >= MIN_READABLE_VERSION and version <= SAVE_VERSION
+
+
+## V1 did not store the resolved config bundle or the generic per-species sector
+## census. Missing perception fields on agent records are already handled by
+## each agent's runtime-state defaults during import.
+static func _migrate_v1_to_v2(source: Dictionary) -> Dictionary:
+	var data: Dictionary = source.duplicate(true)
+	var selection: Dictionary = data.get("selection", {})
+	data["config_bundle"] = ConfigLoader.load_config_bundle(selection)
+	var world: Dictionary = data.get("world", {}).duplicate(true)
+	var sectors = world.get("sectors", [])
+	if sectors is Array:
+		for index in sectors.size():
+			if not (sectors[index] is Dictionary):
+				continue
+			var sector: Dictionary = sectors[index].duplicate(true)
+			if not sector.has("species_counts"):
+				var counts := {}
+				# Sleeping sectors already hold the most reliable census in their
+				# aggregate records. Prefer it when present because old flat counts
+				# could lag until the next dormant update.
+				var aggregates: Array = sector.get("dormant_aggregates", [])
+				for aggregate in aggregates:
+					if aggregate is Dictionary:
+						var species_id := str(aggregate.get("species_type", ""))
+						if species_id != "":
+							counts[species_id] = int(counts.get(species_id, 0)) + int(aggregate.get("count", 0))
+				if counts.is_empty():
+					counts = {
+						"herbivore": int(sector.get("herbivore_count", 0)),
+						"predator": int(sector.get("predator_count", 0)),
+					}
+				sector["species_counts"] = counts
+				sector["threat_score"] = float(counts.get("predator", 0))
+			sector.erase("herbivore_count")
+			sector.erase("predator_count")
+			sectors[index] = sector
+	world["sectors"] = sectors
+	data["world"] = world
+	data["version"] = SAVE_VERSION
 	return data
 
 

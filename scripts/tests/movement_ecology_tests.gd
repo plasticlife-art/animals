@@ -114,16 +114,24 @@ func _test_save_and_budget(a) -> void:
 	var data: Dictionary = Save.read(path)
 	data.version = 1
 	data.erase("config_bundle")
+	data.world.sectors = [{
+		"sector_key": Vector2i(2, 3),
+		"dormant": true,
+		"herbivore_count": 7,
+		"predator_count": 2,
+		"dormant_aggregates": [],
+	}]
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	file.store_var(data, true)
 	file.close()
-	# A v1 file has to be refused, not read. Its sector states predate
-	# `species_counts`, so loading one leaves every sector reporting no animals to
-	# the prey-pressure census and to `threat_score` - a world that looks fine and
-	# in which predators never find a herd again.
-	a.is_true(Save.read(path).is_empty(), "a pre-census save is refused rather than half-loaded")
-	a.is_true(not Save.slot_paths().has(path) or Save.latest_slot() != path,
-		"a refused save is not offered as something to continue")
+	var migrated: Dictionary = Save.read(path)
+	a.equal(int(migrated.get("version", 0)), 2, "v1 save migrates to the current version")
+	a.is_true(migrated.has("config_bundle"), "v1 migration resolves its selected config bundle")
+	var migrated_sector: Dictionary = migrated.world.sectors[0]
+	a.equal(migrated_sector.species_counts, {"herbivore": 7, "predator": 2},
+		"v1 flat sector census migrates to per-species counts")
+	a.near(float(migrated_sector.threat_score), 2.0, 0.001,
+		"v1 predator census restores the sector threat score")
 	DirAccess.remove_absolute(path)
 	Helpers.destroy_manager(m)
 

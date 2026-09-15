@@ -42,6 +42,7 @@ var _autosave_interval: int = 0
 ## Where `_close_help()` goes back to: "start", "pause", "game", or "" when the
 ## help screen is down.
 var _help_return: String = ""
+var _overview_mode: bool = false
 
 
 ## Nothing is simulated until the setup screen says so.
@@ -197,8 +198,12 @@ func _bind_view() -> void:
 
 
 func _process(_delta: float) -> void:
+	var started := Time.get_ticks_usec()
 	_sync_lod_focus_rect()
 	_sync_day_night_tint()
+	if simulation_manager != null and simulation_manager.world_state != null:
+		simulation_manager.record_render_phase("ui",
+			float(Time.get_ticks_usec() - started) / 1000.0)
 
 
 ## Sampled from sub-tick time rather than the last completed tick: the tint is
@@ -478,16 +483,37 @@ func _sync_overlay_blur() -> void:
 
 
 func _sync_lod_focus_rect() -> void:
-	if simulation_manager == null or world_camera == null:
+	if simulation_manager == null or simulation_manager.world_state == null or world_camera == null:
 		return
 	# The camera reports a screen-space rect; sector dormancy is decided in
 	# simulation space, so it goes through the projection seam.
 	var focus_rect: Rect2 = WorldProjection.world_rect_covering(world_camera.get_visible_screen_rect())
-	if simulation_manager.lod_focus_rect == focus_rect:
-		return
-	simulation_manager.set_lod_focus_rect(focus_rect)
+	var bounds: Rect2 = simulation_manager.world_state.bounds
+	var overview_config: Dictionary = simulation_manager.config_bundle.get("visuals", {}).get("overview_lod", {})
+	var visible_fraction := WorldProjection.visible_world_fraction(
+		world_camera.get_visible_screen_rect(), bounds)
+	_overview_mode = resolve_overview_fraction(_overview_mode, visible_fraction, overview_config)
+	var focus_center := WorldProjection.to_world(world_camera.global_position)
+	simulation_manager.set_lod_view(focus_rect, focus_center, _overview_mode)
+	agent_renderer.set_overview_mode(_overview_mode)
+	minimap.set_overview_mode(_overview_mode)
 	if bool(simulation_manager.debug_flags.get("show_lod_overlay", false)):
 		world_view.request_refresh()
+
+
+static func resolve_overview_mode(current: bool, visible_rect: Rect2, bounds: Rect2, config: Dictionary) -> bool:
+	if not bool(config.get("enabled", true)) or bounds.get_area() <= 0.0:
+		return false
+	var fraction := visible_rect.intersection(bounds).get_area() / bounds.get_area()
+	return resolve_overview_fraction(current, fraction, config)
+
+
+static func resolve_overview_fraction(current: bool, fraction: float, config: Dictionary) -> bool:
+	if not bool(config.get("enabled", true)):
+		return false
+	var threshold := float(config.get("exit_visible_fraction", 0.15)) if current \
+		else float(config.get("enter_visible_fraction", 0.2))
+	return fraction >= threshold
 
 
 func _exit_game() -> void:

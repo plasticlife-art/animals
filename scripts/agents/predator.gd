@@ -9,6 +9,10 @@ const PredatorAIScript := preload("res://scripts/agents/ai/predator_ai.gd")
 var hunt: Dictionary = {}
 var last_seen_prey_position := Vector2.ZERO
 var prey_last_seen_time: float = -1.0
+var search_anchor := Vector2.ZERO
+var search_started_time: float = -1.0
+var search_waypoint_index: int = -1
+var search_last_confirmed_position := Vector2.ZERO
 var abandoned_prey_id: int = -1
 var retry_after: float = -1.0
 var preferred_mate_id: int = -1
@@ -51,7 +55,7 @@ func tick(world, delta: float) -> void:
 		return
 
 	# An engaged animal follows its existing target without building every utility context.
-	if state in ["seek_prey", "chase", "attack", "seek_carcass", "feed_carcass"]:
+	if state in ["seek_prey", "chase", "search_last_seen", "attack", "seek_carcass", "feed_carcass"]:
 		set_ai_state(AgentAIState.ENGAGED)
 		_ai_controller.sync_engaged_action(self, world.current_tick)
 		if _continue_engaged_flow(world, delta):
@@ -103,6 +107,7 @@ func clear_targets(world = null) -> void:
 		release_carcass_target(world)
 	else:
 		target_carcass_id = -1
+	_reset_search_state()
 	super.clear_targets()
 
 
@@ -110,6 +115,10 @@ func export_runtime_state() -> Dictionary:
 	var state_data: Dictionary = super.export_runtime_state()
 	state_data["last_seen_prey_position"] = last_seen_prey_position
 	state_data["prey_last_seen_time"] = prey_last_seen_time
+	state_data["search_anchor"] = search_anchor
+	state_data["search_started_time"] = search_started_time
+	state_data["search_waypoint_index"] = search_waypoint_index
+	state_data["search_last_confirmed_position"] = search_last_confirmed_position
 	state_data["abandoned_prey_id"] = abandoned_prey_id
 	state_data["retry_after"] = retry_after
 	state_data["preferred_mate_id"] = preferred_mate_id
@@ -133,6 +142,11 @@ func apply_runtime_state(state_data: Dictionary) -> void:
 	super.apply_runtime_state(state_data)
 	last_seen_prey_position = state_data.get("last_seen_prey_position", position)
 	prey_last_seen_time = float(state_data.get("prey_last_seen_time", -1.0))
+	search_anchor = state_data.get("search_anchor", position)
+	search_started_time = float(state_data.get("search_started_time", -1.0))
+	search_waypoint_index = int(state_data.get("search_waypoint_index", -1))
+	search_last_confirmed_position = state_data.get(
+		"search_last_confirmed_position", last_seen_prey_position)
 	abandoned_prey_id = int(state_data.get("abandoned_prey_id", -1))
 	retry_after = float(state_data.get("retry_after", -1.0))
 	preferred_mate_id = int(state_data.get("preferred_mate_id", preferred_mate_id))
@@ -145,7 +159,7 @@ func _get_debug_target_text() -> String:
 
 
 func _continue_or_finish_chase(world, delta: float) -> bool:
-	if state not in ["seek_prey", "chase", "attack"]:
+	if state not in ["seek_prey", "chase", "search_last_seen", "attack"]:
 		return false
 	if not is_hungry_enough_to_feed(can_continue_feeding()):
 		clear_targets(world)
@@ -167,8 +181,16 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	var critical_hunger: float = float(balance.get("state_thresholds", {}).get("critical_hunger", 65.0))
 	var visible: bool = world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0))
 	if visible:
+		if search_started_time >= 0.0:
+			world.emit_event("PreyReacquired", self, prey.id, {
+				"search_time": maxf(0.0, world.current_time - search_started_time),
+			})
+		_reset_search_state()
 		last_seen_prey_position = prey.position
+		search_last_confirmed_position = prey.position
 		prey_last_seen_time = world.current_time
+	elif search_started_time < 0.0:
+		_begin_last_seen_search(world, prey.id)
 	var distance_sq: float = position.distance_squared_to(last_seen_prey_position)
 	var distance: float = sqrt(distance_sq)
 	var fail_reason := ""
@@ -199,6 +221,11 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		}
 		if fail_reason == "kin_gap" and last_known_kin_center != null:
 			failure_data["kin_distance"] = position.distance_to(last_known_kin_center)
+		if fail_reason == "lost_sight":
+			world.emit_event("PreySearchExpired", self, prey.id, {
+				"search_time": maxf(0.0, world.current_time - search_started_time),
+				"waypoints_visited": maxi(0, search_waypoint_index),
+			})
 		abandoned_prey_id = prey.id
 		retry_after = world.current_time + float(hunt.get("retry_cooldown_seconds", 2.0))
 		world.emit_event("PredationFailed", self, prey.id, failure_data)
@@ -207,12 +234,12 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 
 	chase_timer += delta
 	spend_energy(float(metabolism.get("chase_energy_cost", 5.0)) * delta)
-	target_position = last_seen_prey_position
+	target_position = last_seen_prey_position if visible else _last_seen_search_target(world)
 	if visible and distance <= minf(attack_radius, get_body_radius() + prey.get_body_radius() + float(hunt.get("contact_slack", 5.0))) and world.scenery.segment_clear(position, prey.position, 0.0):
 		return _attack(world, prey, delta)
 
-	set_state("chase", world.current_tick)
-	var chase_waypoint: Vector2 = world.get_next_waypoint(position, last_seen_prey_position, id)
+	set_state("chase" if visible else "search_last_seen", world.current_tick)
+	var chase_waypoint: Vector2 = world.get_next_waypoint(position, target_position, id)
 	move_with_vector(world, Steering.seek(position, chase_waypoint), float(movement.get("sprint_speed", 128.0)), delta)
 	return true
 
@@ -231,7 +258,9 @@ func _hunt(world, delta: float, prey = null) -> bool:
 	var switched_target: bool = target_agent_id != prey.id
 	if switched_target:
 		world.emit_event("HuntStarted", self, prey.id)
+		_reset_search_state()
 	last_seen_prey_position = prey.position
+	search_last_confirmed_position = prey.position
 	prey_last_seen_time = world.current_time
 	target_agent_id = prey.id
 	target_position = prey.position
@@ -240,6 +269,60 @@ func _hunt(world, delta: float, prey = null) -> bool:
 	move_with_vector(world, Steering.seek(position, prey_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	chase_timer = delta if switched_target else maxf(chase_timer, delta)
 	return true
+
+
+func _begin_last_seen_search(world, prey_id: int) -> void:
+	search_anchor = last_seen_prey_position
+	search_last_confirmed_position = last_seen_prey_position
+	search_started_time = world.current_time
+	search_waypoint_index = -1
+	clear_navigation()
+	world.emit_event("PreySearchStarted", self, prey_id, {
+		"anchor": search_anchor,
+	})
+
+
+func _last_seen_search_target(world) -> Vector2:
+	var arrival := get_body_radius() + 8.0
+	var current_target := search_anchor if search_waypoint_index < 0 else _search_waypoint(world, search_waypoint_index)
+	if position.distance_squared_to(current_target) > arrival * arrival:
+		return current_target
+	while search_waypoint_index < 3:
+		search_waypoint_index += 1
+		var candidate := _search_waypoint(world, search_waypoint_index)
+		if _search_waypoint_reachable(world, candidate):
+			clear_navigation()
+			return candidate
+	return current_target
+
+
+func _search_waypoint(world, waypoint_index: int) -> Vector2:
+	var radius: float = float(world.terrain_system.cell_size) * float(hunt.get("search_radius_cells", 0.75))
+	var initial_angle: float = TAU * float(posmod(id * 1103515245 + 12345, 4096)) / 4096.0
+	var raw: Vector2 = search_anchor + Vector2.from_angle(initial_angle + float(waypoint_index) * PI * 0.5) * radius
+	return world.get_nearest_walkable_position(world.clamp_position(raw))
+
+
+func _search_waypoint_reachable(world, candidate: Vector2) -> bool:
+	var body_radius := get_body_radius()
+	if not world.bounds.grow(-body_radius).has_point(candidate) \
+			or not world.scenery.segment_clear(candidate, candidate, body_radius):
+		return false
+	if world.scenery.segment_clear(position, candidate, body_radius):
+		return true
+	var route: PackedVector2Array = world.scenery.local_path(position, candidate, body_radius)
+	if route.is_empty() or route[-1].distance_to(candidate) > body_radius + 8.0:
+		return false
+	local_path = route
+	local_path_goal = candidate
+	return true
+
+
+func _reset_search_state() -> void:
+	search_anchor = Vector2.ZERO
+	search_started_time = -1.0
+	search_waypoint_index = -1
+	search_last_confirmed_position = Vector2.ZERO
 
 
 func _attack(world, prey, delta: float) -> bool:
@@ -273,10 +356,12 @@ func _attack(world, prey, delta: float) -> bool:
 		world.emit_event("PredationSuccess", self, prey.id, {
 			"chance": chance,
 			"isolation": isolation,
+			"chase_time": chase_timer,
 		})
 		world.kill_agent(prey, "predation", id)
 		var carcass: Dictionary = world.find_carcass_by_source_agent(prey.id)
 		target_agent_id = -1
+		_reset_search_state()
 		# `clear_targets()` is the only other thing that zeroes this, and the kill path
 		# does not go through it. Leaving it set made `_hunt`'s `maxf` carry the spent
 		# time into the next chase, which then aborted immediately as a timeout.
@@ -334,6 +419,8 @@ func clear_preferred_mate() -> void:
 
 
 func _attempt_reproduce(world, delta: float) -> bool:
+	if not world.has_reproductive_capacity(species_type):
+		return false
 	var chosen_mate: AgentBase = _find_viable_mate(world, true)
 	if chosen_mate == null:
 		return false
@@ -352,6 +439,8 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	if id > chosen_mate.id:
 		stop_motion(delta)
 		return true
+	if world.reserve_reproductive_capacity(species_type, 1) <= 0:
+		return false
 
 	var center: Vector2 = position.lerp(chosen_mate.position, 0.5)
 	var child_position: Vector2 = world.clamp_position(center + world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 20.0)))
@@ -419,8 +508,12 @@ func _execute_selected_action(world, delta: float, action_name: StringName, snap
 
 
 func _patrol(world, delta: float) -> void:
+	var entering_patrol: bool = state != "patrol"
 	set_state("patrol", world.current_tick)
-	clear_targets(world)
+	# Keep the static patrol route across ticks. Clearing it here forced the same
+	# scenery and terrain checks to be rebuilt eighteen times per second.
+	if entering_patrol or target_agent_id != -1 or target_carcass_id != -1:
+		clear_targets(world)
 	_update_water_memory(world)
 	var patrol_goal: Variant = _resolve_patrol_goal(world)
 	if patrol_goal != null:
@@ -593,10 +686,10 @@ func _regroup_with_kin(world, delta: float) -> bool:
 	target_position = last_known_kin_center
 	set_state("pair_cohesion", world.current_tick)
 	var mate_waypoint: Vector2 = world.get_next_waypoint(position, last_known_kin_center, id)
-	var vectors := []
-	vectors.append({"vector": Steering.seek(position, mate_waypoint), "weight": float(reproduction.get("preferred_mate_seek_weight", 0.75))})
-	vectors.append({"vector": Steering.wander(self, world.rng), "weight": 0.45})
-	move_with_vector(world, Steering.combine(vectors), float(movement.get("max_speed", 84.0)) * 0.8, delta)
+	var move_vector := Steering.combine_two(
+		Steering.seek(position, mate_waypoint), float(reproduction.get("preferred_mate_seek_weight", 0.75)),
+		Steering.wander(self, world.rng), 0.45)
+	move_with_vector(world, move_vector, float(movement.get("max_speed", 84.0)) * 0.8, delta)
 	return true
 
 

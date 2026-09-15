@@ -241,6 +241,98 @@ saves carry it for free and loading resumes at the same season and hour.
 
 ## Current Limitations
 
+## P0 performance verification
+
+The benchmark scripts load the same preset bundle as the setup screen and write
+machine-readable JSON. A headless LOD run represents the whole-map overview;
+the LOD-off run is its full-fidelity control:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+  --script res://scripts/dev/headless_benchmark.gd -- \
+  topdown_kenney large balanced true /private/tmp/animals-lod.json 90 600 1337
+
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+  --script res://scripts/dev/headless_benchmark.gd -- \
+  topdown_kenney large balanced false /private/tmp/animals-full.json 90 600 1337
+```
+
+The complete 3-size x 5-population x 2-style windowed matrix runs each case
+three times at 1600x900 logical resolution and combines the reports:
+
+```bash
+scripts/dev/run_p0_matrix.sh /private/tmp/animals-p0-matrix 3 720 1337
+```
+
+The runner pauses two seconds between fresh Godot processes by default to limit
+thermal carry-over (`COOLDOWN_SECONDS=0` disables it). `standard-acceptance.json`
+is the release gate for balanced, few-predator, and small-herd presets;
+`extreme-report.json` keeps the same uncensored timing and dropped-time fields for
+large herds and many predators.
+
+The worker soak enforces a minimum 30-minute measured interval after warmup:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --path . \
+  --script res://scripts/dev/worker_soak.gd -- \
+  topdown_kenney large balanced /private/tmp/animals-soak.json 1800 1337
+```
+
+The 30-minute soak and the complete 90-run matrix are release gates. Short P0
+regression runs should be made without unrelated CPU-heavy jobs so the report
+describes this build rather than external contention.
+
+## P1 obstacle and depth verification
+
+`ScenerySystem` owns the authoritative, seeded records for props. Trees and
+stones use their base radius for collision; bushes remain passable but add move
+cost and sight attenuation. Movement and interpolation sweep the animal body,
+and `SceneSpriteBatch` packs props, living species and carcasses into one atlas
+and sorts them by projected ground position.
+
+The focused visual scene places animals before and behind solids, inside a bush,
+and at the same depth as another species and a carcass. Run it once per style:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --path . \
+  --script res://scripts/dev/p1_visual_audit.gd -- \
+  topdown_kenney /private/tmp/animals-p1-visual 1337
+
+/Applications/Godot.app/Contents/MacOS/Godot --path . \
+  --script res://scripts/dev/p1_visual_audit.gd -- \
+  isometric_craftpix /private/tmp/animals-p1-visual 1337
+```
+
+## P2 chase and escape verification
+
+Fleeing herd animals rank seven headings against every visible predator, keep
+their chosen route for the configured commitment window, and prefer reachable
+positions that break sight. A predator that loses sight keeps `hunt_prey` as its
+intent while its execution enters `search_last_seen`: it visits the last
+confirmed position and up to four deterministic nearby points before recording
+a lost-sight failure.
+
+The headless behavior gate checks both flows and writes a machine-readable report:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+  --script res://scripts/dev/p2_behavior_audit.gd -- \
+  /private/tmp/animals-p2-behavior.json 2201
+```
+
+The visual scene covers a fleeing animal behind a tree, an animal inside a bush,
+and predators searching last-seen positions. Run it once per style:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --path . \
+  --script res://scripts/dev/p2_visual_audit.gd -- \
+  topdown_kenney /private/tmp/animals-p2-visual 2301
+
+/Applications/Godot.app/Contents/MacOS/Godot --path . \
+  --script res://scripts/dev/p2_visual_audit.gd -- \
+  isometric_craftpix /private/tmp/animals-p2-visual 2301
+```
+
 - The prototype still models one herbivore species and one predator species.
 - Rendering is debug-oriented rather than art-driven.
 - There is no genetics, shelter logic, or authored scenario editor.

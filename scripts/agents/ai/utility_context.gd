@@ -32,13 +32,12 @@ func with_state(new_state_name: StringName) -> Variant:
 	# dictionary copies on every decision of every agent.
 	if new_state_name == state_name:
 		return self
-	# Runs on every predator tick, so it avoids a runtime load() and deep copies.
-	# `values` holds only floats, and target dictionaries are read-only downstream,
-	# so shallow copies are enough to keep the two contexts independent.
+	# Runs on every decision. Context values and targets are immutable after the
+	# builder returns, so state views can share them; only the state name differs.
 	var next_context = get_script().new()
 	next_context.diagnostics = diagnostics
 	next_context.species_type = species_type
 	next_context.state_name = new_state_name
-	next_context.values = values.duplicate()
-	next_context.targets = targets.duplicate()
+	next_context.values = values
+	next_context.targets = targets
 	return next_context

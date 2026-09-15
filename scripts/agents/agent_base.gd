@@ -50,6 +50,13 @@ var last_repath_tick: int = -9999
 var local_retry_tick: int = -9999
 var local_path := PackedVector2Array()
 var local_path_goal := Vector2.ZERO
+## The scenery is static, so a normalized navigation goal and a recently checked
+## direct corridor remain useful across movement ticks. Moving targets replace
+## this cache as soon as their exact position changes.
+var navigation_input_goal := Vector2(INF, INF)
+var navigation_free_goal := Vector2.ZERO
+var navigation_direct_clear: bool = false
+var navigation_direct_check_tick: int = -9999
 var stuck_timer: float = 0.0
 var last_decision_tick: int = -9999
 var cached_snapshot = null
@@ -191,7 +198,9 @@ func clear_action_tracking(current_tick: int) -> void:
 	last_action_reason = ""
 	last_action_scores.clear()
 	last_action_raw_scores.clear()
-	decision_target_data.clear()
+	# Decision target dictionaries may share immutable context storage. Rebind
+	# instead of clearing the shared dictionary in place.
+	decision_target_data = {}
 	action_target_failure_ticks = 0
 
 
@@ -225,8 +234,10 @@ func is_thirst_above_floor(start_floor: float, stop_floor_key: String, continuin
 func is_energy_below_rest_floor() -> bool:
 	var thresholds: Dictionary = balance.get("state_thresholds", {})
 	if state == "rest" or current_action == &"rest":
-		return energy <= float(thresholds.get("rest_energy_resume", 34.0))
-	return energy <= float(thresholds.get("rest_energy", 26.0))
+		return energy <= float(metabolism.get("rest_energy_resume",
+			thresholds.get("rest_energy_resume", 34.0)))
+	return energy <= float(metabolism.get("rest_energy",
+		thresholds.get("rest_energy", 26.0)))
 
 
 func get_drink_thirst_floor() -> float:
@@ -351,6 +362,11 @@ func advance_inertia(world, delta: float) -> void:
 	var previous_position := position
 	velocity = velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * delta)
 	position = world.resolve_movement_position(position, position + velocity * delta, get_body_radius())
+	# Collision resolution can stop the body or slide it along a surface. Keep
+	# velocity tied to that actual displacement, just as `move_with_vector()`
+	# does, so an LOD/inertial step cannot retain speed through a trunk and keep
+	# trying to cross it on later ticks.
+	velocity = (position - previous_position) / maxf(delta, 0.00001)
 	if position.distance_squared_to(previous_position) <= 0.04:
 		stuck_timer = maxf(0.0, stuck_timer - delta)
 	if velocity.length_squared() > 0.001:
@@ -368,7 +384,9 @@ func can_reproduce() -> bool:
 	return is_alive \
 		and age >= float(reproduction.get("maturity_age", 0.0)) \
 		and reproduction_cooldown <= 0.0 \
-		and energy >= float(reproduction.get("energy_threshold", 9999.0))
+		and energy >= float(reproduction.get("energy_threshold", 9999.0)) \
+		and hunger <= float(reproduction.get("max_hunger", need_max)) \
+		and thirst <= float(reproduction.get("max_thirst", need_max))
 
 
 func spend_energy(amount: float) -> void:
@@ -408,6 +426,10 @@ func clear_navigation() -> void:
 	path_index = 0
 	path_goal_cell = -1
 	last_repath_tick = -9999
+	navigation_input_goal = Vector2(INF, INF)
+	navigation_free_goal = Vector2.ZERO
+	navigation_direct_clear = false
+	navigation_direct_check_tick = -9999
 	stuck_timer = 0.0
 
 
@@ -711,7 +733,7 @@ func resolve_carcass_target(world, preferred_carcass: Dictionary = {}) -> Dictio
 
 ## Nearest carcass that still has room, breaking ties on remaining meat.
 func choose_carcass(world, carcasses: Array = []) -> Dictionary:
-	var search_radius := float(balance.get("carcass", {}).get("search_radius", perception.get("vision_radius", 240.0)))
+	var search_radius: float = float(world.carcass_search_radius(self))
 	var best_carcass := {}
 	var best_distance_sq := INF
 	var best_meat := -INF
@@ -787,6 +809,65 @@ func export_runtime_state() -> Dictionary:
 		"last_repath_tick": last_repath_tick,
 		"stuck_timer": stuck_timer,
 	}
+
+
+## Compact state copied from the simulation worker every tick. Static species and
+## balance dictionaries already live on the presentation agent, while navigation,
+## memory and decision caches are worker-only until an explicit save/resync.
+func export_presentation_state() -> Dictionary:
+	return {
+		"id": id,
+		"species_type": species_type,
+		"position": position,
+		"velocity": velocity,
+		"direction": direction,
+		"energy": energy,
+		"hunger": hunger,
+		"thirst": thirst,
+		"age": age,
+		"state": state,
+		"ai_state": String(ai_state),
+		"current_action": String(current_action),
+		"is_alive": is_alive,
+		"sex": sex,
+		"reproduction_cooldown": reproduction_cooldown,
+		"target_agent_id": target_agent_id,
+		"target_carcass_id": target_carcass_id,
+		"target_position": target_position,
+		"group_id": group_id,
+		"last_state_change_tick": last_state_change_tick,
+		"last_action_change_tick": last_action_change_tick,
+		"interaction_timer": interaction_timer,
+		"attack_cooldown": attack_cooldown,
+		"chase_timer": chase_timer,
+		"lod_tier": lod_tier,
+	}
+
+
+func apply_presentation_state(state_data: Dictionary) -> void:
+	position = state_data.get("position", position)
+	velocity = state_data.get("velocity", velocity)
+	direction = state_data.get("direction", direction)
+	energy = float(state_data.get("energy", energy))
+	hunger = float(state_data.get("hunger", hunger))
+	thirst = float(state_data.get("thirst", thirst))
+	age = float(state_data.get("age", age))
+	state = str(state_data.get("state", state))
+	ai_state = StringName(state_data.get("ai_state", String(ai_state)))
+	current_action = StringName(state_data.get("current_action", String(current_action)))
+	is_alive = bool(state_data.get("is_alive", is_alive))
+	sex = str(state_data.get("sex", sex))
+	reproduction_cooldown = float(state_data.get("reproduction_cooldown", reproduction_cooldown))
+	target_agent_id = int(state_data.get("target_agent_id", target_agent_id))
+	target_carcass_id = int(state_data.get("target_carcass_id", target_carcass_id))
+	target_position = state_data.get("target_position", target_position)
+	group_id = int(state_data.get("group_id", group_id))
+	last_state_change_tick = int(state_data.get("last_state_change_tick", last_state_change_tick))
+	last_action_change_tick = int(state_data.get("last_action_change_tick", last_action_change_tick))
+	interaction_timer = float(state_data.get("interaction_timer", interaction_timer))
+	attack_cooldown = float(state_data.get("attack_cooldown", attack_cooldown))
+	chase_timer = float(state_data.get("chase_timer", chase_timer))
+	lod_tier = int(state_data.get("lod_tier", lod_tier))
 
 
 func apply_runtime_state(state_data: Dictionary) -> void:

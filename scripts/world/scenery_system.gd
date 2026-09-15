@@ -1,6 +1,8 @@
 class_name ScenerySystem
 extends RefCounted
 
+const INVALID_LOCAL_POINT := Vector2i(-2147483648, -2147483648)
+
 ## World-owned static scenery. No dependency on the renderer or the ecology RNG.
 var _point_cache: Dictionary = {}
 var _near_cache: Dictionary = {}
@@ -64,7 +66,10 @@ func query_rect(rect: Rect2) -> Array:
 	var b := Vector2i((rect.end / bucket_size).floor())
 	for y in range(a.y, b.y + 1):
 		for x in range(a.x, b.x + 1):
-			for entry in buckets.get(Vector2i(x, y), []):
+			var bucket = buckets.get(Vector2i(x, y))
+			if bucket == null:
+				continue
+			for entry in bucket:
 				if rect.has_point(entry.position):
 					result.append(entry)
 	return result
@@ -114,7 +119,14 @@ func segment_clear(a: Vector2, b: Vector2, radius: float = 0.0) -> bool:
 	var ai := terrain.get_index_from_position(a)
 	var bi := terrain.get_index_from_position(b)
 	var short_move := ai >= 0 and ai == bi and radius + max_extent < terrain.cell_size
-	var safe_cell := short_move and terrain.is_walkable_index(ai) and terrain.get_cell_rect(ai).grow(-radius - 0.01).has_point(a) and terrain.get_cell_rect(ai).grow(-radius - 0.01).has_point(b)
+	# `Rect2.grow()` produces a negative size when a large body is wider than
+	# the cell. Godot still evaluates the full `and` expression and reports the
+	# invalid rectangle from `has_point()`, so guard the fast path before making
+	# the inset rectangle at all. Large bodies take the exact swept test below.
+	var safe_cell := false
+	if short_move and radius * 2.0 + 0.02 < terrain.cell_size:
+		var inset := terrain.get_cell_rect(ai).grow(-radius - 0.01)
+		safe_cell = terrain.is_walkable_index(ai) and inset.has_point(a) and inset.has_point(b)
 	if not safe_cell and not terrain_clear(a, b, radius):
 		return false
 	var nearby: Array
@@ -173,9 +185,18 @@ func nearest_free(point: Vector2, radius: float) -> Vector2:
 
 func movement_cost(point: Vector2) -> float:
 	var cost := 1.0
-	for entry in query_rect(Rect2(point, Vector2.ZERO).grow(max_extent + 0.01)):
-		if point.distance_squared_to(entry.position) <= pow(float(entry.get("cover_radius", 0.0)), 2.0):
-			cost = maxf(cost, float(entry.get("move_cost", 1.0)))
+	var area := Rect2(point, Vector2.ZERO).grow(max_extent + 0.01)
+	var low := Vector2i((area.position / bucket_size).floor())
+	var high := Vector2i((area.end / bucket_size).floor())
+	for y in range(low.y, high.y + 1):
+		for x in range(low.x, high.x + 1):
+			var bucket = buckets.get(Vector2i(x, y))
+			if bucket == null:
+				continue
+			for entry in bucket:
+				var cover_radius := float(entry.get("cover_radius", 0.0))
+				if cover_radius > 0.0 and point.distance_squared_to(entry.position) <= cover_radius * cover_radius:
+					cost = maxf(cost, float(entry.get("move_cost", 1.0)))
 	return cost
 
 func visible(a: Vector2, b: Vector2, view_radius: float) -> bool:
@@ -212,7 +233,8 @@ func local_path(a: Vector2, b: Vector2, radius: float) -> PackedVector2Array:
 			grid.set_point_solid(key, _point_cache[cache_key])
 	var start := Vector2i((a / spacing).floor())
 	var end := Vector2i((b / spacing).floor()).clamp(origin + Vector2i.ONE, origin + Vector2i(23, 23))
-	if grid.is_point_solid(end):
+	end = _nearest_open_local_point(grid, end, origin)
+	if end == INVALID_LOCAL_POINT:
 		return PackedVector2Array()
 	grid.set_point_solid(start, false)
 	var raw := grid.get_point_path(start, end)
@@ -226,3 +248,32 @@ func local_path(a: Vector2, b: Vector2, radius: float) -> PackedVector2Array:
 	if segment_clear(path[-1], b, radius):
 		path.append(b)
 	return path
+
+
+## A coarse terrain waypoint can share a walkable cell with a tree. The local
+## grid used to reject that endpoint outright, making an otherwise reachable
+## route retry forever. Pick the nearest free refined cell while retaining a
+## one-cell guard around the local window; the following AStar query still
+## proves that the replacement is connected to the start.
+func _nearest_open_local_point(grid: AStarGrid2D, desired: Vector2i, origin: Vector2i) -> Vector2i:
+	if not grid.is_point_solid(desired):
+		return desired
+	var low := origin + Vector2i.ONE
+	var high := origin + Vector2i(23, 23)
+	for ring in range(1, 24):
+		var best := INVALID_LOCAL_POINT
+		var best_distance := INF
+		for y in range(maxi(low.y, desired.y - ring), mini(high.y, desired.y + ring) + 1):
+			for x in range(maxi(low.x, desired.x - ring), mini(high.x, desired.x + ring) + 1):
+				if abs(x - desired.x) != ring and abs(y - desired.y) != ring:
+					continue
+				var candidate := Vector2i(x, y)
+				if grid.is_point_solid(candidate):
+					continue
+				var distance := Vector2(candidate).distance_squared_to(Vector2(desired))
+				if distance < best_distance:
+					best = candidate
+					best_distance = distance
+		if best != INVALID_LOCAL_POINT:
+			return best
+	return INVALID_LOCAL_POINT

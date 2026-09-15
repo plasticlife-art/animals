@@ -57,7 +57,7 @@ func tick(world, delta: float) -> void:
 		world.species_registry.predator_set(species_type)
 	)
 	if not predators.is_empty():
-		last_threat_position = predators[0].position
+		last_threat_position = _nearest_threat_position(predators)
 		threat_memory_until = world.current_time + float(perception.get("threat_memory_seconds", 2.0))
 	if not predators.is_empty() or world.current_time < threat_memory_until:
 		interaction_timer = 0.0
@@ -78,7 +78,7 @@ func tick(world, delta: float) -> void:
 	var context = cached_context
 	if should_decide or snapshot == null or context == null:
 		var context_started_at_usec := Time.get_ticks_usec()
-		snapshot = _build_snapshot(world)
+		snapshot = _build_snapshot(world, predators)
 		context = _ai_controller.build_context(self, world, snapshot)
 		world.record_ai_context_ms(float(Time.get_ticks_usec() - context_started_at_usec) / 1000.0)
 		var next_ai_state: StringName = _ai_controller.resolve_state(self, context)
@@ -110,8 +110,8 @@ func tick(world, delta: float) -> void:
 ## Which perception snapshot this behaviour runs on. The forage loop below is
 ## shared with any herd animal; only its food differs, and that is what a
 ## subclass overrides here.
-func _build_snapshot(world):
-	return world.build_herbivore_snapshot(self)
+func _build_snapshot(world, known_predators = null):
+	return world.build_herbivore_snapshot(self, known_predators)
 
 
 func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {}) -> bool:
@@ -141,10 +141,8 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 	set_state("seek_water", world.current_tick)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, false)
 	var waypoint: Vector2 = world.get_next_waypoint(position, water["position"], id)
-	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, waypoint), "weight": 1.4},
-		{"vector": herd_vector, "weight": 0.5},
-	])
+	var move_vector: Vector2 = Steering.combine_two(
+		Steering.seek(position, waypoint), 1.4, herd_vector, 0.5)
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
 	return true
 
@@ -232,10 +230,8 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 	set_state("seek_food", world.current_tick)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, false)
 	var waypoint: Vector2 = world.get_next_waypoint(position, grass["center"], id)
-	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, waypoint), "weight": 1.3},
-		{"vector": herd_vector, "weight": 0.15},
-	])
+	var move_vector: Vector2 = Steering.combine_two(
+		Steering.seek(position, waypoint), 1.3, herd_vector, 0.15)
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
 	return true
 
@@ -243,7 +239,8 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 ## Both the context builder and the flee action want the escape destination in the same
 ## tick, and each computation costs several pathfinds. Memoize it per tick so a panicking
 ## herd asks the navigation budget once per agent instead of twice.
-func get_escape_destination(world, flee_vector: Vector2, base_distance: float) -> Vector2:
+func get_escape_destination(world, flee_vector: Vector2, base_distance: float,
+		predators: Array = []) -> Vector2:
 	var refresh_ticks := maxi(1, int(perception.get("escape_refresh_ticks", 12)))
 	var changed := _escape_heading.dot(flee_vector) < 0.5
 	var arrived := position.distance_to(_escape_target_position) < get_body_radius() + 8.0
@@ -251,7 +248,14 @@ func get_escape_destination(world, flee_vector: Vector2, base_distance: float) -
 		return _escape_target_position
 	_escape_target_tick = world.current_tick
 	_escape_heading = flee_vector
-	_escape_target_position = world.choose_escape_destination(position, flee_vector, base_distance)
+	var threat_positions: Array[Vector2] = []
+	for predator in predators:
+		if predator != null and predator.is_alive:
+			threat_positions.append(predator.position)
+	if threat_positions.is_empty() and world.current_time < threat_memory_until:
+		threat_positions.append(last_threat_position)
+	_escape_target_position = world.choose_escape_destination(
+		position, flee_vector, base_distance, id, threat_positions, get_body_radius())
 	return _escape_target_position
 
 
@@ -267,12 +271,26 @@ func _flee(world, delta: float, predators: Array, _neighbors: Array) -> void:
 	if flee_vector.is_zero_approx():
 		flee_vector = direction
 	flee_vector = flee_vector.normalized()
-	var escape_target := get_escape_destination(world, flee_vector, world.terrain_system.cell_size * float(perception.get("escape_distance_cells", 2.5)))
+	var escape_target := get_escape_destination(world, flee_vector,
+		world.terrain_system.cell_size * float(perception.get("escape_distance_cells", 2.5)), predators)
 	target_position = escape_target
 	var waypoint: Vector2 = world.get_next_waypoint(position, escape_target, id)
 	move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("sprint_speed", 115.0)), delta)
 	if velocity.length_squared() > 1.0:
 		spend_energy(float(metabolism.get("sprint_energy_cost", 2.0)) * delta)
+
+
+func _nearest_threat_position(predators: Array) -> Vector2:
+	var nearest := last_threat_position
+	var nearest_distance_sq := INF
+	for predator in predators:
+		if predator == null or not predator.is_alive:
+			continue
+		var distance_sq: float = position.distance_squared_to(predator.position)
+		if distance_sq < nearest_distance_sq:
+			nearest_distance_sq = distance_sq
+			nearest = predator.position
+	return nearest
 
 
 func _should_regroup(world, group_center = null) -> bool:
@@ -297,14 +315,15 @@ func _regroup(world, delta: float, neighbors: Array, group_center = null) -> voi
 	target_position = center
 	var weights: Dictionary = balance.get("herd_weights", {})
 	var waypoint: Vector2 = world.get_next_waypoint(position, center, id)
-	var move_vector: Vector2 = Steering.combine([
-		{"vector": Steering.seek(position, waypoint), "weight": float(weights.get("regroup", 1.1))},
-		{"vector": _herd_vector(world, neighbors, true), "weight": 0.85},
-	])
+	var move_vector: Vector2 = Steering.combine_two(
+		Steering.seek(position, waypoint), float(weights.get("regroup", 1.1)),
+		_herd_vector(world, neighbors, true), 0.85)
 	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
 
 
 func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array = []) -> bool:
+	if not world.has_reproductive_capacity(species_type):
+		return false
 	var safe_radius := float(reproduction.get("safe_radius", 100.0))
 	if predators.is_empty():
 		predators = world.query_agents_multi(position, safe_radius, world.species_registry.predator_set(species_type), id)
@@ -336,16 +355,17 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 	if position.distance_squared_to(chosen_mate.position) > contact_distance * contact_distance:
 		set_state("reproduce", world.current_tick)
 		var waypoint: Vector2 = world.get_next_waypoint(position, chosen_mate.position, id)
-		var move_vector: Vector2 = Steering.combine([
-			{"vector": Steering.seek(position, waypoint), "weight": 1.2},
-			{"vector": _herd_vector(world, neighbors, true), "weight": 0.5},
-		])
+		var move_vector: Vector2 = Steering.combine_two(
+			Steering.seek(position, waypoint), 1.2,
+			_herd_vector(world, neighbors, true), 0.5)
 		move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)), delta)
 		return true
 
 	if id > chosen_mate.id:
 		stop_motion(delta)
 		return true
+	if world.reserve_reproductive_capacity(species_type, 1) <= 0:
+		return false
 
 	var spawn_center: Vector2 = position.lerp(chosen_mate.position, 0.5)
 	var spawn_offset: Vector2 = world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 18.0))
@@ -410,10 +430,8 @@ func _explore(world, delta: float, neighbors: Array) -> void:
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
 	set_state("wander", world.current_tick)
 	clear_targets()
-	var combined: Vector2 = Steering.combine([
-		{"vector": wander_vector, "weight": float(weights.get("wander", 0.45))},
-		{"vector": herd_vector, "weight": 1.0},
-	])
+	var combined: Vector2 = Steering.combine_two(
+		wander_vector, float(weights.get("wander", 0.45)), herd_vector, 1.0)
 	move_with_vector(world, combined, float(movement.get("max_speed", 70.0)) * 0.9, delta)
 
 
@@ -430,10 +448,8 @@ func _wander_or_graze(world, delta: float, neighbors: Array) -> void:
 
 	set_state("wander", world.current_tick)
 	clear_targets()
-	var combined: Vector2 = Steering.combine([
-		{"vector": wander_vector, "weight": float(weights.get("wander", 0.45))},
-		{"vector": herd_vector, "weight": 1.0},
-	])
+	var combined: Vector2 = Steering.combine_two(
+		wander_vector, float(weights.get("wander", 0.45)), herd_vector, 1.0)
 	move_with_vector(world, combined, base_speed * 0.9, delta)
 
 
@@ -458,14 +474,14 @@ func _get_group_neighbors(world) -> Array:
 func _herd_vector(world, neighbors: Array, include_wander: bool) -> Vector2:
 	var weights: Dictionary = balance.get("herd_weights", {})
 	var separation_radius := float(perception.get("separation_radius", 28.0))
-	var vectors := [
-		{"vector": Steering.cohesion(position, neighbors), "weight": float(weights.get("cohesion", 0.75))},
-		{"vector": Steering.alignment(neighbors), "weight": float(weights.get("alignment", 0.55))},
-		{"vector": Steering.separation(position, neighbors, separation_radius), "weight": float(weights.get("separation", 1.2))},
-	]
+	var total := Steering.cohesion(position, neighbors) * float(weights.get("cohesion", 0.75))
+	total += Steering.alignment(neighbors) * float(weights.get("alignment", 0.55))
+	total += Steering.separation(position, neighbors, separation_radius) * float(weights.get("separation", 1.2))
 	if include_wander:
-		vectors.append({"vector": Steering.wander(self, world.rng), "weight": float(weights.get("wander", 0.45))})
-	return Steering.combine(vectors)
+		total += Steering.wander(self, world.rng) * float(weights.get("wander", 0.45))
+	if total.length_squared() <= 0.0001:
+		return Vector2.ZERO
+	return total.normalized()
 
 
 func can_continue_grazing() -> bool:

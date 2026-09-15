@@ -31,12 +31,9 @@ const LOD_PRIORITY_STATES := {
 	"flee": true,
 	"seek_prey": true,
 	"chase": true,
+	"search_last_seen": true,
 	"attack": true,
 	"reproduce": true,
-	"eat": true,
-	"drink": true,
-	"seek_carcass": true,
-	"feed_carcass": true,
 }
 
 var bounds: Rect2 = Rect2(0.0, 0.0, 1600.0, 900.0)
@@ -87,6 +84,15 @@ var _prey_pressure_refresh_tick: int = -9999
 var _prey_pressure_refresh_ticks: int = 9
 var _path_budget_remaining: int = 0
 var _new_path_budget_remaining: int = 0
+var _path_time_budget_ms: float = 4.0
+var _path_time_spent_ms: float = 0.0
+var _path_expansions_per_slice: int = 384
+var _pending_global_paths: Array = []
+var _pending_global_path_keys: Dictionary = {}
+var _path_served_requesters: Dictionary = {}
+var _pending_local_agent_ids: Array[int] = []
+var _pending_local_paths: Dictionary = {}
+var _local_path_served_agents: Dictionary = {}
 var _goal_bucket_size: int = 4
 var _sector_grass_refresh_ticks: int = 18
 var _grass_local_reach_cells: int = 3
@@ -96,11 +102,15 @@ var _walk_reachable_cache_limit: int = 4096
 var _grass_target_refresh_ticks: int = 6
 var _mid_decision_interval_ticks: int = 3
 var _far_decision_interval_ticks: int = 8
+var _lod_agent_cache: Dictionary = {}
+var _lod_context_cache_key: PackedInt32Array = PackedInt32Array()
 var _very_far_sector_step_seconds: float = 0.75
 var _dormant_speed_scale: float = 0.45
 var _dormant_goal_refresh_seconds: float = 2.0
 var _dormant_stale_wake_seconds: float = 6.0
 var _dormant_reify_budget_per_tick: int = 1
+var _reproduction_population_counts: Dictionary = {}
+var _reproduction_birth_reservations: Dictionary = {}
 
 
 func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNumberGenerator) -> void:
@@ -163,12 +173,20 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_walk_reachable_cache_limit = maxi(64, int(navigation_config.get("grass_local_reach_cache_limit", 4096)))
 	_walk_reachable_cache.clear()
 	_walk_reachable_order.clear()
+	_pending_global_paths.clear()
+	_pending_global_path_keys.clear()
+	_pending_local_agent_ids.clear()
+	_pending_local_paths.clear()
+	_lod_agent_cache.clear()
+	_lod_context_cache_key = PackedInt32Array()
 	_prey_pressure_refresh_ticks = maxi(1, int(navigation_config.get("prey_pressure_refresh_ticks", 9)))
 	_grass_target_refresh_ticks = maxi(1, int(navigation_config.get("grass_target_refresh_ticks", 6)))
 	_dormant_speed_scale = clampf(float(simulation_lod_config.get("dormant_speed_scale", 0.45)), 0.1, 1.0)
 	_dormant_goal_refresh_seconds = maxf(0.5, float(simulation_lod_config.get("dormant_goal_refresh_seconds", 2.0)))
 	_dormant_stale_wake_seconds = maxf(_dormant_goal_refresh_seconds, float(simulation_lod_config.get("dormant_stale_wake_seconds", 6.0)))
 	_dormant_reify_budget_per_tick = maxi(0, int(simulation_lod_config.get("dormant_reify_budget_per_tick", 1)))
+	_reproduction_population_counts.clear()
+	_reproduction_birth_reservations.clear()
 
 	spatial_grid = SpatialGridScript.new()
 	spatial_grid.configure(float(world_config.get("spatial_cell_size", 96.0)))
@@ -191,6 +209,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary = {}) -> void:
 	current_tick = tick
 	current_time = time_seconds
+	_reproduction_population_counts.clear()
+	_reproduction_birth_reservations.clear()
 	climate.sample(current_time)
 	_reset_performance_counters()
 	scenery.visibility_checks = 0
@@ -200,13 +220,16 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	resource_system.step(delta, climate.regrowth_multiplier)
 	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
+	var lod_context_key := _lod_assignment_context_key(active_lod_context)
+	if lod_context_key != _lod_context_cache_key:
+		_lod_context_cache_key = lod_context_key
+		_lod_agent_cache.clear()
 	_mid_decision_interval_ticks = int(active_lod_context.get("mid_decision_interval_ticks", 3))
 	_far_decision_interval_ticks = int(active_lod_context.get("far_decision_interval_ticks", 8))
 	_very_far_sector_step_seconds = float(active_lod_context.get("very_far_sector_step_seconds", 0.75))
 	phase_started_usec = Time.get_ticks_usec()
 	_wake_relevant_dormant_sectors(active_lod_context)
 	_refresh_prey_pressure_sectors()
-	_rebuild_group_state_cache()
 	performance_counters["phase_sectors_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 
 	phase_started_usec = Time.get_ticks_usec()
@@ -214,20 +237,26 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 		var agent = living_agents[(offset + current_tick) % living_agents.size()]
 		if agent == null or not agent.is_alive:
 			continue
-		var lod_tier: int = _resolve_lod_tier(agent, active_lod_context)
+		var lod_tier: int = _resolve_lod_tier_cached(agent, active_lod_context)
 		agent.lod_tier = lod_tier
 		var previous_position: Vector2 = agent.position
+		var agent_started_usec := Time.get_ticks_usec()
 		if _should_run_full_tick(agent, lod_tier, active_lod_context):
 			performance_counters["agents_full_tick"] += 1
 			agent.tick(self, delta)
 		else:
 			performance_counters["agents_maintenance_tick"] += 1
 			agent.tick_maintenance(self, delta)
+		var species_timing_key := "agent_%s_ms" % agent.species_type
+		performance_counters[species_timing_key] = float(performance_counters.get(species_timing_key, 0.0)) \
+			+ float(Time.get_ticks_usec() - agent_started_usec) / 1000.0
 		_track_agent_runtime_position(agent, previous_position)
 		if agent.stuck_timer > 0.75:
 			performance_counters["stuck_agents"] += 1
 
+	var overlap_started_usec := Time.get_ticks_usec()
 	_resolve_agent_overlap(delta)
+	performance_counters["phase_overlap_ms"] = float(Time.get_ticks_usec() - overlap_started_usec) / 1000.0
 	performance_counters["phase_agents_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 
 	_flush_removals()
@@ -391,6 +420,49 @@ func get_population_metrics() -> Dictionary:
 	return metrics
 
 
+## Density-dependent breeding limit for a configured habitat.
+##
+## The reference is the preset's starting population, so map/mix presets keep
+## their intended scale. This only suppresses new births near carrying capacity;
+## it never inserts animals or kills them, and reproduction resumes after losses.
+func get_reproductive_capacity(species_type: String) -> int:
+	var regulation: Dictionary = config_bundle.get("balance", {}).get("population_regulation", {})
+	if not bool(regulation.get("enabled", false)):
+		return 2147483647
+	var initial_count := int(config_bundle.get("world", {}).get("spawns", {}).get(
+		"%s_count" % species_type, 0))
+	if initial_count <= 0:
+		return 0
+	var multipliers: Dictionary = regulation.get("capacity_multipliers", {})
+	return maxi(initial_count, int(round(float(initial_count) * float(
+		multipliers.get(species_type, regulation.get("default_capacity_multiplier", 2.0))))))
+
+
+func _reproduction_population_count(species_type: String) -> int:
+	if _reproduction_population_counts.has(species_type):
+		return int(_reproduction_population_counts[species_type])
+	var count := int(get_population_metrics().get("%s_count" % species_type, 0))
+	_reproduction_population_counts[species_type] = count
+	return count
+
+
+func has_reproductive_capacity(species_type: String) -> bool:
+	return _reproduction_population_count(species_type) \
+		+ int(_reproduction_birth_reservations.get(species_type, 0)) \
+		< get_reproductive_capacity(species_type)
+
+
+func reserve_reproductive_capacity(species_type: String, requested_births: int) -> int:
+	if requested_births <= 0:
+		return 0
+	var used := int(_reproduction_birth_reservations.get(species_type, 0))
+	var available := maxi(0, get_reproductive_capacity(species_type) \
+		- _reproduction_population_count(species_type) - used)
+	var granted := mini(requested_births, available)
+	_reproduction_birth_reservations[species_type] = used + granted
+	return granted
+
+
 func get_lod_counts() -> Dictionary:
 	return lod_counts.duplicate(true)
 
@@ -445,6 +517,12 @@ func shutdown() -> void:
 	_sector_grass_cache.clear()
 	_walk_reachable_cache.clear()
 	_walk_reachable_order.clear()
+	_pending_global_paths.clear()
+	_pending_global_path_keys.clear()
+	_pending_local_agent_ids.clear()
+	_pending_local_paths.clear()
+	_lod_agent_cache.clear()
+	_lod_context_cache_key = PackedInt32Array()
 	_prey_pressure_sectors.clear()
 	_prey_pressure_refresh_tick = -9999
 	spatial_grid = null
@@ -478,10 +556,13 @@ func query_agents_multi(position: Vector2, radius: float, species_set: Dictionar
 
 ## `visible_agents()` over a species set.
 func visible_agents_multi(observer, radius: float, species_set: Dictionary) -> Array:
-	var result: Array = []
-	for candidate in query_agents_multi(observer.position, radius, species_set, observer.id):
-		if can_see(observer, candidate, radius):
-			result.append(candidate)
+	var result: Array = query_agents_multi(observer.position, radius, species_set, observer.id)
+	# Filter the spatial result in place. Creating a second result array doubled
+	# temporary allocations for the near-threat check that every active herd
+	# animal performs each movement tick.
+	for index in range(result.size() - 1, -1, -1):
+		if not can_see(observer, result[index], radius):
+			result.remove_at(index)
 	return result
 
 
@@ -510,8 +591,27 @@ func query_water_sources(position: Vector2, radius: float) -> Array:
 func query_carcasses(position: Vector2, radius: float) -> Array:
 	performance_counters["carcass_query_calls"] += 1
 	var matches: Array = []
-	var radius_sq := radius * radius
-	for carcass in carcasses.values():
+	var clamped_radius := maxf(0.0, radius)
+	var radius_sq := clamped_radius * clamped_radius
+	var center_sector := _get_sector_key(position)
+	var sector_radius := int(ceil(clamped_radius / _sector_size))
+	var candidate_ids: Array[int] = []
+	for x in range(center_sector.x - sector_radius, center_sector.x + sector_radius + 1):
+		for y in range(center_sector.y - sector_radius, center_sector.y + sector_radius + 1):
+			var sector_state: Dictionary = _sector_states.get(Vector2i(x, y), {})
+			if sector_state.is_empty():
+				continue
+			for carcass_id in sector_state.get("carcass_ids", []):
+				candidate_ids.append(int(carcass_id))
+	# Sector order must not decide which equal-distance carcass wins. IDs are
+	# monotonic, so sorting the small local candidate set preserves deterministic
+	# tie-breaking without walking every carcass in the world.
+	candidate_ids.sort()
+	performance_counters["carcasses_scanned"] += candidate_ids.size()
+	for carcass_id in candidate_ids:
+		var carcass: Dictionary = carcasses.get(carcass_id, {})
+		if carcass.is_empty():
+			continue
 		if not _is_carcass_available(carcass):
 			continue
 		if position.distance_squared_to(carcass["position"]) > radius_sq:
@@ -533,7 +633,32 @@ func perception_radius(agent, key: String, default_value: float) -> float:
 	return float(agent.perception.get(key, default_value)) * climate.perception_multiplier_for(agent.species_type)
 
 
-func build_herbivore_snapshot(agent) -> Variant:
+## Carrion smell expands as hunger becomes critical. Water and grass already
+## have long-range memory searches; keeping carcasses at a fixed visual radius
+## made active scavengers starve beside a map-wide surplus that dormant sectors
+## could locate through their sector index.
+func carcass_search_radius(agent) -> float:
+	var base := float(agent.balance.get("carcass", {}).get("search_radius",
+		agent.perception.get("vision_radius", 240.0)))
+	var critical := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get(
+		"critical_hunger", 60.0))
+	if agent.hunger <= critical:
+		return base
+	var urgency := clampf((agent.hunger - critical) / maxf(1.0, agent.need_max - critical), 0.0, 1.0)
+	return lerpf(base, maxf(base * 4.0, _sector_size * 2.2), urgency)
+
+
+func water_search_radius(agent) -> float:
+	var base := float(agent.perception.get("water_search_radius", 260.0))
+	var critical := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get(
+		"critical_thirst", 50.0))
+	if agent.thirst <= critical:
+		return base
+	var urgency := clampf((agent.thirst - critical) / maxf(1.0, agent.need_max - critical), 0.0, 1.0)
+	return lerpf(base, maxf(base * 3.0, _sector_size * 2.5), urgency)
+
+
+func build_herbivore_snapshot(agent, known_predators = null) -> Variant:
 	var snapshot = AgentPerceptionSnapshotScript.new()
 	snapshot.built_at_tick = current_tick
 	snapshot.built_at_time = current_time
@@ -552,7 +677,8 @@ func build_herbivore_snapshot(agent) -> Variant:
 		if snapshot.group_neighbors.is_empty():
 			snapshot.group_neighbors = snapshot.species_neighbors
 	var danger_radius := perception_radius(agent, "danger_radius", 120.0)
-	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type))
+	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type)) \
+		if known_predators == null else known_predators
 	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
@@ -560,7 +686,7 @@ func build_herbivore_snapshot(agent) -> Variant:
 	performance_counters["snapshot_group_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.water_target = _resolve_water_source(agent.position, float(agent.perception.get("water_search_radius", 260.0)))
+	snapshot.water_target = _resolve_water_source(agent.position, water_search_radius(agent))
 	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	snapshot.grass_target = _find_grass_target_for_agent(agent)
@@ -570,7 +696,7 @@ func build_herbivore_snapshot(agent) -> Variant:
 ## Perception for a carrion feeder: the herd fields a flocking animal needs, plus
 ## the carcass fields the feeding action needs, and no grass search at all - which
 ## is the expensive half of the herbivore snapshot.
-func build_scavenger_snapshot(agent) -> Variant:
+func build_scavenger_snapshot(agent, known_predators = null) -> Variant:
 	var snapshot = AgentPerceptionSnapshotScript.new()
 	snapshot.built_at_tick = current_tick
 	snapshot.built_at_time = current_time
@@ -589,7 +715,8 @@ func build_scavenger_snapshot(agent) -> Variant:
 	# adding it to some predator's `role.eats_species` is all it takes to turn the
 	# inherited panic behaviour on.
 	var danger_radius := perception_radius(agent, "danger_radius", 120.0)
-	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type))
+	snapshot.predators = visible_agents_multi(agent, danger_radius, species_registry.predator_set(agent.species_type)) \
+		if known_predators == null else known_predators
 	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
@@ -597,11 +724,11 @@ func build_scavenger_snapshot(agent) -> Variant:
 	performance_counters["snapshot_group_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.water_target = _resolve_water_source(agent.position, float(agent.perception.get("water_search_radius", 260.0)))
+	snapshot.water_target = _resolve_water_source(agent.position, water_search_radius(agent))
 	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.carcasses = query_carcasses(agent.position, float(agent.balance.get("carcass", {}).get("search_radius", 420.0)))
+	snapshot.carcasses = query_carcasses(agent.position, carcass_search_radius(agent))
 	snapshot.carcass_target = agent.choose_carcass(self, snapshot.carcasses)
 	performance_counters["snapshot_carcass_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 	return snapshot
@@ -619,7 +746,7 @@ func build_predator_snapshot(agent) -> Variant:
 	performance_counters["snapshot_agent_query_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.carcasses = query_carcasses(agent.position, float(agent.balance.get("carcass", {}).get("search_radius", vision_radius)))
+	snapshot.carcasses = query_carcasses(agent.position, carcass_search_radius(agent))
 	performance_counters["snapshot_carcass_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
@@ -791,9 +918,12 @@ func local_waypoint(agent, target: Vector2) -> Vector2:
 	if agent.local_path_goal.distance_squared_to(target) > terrain_system.cell_size * terrain_system.cell_size or agent.stuck_timer > 0.75:
 		agent.local_path = PackedVector2Array()
 	if agent.local_path.is_empty():
-		if _local_path_budget <= 0 or current_tick < agent.local_retry_tick:
+		if _local_path_budget <= 0 or _local_path_served_agents.has(agent.id) \
+				or current_tick < agent.local_retry_tick:
+			_enqueue_local_path(agent.id, target)
 			return agent.position
 		_local_path_budget -= 1
+		_local_path_served_agents[agent.id] = true
 		agent.local_retry_tick = current_tick + 12
 		agent.local_path = scenery.local_path(agent.position, target, radius)
 		agent.local_path_goal = target
@@ -838,11 +968,7 @@ func _resolve_water_source(position: Vector2, radius: float) -> Dictionary:
 
 
 func _resolve_predator_water_search_radius(agent) -> float:
-	var critical_thirst := float(agent.balance.get("state_thresholds", {}).get("critical_thirst", 60.0))
-	var search_radius := float(agent.perception.get("water_search_radius", agent.perception.get("vision_radius", 240.0)))
-	if agent.thirst >= critical_thirst:
-		search_radius = maxf(search_radius * 3.0, 1200.0)
-	return search_radius
+	return water_search_radius(agent)
 
 
 func _find_grass_target_for_agent(agent) -> Dictionary:
@@ -870,7 +996,7 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	# onto neighbouring cells. It measured flat (101 vs 107 vs 111 herbivores at
 	# tick 1500 for offsets of 0, half a cell and a full cell), so the concept is
 	# not carried. Herd contention is handled by the overlap pass instead.
-	var local_grass := find_reachable_grass(agent.position, base_search_radius, min_biomass)
+	var local_grass := find_reachable_grass(agent.position, base_search_radius, min_biomass, agent.id)
 	if not local_grass.is_empty():
 		agent.grass_target_cache = local_grass
 		agent.grass_target_tick = current_tick
@@ -878,7 +1004,7 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	var expanded_search_radius := lerpf(base_search_radius, maxf(base_search_radius * 4.0, 720.0), urgency_ratio)
 	if expanded_search_radius <= base_search_radius:
 		return {}
-	var expanded_grass := find_reachable_grass(agent.position, expanded_search_radius, min_biomass)
+	var expanded_grass := find_reachable_grass(agent.position, expanded_search_radius, min_biomass, agent.id)
 	if not expanded_grass.is_empty():
 		agent.grass_target_cache = expanded_grass
 		agent.grass_target_tick = current_tick
@@ -1073,6 +1199,7 @@ func import_state(data: Dictionary) -> void:
 
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
 	_import_sector_states(data.get("sectors", {}))
+	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
 	spatial_grid.rebuild(living_agents)
 	_rebuild_group_state_cache()
@@ -1189,15 +1316,15 @@ func record_herbivore_hunger_reduction(amount: float, herbivore_count: int = 1) 
 	performance_counters["herbivore_hunger_reduced_total"] += amount * herbivore_count
 
 
-func find_reachable_grass(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
+func find_reachable_grass(position: Vector2, radius: float, min_biomass: float = 0.0, requester_id: int = -1) -> Dictionary:
 	var started_at_usec: int = Time.get_ticks_usec()
-	var result: Dictionary = _find_reachable_grass_uncounted(position, radius, min_biomass)
+	var result: Dictionary = _find_reachable_grass_uncounted(position, radius, min_biomass, requester_id)
 	performance_counters["grass_search_ms"] += float(Time.get_ticks_usec() - started_at_usec) / 1000.0
 	performance_counters["grass_search_calls"] += 1
 	return result
 
 
-func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_biomass: float) -> Dictionary:
+func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_biomass: float, requester_id: int = -1) -> Dictionary:
 	if terrain_system == null:
 		return resource_system.find_best_cell(position, radius, min_biomass)
 
@@ -1226,7 +1353,7 @@ func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_bioma
 	var candidate_index: int = int(candidate.get("index", -1))
 	if candidate_index == -1:
 		return {}
-	var path_result := _find_path_with_budget(start_index, candidate_index)
+	var path_result := _find_path_with_budget(start_index, candidate_index, requester_id)
 	var path_cells: Array = path_result.get("cells", [])
 	if path_cells.is_empty():
 		if not terrain_system.has_cached_path_between_indices(start_index, candidate_index):
@@ -1294,8 +1421,24 @@ func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: i
 	var agent = get_agent(agent_id)
 	if agent == null:
 		return from_position
-	var target := scenery.nearest_free(to_position, agent.get_body_radius())
-	if scenery.segment_clear(from_position, target, agent.get_body_radius()):
+	var radius: float = agent.get_body_radius()
+	var goal_changed: bool = agent.navigation_input_goal != to_position
+	if goal_changed or force_repath:
+		agent.navigation_input_goal = to_position
+		agent.navigation_free_goal = scenery.nearest_free(to_position, radius)
+		agent.navigation_direct_clear = false
+		agent.navigation_direct_check_tick = -9999
+	var target: Vector2 = agent.navigation_free_goal
+	var direct_check_interval := maxi(1, int(navigation_config.get("repath_interval_ticks", 8)))
+	var should_check_direct: bool = force_repath or goal_changed \
+		or current_tick - agent.navigation_direct_check_tick >= direct_check_interval
+	if should_check_direct:
+		agent.navigation_direct_check_tick = current_tick
+		agent.navigation_direct_clear = scenery.segment_clear(from_position, target, radius)
+	if agent.navigation_direct_clear:
+		agent.path_cells.clear()
+		agent.path_index = 0
+		agent.local_path = PackedVector2Array()
 		return target
 	return local_waypoint(agent, _coarse_waypoint(from_position, target, agent_id, force_repath))
 
@@ -1336,7 +1479,7 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 			needs_repath = true
 
 	if needs_repath:
-		var path_result: Dictionary = _find_path_with_budget(start_index, goal_index)
+		var path_result: Dictionary = _find_path_with_budget(start_index, goal_index, agent.id)
 		var path_cells: Array = path_result.get("cells", [])
 		agent.path_cells = path_cells.duplicate()
 		agent.path_goal_cell = goal_index
@@ -1356,7 +1499,8 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 	return target
 
 
-func choose_escape_destination(position: Vector2, flee_vector: Vector2, base_distance: float) -> Vector2:
+func choose_escape_destination(position: Vector2, flee_vector: Vector2, base_distance: float,
+		requester_id: int = -1, threat_positions: Array[Vector2] = [], body_radius: float = 0.0) -> Vector2:
 	if terrain_system == null or flee_vector.length_squared() <= 0.0001:
 		return clamp_position(position + flee_vector * base_distance)
 
@@ -1365,31 +1509,113 @@ func choose_escape_destination(position: Vector2, flee_vector: Vector2, base_dis
 	if start_index == -1:
 		return clamp_position(position + direction * base_distance)
 
-	var angles: Array = [0.0, 0.45, -0.45, 0.9, -0.9]
-	var distance_scales: Array = [1.0, 1.35]
-	var best_target: Vector2 = clamp_position(position + direction * base_distance)
-	var best_score: float = -INF
-	for scale in distance_scales:
-		for angle in angles:
-			var candidate_position: Vector2 = get_nearest_walkable_position(clamp_position(position + direction.rotated(float(angle)) * base_distance * float(scale)))
-			var candidate_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(candidate_position))
-			if candidate_index == -1:
-				continue
-			var path_result: Dictionary = _find_path_with_budget(start_index, candidate_index)
-			var path_cells: Array = path_result.get("cells", [])
-			if path_cells.is_empty():
-				continue
-			var candidate_direction: Vector2 = candidate_position - position
-			if candidate_direction.length_squared() <= 0.001:
-				continue
-			var alignment: float = direction.dot(candidate_direction.normalized())
-			var score: float = alignment * 220.0 - float(path_result.get("cost", INF))
-			if not bool(path_result.get("reachable", false)):
-				score -= 24.0
-			if score > best_score:
-				best_score = score
-				best_target = candidate_position
-	return best_target
+	var current_min_threat_distance := _minimum_threat_distance(position, threat_positions)
+	var candidates: Array = []
+	for angle_degrees in [0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0]:
+		var raw: Vector2 = position + direction.rotated(deg_to_rad(float(angle_degrees))) * base_distance
+		var candidate_position: Variant = _escape_candidate_position(raw, body_radius)
+		if candidate_position == null:
+			continue
+		var candidate: Vector2 = candidate_position
+		var candidate_index: int = terrain_system.find_nearest_walkable_index(
+			terrain_system.get_index_from_position(candidate))
+		if candidate_index == -1:
+			continue
+		var min_threat_distance := _minimum_threat_distance(candidate, threat_positions)
+		var cover_breaks := _escape_cover_breaks(candidate, threat_positions)
+		var edge_clearance := minf(minf(candidate.x - bounds.position.x, bounds.end.x - candidate.x),
+			minf(candidate.y - bounds.position.y, bounds.end.y - candidate.y)) - body_radius
+		var candidate_direction := (candidate - position).normalized()
+		candidates.append({
+			"position": candidate,
+			"index": candidate_index,
+			"safe": threat_positions.is_empty() or min_threat_distance + 0.01 >= current_min_threat_distance,
+			"cover_breaks": cover_breaks,
+			"threat_distance": 0.0 if threat_positions.is_empty() else min_threat_distance,
+			"edge_clearance": edge_clearance,
+			"alignment": direction.dot(candidate_direction),
+		})
+	if candidates.is_empty():
+		return position
+	candidates.sort_custom(_escape_candidate_precedes)
+
+	# Global routes are served by the same persistent fair queue as every other
+	# navigation request. Cached candidates are free; at most one new search for
+	# this animal is admitted in a tick, and later commitment refreshes can use
+	# the completed result without evicting other requesters.
+	var fallback: Vector2 = candidates[0].position
+	var routed_candidates: Array = []
+	for candidate_offset in range(mini(3, candidates.size())):
+		var candidate: Dictionary = candidates[candidate_offset]
+		var path_result := _find_path_with_budget(start_index, int(candidate.index), requester_id)
+		if bool(path_result.get("pending", false)):
+			continue
+		if bool(path_result.get("reachable", false)) and not path_result.get("cells", []).is_empty():
+			candidate = candidate.duplicate()
+			candidate["path_cost"] = float(path_result.get("cost", INF))
+			routed_candidates.append(candidate)
+	if not routed_candidates.is_empty():
+		routed_candidates.sort_custom(_escape_routed_candidate_precedes)
+		return routed_candidates[0].position
+	return fallback
+
+
+func _escape_candidate_position(raw: Vector2, body_radius: float) -> Variant:
+	var margin := maxf(4.0, body_radius + 0.01)
+	var safe_bounds := bounds.grow(-margin)
+	if safe_bounds.size.x <= 0.0 or safe_bounds.size.y <= 0.0:
+		return null
+	var clamped := Vector2(clampf(raw.x, safe_bounds.position.x, safe_bounds.end.x),
+		clampf(raw.y, safe_bounds.position.y, safe_bounds.end.y))
+	var walkable := get_nearest_walkable_position(clamped)
+	var free := scenery.nearest_free(walkable, body_radius)
+	if not safe_bounds.has_point(free) or not scenery.segment_clear(free, free, body_radius):
+		return null
+	return free
+
+
+func _minimum_threat_distance(point: Vector2, threat_positions: Array[Vector2]) -> float:
+	if threat_positions.is_empty():
+		return INF
+	var minimum := INF
+	for threat_position in threat_positions:
+		minimum = minf(minimum, point.distance_to(threat_position))
+	return minimum
+
+
+func _escape_cover_breaks(candidate: Vector2, threat_positions: Array[Vector2]) -> int:
+	var breaks := 0
+	for threat_position in threat_positions:
+		var distance := threat_position.distance_to(candidate)
+		if not scenery.visible(threat_position, candidate, distance + 0.01):
+			breaks += 1
+	return breaks
+
+
+func _escape_candidate_precedes(a: Dictionary, b: Dictionary) -> bool:
+	if bool(a.safe) != bool(b.safe):
+		return bool(a.safe)
+	if int(a.cover_breaks) != int(b.cover_breaks):
+		return int(a.cover_breaks) > int(b.cover_breaks)
+	if not is_equal_approx(float(a.threat_distance), float(b.threat_distance)):
+		return float(a.threat_distance) > float(b.threat_distance)
+	if not is_equal_approx(float(a.edge_clearance), float(b.edge_clearance)):
+		return float(a.edge_clearance) > float(b.edge_clearance)
+	return float(a.alignment) > float(b.alignment)
+
+
+func _escape_routed_candidate_precedes(a: Dictionary, b: Dictionary) -> bool:
+	if bool(a.safe) != bool(b.safe):
+		return bool(a.safe)
+	if int(a.cover_breaks) != int(b.cover_breaks):
+		return int(a.cover_breaks) > int(b.cover_breaks)
+	if not is_equal_approx(float(a.threat_distance), float(b.threat_distance)):
+		return float(a.threat_distance) > float(b.threat_distance)
+	if not is_equal_approx(float(a.path_cost), float(b.path_cost)):
+		return float(a.path_cost) < float(b.path_cost)
+	if not is_equal_approx(float(a.edge_clearance), float(b.edge_clearance)):
+		return float(a.edge_clearance) > float(b.edge_clearance)
+	return float(a.alignment) > float(b.alignment)
 
 
 func emit_event(event_type: String, agent, other_agent_id: int = -1, data: Dictionary = {}) -> void:
@@ -1462,13 +1688,7 @@ func _maybe_spawn_carcass(agent, cause: String) -> void:
 		"source_agent_id": int(agent.id),
 	}
 	carcasses[carcass_id] = carcass
-	var sector_key := _get_sector_key(agent.position)
-	var sector_state: Dictionary = _get_or_create_sector_state(sector_key)
-	var carcass_ids: Array = sector_state.get("carcass_ids", [])
-	if not carcass_ids.has(carcass_id):
-		carcass_ids.append(carcass_id)
-	sector_state["carcass_ids"] = carcass_ids
-	_sector_states[sector_key] = sector_state
+	_register_carcass_sector(carcass_id, agent.position)
 	emit_event("CarcassSpawned", agent, -1, {
 		"carcass_id": carcass_id,
 		"cause": cause,
@@ -1506,13 +1726,7 @@ func _flush_carcass_removals() -> void:
 	for carcass_id in pending_carcass_removals:
 		var carcass: Dictionary = carcasses.get(carcass_id, {})
 		if not carcass.is_empty():
-			var sector_key := _get_sector_key(carcass["position"])
-			var sector_state: Dictionary = _sector_states.get(sector_key, {})
-			if not sector_state.is_empty():
-				var carcass_ids: Array = sector_state.get("carcass_ids", [])
-				carcass_ids.erase(carcass_id)
-				sector_state["carcass_ids"] = carcass_ids
-				_sector_states[sector_key] = sector_state
+			_unregister_carcass_sector(carcass_id, carcass["position"])
 		carcasses.erase(carcass_id)
 	pending_carcass_removals.clear()
 
@@ -1650,9 +1864,10 @@ func _spawn_initial_carcasses() -> void:
 		# some are already the scavenger's alone - the same spread a running
 		# world would have.
 		var age: float = rng.randf() * ttl
+		var position: Vector2 = get_nearest_walkable_position(clamp_position(random_point()))
 		carcasses[carcass_id] = {
 			"id": carcass_id,
-			"position": get_nearest_walkable_position(clamp_position(random_point())),
+			"position": position,
 			"created_at": current_time - age,
 			"ttl_seconds": ttl,
 			"source_species": source_species,
@@ -1663,6 +1878,7 @@ func _spawn_initial_carcasses() -> void:
 			"active_feeder_ids": [],
 			"source_agent_id": -1,
 		}
+		_register_carcass_sector(carcass_id, position)
 
 
 ## `role.social == "solitary"`: scattered singles, no groups and no pairing.
@@ -1748,9 +1964,39 @@ func _resolve_lod_tier(agent: AgentBase, lod_context: Dictionary) -> int:
 	return LOD_TIER_2
 
 
+func _resolve_lod_tier_cached(agent: AgentBase, lod_context: Dictionary) -> int:
+	var sector_key: Vector2i = _agent_sector_cells.get(agent.id, _get_sector_key(agent.position))
+	var priority := _is_priority_lod_agent(agent) \
+		or agent.id == int(lod_context.get("selected_agent_id", -1))
+	var cached: Dictionary = _lod_agent_cache.get(agent.id, {})
+	if cached.get("sector", Vector2i(2147483647, 2147483647)) == sector_key \
+			and bool(cached.get("priority", false)) == priority:
+		return int(cached.get("tier", LOD_TIER_0))
+	var tier := _resolve_lod_tier(agent, lod_context)
+	_lod_agent_cache[agent.id] = {"sector": sector_key, "priority": priority, "tier": tier}
+	return tier
+
+
+func _lod_assignment_context_key(lod_context: Dictionary) -> PackedInt32Array:
+	var focus_rect: Rect2 = lod_context.get("focus_rect", Rect2())
+	if focus_rect.size.is_zero_approx():
+		var radius := float(lod_context.get("headless_active_radius", 0.0))
+		if radius > 0.0:
+			focus_rect = Rect2(bounds.get_center() - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)
+	var near := focus_rect.grow(float(lod_context.get("near_margin", 0.0)))
+	var mid := focus_rect.grow(float(lod_context.get("mid_margin", 0.0)))
+	return PackedInt32Array([
+		1 if bool(lod_context.get("enabled", false)) else 0,
+		floori(near.position.x / _sector_size), floori(near.position.y / _sector_size),
+		ceili(near.end.x / _sector_size), ceili(near.end.y / _sector_size),
+		floori(mid.position.x / _sector_size), floori(mid.position.y / _sector_size),
+		ceili(mid.end.x / _sector_size), ceili(mid.end.y / _sector_size),
+		int(lod_context.get("selected_agent_id", -1)),
+	])
+
+
 func _is_priority_lod_agent(agent: AgentBase) -> bool:
 	return agent.target_agent_id != -1 \
-		or agent.interaction_timer > 0.0 \
 		or agent.ai_state == &"panic" \
 		or LOD_PRIORITY_STATES.has(agent.state)
 
@@ -1831,6 +2077,7 @@ func _reset_performance_counters() -> void:
 		"agent_query_calls": 0,
 		"water_query_calls": 0,
 		"carcass_query_calls": 0,
+		"carcasses_scanned": 0,
 		"spatial_update_ms": 0.0,
 		"group_center_lookups": 0,
 		"sector_wakeups": 0,
@@ -1867,9 +2114,18 @@ func _prepare_navigation_budget() -> void:
 	_local_path_budget = maxi(1, int(navigation_config.get("local_path_budget_per_tick", 6)))
 	_path_budget_remaining = maxi(1, int(navigation_config.get("path_budget_per_tick", 64)))
 	_new_path_budget_remaining = maxi(1, int(navigation_config.get("max_new_paths_per_tick", 18)))
+	_path_time_budget_ms = maxf(0.25, float(navigation_config.get("path_time_budget_ms_per_tick", 4.0)))
+	_path_expansions_per_slice = maxi(32, int(navigation_config.get("path_expansions_per_slice", 384)))
+	_path_time_spent_ms = 0.0
+	_path_served_requesters.clear()
+	_local_path_served_agents.clear()
+	_service_pending_global_paths()
+	_service_pending_local_paths()
+	performance_counters["pending_global_paths"] = _pending_global_paths.size()
+	performance_counters["pending_local_paths"] = _pending_local_agent_ids.size()
 
 
-func _find_path_with_budget(start_index: int, goal_index: int) -> Dictionary:
+func _find_path_with_budget(start_index: int, goal_index: int, requester_id: int = -1) -> Dictionary:
 	if terrain_system == null:
 		return {
 			"cells": [],
@@ -1882,20 +2138,109 @@ func _find_path_with_budget(start_index: int, goal_index: int) -> Dictionary:
 		return terrain_system.find_path_between_indices(start_index, goal_index)
 	var has_cached := terrain_system.has_cached_path_between_indices(start_index, goal_index)
 	if not has_cached:
-		if _path_budget_remaining <= 0 or _new_path_budget_remaining <= 0:
-			return {
-				"cells": [],
-				"cost": INF,
-				"reachable": false,
-				"start_index": start_index,
-				"goal_index": goal_index,
-			}
+		if _path_budget_remaining <= 0 or _new_path_budget_remaining <= 0 \
+				or _path_time_spent_ms >= _path_time_budget_ms \
+				or (requester_id >= 0 and (_path_served_requesters.has(requester_id) \
+					or _has_pending_global_requester(requester_id))):
+			_enqueue_global_path(start_index, goal_index, requester_id)
+			return _pending_path_result(start_index, goal_index)
 		_path_budget_remaining -= 1
 		_new_path_budget_remaining -= 1
+		if requester_id >= 0:
+			_path_served_requesters[requester_id] = true
 	var started_at_usec: int = Time.get_ticks_usec()
-	var path_result: Dictionary = terrain_system.find_path_between_indices(start_index, goal_index)
-	performance_counters["pathfind_ms"] += float(Time.get_ticks_usec() - started_at_usec) / 1000.0
-	return path_result
+	var step: Dictionary = terrain_system.step_path_between_indices(
+		start_index, goal_index, _path_expansions_per_slice)
+	var elapsed_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
+	_path_time_spent_ms += elapsed_ms
+	performance_counters["pathfind_ms"] += elapsed_ms
+	if not bool(step.get("complete", false)):
+		_enqueue_global_path(start_index, goal_index, requester_id)
+		return _pending_path_result(start_index, goal_index)
+	return step.get("result", _pending_path_result(start_index, goal_index))
+
+
+func _pending_path_result(start_index: int, goal_index: int) -> Dictionary:
+	return {"cells": [], "cost": INF, "reachable": false,
+		"start_index": start_index, "goal_index": goal_index, "pending": true}
+
+
+func _has_pending_global_requester(requester_id: int) -> bool:
+	for request in _pending_global_paths:
+		if int(request.get("requester_id", -1)) == requester_id:
+			return true
+	return false
+
+
+func _enqueue_global_path(start_index: int, goal_index: int, requester_id: int) -> void:
+	var key := Vector2i(start_index, goal_index)
+	if _pending_global_path_keys.has(key):
+		return
+	if requester_id >= 0:
+		for request in _pending_global_paths:
+			if int(request.get("requester_id", -1)) == requester_id:
+				return
+	_pending_global_path_keys[key] = true
+	_pending_global_paths.append({"key": key, "start": start_index, "goal": goal_index,
+		"requester_id": requester_id})
+
+
+func _service_pending_global_paths() -> void:
+	var deferred: Array = []
+	while not _pending_global_paths.is_empty() and _path_budget_remaining > 0 \
+			and _new_path_budget_remaining > 0 and _path_time_spent_ms < _path_time_budget_ms:
+		var request: Dictionary = _pending_global_paths.pop_front()
+		var key: Vector2i = request.key
+		_pending_global_path_keys.erase(key)
+		var requester_id := int(request.get("requester_id", -1))
+		if requester_id >= 0 and _path_served_requesters.has(requester_id):
+			deferred.append(request)
+			continue
+		var start_index := int(request.start)
+		var goal_index := int(request.goal)
+		if terrain_system.has_cached_path_between_indices(start_index, goal_index):
+			continue
+		_path_budget_remaining -= 1
+		_new_path_budget_remaining -= 1
+		if requester_id >= 0:
+			_path_served_requesters[requester_id] = true
+		var started_at_usec := Time.get_ticks_usec()
+		var step: Dictionary = terrain_system.step_path_between_indices(
+			start_index, goal_index, _path_expansions_per_slice)
+		var elapsed_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
+		_path_time_spent_ms += elapsed_ms
+		performance_counters["pathfind_ms"] += elapsed_ms
+		if not bool(step.get("complete", false)):
+			deferred.append(request)
+	for request in deferred:
+		_pending_global_paths.append(request)
+		_pending_global_path_keys[request.key] = true
+
+
+func _enqueue_local_path(agent_id: int, target: Vector2) -> void:
+	if agent_id < 0:
+		return
+	_pending_local_paths[agent_id] = target
+	if not _pending_local_agent_ids.has(agent_id):
+		_pending_local_agent_ids.append(agent_id)
+
+
+func _service_pending_local_paths() -> void:
+	while not _pending_local_agent_ids.is_empty() and _local_path_budget > 0:
+		var agent_id: int = _pending_local_agent_ids.pop_front()
+		var target: Vector2 = _pending_local_paths.get(agent_id, Vector2.INF)
+		_pending_local_paths.erase(agent_id)
+		var agent = get_agent(agent_id)
+		if agent == null or not agent.is_alive or target == Vector2.INF:
+			continue
+		if scenery.segment_clear(agent.position, target, agent.get_body_radius()):
+			agent.local_path = PackedVector2Array()
+			continue
+		_local_path_budget -= 1
+		_local_path_served_agents[agent_id] = true
+		agent.local_retry_tick = current_tick + 12
+		agent.local_path = scenery.local_path(agent.position, target, agent.get_body_radius())
+		agent.local_path_goal = target
 
 
 func _register_living_agent(agent) -> void:
@@ -1905,11 +2250,13 @@ func _register_living_agent(agent) -> void:
 	_living_agent_index_by_id[agent.id] = living_agents.size() - 1
 	spatial_grid.insert(agent)
 	_register_sector_presence(agent)
+	_add_agent_to_group_cache(agent)
 
 
 func _unregister_living_agent(agent) -> void:
 	if agent == null:
 		return
+	_remove_agent_from_group_cache(agent)
 	var index := int(_living_agent_index_by_id.get(agent.id, -1))
 	if index != -1:
 		var last_index := living_agents.size() - 1
@@ -1934,11 +2281,54 @@ func _track_agent_runtime_position(agent, previous_position: Vector2) -> void:
 	var started_at_usec := Time.get_ticks_usec()
 	spatial_grid.update_agent(agent, previous_position)
 	_update_agent_sector(agent)
+	_move_agent_in_group_cache(agent, previous_position)
 	performance_counters["spatial_update_ms"] += float(Time.get_ticks_usec() - started_at_usec) / 1000.0
 
 
 func _get_sector_key(position: Vector2) -> Vector2i:
 	return Vector2i(floori(position.x / _sector_size), floori(position.y / _sector_size))
+
+
+## Keeps carcass discovery, dormant feeding and rendering on the same spatial
+## ledger. Carcasses do not move, so one sector membership lasts until removal.
+func _register_carcass_sector(carcass_id: int, position: Vector2) -> void:
+	var sector_key := _get_sector_key(position)
+	var sector_state: Dictionary = _get_or_create_sector_state(sector_key)
+	var carcass_ids: Array = sector_state.get("carcass_ids", [])
+	if not carcass_ids.has(carcass_id):
+		carcass_ids.append(carcass_id)
+	sector_state["carcass_ids"] = carcass_ids
+	_sector_states[sector_key] = sector_state
+
+
+func _unregister_carcass_sector(carcass_id: int, position: Vector2) -> void:
+	var sector_key := _get_sector_key(position)
+	var sector_state: Dictionary = _sector_states.get(sector_key, {})
+	if sector_state.is_empty():
+		return
+	var carcass_ids: Array = sector_state.get("carcass_ids", [])
+	carcass_ids.erase(carcass_id)
+	sector_state["carcass_ids"] = carcass_ids
+	_sector_states[sector_key] = sector_state
+
+
+## Saved version 1 worlds and early version 2 snapshots can lack carcass sector
+## membership. Rebuilding from the authoritative carcass records also removes
+## stale IDs left by an interrupted older save.
+func _rebuild_carcass_sector_index() -> void:
+	for sector_key in _sector_states.keys():
+		var sector_state: Dictionary = _sector_states[sector_key]
+		sector_state["carcass_ids"] = []
+		_sector_states[sector_key] = sector_state
+	var sorted_ids: Array[int] = []
+	for carcass_id in carcasses.keys():
+		sorted_ids.append(int(carcass_id))
+	sorted_ids.sort()
+	for carcass_id in sorted_ids:
+		var carcass: Dictionary = carcasses.get(carcass_id, {})
+		if carcass.is_empty():
+			continue
+		_register_carcass_sector(carcass_id, carcass.get("position", bounds.get_center()))
 
 
 func _sector_key_to_rect(sector_key: Vector2i) -> Rect2:
@@ -2076,6 +2466,57 @@ func _group_cache_key(species_type: String, group_id: int) -> Vector2i:
 	return Vector2i(species_registry.slot(species_type), group_id)
 
 
+func _add_agent_to_group_cache(agent) -> void:
+	if agent == null or not agent.is_alive or agent.group_id == -1:
+		return
+	var cache_key := _group_cache_key(agent.species_type, agent.group_id)
+	var group_state: Dictionary = _group_state_cache.get(cache_key, {
+		"count": 0, "sum": Vector2.ZERO, "center": null})
+	var count := int(group_state.get("count", 0)) + 1
+	var sum: Vector2 = Vector2(group_state.get("sum", Vector2.ZERO)) + agent.position
+	group_state["count"] = count
+	group_state["sum"] = sum
+	group_state["center"] = sum / float(count)
+	_group_state_cache[cache_key] = group_state
+
+
+func _remove_agent_from_group_cache(agent) -> void:
+	if agent == null or agent.group_id == -1:
+		return
+	var cache_key := _group_cache_key(agent.species_type, agent.group_id)
+	var group_state: Dictionary = _group_state_cache.get(cache_key, {})
+	if group_state.is_empty():
+		return
+	var count := int(group_state.get("count", 0)) - 1
+	if count <= 0:
+		_group_state_cache.erase(cache_key)
+		return
+	var sum: Vector2 = Vector2(group_state.get("sum", Vector2.ZERO)) - agent.position
+	group_state["count"] = count
+	group_state["sum"] = sum
+	group_state["center"] = sum / float(count)
+	_group_state_cache[cache_key] = group_state
+
+
+func _move_agent_in_group_cache(agent, previous_position: Vector2) -> void:
+	if agent == null or not agent.is_alive or agent.group_id == -1 \
+			or previous_position == agent.position:
+		return
+	var cache_key := _group_cache_key(agent.species_type, agent.group_id)
+	var group_state: Dictionary = _group_state_cache.get(cache_key, {})
+	if group_state.is_empty():
+		_add_agent_to_group_cache(agent)
+		return
+	var count := int(group_state.get("count", 0))
+	if count <= 0:
+		return
+	var sum: Vector2 = Vector2(group_state.get("sum", Vector2.ZERO)) \
+		+ agent.position - previous_position
+	group_state["sum"] = sum
+	group_state["center"] = sum / float(count)
+	_group_state_cache[cache_key] = group_state
+
+
 func _rebuild_group_state_cache() -> void:
 	_group_state_cache.clear()
 	for agent in living_agents:
@@ -2206,8 +2647,12 @@ func _wake_relevant_dormant_sectors(lod_context: Dictionary) -> void:
 		if _dormant_sector_should_force_wake(sector_key, sector_state, lod_context):
 			sectors_to_wake.append(sector_key)
 			continue
+		# Stale reification is a recovery mechanism for the camera vicinity. In a
+		# whole-world overview it used to wake one far sector every tick until almost
+		# the entire world was materialized again, defeating semantic LOD over time.
 		var stale_score := _get_dormant_sector_stale_score(sector_state)
-		if stale_score >= _dormant_stale_wake_seconds:
+		if not bool(lod_context.get("overview", false)) \
+				and stale_score >= _dormant_stale_wake_seconds:
 			performance_counters["dormant_stale_sectors"] += 1
 			stale_candidates.append({
 				"sector_key": sector_key,
@@ -2279,15 +2724,13 @@ func _can_sleep_sector(sector_key: Vector2i, lod_context: Dictionary) -> bool:
 	var sector_state: Dictionary = _sector_states.get(sector_key, {})
 	if sector_state.is_empty():
 		return false
-	if not sector_state.get("carcass_ids", []).is_empty():
-		return false
 	for agent_id in sector_state.get("agent_ids", []):
 		if int(agent_id) == int(lod_context.get("selected_agent_id", -1)):
 			return false
 		var agent = get_agent(int(agent_id))
 		if agent == null or not agent.is_alive:
 			continue
-		if _resolve_lod_tier(agent, lod_context) != LOD_TIER_2:
+		if agent.lod_tier != LOD_TIER_2:
 			return false
 		if _is_priority_lod_agent(agent):
 			return false
@@ -2310,13 +2753,21 @@ func _sleep_sector(sector_key: Vector2i) -> void:
 	sector_state = _get_or_create_sector_state(sector_key)
 	sector_state["dormant"] = true
 	sector_state["dormant_records"] = records
-	sector_state["dormant_elapsed"] = 0.0
+	# A zoom change can put dozens of sectors to sleep on one tick. A stable
+	# phase keeps their aggregate ecology and migration work from recurring in
+	# one large burst every `_very_far_sector_step_seconds`.
+	sector_state["dormant_elapsed"] = _dormant_phase_offset(sector_key)
 	sector_state["dormant_species"] = _build_dormant_species_state(records)
 	sector_state["dormant_aggregates"] = _build_dormant_aggregates(records, sector_key)
 	sector_state["dormant_count"] = records.size()
 	sector_state["agent_ids"] = []
 	_project_dormant_counts_onto_sector(sector_state)
 	_sector_states[sector_key] = sector_state
+
+
+func _dormant_phase_offset(sector_key: Vector2i) -> float:
+	var hash_bucket := posmod(sector_key.x * 73856093 + sector_key.y * 19349663, 97)
+	return _very_far_sector_step_seconds * float(hash_bucket) / 97.0
 
 
 func _wake_sector(sector_key: Vector2i) -> void:
@@ -2407,6 +2858,12 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 			"avg_thirst_sum": 0.0,
 			"avg_energy_sum": 0.0,
 			"avg_age_sum": 0.0,
+			"mature_males": 0,
+			"mature_females": 0,
+			"ready_males": 0,
+			"ready_females": 0,
+			"old_age_count": 0,
+			"max_age_count": 0,
 			"record_ids": [],
 		})
 		aggregate["count"] = int(aggregate.get("count", 0)) + 1
@@ -2416,6 +2873,27 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		aggregate["avg_thirst_sum"] = float(aggregate.get("avg_thirst_sum", 0.0)) + float(record.get("thirst", 0.0))
 		aggregate["avg_energy_sum"] = float(aggregate.get("avg_energy_sum", 0.0)) + float(record.get("energy", 0.0))
 		aggregate["avg_age_sum"] = float(aggregate.get("avg_age_sum", 0.0)) + float(record.get("age", 0.0))
+		var species_key := str(record.get("species_type", ""))
+		var reproduction_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("reproduction", {})
+		var is_mature := float(record.get("age", 0.0)) >= float(reproduction_config.get("maturity_age", 0.0))
+		var is_ready := is_mature \
+			and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
+			and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
+			and float(record.get("hunger", 0.0)) <= float(reproduction_config.get("max_hunger", 100.0)) \
+			and float(record.get("thirst", 0.0)) <= float(reproduction_config.get("max_thirst", 100.0))
+		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
+		if is_mature:
+			var mature_key := "mature_males" if sex == AgentBaseScript.SEX_MALE else "mature_females"
+			aggregate[mature_key] = int(aggregate.get(mature_key, 0)) + 1
+		if is_ready:
+			var ready_key := "ready_males" if sex == AgentBaseScript.SEX_MALE else "ready_females"
+			aggregate[ready_key] = int(aggregate.get(ready_key, 0)) + 1
+		var aging_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("aging", {})
+		var record_age := float(record.get("age", 0.0))
+		if record_age >= float(aging_config.get("old_age_start", aging_config.get("max_age", INF))):
+			aggregate["old_age_count"] = int(aggregate.get("old_age_count", 0)) + 1
+		if record_age >= float(aging_config.get("max_age", INF)):
+			aggregate["max_age_count"] = int(aggregate.get("max_age_count", 0)) + 1
 		var record_ids: Array = aggregate.get("record_ids", [])
 		record_ids.append(int(record.get("id", -1)))
 		aggregate["record_ids"] = record_ids
@@ -2451,7 +2929,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		# which suppressed births and need-deaths for any aggregate small enough that its
 		# per-step share was below 1. `carcass_id` identifies the carcass a `seek_carcass`
 		# goal refers to, so losing it broke dormant scavenging entirely.
-		for carried_key in ["birth_debt", "starvation_debt", "thirst_debt", "carcass_id"]:
+		for carried_key in ["birth_debt", "starvation_debt", "thirst_debt", "old_age_debt", "carcass_id"]:
 			if previous.has(carried_key):
 				aggregate[carried_key] = previous[carried_key]
 		aggregates.append(aggregate)
@@ -2785,9 +3263,10 @@ func _dormant_energy_recovery_ceiling(
 	# surfaced as a wall of `low_energy` hunt failures. Staying below the reserve still means
 	# only real food can buy a litter.
 	var reproduction_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {}).get("reproduction", {})
+	var metabolism_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {}).get("metabolism", {})
 	var idle_ratio := float(config_bundle.get("balance", {}).get("dormant_ecology", {}).get("idle_recovery_energy_ratio", 0.75))
 	var rest_ceiling := maxf(
-		float(thresholds.get("rest_energy_resume", 34.0)),
+		float(metabolism_config.get("rest_energy_resume", thresholds.get("rest_energy_resume", 34.0))),
 		float(reproduction_config.get("energy_threshold", 0.0)) * idle_ratio
 	)
 	# At a food or water goal the aggregate is eating or drinking, and those live states
@@ -2961,13 +3440,14 @@ func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dic
 	var avg_age: float = float(aggregate.get("avg_age", 0.0)) + elapsed
 	var starvation_deaths: int = _dormant_need_deaths(aggregate, "starvation_debt", count, avg_hunger, elapsed)
 	var thirst_deaths: int = _dormant_need_deaths(aggregate, "thirst_debt", count, avg_thirst, elapsed)
-	var old_age_deaths: int = 0
-	var old_age_start := float(aging.get("old_age_start", aging.get("max_age", 9999.0)))
-	var max_age := float(aging.get("max_age", 9999.0))
-	if avg_age >= max_age:
-		old_age_deaths = maxi(1, int(ceil(float(count) * 0.2)))
-	elif avg_age >= old_age_start:
-		old_age_deaths = int(round(float(count) * float(aging.get("old_age_death_chance_per_second", 0.0)) * elapsed))
+	# Age remains cohort based in dormancy. Applying mortality to an aggregate's
+	# mean age made one old cohort pull every newborn over the threshold together.
+	var forced_old_age_deaths := mini(count, int(aggregate.get("max_age_count", 0)))
+	var aging_population := maxi(0, int(aggregate.get("old_age_count", 0)) - forced_old_age_deaths)
+	var old_age_debt: float = float(aggregate.get("old_age_debt", 0.0)) \
+		+ float(aging_population) * float(aging.get("old_age_death_chance_per_second", 0.0)) * elapsed
+	var old_age_deaths := mini(count, forced_old_age_deaths + int(floor(old_age_debt)))
+	aggregate["old_age_debt"] = old_age_debt - float(maxi(0, old_age_deaths - forced_old_age_deaths))
 	var applied_deaths: int = mini(count, starvation_deaths + thirst_deaths + old_age_deaths)
 	count = maxi(0, count - applied_deaths)
 	aggregate["count"] = count
@@ -3013,19 +3493,27 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, elapsed: float
 	var energy_threshold := float(reproduction_config.get("energy_threshold", 9999.0))
 	var avg_energy: float = float(aggregate.get("avg_energy", 0.0))
 	var avg_hunger: float = float(aggregate.get("avg_hunger", 0.0))
-	if avg_energy < energy_threshold or avg_hunger > 35.0:
+	var avg_thirst: float = float(aggregate.get("avg_thirst", 0.0))
+	var ready_pairs := mini(int(aggregate.get("ready_males", 0)), int(aggregate.get("ready_females", 0)))
+	if ready_pairs <= 0 or avg_energy < energy_threshold \
+			or avg_hunger > float(reproduction_config.get("max_hunger", 100.0)) \
+			or avg_thirst > float(reproduction_config.get("max_thirst", 100.0)):
 		return 0
-	var birth_rate: float = clampf((avg_energy - energy_threshold) / maxf(1.0, energy_threshold), 0.0, 0.35) * 0.15 * float(count)
-	# Only pairs breed, so at most `count / 2` of the group can be on cooldown at once.
-	var cooldown_ceiling: float = float(count) / (2.0 * maxf(1.0, float(reproduction_config.get("cooldown", 46.0))))
+	var reserve_ratio: float = clampf((avg_energy - energy_threshold) / maxf(1.0, energy_threshold), 0.0, 0.35)
+	var birth_rate: float = reserve_ratio * 0.15 * float(ready_pairs * 2)
+	# Only ready opposite-sex pairs breed. This mirrors the live path's mate gate
+	# and prevents an all-female or juvenile aggregate from creating offspring.
+	var cooldown_ceiling: float = float(ready_pairs) / maxf(1.0, float(reproduction_config.get("cooldown", 46.0)))
 	var debt: float = float(aggregate.get("birth_debt", 0.0)) + minf(birth_rate, cooldown_ceiling) * elapsed
-	var births: int = int(floor(debt))
+	var births: int = mini(ready_pairs, int(floor(debt)))
 	aggregate["birth_debt"] = debt - float(births)
+	births = reserve_reproductive_capacity(str(aggregate.get("species_type", "")), births)
 	if births > 0:
 		# The live path charges `birth_energy_cost` to both parents. Skipping it here left
 		# the coarse path breeding for free, with nothing to pay back between litters.
 		var total_cost: float = float(births) * 2.0 * float(reproduction_config.get("birth_energy_cost", 0.0))
 		aggregate["avg_energy"] = maxf(0.0, avg_energy - total_cost / float(count))
+		aggregate["births_this_step"] = births
 	return maxi(0, births)
 
 
@@ -3053,7 +3541,7 @@ func _move_dormant_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapse
 		aggregate["stale_time"] = maxf(0.0, float(aggregate.get("stale_time", 0.0)) - elapsed * 0.5)
 
 
-func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: Dictionary) -> void:
+func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: Dictionary, elapsed: float = 0.0) -> void:
 	var records: Array = sector_state.get("dormant_records", [])
 	var aggregates: Array = sector_state.get("dormant_aggregates", [])
 	var grouped_records: Dictionary = {}
@@ -3066,7 +3554,15 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 	for aggregate in aggregates:
 		var aggregate_key: String = _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)))
 		var bucket: Array = grouped_records.get(aggregate_key, [])
-		bucket.sort_custom(func(a, b): return int(a.get("id", -1)) < int(b.get("id", -1)))
+		# When an aggregate shrinks, retain younger records first. The coarse age
+		# ledger is the main reason for that shrink, and keeping the oldest records
+		# used to let the initial cohort survive while deleting its offspring.
+		bucket.sort_custom(func(a, b):
+			var age_a := float(a.get("age", 0.0))
+			var age_b := float(b.get("age", 0.0))
+			if not is_equal_approx(age_a, age_b):
+				return age_a < age_b
+			return int(a.get("id", -1)) < int(b.get("id", -1)))
 		var target_count := int(aggregate.get("count", 0))
 		if target_count <= 0:
 			continue
@@ -3074,11 +3570,31 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 		if template.is_empty():
 			template = _find_dormant_record_template(records, str(aggregate.get("species_type", "")))
 		var cluster_radius := minf(_sector_size * 0.22, 36.0 + float(target_count) * 1.5)
+		var record_ids: Array = []
+		var position_sum := Vector2.ZERO
+		var age_sum := 0.0
+		var births_to_assign := int(aggregate.get("births_this_step", 0))
+		var reproduction_config: Dictionary = config_bundle.get("species", {}).get(
+			str(aggregate.get("species_type", "")), {}).get("reproduction", {})
+		var parent_cooldown := float(reproduction_config.get("cooldown", 46.0))
+		var male_parents_left := births_to_assign
+		var female_parents_left := births_to_assign
 		for index in range(target_count):
 			var record: Dictionary = {}
 			var is_newborn := false
 			if index < bucket.size():
 				record = bucket[index]
+				record["age"] = float(record.get("age", 0.0)) + elapsed
+				record["reproduction_cooldown"] = maxf(0.0,
+					float(record.get("reproduction_cooldown", 0.0)) - elapsed)
+				var parent_ready := float(record.get("age", 0.0)) >= float(reproduction_config.get("maturity_age", 0.0)) \
+					and float(record.get("reproduction_cooldown", 0.0)) <= 0.0
+				if parent_ready and str(record.get("sex", AgentBaseScript.SEX_FEMALE)) == AgentBaseScript.SEX_MALE and male_parents_left > 0:
+					record["reproduction_cooldown"] = parent_cooldown
+					male_parents_left -= 1
+				elif parent_ready and str(record.get("sex", AgentBaseScript.SEX_FEMALE)) == AgentBaseScript.SEX_FEMALE and female_parents_left > 0:
+					record["reproduction_cooldown"] = parent_cooldown
+					female_parents_left -= 1
 			elif not template.is_empty():
 				record = template.duplicate(true)
 				record["id"] = next_agent_id
@@ -3099,13 +3615,20 @@ func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: D
 			record["hunger"] = float(aggregate.get("avg_hunger", record.get("hunger", 0.0)))
 			record["thirst"] = float(aggregate.get("avg_thirst", record.get("thirst", 0.0)))
 			record["energy"] = float(aggregate.get("avg_energy", record.get("energy", 0.0)))
-			# A newborn keeps its own age. Overwriting it with the group mean, as the
-			# unconditional assignment did, meant dormant young were born middle-aged
-			# and inflated old-age mortality.
-			if not is_newborn:
-				record["age"] = float(aggregate.get("avg_age", record.get("age", 0.0)))
+			# Existing records retain their own cohort age. Averaging every animal's
+			# age made newborns become middle-aged on the next coarse step.
 			record["group_id"] = int(aggregate.get("group_id", record.get("group_id", -1)))
 			next_records.append(record)
+			record_ids.append(int(record.get("id", -1)))
+			position_sum += Vector2(record.get("position", aggregate_center))
+			age_sum += float(record.get("age", 0.0))
+		var actual_count := record_ids.size()
+		aggregate["count"] = actual_count
+		aggregate["record_ids"] = record_ids
+		if actual_count > 0:
+			aggregate["center"] = position_sum / float(actual_count)
+			aggregate["avg_age"] = age_sum / float(actual_count)
+		aggregate.erase("births_this_step")
 	sector_state["dormant_records"] = next_records
 
 
@@ -3164,10 +3687,9 @@ func _dormant_sector_should_force_wake(sector_key: Vector2i, sector_state: Dicti
 	var prey_count := _sector_species_count(sector_state, _prey_species_ids)
 	if threat_count > 0 and prey_count > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
 		return true
-	if not sector_state.get("carcass_ids", []).is_empty() and threat_count > 0:
-		return true
-	if bool(sector_state.get("water", false)) and threat_count > 0 and prey_count > 0:
-		return true
+	# Co-located predators and prey are resolved by the dormant predation ledger.
+	# Water is sector state as well, so it does not require materializing a far
+	# sector. The active-ring check above still wakes a chase approaching LOD0/1.
 	return false
 
 
@@ -3215,25 +3737,33 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 				var drink_duration := maxf(0.1, float(feeding.get("drink_duration", 0.6)))
 				var thirst_restore := float(feeding.get("drink_restore", 35.0)) * minf(1.0, elapsed / drink_duration)
 				aggregate["avg_thirst"] = maxf(0.0, float(aggregate.get("avg_thirst", 0.0)) - thirst_restore)
-			elif str(aggregate.get("goal_kind", "")) == "grass" and _dormant_aggregate_reached_goal(sector_key, aggregate):
+			# A sleeping herd represents animals spread through this whole sector,
+			# rather than one body pinned to the aggregate centre. Let it graze local
+			# biomass whenever hungry, including during a water trip. Requiring the
+			# averaged centre to touch one exact grass cell caused dormant herbivores
+			# to starve while the same sector still held millions of biomass and the
+			# fully simulated population had zero starvation deaths.
+			var graze_floor := float(config_bundle.get("balance", {}).get(
+				"state_thresholds", {}).get("graze_hunger_floor", 12.0))
+			if float(aggregate.get("avg_hunger", 0.0)) >= graze_floor:
 				var grass_target := _get_sector_best_grass(sector_key, 1.0)
 				if grass_target.is_empty():
 					aggregate["last_goal_refresh_time"] = -INF
-					continue
-				var bite_amount := float(feeding.get("bite_amount", 18.0))
-				var eat_duration := maxf(0.1, float(feeding.get("eat_duration", 0.55)))
-				var desired_consumption := float(aggregate.get("count", 0)) * bite_amount * maxf(1.0, elapsed / eat_duration)
-				var consumed := consume_grass_cell(int(grass_target.get("index", -1)), desired_consumption)
-				if consumed <= 0.0:
-					aggregate["last_goal_refresh_time"] = -INF
-					continue
-				var consumed_per_agent := consumed / maxf(1.0, float(aggregate.get("count", 0)))
-				var hunger_reduction := consumed_per_agent * float(feeding.get("nutrition_gain", 0.8))
-				if hunger_reduction > 0.0:
-					aggregate["avg_hunger"] = maxf(0.0, float(aggregate.get("avg_hunger", 0.0)) - hunger_reduction)
-					record_herbivore_hunger_reduction(hunger_reduction, int(aggregate.get("count", 0)))
-				var max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
-				aggregate["avg_energy"] = minf(max_energy, float(aggregate.get("avg_energy", 0.0)) + consumed_per_agent * 0.18)
+				else:
+					var bite_amount := float(feeding.get("bite_amount", 18.0))
+					var eat_duration := maxf(0.1, float(feeding.get("eat_duration", 0.55)))
+					var desired_consumption := float(aggregate.get("count", 0)) * bite_amount * maxf(1.0, elapsed / eat_duration)
+					var consumed := consume_grass_cell(int(grass_target.get("index", -1)), desired_consumption)
+					if consumed <= 0.0:
+						aggregate["last_goal_refresh_time"] = -INF
+					else:
+						var consumed_per_agent := consumed / maxf(1.0, float(aggregate.get("count", 0)))
+						var hunger_reduction := consumed_per_agent * float(feeding.get("nutrition_gain", 0.8))
+						if hunger_reduction > 0.0:
+							aggregate["avg_hunger"] = maxf(0.0, float(aggregate.get("avg_hunger", 0.0)) - hunger_reduction)
+							record_herbivore_hunger_reduction(hunger_reduction, int(aggregate.get("count", 0)))
+						var max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
+						aggregate["avg_energy"] = minf(max_energy, float(aggregate.get("avg_energy", 0.0)) + consumed_per_agent * 0.18)
 			continue
 		# Meat eaters, hunters and carrion feeders alike: the `water` and `seek_carcass`
 		# arms below serve both, and only a hunter is ever handed a `hunt` goal.
@@ -3327,9 +3857,13 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 		next_aggregates.append(aggregate)
 	sector_state["dormant_aggregates"] = next_aggregates
 	_apply_dormant_resource_interactions(sector_key, sector_state, elapsed)
-	_sync_dormant_records_with_aggregates(sector_key, sector_state)
+	_sync_dormant_records_with_aggregates(sector_key, sector_state, elapsed)
 	sector_state["dormant_species"] = _build_dormant_species_state(sector_state.get("dormant_records", []))
-	sector_state["dormant_aggregates"] = _build_dormant_aggregates(sector_state.get("dormant_records", []), sector_key, _build_dormant_aggregate_previous_map(next_aggregates))
+	# `_sync_dormant_records_with_aggregates()` refreshes record IDs, center and
+	# average age while materializing births/deaths. Rebuilding every aggregate
+	# from those same records here repeated the most expensive half of a coarse
+	# sector step without changing its authoritative values.
+	sector_state["dormant_aggregates"] = next_aggregates
 	sector_state["dormant_count"] = sector_state.get("dormant_records", []).size()
 	_project_dormant_counts_onto_sector(sector_state)
 

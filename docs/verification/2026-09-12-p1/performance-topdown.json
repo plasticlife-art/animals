@@ -1,0 +1,961 @@
+{
+	"content_scale_resolution": [
+		1600,
+		900
+	],
+	"lod_enabled": true,
+	"logical_viewport_resolution": [
+		1600.0,
+		900.0
+	],
+	"measured_frames_per_view": 720,
+	"overview_lod": {
+		"bush_keep_fraction": 0.35,
+		"depth_order_interval_ticks": 6.0,
+		"disable_shadows": true,
+		"enabled": true,
+		"enter_visible_fraction": 0.2,
+		"exit_visible_fraction": 0.15,
+		"freeze_animation": true,
+		"hide_groups": [
+			"meadow",
+			"drought",
+			"swamp"
+		],
+		"minimap_refresh_hz": 5.0,
+		"thin_groups": [
+			"bush"
+		]
+	},
+	"requested_resolution": [
+		1600,
+		900
+	],
+	"results": [
+		{
+			"camera_zoom": 0.800000011920929,
+			"elapsed_seconds": 5.289561,
+			"measured_actual_speed": 0.777212156379537,
+			"measured_frames": 720,
+			"performance": {
+				"actual_speed": 0.833308241496285,
+				"dropped_simulation_seconds": 1.22058544444444,
+				"frame_ms": {
+					"count": 720,
+					"p50": 6.94444444444444,
+					"p95": 10.0803333333335,
+					"p99": 11.4433333333335
+				},
+				"lod_counts": {
+					"lod0_agents": 22,
+					"lod1_agents": 34,
+					"lod2_agents": 286
+				},
+				"render_counts": {
+					"multimesh_writes": 20,
+					"order_rebuilt": false,
+					"overview": false,
+					"visible_animals": 20,
+					"visible_carcasses": 1,
+					"visible_dormant_animals": 0,
+					"visible_scene_dynamic": 21,
+					"visible_scenery": 118,
+					"visible_shadows": 20
+				},
+				"render_cpu_ms": {
+					"count": 720,
+					"p50": 0.794,
+					"p95": 1.567,
+					"p99": 2.269
+				},
+				"render_phases_ms": {
+					"animation": {
+						"count": 720,
+						"p50": 0.248,
+						"p95": 0.482,
+						"p99": 0.572
+					},
+					"culling": {
+						"count": 720,
+						"p50": 0.0,
+						"p95": 0.066,
+						"p99": 0.106
+					},
+					"depth_order": {
+						"count": 74,
+						"p50": 0.228,
+						"p95": 0.471,
+						"p99": 0.499
+					},
+					"minimap": {
+						"count": 15,
+						"p50": 1.377,
+						"p95": 4.633,
+						"p99": 4.633
+					},
+					"multimesh_write": {
+						"count": 720,
+						"p50": 0.122,
+						"p95": 0.305,
+						"p99": 0.545
+					},
+					"scene_batch": {
+						"count": 720,
+						"p50": 0.146,
+						"p95": 0.566,
+						"p99": 0.918
+					},
+					"shadows": {
+						"count": 720,
+						"p50": 0.331,
+						"p95": 0.698,
+						"p99": 0.964
+					},
+					"static_culling": {
+						"count": 720,
+						"p50": 0.012,
+						"p95": 0.025,
+						"p99": 0.039
+					},
+					"terrain": {
+						"count": 0,
+						"p50": 0.0,
+						"p95": 0.0,
+						"p99": 0.0
+					},
+					"ui": {
+						"count": 720,
+						"p50": 0.104,
+						"p95": 0.206,
+						"p99": 0.394
+					}
+				},
+				"requested_speed": 1.0,
+				"simulation_counts": {
+					"action_select_ms": 1.09,
+					"agent_herbivore_ms": 5.117,
+					"agent_predator_ms": 0.824,
+					"agent_query_calls": 57,
+					"agent_scavenger_ms": 2.208,
+					"agents_full_tick": 39,
+					"agents_maintenance_tick": 73,
+					"ai_context_build_ms": 2.404,
+					"carcass_query_calls": 14,
+					"carcasses_scanned": 66,
+					"dormant_forced_wakeups": 0,
+					"dormant_goal_refreshes": 0,
+					"dormant_hunt_colocated_steps": 0,
+					"dormant_hunting_predator_steps": 0,
+					"dormant_meat_granted": 0.0,
+					"dormant_migrations": 0,
+					"dormant_predation_kills": 0,
+					"dormant_predator_hunger_reduced": 0.0,
+					"dormant_stale_sectors": 0,
+					"dormant_steps": 1,
+					"grass_cells_scanned": 810,
+					"grass_consumed_total": 0.0,
+					"grass_query_calls": 0,
+					"grass_search_calls": 10,
+					"grass_search_ms": 0.313,
+					"grass_target_budget_misses": 0,
+					"group_center_lookups": 16,
+					"herbivore_hunger_reduced_total": 0.0,
+					"local_path_searches": 0,
+					"path_cache_hits": 1,
+					"pathfind_calls": 0,
+					"pathfind_ms": 0.004,
+					"pending_global_paths": 0,
+					"pending_local_paths": 0,
+					"phase_agents_ms": 11.383,
+					"phase_dormant_ms": 3.396,
+					"phase_overlap_ms": 2.033,
+					"phase_resources_ms": 11.729,
+					"phase_sectors_ms": 5.252,
+					"sector_wakeups": 2,
+					"snapshot_agent_query_ms": 0.432,
+					"snapshot_carcass_ms": 0.272,
+					"snapshot_group_ms": 0.079,
+					"snapshot_predator_choice_ms": 0.05,
+					"snapshot_water_ms": 0.339,
+					"spatial_update_ms": 0.810000000000001,
+					"stuck_agents": 0,
+					"visibility_checks": 1,
+					"water_query_calls": 19
+				},
+				"simulation_phases_ms": {
+					"action_select_ms": {
+						"count": 74,
+						"p50": 1.43,
+						"p95": 6.146,
+						"p99": 12.665
+					},
+					"agent_herbivore_ms": {
+						"count": 74,
+						"p50": 6.261,
+						"p95": 26.596,
+						"p99": 62.143
+					},
+					"agent_predator_ms": {
+						"count": 74,
+						"p50": 1.196,
+						"p95": 2.862,
+						"p99": 10.743
+					},
+					"agent_scavenger_ms": {
+						"count": 74,
+						"p50": 2.185,
+						"p95": 6.563,
+						"p99": 11.562
+					},
+					"ai_context_build_ms": {
+						"count": 74,
+						"p50": 3.162,
+						"p95": 11.931,
+						"p99": 27.624
+					},
+					"grass_search_ms": {
+						"count": 74,
+						"p50": 0.357,
+						"p95": 1.799,
+						"p99": 6.098
+					},
+					"pathfind_ms": {
+						"count": 74,
+						"p50": 0.0,
+						"p95": 11.702,
+						"p99": 14.083
+					},
+					"phase_agents_ms": {
+						"count": 74,
+						"p50": 15.775,
+						"p95": 41.407,
+						"p99": 81.807
+					},
+					"phase_dormant_ms": {
+						"count": 74,
+						"p50": 5.533,
+						"p95": 14.342,
+						"p99": 22.203
+					},
+					"phase_overlap_ms": {
+						"count": 74,
+						"p50": 2.709,
+						"p95": 5.844,
+						"p99": 6.45
+					},
+					"phase_resources_ms": {
+						"count": 74,
+						"p50": 20.9,
+						"p95": 42.154,
+						"p99": 45.331
+					},
+					"phase_sectors_ms": {
+						"count": 74,
+						"p50": 9.373,
+						"p95": 18.229,
+						"p99": 37.09
+					},
+					"snapshot_agent_query_ms": {
+						"count": 74,
+						"p50": 0.565,
+						"p95": 2.791,
+						"p99": 5.583
+					},
+					"snapshot_carcass_ms": {
+						"count": 74,
+						"p50": 0.253,
+						"p95": 0.853,
+						"p99": 4.009
+					},
+					"snapshot_group_ms": {
+						"count": 74,
+						"p50": 0.097,
+						"p95": 0.409,
+						"p99": 1.086
+					},
+					"snapshot_predator_choice_ms": {
+						"count": 74,
+						"p50": 0.098,
+						"p95": 0.319,
+						"p99": 0.511
+					},
+					"snapshot_water_ms": {
+						"count": 74,
+						"p50": 0.462,
+						"p95": 1.773,
+						"p99": 2.205
+					},
+					"spatial_update_ms": {
+						"count": 74,
+						"p50": 1.082,
+						"p95": 2.593,
+						"p99": 4.64899999999999
+					}
+				},
+				"tick_ms": {
+					"count": 74,
+					"p50": 52.434,
+					"p95": 119.988,
+					"p99": 145.398
+				},
+				"worker_apply_ms": {
+					"count": 74,
+					"p50": 1.527,
+					"p95": 4.046,
+					"p99": 28.635
+				},
+				"worker_cycle_ms": {
+					"count": 74,
+					"p50": 62.47,
+					"p95": 126.995,
+					"p99": 156.168
+				},
+				"worker_snapshot_counts": {
+					"agent_removals": 6,
+					"agents": 74,
+					"carcasses": 0,
+					"events": 0,
+					"grass_cells": 0,
+					"groups": 6,
+					"mode": "delta",
+					"sectors": 4
+				},
+				"worker_snapshot_ms": {
+					"count": 74,
+					"p50": 2.401,
+					"p95": 6.951,
+					"p99": 25.322
+				}
+			},
+			"screenshot_resolution": [
+				1446,
+				813
+			],
+			"simulated_seconds": 4.1111111111111,
+			"view": "herd",
+			"visible_world_fraction": 0.0192901328757957
+		},
+		{
+			"camera_zoom": 0.800000011920929,
+			"elapsed_seconds": 4.956761,
+			"measured_actual_speed": 1.07597145259441,
+			"measured_frames": 720,
+			"performance": {
+				"actual_speed": 0.993154516966058,
+				"dropped_simulation_seconds": 0.0494108888888865,
+				"frame_ms": {
+					"count": 720,
+					"p50": 6.94444444444444,
+					"p95": 6.94444444444444,
+					"p99": 7.07122222222234
+				},
+				"lod_counts": {
+					"lod0_agents": 40,
+					"lod1_agents": 34,
+					"lod2_agents": 275
+				},
+				"render_counts": {
+					"multimesh_writes": 106,
+					"order_rebuilt": true,
+					"overview": false,
+					"visible_animals": 27,
+					"visible_carcasses": 3,
+					"visible_dormant_animals": 0,
+					"visible_scene_dynamic": 30,
+					"visible_scenery": 76,
+					"visible_shadows": 27
+				},
+				"render_cpu_ms": {
+					"count": 720,
+					"p50": 1.106,
+					"p95": 1.826,
+					"p99": 2.418
+				},
+				"render_phases_ms": {
+					"animation": {
+						"count": 720,
+						"p50": 0.231,
+						"p95": 0.38,
+						"p99": 0.59
+					},
+					"culling": {
+						"count": 720,
+						"p50": 0.055,
+						"p95": 0.096,
+						"p99": 0.163
+					},
+					"depth_order": {
+						"count": 720,
+						"p50": 0.21,
+						"p95": 0.283,
+						"p99": 0.402
+					},
+					"minimap": {
+						"count": 36,
+						"p50": 1.016,
+						"p95": 1.582,
+						"p99": 1.87
+					},
+					"multimesh_write": {
+						"count": 720,
+						"p50": 0.236,
+						"p95": 0.352,
+						"p99": 0.524
+					},
+					"scene_batch": {
+						"count": 720,
+						"p50": 0.496,
+						"p95": 0.888,
+						"p99": 1.737
+					},
+					"shadows": {
+						"count": 720,
+						"p50": 0.278,
+						"p95": 0.475,
+						"p99": 0.704
+					},
+					"static_culling": {
+						"count": 720,
+						"p50": 0.009,
+						"p95": 0.024,
+						"p99": 0.952
+					},
+					"terrain": {
+						"count": 0,
+						"p50": 0.0,
+						"p95": 0.0,
+						"p99": 0.0
+					},
+					"ui": {
+						"count": 720,
+						"p50": 0.075,
+						"p95": 0.138,
+						"p99": 0.254
+					}
+				},
+				"requested_speed": 1.0,
+				"simulation_counts": {
+					"action_select_ms": 0.854,
+					"agent_herbivore_ms": 4.438,
+					"agent_predator_ms": 0.723,
+					"agent_query_calls": 67,
+					"agent_scavenger_ms": 1.607,
+					"agents_full_tick": 53,
+					"agents_maintenance_tick": 67,
+					"ai_context_build_ms": 1.668,
+					"carcass_query_calls": 6,
+					"carcasses_scanned": 26,
+					"dormant_forced_wakeups": 0,
+					"dormant_goal_refreshes": 3,
+					"dormant_hunt_colocated_steps": 0,
+					"dormant_hunting_predator_steps": 0,
+					"dormant_meat_granted": 0.0,
+					"dormant_migrations": 0,
+					"dormant_predation_kills": 0,
+					"dormant_predator_hunger_reduced": 0.0,
+					"dormant_stale_sectors": 0,
+					"dormant_steps": 4,
+					"grass_cells_scanned": 5710,
+					"grass_consumed_total": 33.0,
+					"grass_query_calls": 0,
+					"grass_search_calls": 10,
+					"grass_search_ms": 0.232,
+					"grass_target_budget_misses": 0,
+					"group_center_lookups": 12,
+					"herbivore_hunger_reduced_total": 33.0,
+					"local_path_searches": 0,
+					"path_cache_hits": 1,
+					"pathfind_calls": 2,
+					"pathfind_ms": 4.874,
+					"pending_global_paths": 1,
+					"pending_local_paths": 0,
+					"phase_agents_ms": 9.905,
+					"phase_dormant_ms": 6.873,
+					"phase_overlap_ms": 2.054,
+					"phase_resources_ms": 0.062,
+					"phase_sectors_ms": 6.427,
+					"sector_wakeups": 2,
+					"snapshot_agent_query_ms": 0.43,
+					"snapshot_carcass_ms": 0.09,
+					"snapshot_group_ms": 0.044,
+					"snapshot_predator_choice_ms": 0.033,
+					"snapshot_water_ms": 0.187,
+					"spatial_update_ms": 0.791000000000001,
+					"stuck_agents": 0,
+					"visibility_checks": 17,
+					"water_query_calls": 17
+				},
+				"simulation_phases_ms": {
+					"action_select_ms": {
+						"count": 96,
+						"p50": 1.109,
+						"p95": 4.224,
+						"p99": 7.447
+					},
+					"agent_herbivore_ms": {
+						"count": 96,
+						"p50": 4.438,
+						"p95": 19.072,
+						"p99": 31.006
+					},
+					"agent_predator_ms": {
+						"count": 96,
+						"p50": 1.0,
+						"p95": 2.686,
+						"p99": 10.318
+					},
+					"agent_scavenger_ms": {
+						"count": 96,
+						"p50": 1.776,
+						"p95": 8.001,
+						"p99": 15.53
+					},
+					"ai_context_build_ms": {
+						"count": 96,
+						"p50": 2.512,
+						"p95": 8.48,
+						"p99": 15.1
+					},
+					"grass_search_ms": {
+						"count": 96,
+						"p50": 0.279,
+						"p95": 1.256,
+						"p99": 2.32
+					},
+					"pathfind_ms": {
+						"count": 96,
+						"p50": 3.116,
+						"p95": 7.618,
+						"p99": 9.775
+					},
+					"phase_agents_ms": {
+						"count": 96,
+						"p50": 12.886,
+						"p95": 26.616,
+						"p99": 54.576
+					},
+					"phase_dormant_ms": {
+						"count": 96,
+						"p50": 4.05,
+						"p95": 7.471,
+						"p99": 13.628
+					},
+					"phase_overlap_ms": {
+						"count": 96,
+						"p50": 1.709,
+						"p95": 3.271,
+						"p99": 5.594
+					},
+					"phase_resources_ms": {
+						"count": 96,
+						"p50": 0.758,
+						"p95": 10.054,
+						"p99": 14.27
+					},
+					"phase_sectors_ms": {
+						"count": 96,
+						"p50": 5.519,
+						"p95": 9.044,
+						"p99": 9.791
+					},
+					"snapshot_agent_query_ms": {
+						"count": 96,
+						"p50": 0.476,
+						"p95": 1.833,
+						"p99": 2.82
+					},
+					"snapshot_carcass_ms": {
+						"count": 96,
+						"p50": 0.188,
+						"p95": 0.518,
+						"p99": 0.791
+					},
+					"snapshot_group_ms": {
+						"count": 96,
+						"p50": 0.072,
+						"p95": 0.317,
+						"p99": 0.588
+					},
+					"snapshot_predator_choice_ms": {
+						"count": 96,
+						"p50": 0.125,
+						"p95": 0.633,
+						"p99": 1.475
+					},
+					"snapshot_water_ms": {
+						"count": 96,
+						"p50": 0.307,
+						"p95": 1.244,
+						"p99": 2.114
+					},
+					"spatial_update_ms": {
+						"count": 96,
+						"p50": 0.778000000000001,
+						"p95": 1.418,
+						"p99": 1.945
+					}
+				},
+				"tick_ms": {
+					"count": 96,
+					"p50": 28.56,
+					"p95": 52.14,
+					"p99": 77.982
+				},
+				"worker_apply_ms": {
+					"count": 96,
+					"p50": 1.46,
+					"p95": 2.65,
+					"p99": 3.141
+				},
+				"worker_cycle_ms": {
+					"count": 96,
+					"p50": 34.479,
+					"p95": 59.559,
+					"p99": 82.761
+				},
+				"worker_snapshot_counts": {
+					"agent_removals": 0,
+					"agents": 88,
+					"carcasses": 0,
+					"events": 1,
+					"grass_cells": 0,
+					"groups": 8,
+					"mode": "delta",
+					"sectors": 6
+				},
+				"worker_snapshot_ms": {
+					"count": 96,
+					"p50": 2.006,
+					"p95": 3.639,
+					"p99": 7.063
+				}
+			},
+			"simulated_seconds": 5.33333333333332,
+			"view": "pan",
+			"visible_world_fraction": 0.0192901234567901
+		},
+		{
+			"camera_zoom": 0.110673882067204,
+			"elapsed_seconds": 4.976093,
+			"measured_actual_speed": 1.00480437162247,
+			"measured_frames": 720,
+			"performance": {
+				"actual_speed": 1.04840959575092,
+				"dropped_simulation_seconds": 0.0,
+				"frame_ms": {
+					"count": 720,
+					"p50": 6.896,
+					"p95": 6.896,
+					"p99": 8.33333333333333
+				},
+				"lod_counts": {
+					"lod0_agents": 5,
+					"lod1_agents": 44,
+					"lod2_agents": 307
+				},
+				"render_counts": {
+					"multimesh_writes": 0,
+					"order_rebuilt": false,
+					"overview": true,
+					"visible_animals": 356,
+					"visible_carcasses": 26,
+					"visible_dormant_animals": 300,
+					"visible_scene_dynamic": 382,
+					"visible_scenery": 1394,
+					"visible_shadows": 0
+				},
+				"render_cpu_ms": {
+					"count": 720,
+					"p50": 0.018,
+					"p95": 1.196,
+					"p99": 6.809
+				},
+				"render_phases_ms": {
+					"animation": {
+						"count": 720,
+						"p50": 0.0,
+						"p95": 0.675,
+						"p99": 0.846
+					},
+					"culling": {
+						"count": 720,
+						"p50": 0.0,
+						"p95": 0.07,
+						"p99": 0.089
+					},
+					"depth_order": {
+						"count": 23,
+						"p50": 2.667,
+						"p95": 4.568,
+						"p99": 4.757
+					},
+					"minimap": {
+						"count": 18,
+						"p50": 0.97,
+						"p95": 2.219,
+						"p99": 2.219
+					},
+					"multimesh_write": {
+						"count": 91,
+						"p50": 0.198,
+						"p95": 2.711,
+						"p99": 3.256
+					},
+					"scene_batch": {
+						"count": 720,
+						"p50": 0.001,
+						"p95": 0.388,
+						"p99": 5.629
+					},
+					"shadows": {
+						"count": 720,
+						"p50": 0.0,
+						"p95": 0.002,
+						"p99": 0.002
+					},
+					"static_culling": {
+						"count": 91,
+						"p50": 0.01,
+						"p95": 0.016,
+						"p99": 13.438
+					},
+					"terrain": {
+						"count": 0,
+						"p50": 0.0,
+						"p95": 0.0,
+						"p99": 0.0
+					},
+					"ui": {
+						"count": 720,
+						"p50": 0.066,
+						"p95": 0.126,
+						"p99": 0.209
+					}
+				},
+				"requested_speed": 1.0,
+				"simulation_counts": {
+					"action_select_ms": 0.18,
+					"agent_herbivore_ms": 1.665,
+					"agent_predator_ms": 1.107,
+					"agent_query_calls": 18,
+					"agent_scavenger_ms": 0.662,
+					"agents_full_tick": 15,
+					"agents_maintenance_tick": 55,
+					"ai_context_build_ms": 0.213,
+					"carcass_query_calls": 2,
+					"carcasses_scanned": 6,
+					"dormant_forced_wakeups": 0,
+					"dormant_goal_refreshes": 0,
+					"dormant_hunt_colocated_steps": 0,
+					"dormant_hunting_predator_steps": 0,
+					"dormant_meat_granted": 0.0,
+					"dormant_migrations": 0,
+					"dormant_predation_kills": 0,
+					"dormant_predator_hunger_reduced": 0.0,
+					"dormant_stale_sectors": 0,
+					"dormant_steps": 0,
+					"grass_cells_scanned": 0,
+					"grass_consumed_total": 0.0,
+					"grass_query_calls": 0,
+					"grass_search_calls": 0,
+					"grass_search_ms": 0.0,
+					"grass_target_budget_misses": 0,
+					"group_center_lookups": 0,
+					"herbivore_hunger_reduced_total": 0.0,
+					"local_path_searches": 0,
+					"path_cache_hits": 1,
+					"pathfind_calls": 0,
+					"pathfind_ms": 5.222,
+					"pending_global_paths": 1,
+					"pending_local_paths": 0,
+					"phase_agents_ms": 5.581,
+					"phase_dormant_ms": 1.854,
+					"phase_overlap_ms": 0.953,
+					"phase_resources_ms": 0.088,
+					"phase_sectors_ms": 4.215,
+					"sector_wakeups": 1,
+					"snapshot_agent_query_ms": 0.035,
+					"snapshot_carcass_ms": 0.026,
+					"snapshot_group_ms": 0.0,
+					"snapshot_predator_choice_ms": 0.042,
+					"snapshot_water_ms": 0.032,
+					"spatial_update_ms": 0.56,
+					"stuck_agents": 0,
+					"visibility_checks": 3,
+					"water_query_calls": 5
+				},
+				"simulation_phases_ms": {
+					"action_select_ms": {
+						"count": 90,
+						"p50": 0.184,
+						"p95": 0.656,
+						"p99": 1.083
+					},
+					"agent_herbivore_ms": {
+						"count": 90,
+						"p50": 1.044,
+						"p95": 3.482,
+						"p99": 5.638
+					},
+					"agent_predator_ms": {
+						"count": 90,
+						"p50": 0.644,
+						"p95": 1.412,
+						"p99": 2.084
+					},
+					"agent_scavenger_ms": {
+						"count": 90,
+						"p50": 0.97,
+						"p95": 4.984,
+						"p99": 9.998
+					},
+					"ai_context_build_ms": {
+						"count": 90,
+						"p50": 0.434,
+						"p95": 1.449,
+						"p99": 2.635
+					},
+					"grass_search_ms": {
+						"count": 90,
+						"p50": 0.0,
+						"p95": 0.365,
+						"p99": 0.858
+					},
+					"pathfind_ms": {
+						"count": 90,
+						"p50": 4.202,
+						"p95": 7.928,
+						"p99": 14.285
+					},
+					"phase_agents_ms": {
+						"count": 90,
+						"p50": 4.304,
+						"p95": 8.187,
+						"p99": 15.528
+					},
+					"phase_dormant_ms": {
+						"count": 90,
+						"p50": 1.852,
+						"p95": 5.896,
+						"p99": 10.051
+					},
+					"phase_overlap_ms": {
+						"count": 90,
+						"p50": 0.738,
+						"p95": 1.212,
+						"p99": 1.599
+					},
+					"phase_resources_ms": {
+						"count": 90,
+						"p50": 0.067,
+						"p95": 0.131,
+						"p99": 0.247
+					},
+					"phase_sectors_ms": {
+						"count": 90,
+						"p50": 2.295,
+						"p95": 4.122,
+						"p99": 5.608
+					},
+					"snapshot_agent_query_ms": {
+						"count": 90,
+						"p50": 0.058,
+						"p95": 0.346,
+						"p99": 0.89
+					},
+					"snapshot_carcass_ms": {
+						"count": 90,
+						"p50": 0.025,
+						"p95": 0.131,
+						"p99": 0.269
+					},
+					"snapshot_group_ms": {
+						"count": 90,
+						"p50": 0.009,
+						"p95": 0.042,
+						"p99": 0.073
+					},
+					"snapshot_predator_choice_ms": {
+						"count": 90,
+						"p50": 0.033,
+						"p95": 0.214,
+						"p99": 0.496
+					},
+					"snapshot_water_ms": {
+						"count": 90,
+						"p50": 0.053,
+						"p95": 0.191,
+						"p99": 0.291
+					},
+					"spatial_update_ms": {
+						"count": 90,
+						"p50": 0.409,
+						"p95": 0.65,
+						"p99": 0.769
+					}
+				},
+				"tick_ms": {
+					"count": 90,
+					"p50": 12.993,
+					"p95": 21.809,
+					"p99": 26.872
+				},
+				"worker_apply_ms": {
+					"count": 90,
+					"p50": 0.802,
+					"p95": 1.791,
+					"p99": 2.816
+				},
+				"worker_cycle_ms": {
+					"count": 90,
+					"p50": 20.693,
+					"p95": 27.966,
+					"p99": 34.39
+				},
+				"worker_snapshot_counts": {
+					"agent_removals": 6,
+					"agents": 56,
+					"carcasses": 0,
+					"events": 0,
+					"grass_cells": 0,
+					"groups": 4,
+					"mode": "delta",
+					"sectors": 2
+				},
+				"worker_snapshot_ms": {
+					"count": 90,
+					"p50": 1.708,
+					"p95": 3.402,
+					"p99": 4.017
+				}
+			},
+			"screenshot_resolution": [
+				1446,
+				813
+			],
+			"simulated_seconds": 4.99999999999998,
+			"view": "overview",
+			"visible_world_fraction": 1.0
+		}
+	],
+	"seed": 1337,
+	"selection": {
+		"difficulty": "normal",
+		"map_size": "large",
+		"mix": "balanced",
+		"rules": "normal",
+		"scenario": "normal",
+		"style": "topdown_kenney"
+	},
+	"speed": 1.0,
+	"tick_rate": 18.0,
+	"warmup_frames": 180,
+	"window_resolution": [
+		1446,
+		1748
+	],
+	"world_size": [
+		14400.0,
+		8100.0
+	]
+}

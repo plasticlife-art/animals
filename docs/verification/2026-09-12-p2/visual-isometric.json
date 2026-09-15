@@ -1,0 +1,95 @@
+{
+	"anchor": "(2416.0, 1360.0)",
+	"depth_order": [
+		1,
+		-1,
+		241,
+		265,
+		-2,
+		2,
+		-3,
+		242
+	],
+	"resolution": [
+		1600,
+		900
+	],
+	"roles": [
+		{
+			"id": 1,
+			"position": "(2186.0, 1275.0)",
+			"role": "fleeing_behind_tree",
+			"species": "herbivore",
+			"state": "flee"
+		},
+		{
+			"id": 241,
+			"position": "(2186.0, 1405.0)",
+			"role": "occluded_hunter",
+			"species": "predator",
+			"state": "search_last_seen"
+		},
+		{
+			"id": 265,
+			"position": "(2416.0, 1390.0)",
+			"role": "inside_bush",
+			"species": "scavenger",
+			"state": "flee"
+		},
+		{
+			"id": 242,
+			"position": "(2601.0, 1405.0)",
+			"role": "searching_last_seen",
+			"species": "predator",
+			"state": "search_last_seen"
+		},
+		{
+			"id": 2,
+			"position": "(2666.0, 1315.0)",
+			"role": "last_confirmed_prey",
+			"species": "herbivore",
+			"state": "flee"
+		}
+	],
+	"scenery": [
+		{
+			"cover_radius": 0.0,
+			"id": 1,
+			"kind": "tree_large",
+			"level": 0,
+			"move_cost": 1.0,
+			"opacity": 0.0,
+			"position": "(2186.0, 1340.0)",
+			"radius": 4.16,
+			"scale": 1.4,
+			"slot": 0
+		},
+		{
+			"cover_radius": 10.24,
+			"id": 2,
+			"kind": "bush",
+			"level": 0,
+			"move_cost": 1.4,
+			"opacity": 0.55,
+			"position": "(2416.0, 1390.0)",
+			"radius": 0.0,
+			"scale": 0.42,
+			"slot": 5
+		},
+		{
+			"cover_radius": 0.0,
+			"id": 3,
+			"kind": "tree_large",
+			"level": 0,
+			"move_cost": 1.0,
+			"opacity": 0.0,
+			"position": "(2636.0, 1365.0)",
+			"radius": 4.16,
+			"scale": 1.4,
+			"slot": 0
+		}
+	],
+	"screenshot": "/private/tmp/animals-p2-visual/p2-isometric_craftpix.png",
+	"seed": 2301,
+	"style": "isometric_craftpix"
+}

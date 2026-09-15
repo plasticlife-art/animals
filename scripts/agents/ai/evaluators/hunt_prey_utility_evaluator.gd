@@ -8,10 +8,12 @@ func _init(new_config: Dictionary = {}) -> void:
 	super._init(AgentAction.HUNT_PREY, new_config)
 
 
-func evaluate(_agent, context) -> Dictionary:
+func evaluate(agent, context) -> Dictionary:
 	var feeding_allowed := float(context.get_value("feeding_allowed", 1.0))
 	if feeding_allowed < 0.5:
 		return veto((["below hunger floor"] if context.diagnostics else []))
+	if agent != null and agent.energy <= float(agent.hunt.get("min_chase_energy", 0.0)):
+		return veto((["below chase energy reserve"] if context.diagnostics else []))
 	var hunger := float(context.get_value("hunger", 0.0))
 	var prey_quality := float(context.get_value("prey_quality", 0.0))
 	var prey_proximity := float(context.get_value("prey_proximity", 0.0))

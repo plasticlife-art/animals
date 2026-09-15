@@ -132,7 +132,9 @@
               "simulation_lod": {
                 "sector_size": 512.0,
                 "near_sector_margin": 192.0,
-                "mid_sector_margin": 960.0,
+                "mid_sector_margin": 512.0,
+                "overview_near_sector_margin": 192.0,
+                "overview_mid_sector_margin": 512.0,
                 "headless_active_radius": 960.0
               },
               "water_generation": {
@@ -238,7 +240,9 @@
               "simulation_lod": {
                 "sector_size": 1024.0,
                 "near_sector_margin": 384.0,
-                "mid_sector_margin": 1920.0,
+                "mid_sector_margin": 1024.0,
+                "overview_near_sector_margin": 384.0,
+                "overview_mid_sector_margin": 1024.0,
                 "headless_active_radius": 1920.0
               },
               "water_generation": {
@@ -348,7 +352,9 @@
               "simulation_lod": {
                 "sector_size": 2304.0,
                 "near_sector_margin": 864.0,
-                "mid_sector_margin": 4320.0,
+                "mid_sector_margin": 2304.0,
+                "overview_near_sector_margin": 576.0,
+                "overview_mid_sector_margin": 1536.0,
                 "headless_active_radius": 4320.0
               },
               "water_generation": {

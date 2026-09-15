@@ -18,6 +18,8 @@ const CAMERA_BORDER_COLOR := Color(1.0, 1.0, 1.0, 0.88)
 const PANEL_PADDING := 10.0
 const MAP_PADDING := 8.0
 const MIN_CAMERA_RECT_SIZE := 4.0
+const DOT_TEXTURE_SIZE := 12
+const DOT_CAPACITY_CHUNK := 256
 
 ## Built once per bind from `visuals.json`, because this runs per agent per
 ## redraw and must not parse config in the loop.
@@ -33,6 +35,14 @@ var _cached_world_bounds: Rect2 = Rect2()
 var _cached_map_pixel_size: Vector2i = Vector2i.ZERO
 var _dragging: bool = false
 var _last_camera_rect: Rect2 = Rect2()
+var _overview_mode: bool = false
+var _overview_refresh_interval: float = 0.2
+var _normal_refresh_interval: float = 0.25
+var _refresh_elapsed: float = 0.0
+var _refresh_pending: bool = false
+var _dot_multimesh: MultiMesh
+var _dot_texture: Texture2D
+var _dots_dirty: bool = true
 
 
 ## Off by default: on a large map the generator places well over a hundred
@@ -45,6 +55,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
+	_initialize_dot_batch()
 	queue_redraw()
 
 
@@ -71,6 +82,14 @@ func bind_manager(manager: SimulationManager) -> void:
 		_connect_manager()
 	_last_camera_rect = Rect2()
 	_rebuild_species_dots()
+	var hz := maxf(0.1, float(manager.config_bundle.get("visuals", {}) \
+		.get("overview_lod", {}).get("minimap_refresh_hz", 5.0)))
+	_overview_refresh_interval = 1.0 / hz
+	# Camera motion used to redraw the complete animal map every frame. Keep it
+	# on the same cadence as the rest of the HUD; overview has its explicit cap.
+	_normal_refresh_interval = float(manager.ui_refresh_interval_ticks) / maxf(1.0, manager.tick_rate)
+	_refresh_elapsed = 0.0
+	_refresh_pending = false
 	_rebuild_static_cache()
 	queue_redraw()
 
@@ -89,10 +108,19 @@ func set_input_enabled(value: bool) -> void:
 
 func request_refresh() -> void:
 	if is_visible_in_tree():
+		_dots_dirty = true
 		queue_redraw()
 
 
-func _process(_delta: float) -> void:
+func set_overview_mode(value: bool) -> void:
+	if _overview_mode == value:
+		return
+	_overview_mode = value
+	_refresh_pending = true
+	_refresh_elapsed = _current_refresh_interval()
+
+
+func _process(delta: float) -> void:
 	if _dragging and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_dragging = false
 
@@ -102,7 +130,17 @@ func _process(_delta: float) -> void:
 
 	if _rect_changed(_last_camera_rect, current_camera_rect):
 		_last_camera_rect = current_camera_rect
-		request_refresh()
+		_refresh_pending = true
+	if _refresh_pending:
+		_refresh_elapsed += delta
+		if _refresh_elapsed >= _current_refresh_interval():
+			_refresh_elapsed = 0.0
+			_refresh_pending = false
+			request_refresh()
+
+
+func _current_refresh_interval() -> float:
+	return _overview_refresh_interval if _overview_mode else _normal_refresh_interval
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -129,12 +167,14 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
+	var started := Time.get_ticks_usec()
 	var panel_rect := Rect2(Vector2.ZERO, size)
 	draw_rect(panel_rect, PANEL_BACKGROUND_COLOR, true)
 	draw_rect(panel_rect, PANEL_BORDER_COLOR, false, 2.0)
 
 	var map_rect := _get_map_rect()
 	if map_rect.size.x <= 0.0 or map_rect.size.y <= 0.0:
+		_record_draw_time(started)
 		return
 
 	draw_rect(map_rect, MAP_BACKGROUND_COLOR, true)
@@ -143,11 +183,23 @@ func _draw() -> void:
 	draw_rect(map_rect, MAP_BORDER_COLOR, false, 1.0)
 
 	if simulation_manager == null or simulation_manager.world_state == null:
+		_record_draw_time(started)
 		return
 
-	_draw_agents(map_rect)
+	if _dots_dirty:
+		_rebuild_dot_batch(map_rect)
+		_dots_dirty = false
+	if _dot_multimesh != null and _dot_multimesh.visible_instance_count > 0:
+		draw_multimesh(_dot_multimesh, _dot_texture)
 	_draw_selected_agent(map_rect)
 	_draw_camera_rect(map_rect)
+	_record_draw_time(started)
+
+
+func _record_draw_time(started_usec: int) -> void:
+	if simulation_manager != null:
+		simulation_manager.record_render_phase("minimap",
+			float(Time.get_ticks_usec() - started_usec) / 1000.0)
 
 
 func _notification(what: int) -> void:
@@ -186,6 +238,93 @@ func _draw_agents(map_rect: Rect2) -> void:
 			float(dot.get("radius", 1.5)),
 			dot.get("color", UNKNOWN_SPECIES_COLOR)
 		)
+	# LOD2 sectors retain stable record IDs in compact aggregates. Draw the same
+	# overview proxies as the world batch so sleeping animals do not disappear
+	# from the minimap merely because their simulation was aggregated.
+	for sector_key in world._sector_states:
+		var sector: Dictionary = world._sector_states[sector_key]
+		if not bool(sector.get("dormant", false)):
+			continue
+		var sector_rect: Rect2 = world._sector_key_to_rect(sector_key)
+		for aggregate in sector.get("dormant_aggregates", []):
+			var species := str(aggregate.get("species_type", ""))
+			var center: Vector2 = aggregate.get("center", sector_rect.get_center())
+			var dot: Dictionary = _species_dots.get(species, {})
+			for agent_id_value in aggregate.get("record_ids", []):
+				var proxy := SceneSpriteBatch.dormant_proxy_position(center, sector_rect, int(agent_id_value))
+				draw_circle(_world_to_map_point(proxy, map_rect),
+					float(dot.get("radius", 1.5)), dot.get("color", UNKNOWN_SPECIES_COLOR))
+
+
+func _initialize_dot_batch() -> void:
+	var image := Image.create(DOT_TEXTURE_SIZE, DOT_TEXTURE_SIZE, false, Image.FORMAT_RGBA8)
+	image.fill(Color.TRANSPARENT)
+	var center := Vector2.ONE * (float(DOT_TEXTURE_SIZE) - 1.0) * 0.5
+	var radius := float(DOT_TEXTURE_SIZE) * 0.42
+	for x in DOT_TEXTURE_SIZE:
+		for y in DOT_TEXTURE_SIZE:
+			var sample := Vector2(float(x), float(y))
+			if sample.distance_to(center) <= radius:
+				image.set_pixel(x, y, Color.WHITE)
+	_dot_texture = ImageTexture.create_from_image(image)
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE
+	_dot_multimesh = MultiMesh.new()
+	_dot_multimesh.transform_format = MultiMesh.TRANSFORM_2D
+	_dot_multimesh.use_colors = true
+	_dot_multimesh.mesh = quad
+
+
+func _ensure_dot_capacity(needed: int) -> void:
+	if _dot_multimesh.instance_count >= needed:
+		return
+	_dot_multimesh.instance_count = maxi(needed,
+		_dot_multimesh.instance_count + DOT_CAPACITY_CHUNK)
+
+
+func _write_dot(index: int, point: Vector2, dot: Dictionary) -> void:
+	var radius := float(dot.get("radius", 1.5))
+	var diameter := radius * 2.0
+	_dot_multimesh.set_instance_transform_2d(index, Transform2D(
+		Vector2(diameter, 0.0), Vector2(0.0, diameter), point))
+	_dot_multimesh.set_instance_color(index,
+		dot.get("color", UNKNOWN_SPECIES_COLOR))
+
+
+func _rebuild_dot_batch(map_rect: Rect2) -> void:
+	if _dot_multimesh == null or simulation_manager == null \
+			or simulation_manager.world_state == null:
+		return
+	var world = simulation_manager.world_state
+	var count := world.get_living_agents().size()
+	for sector in world._sector_states.values():
+		if not bool(sector.get("dormant", false)):
+			continue
+		for aggregate in sector.get("dormant_aggregates", []):
+			count += aggregate.get("record_ids", []).size()
+	_ensure_dot_capacity(count)
+	var index := 0
+	for agent in world.get_living_agents():
+		var point := _world_to_map_point(agent.position, map_rect)
+		if not map_rect.has_point(point):
+			continue
+		_write_dot(index, point, _species_dots.get(agent.species_type, {}))
+		index += 1
+	for sector_key in world._sector_states:
+		var sector: Dictionary = world._sector_states[sector_key]
+		if not bool(sector.get("dormant", false)):
+			continue
+		var sector_rect: Rect2 = world._sector_key_to_rect(sector_key)
+		for aggregate in sector.get("dormant_aggregates", []):
+			var species := str(aggregate.get("species_type", ""))
+			var center: Vector2 = aggregate.get("center", sector_rect.get_center())
+			var dot: Dictionary = _species_dots.get(species, {})
+			for agent_id_value in aggregate.get("record_ids", []):
+				var proxy := SceneSpriteBatch.dormant_proxy_position(
+					center, sector_rect, int(agent_id_value))
+				_write_dot(index, _world_to_map_point(proxy, map_rect), dot)
+				index += 1
+	_dot_multimesh.visible_instance_count = index
 
 
 func _draw_selected_agent(map_rect: Rect2) -> void:
@@ -434,6 +573,9 @@ func _rect_changed(previous: Rect2, current: Rect2, epsilon: float = 0.1) -> boo
 
 func _on_tick_completed(_tick: int, _snapshot: Dictionary) -> void:
 	if simulation_manager != null and not simulation_manager.should_refresh_ui_on_tick(_tick):
+		return
+	if _overview_mode:
+		_refresh_pending = true
 		return
 	request_refresh()
 

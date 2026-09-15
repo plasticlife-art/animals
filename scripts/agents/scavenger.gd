@@ -31,8 +31,8 @@ func configure(
 	debug_color = Color(0.86, 0.74, 0.38)
 
 
-func _build_snapshot(world):
-	return world.build_scavenger_snapshot(self)
+func _build_snapshot(world, known_predators = null):
+	return world.build_scavenger_snapshot(self, known_predators)
 
 
 ## Carrion, where the herd template would graze. Every other arm of the parent's

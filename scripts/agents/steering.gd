@@ -92,3 +92,12 @@ static func combine(vectors: Array) -> Vector2:
 	if total.length_squared() <= 0.0001:
 		return Vector2.ZERO
 	return total.normalized()
+
+
+## Hot two-vector form used by herd movement. It avoids allocating an Array and
+## two Dictionaries for every moving animal on every simulation tick.
+static func combine_two(first: Vector2, first_weight: float, second: Vector2, second_weight: float) -> Vector2:
+	var total := first * first_weight + second * second_weight
+	if total.length_squared() <= 0.0001:
+		return Vector2.ZERO
+	return total.normalized()

@@ -1,0 +1,30 @@
+{
+  "kind": "short_p2_baseline_not_balance_acceptance",
+  "seed": 3,
+  "lod": true,
+  "simulated_seconds": 180.0,
+  "wall_seconds": 337.155582,
+  "history": [
+    {"time": 0.1, "herbivore": 240, "predator": 24, "scavenger": 72},
+    {"time": 60.1, "herbivore": 247, "predator": 32, "scavenger": 113},
+    {"time": 120.1, "herbivore": 324, "predator": 25, "scavenger": 166},
+    {"time": 180.0, "herbivore": 369, "predator": 29, "scavenger": 235}
+  ],
+  "counters": {
+    "hunts_started": 406,
+    "attack_attempts": 144,
+    "hunt_success": 73,
+    "chases_failed": 310,
+    "search_started": 3,
+    "prey_reacquired": 3,
+    "search_expired": 0,
+    "completed_chase_count": 383,
+    "completed_chase_duration_total": 455.666666666662,
+    "births_herbivore": 271,
+    "births_predator": 24,
+    "births_scavenger": 190,
+    "deaths_herbivore": 142,
+    "deaths_predator": 19,
+    "deaths_scavenger": 27
+  }
+}

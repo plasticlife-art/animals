@@ -25,6 +25,11 @@ var counters := {
 	"hunt_fail_low_energy": 0,
 	"hunt_fail_kin_gap": 0,
 	"hunt_fail_miss": 0,
+	"search_started": 0,
+	"prey_reacquired": 0,
+	"search_expired": 0,
+	"completed_chase_duration_total": 0.0,
+	"completed_chase_count": 0,
 	"carcasses_spawned": 0,
 	"carcasses_expired": 0,
 	"carcass_consumption_events": 0,
@@ -162,6 +167,11 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		"hunt_fail_low_energy": counters["hunt_fail_low_energy"],
 		"hunt_fail_kin_gap": counters["hunt_fail_kin_gap"],
 		"hunt_fail_miss": counters["hunt_fail_miss"],
+		"search_started": counters["search_started"],
+		"prey_reacquired": counters["prey_reacquired"],
+		"search_expired": counters["search_expired"],
+		"average_completed_chase_seconds": 0.0 if int(counters["completed_chase_count"]) == 0 \
+			else float(counters["completed_chase_duration_total"]) / float(counters["completed_chase_count"]),
 		"grass_total_biomass": world.resource_system.get_total_biomass(),
 		"grass_regrowing_cells": world.resource_system.get_regrowing_cell_count(),
 		"grass_biomass_by_biome": grass_biomass_by_biome,
@@ -236,7 +246,8 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		snapshot["dormant_%s_avg_hunger" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_hunger_sum" % species_id, 0.0)) / dormant
 		snapshot["dormant_%s_avg_thirst" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_thirst_sum" % species_id, 0.0)) / dormant
 		snapshot["dormant_%s_avg_energy" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_energy_sum" % species_id, 0.0)) / dormant
-	for key in ["hunts_started", "chases_failed", "attack_attempts", "hunt_fail_lost_sight"]:
+	for key in ["hunts_started", "chases_failed", "attack_attempts", "hunt_fail_lost_sight",
+			"search_started", "prey_reacquired", "search_expired"]:
 		snapshot[key] = counters[key]
 	snapshot["chase_success_rate"] = float(counters.hunt_success) / maxf(1.0, float(counters.hunt_success + counters.chases_failed))
 	for key in ["visibility_checks", "local_path_searches", "stuck_agents"]:
@@ -326,13 +337,23 @@ func _on_event_emitted(event: Dictionary) -> void:
 			counters["attack_attempts"] += 1
 		"PredationSuccess":
 			counters["hunt_success"] += 1
+			counters["completed_chase_duration_total"] += float(data.get("chase_time", 0.0))
+			counters["completed_chase_count"] += 1
 		"PredationFailed":
 			counters["hunt_fail"] += 1
 			if str(data.get("reason", "")) != "miss":
 				counters["chases_failed"] += 1
+				counters["completed_chase_duration_total"] += float(data.get("chase_time", 0.0))
+				counters["completed_chase_count"] += 1
 			var fail_key := "hunt_fail_%s" % str(data.get("reason", ""))
 			if counters.has(fail_key):
 				counters[fail_key] += 1
+		"PreySearchStarted":
+			counters["search_started"] += 1
+		"PreyReacquired":
+			counters["prey_reacquired"] += 1
+		"PreySearchExpired":
+			counters["search_expired"] += 1
 		"WaterConsumed":
 			counters["water_events"] += 1
 		"GrassConsumed":

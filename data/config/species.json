@@ -40,7 +40,7 @@
       "energy_decay": 2.4,
       "rest_recovery": 9.0,
       "hunger_rate": 2.0,
-      "thirst_rate": 1.5,
+      "thirst_rate": 0.35,
       "dehydration_energy_penalty": 4.8,
       "sprint_energy_cost": 2.0
     },
@@ -56,16 +56,18 @@
     "reproduction": {
       "maturity_age": 24.0,
       "energy_threshold": 66.0,
-      "cooldown": 46.0,
+      "cooldown": 70.0,
       "birth_energy_cost": 22.0,
+	  "max_hunger": 42.0,
+	  "max_thirst": 45.0,
       "mate_contact_slack": 4.0,
       "safe_radius": 120.0,
       "offspring_spawn_radius": 54.0
     },
     "aging": {
-      "max_age": 220.0,
-      "old_age_start": 180.0,
-      "old_age_death_chance_per_second": 0.02
+      "max_age": 1200.0,
+      "old_age_start": 1000.0,
+      "old_age_death_chance_per_second": 0.003
     }
   },
   "predator": {
@@ -83,7 +85,7 @@
       "social": "pair",
       "script": "res://scripts/agents/predator.gd",
       "ai": "res://scripts/agents/ai/predator_ai.gd",
-      "carrion_max_age_seconds": 12.0
+      "carrion_max_age_seconds": 45.0
     },
     "movement": {
       "max_speed": 95.0,
@@ -110,8 +112,10 @@
       "max_energy": 150.0,
       "energy_decay": 2.2,
       "rest_recovery": 8.5,
-      "hunger_rate": 1.25,
-      "thirst_rate": 1.0,
+	  "rest_energy": 40.0,
+	  "rest_energy_resume": 60.0,
+	  "hunger_rate": 0.2,
+	  "thirst_rate": 0.18,
       "dehydration_energy_penalty": 3.5,
       "chase_energy_cost": 2.8
     },
@@ -127,16 +131,19 @@
       "gorge_below_energy_threshold": true
     },
     "hunt": {
-      "min_chase_energy": 4.0,
+      "min_chase_energy": 20.0,
       "lost_sight_search_seconds": 3.0,
+      "search_radius_cells": 0.75,
       "retry_cooldown_seconds": 2.0,
       "contact_slack": 5.0
     },
     "reproduction": {
       "maturity_age": 20.0,
-      "energy_threshold": 92.0,
-      "cooldown": 46.0,
-      "birth_energy_cost": 16.0,
+	  "energy_threshold": 70.0,
+      "cooldown": 60.0,
+      "birth_energy_cost": 18.0,
+	  "max_hunger": 60.0,
+	  "max_thirst": 60.0,
       "mate_contact_slack": 4.0,
       "preferred_mate_follow_radius": 180.0,
       "preferred_mate_break_radius": 640.0,
@@ -145,9 +152,9 @@
       "offspring_spawn_radius": 60.0
     },
     "aging": {
-      "max_age": 260.0,
-      "old_age_start": 215.0,
-      "old_age_death_chance_per_second": 0.018
+      "max_age": 1440.0,
+      "old_age_start": 1200.0,
+	  "old_age_death_chance_per_second": 0.003
     }
   },
   "scavenger": {
@@ -189,8 +196,8 @@
       "max_energy": 90.0,
       "energy_decay": 1.4,
       "rest_recovery": 9.5,
-      "hunger_rate": 0.5,
-      "thirst_rate": 1.2,
+	  "hunger_rate": 0.08,
+	  "thirst_rate": 0.2,
       "dehydration_energy_penalty": 4.0,
       "sprint_energy_cost": 1.6
     },
@@ -208,17 +215,19 @@
     },
     "reproduction": {
       "maturity_age": 18.0,
-      "energy_threshold": 50.0,
-      "cooldown": 40.0,
-      "birth_energy_cost": 12.0,
+      "energy_threshold": 45.0,
+      "cooldown": 65.0,
+      "birth_energy_cost": 16.0,
+	  "max_hunger": 40.0,
+	  "max_thirst": 45.0,
       "mate_contact_slack": 4.0,
       "safe_radius": 100.0,
       "offspring_spawn_radius": 40.0
     },
     "aging": {
-      "max_age": 210.0,
-      "old_age_start": 170.0,
-      "old_age_death_chance_per_second": 0.03
+      "max_age": 1200.0,
+	  "old_age_start": 1000.0,
+	  "old_age_death_chance_per_second": 0.004
     }
   }
 }

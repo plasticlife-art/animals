@@ -73,6 +73,7 @@ func rebuild_layers() -> void:
 func rebuild() -> void:
 	if simulation_manager == null or simulation_manager.world_state == null:
 		return
+	var started := Time.get_ticks_usec()
 	var terrain: TerrainSystem = simulation_manager.world_state.terrain_system
 	if terrain == null:
 		return
@@ -81,6 +82,8 @@ func rebuild() -> void:
 	elif _biome_layer != null:
 		_rebuild_orthogonal(terrain)
 	# Scenery is rendered by the common scene sprite batch.
+	simulation_manager.record_render_phase("terrain",
+		float(Time.get_ticks_usec() - started) / 1000.0)
 
 
 func _rebuild_orthogonal(terrain: TerrainSystem) -> void:

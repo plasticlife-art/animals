@@ -7,7 +7,9 @@ var is_locked: bool = false
 
 
 func get_allowed_actions() -> Array:
-	return allowed_actions.duplicate()
+	# Policies are immutable after controller construction. Selection only
+	# iterates this array, so copying it for every decision adds no isolation.
+	return allowed_actions
 
 
 func is_action_allowed(action_name: StringName) -> bool:

@@ -18,6 +18,8 @@ var _regrowing_cells: Dictionary = {}
 # Counts cells visited by find_best_cell since the last drain, so the cost of grass
 # searching is attributable instead of hiding inside the agent tick.
 var _cells_scanned: int = 0
+var _dirty_cells: Dictionary = {}
+var track_dirty_cells: bool = false
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrain_system: TerrainSystem = null) -> void:
@@ -53,6 +55,7 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 	total_biomass = 0.0
 	_biomass_totals_by_biome.clear()
 	_regrowing_cells.clear()
+	_dirty_cells.clear()
 
 	var density_min := float(grass_config.get("initial_density_min", 0.45))
 	var density_max := float(grass_config.get("initial_density_max", 0.95))
@@ -83,6 +86,7 @@ func import_cells(cells, new_terrain_system: TerrainSystem = null) -> void:
 	total_biomass = 0.0
 	_biomass_totals_by_biome.clear()
 	_regrowing_cells.clear()
+	_dirty_cells.clear()
 	for index in range(_cells.size()):
 		var biomass: float = _cells[index]
 		total_biomass += biomass
@@ -117,6 +121,8 @@ func step(delta: float, season_regrowth_multiplier: float = 1.0) -> void:
 		if delta_biomass <= 0.0:
 			continue
 		_cells[index] = updated
+		if track_dirty_cells:
+			_dirty_cells[index] = updated
 		total_biomass += delta_biomass
 		_add_biomass_to_biome(index, delta_biomass)
 	for index in filled_cells:
@@ -309,10 +315,30 @@ func consume_cell(index: int, amount: float) -> float:
 	if consumed <= 0.0:
 		return 0.0
 	_cells[index] -= consumed
+	if track_dirty_cells:
+		_dirty_cells[index] = _cells[index]
 	total_biomass -= consumed
 	_add_biomass_to_biome(index, -consumed)
 	_regrowing_cells[index] = true
 	return consumed
+
+
+func take_dirty_cells() -> Dictionary:
+	var indices := PackedInt32Array()
+	var values := PackedFloat32Array()
+	indices.resize(_dirty_cells.size())
+	values.resize(_dirty_cells.size())
+	var offset := 0
+	for index in _dirty_cells.keys():
+		indices[offset] = int(index)
+		values[offset] = float(_dirty_cells[index])
+		offset += 1
+	_dirty_cells.clear()
+	return {"indices": indices, "values": values}
+
+
+func clear_dirty_cells() -> void:
+	_dirty_cells.clear()
 
 
 func get_biomass_totals_by_biome() -> Dictionary:

@@ -14,12 +14,10 @@ extends Node2D
 ## from the simulation clock, so no visual state is stored on `AgentBase` and
 ## headless runs stay bit-identical.
 ##
-## One accepted limitation: each species is its own MultiMesh, and a MultiMesh
-## is a single canvas item, so depth sorting is exact within a species but not
-## across them. Predators draw above herbivores, carcasses below both. Merging
-## the two atlases into one sheet would allow exact global sorting, but it would
-## also mean compositing every art pack before use, and pack-swapping is the
-## thing this layer is built to keep cheap.
+## The per-species batches keep atlas metadata, while `SceneSpriteBatch` packs
+## their textures with props and carcasses into one runtime atlas. That common
+## MultiMesh gives exact painter ordering across every visible ground object
+## without creating a node per animal or losing cheap art-pack swaps.
 
 const INSTANCE_GROW_CHUNK := 256
 ## Below this much drawn movement in a tick there is no direction to read, and
@@ -86,10 +84,14 @@ var _shadow_scale: float = 0.55
 var _shadow_bias: float = 2.0
 var _shadow_agents: Array = []
 var _marker_phase: float = 0.0
+var overview_mode: bool = false
+var _overview_config: Dictionary = {}
+var render_generation: int = 0
 
 
 func bind_manager(manager: SimulationManager) -> void:
 	simulation_manager = manager
+	_overview_config = manager.config_bundle.get("visuals", {}).get("overview_lod", {})
 	if _batches.is_empty():
 		_build_batches()
 	# Guarded: the setup screen can start a new simulation on the same manager,
@@ -97,6 +99,15 @@ func bind_manager(manager: SimulationManager) -> void:
 	if not simulation_manager.tick_completed.is_connected(_on_tick_completed):
 		simulation_manager.tick_completed.connect(_on_tick_completed)
 	refresh()
+
+
+func set_overview_mode(value: bool) -> void:
+	if overview_mode == value:
+		return
+	overview_mode = value
+	_needs_refresh = true
+	if _shadow_node != null:
+		_shadow_node.visible = not (value and bool(_overview_config.get("disable_shadows", true)))
 
 
 ## Throw away the sprite batches and build them again from the current visuals.
@@ -174,6 +185,7 @@ func refresh() -> void:
 	_fill_shadows()
 
 	_fill_carcasses(world, visible_rect)
+	render_generation += 1
 
 
 func _fill_species(species_id: String, agents: Array) -> void:
@@ -183,20 +195,23 @@ func _fill_species(species_id: String, agents: Array) -> void:
 		multimesh.visible_instance_count = 0
 		batch["node"].visible = false
 		return
-	batch["node"].visible = true
+	# The common scene batch is the visible owner once it exists. Species batches
+	# remain as atlas/mesh metadata only; drawing and writing them as well would
+	# duplicate every animal and double the per-frame MultiMesh traffic.
+	batch["node"].visible = scene_batch == null
 
-	# Painter's algorithm: a MultiMesh draws in instance order and has no y-sort
-	# of its own, so the order is established here. Only the culled subset is
-	# sorted, and only on refresh ticks.
-	agents.sort_custom(_compare_depth)
-
-	_ensure_capacity(multimesh, agents.size())
-	# Only the slowly changing part is written here. Transforms and animation
-	# frames belong to `_process`, which runs at the display rate.
-	for index in range(agents.size()):
-		multimesh.set_instance_color(index, _resolve_tint(agents[index]))
+	if scene_batch == null:
+		# The fallback species batch needs its own painter order. The common scene
+		# batch sorts all species with scenery later, so sorting here as well was a
+		# duplicate per-species pass on every simulation tick.
+		agents.sort_custom(_compare_depth)
+		_ensure_capacity(multimesh, agents.size())
+		# Only the slowly changing part is written here. Transforms and animation
+		# frames belong to `_process`, which runs at the display rate.
+		for index in range(agents.size()):
+			multimesh.set_instance_color(index, _resolve_tint(agents[index]))
 	batch["agents"] = agents
-	multimesh.visible_instance_count = agents.size()
+	multimesh.visible_instance_count = agents.size() if scene_batch == null else 0
 
 
 ## Shadows are one batch for every species: they are identical blobs, and the
@@ -216,7 +231,7 @@ func _fill_shadows() -> void:
 
 
 func _animate_shadows(alpha: float) -> void:
-	if _shadow_node == null or _shadow_agents.is_empty():
+	if _shadow_node == null or _shadow_agents.is_empty() or not _shadow_node.visible:
 		return
 	var multimesh: MultiMesh = _shadow_node.multimesh
 	for index in range(_shadow_agents.size()):
@@ -247,6 +262,10 @@ func _fill_carcasses(world, visible_rect: Rect2) -> void:
 	if _carcass_batch.is_empty():
 		return
 	var multimesh: MultiMesh = _carcass_batch["multimesh"]
+	if scene_batch != null:
+		multimesh.visible_instance_count = 0
+		_carcass_batch["node"].visible = false
+		return
 	var stages: int = maxi(1, int(_carcass_batch["stages"]))
 	var visible_carcasses: Array = []
 	for carcass_id in world.carcasses.keys():
@@ -435,6 +454,9 @@ func _build_batches() -> void:
 			"stride_length": float(config.get("stride_length", 26.0)),
 			"directions": maxi(1, int(config.get("directions", 1))),
 			"agents": [],
+			"scene_transforms": [],
+			"scene_frames": [],
+			"scene_colors": [],
 		}
 		_buckets[str(species_id)] = []
 
@@ -567,22 +589,50 @@ func _process(delta: float) -> void:
 		return
 	var started := Time.get_ticks_usec()
 	var view := _get_visible_world_rect(simulation_manager.world_state.bounds)
+	# Overview uses a frozen atlas frame and tiny sprites. Rewriting every visible
+	# transform between two simulation results only burns the main thread and
+	# competes with the worker. Refresh on a completed tick or while the camera is
+	# moving; normal zoom keeps per-frame interpolation.
+	var update_dynamic := not overview_mode or _needs_refresh or view != _last_camera_rect
+	var phase_started := Time.get_ticks_usec()
 	if _needs_refresh or view != _last_camera_rect:
 		refresh()
 		_needs_refresh = false
 		_last_camera_rect = view
-	_render_positions.clear()
+	simulation_manager.record_render_phase("culling", float(Time.get_ticks_usec() - phase_started) / 1000.0)
+	if update_dynamic:
+		_render_positions.clear()
 	var alpha: float = simulation_manager.get_tick_alpha()
 	if simulation_manager.paused:
 		delta = 0.0
 	if simulation_manager.selected_agent_id != -1:
 		_marker_phase += delta
 		queue_redraw()
-	_animate_shadows(alpha)
-	for species_id in _batches.keys():
-		_animate_species(_batches[species_id], alpha, delta)
-	if scene_batch != null:
+	phase_started = Time.get_ticks_usec()
+	if update_dynamic:
+		_animate_shadows(alpha)
+	simulation_manager.record_render_phase("shadows", float(Time.get_ticks_usec() - phase_started) / 1000.0)
+	phase_started = Time.get_ticks_usec()
+	if update_dynamic:
+		for species_id in _batches.keys():
+			_animate_species(_batches[species_id], alpha, delta)
+	simulation_manager.record_render_phase("animation", float(Time.get_ticks_usec() - phase_started) / 1000.0)
+	phase_started = Time.get_ticks_usec()
+	if scene_batch != null and update_dynamic:
 		scene_batch.render(self, alpha)
+	elif scene_batch != null:
+		scene_batch.last_counts["multimesh_writes"] = 0
+		scene_batch.last_counts["order_rebuilt"] = false
+	simulation_manager.record_render_phase("scene_batch", float(Time.get_ticks_usec() - phase_started) / 1000.0)
+	var visible_animals := 0
+	for batch in _batches.values():
+		visible_animals += batch.get("agents", []).size()
+	var counts := {"visible_animals": visible_animals,
+		"visible_shadows": 0 if _shadow_node == null or not _shadow_node.visible else _shadow_agents.size(),
+		"overview": overview_mode}
+	if scene_batch != null:
+		counts.merge(scene_batch.last_counts, true)
+	simulation_manager.set_render_counts(counts)
 	simulation_manager.render_times.add(float(Time.get_ticks_usec() - started) / 1000.0)
 
 
@@ -752,29 +802,42 @@ func _animate_species(batch: Dictionary, alpha: float, delta: float) -> void:
 	var stride: float = maxf(1.0, float(batch.get("stride_length", 26.0)))
 	var directions: int = int(batch.get("directions", 1))
 	var ground_offset: float = float(batch["ground_offset"])
+	var scene_transforms: Array = batch["scene_transforms"]
+	var scene_frames: Array = batch["scene_frames"]
+	var scene_colors: Array = batch["scene_colors"]
+	scene_transforms.resize(agents.size())
+	scene_frames.resize(agents.size())
+	scene_colors.resize(agents.size())
 	for index in range(agents.size()):
 		var agent = agents[index]
 		if agent == null or not agent.is_alive:
 			continue
 		# An atlas with real direction rows never mirrors: it already has both
 		# sides drawn, and flipping would fight the artwork.
-		var facing: float = 1.0 if directions > 1 else _resolve_facing(agent, delta)
-		var direction_row: int = _resolve_direction(agent) if directions > 1 else 0
-		var animation_id: String = _resolve_animation(agent)
-		var frame: Vector2 = _advance_frame(agent, animations, stride, delta, animation_id)
+		var simplified := overview_mode and bool(_overview_config.get("freeze_animation", true))
+		var facing: float = 1.0 if directions > 1 or simplified else _resolve_facing(agent, delta)
+		var direction_row: int = 0 if simplified else (_resolve_direction(agent) if directions > 1 else 0)
+		var animation_id: String = "idle" if simplified else _resolve_animation(agent)
+		var frame: Vector2 = Vector2(0.0, float(animations.get("idle", {}).get("row", 0))) \
+			if simplified else _advance_frame(agent, animations, stride, delta, animation_id)
 		frame.y += float(direction_row)
 		var scale_factor: float = _age_scale_of(agent)
 		var point: Vector2 = _anchor(_curve_position(agent, alpha), ground_offset * scale_factor)
 		# A standing animal that is perfectly still reads as frozen, so idle and
 		# eat breathe. Walking already has the leg cycle and needs no help.
-		if _idle_bob_px > 0.0 and (animation_id == "idle" or animation_id == "eat"):
+		if not simplified and _idle_bob_px > 0.0 and (animation_id == "idle" or animation_id == "eat"):
 			point.y += sin(float(_phase.get(agent.id, 0.0)) * TAU) * _idle_bob_px
-		multimesh.set_instance_transform_2d(index, Transform2D(
+		var transform := Transform2D(
 			Vector2(facing * scale_factor, 0.0),
 			Vector2(0.0, scale_factor),
 			point
-		))
-		multimesh.set_instance_custom_data(index, Color(frame.x, frame.y, 0.0, 0.0))
+		)
+		if scene_batch == null:
+			multimesh.set_instance_transform_2d(index, transform)
+			multimesh.set_instance_custom_data(index, Color(frame.x, frame.y, 0.0, 0.0))
+		scene_transforms[index] = transform
+		scene_frames[index] = frame
+		scene_colors[index] = _resolve_tint(agent)
 
 
 ## Walk and run advance by ground actually covered rather than by wall clock, so

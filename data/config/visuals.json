@@ -227,6 +227,18 @@
       0.9
     ]
   },
+  "overview_lod": {
+    "enabled": true,
+    "enter_visible_fraction": 0.2,
+    "exit_visible_fraction": 0.15,
+    "bush_keep_fraction": 0.35,
+    "minimap_refresh_hz": 5.0,
+    "depth_order_interval_ticks": 6,
+    "hide_groups": ["meadow", "drought", "swamp"],
+    "thin_groups": ["bush"],
+    "disable_shadows": true,
+    "freeze_animation": true
+  },
   "props": {
     "atlas": "res://assets/tiles/props_atlas.png",
     "cell_px": [

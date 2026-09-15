@@ -99,6 +99,64 @@ static func world_rect_covering(screen_rect: Rect2) -> Rect2:
 	return Rect2(minimum, maximum - minimum)
 
 
+## Fraction of the world's ground plane visible through a screen-space camera
+## rectangle. The inverse AABB from `world_rect_covering()` deliberately
+## overestimates an isometric diamond and can report 100% while only its middle
+## is on screen. Clipping the projected world polygon keeps overview thresholds
+## honest in both projections.
+static func visible_world_fraction(screen_rect: Rect2, world_bounds: Rect2) -> float:
+	if screen_rect.get_area() <= 0.0 or world_bounds.get_area() <= 0.0:
+		return 0.0
+	var polygon: Array = [
+		to_screen(world_bounds.position),
+		to_screen(Vector2(world_bounds.end.x, world_bounds.position.y)),
+		to_screen(world_bounds.end),
+		to_screen(Vector2(world_bounds.position.x, world_bounds.end.y)),
+	]
+	var total_area := _polygon_area(polygon)
+	if total_area <= 0.0:
+		return 0.0
+	polygon = _clip_polygon_axis(polygon, 0, screen_rect.position.x, true)
+	polygon = _clip_polygon_axis(polygon, 0, screen_rect.end.x, false)
+	polygon = _clip_polygon_axis(polygon, 1, screen_rect.position.y, true)
+	polygon = _clip_polygon_axis(polygon, 1, screen_rect.end.y, false)
+	return clampf(_polygon_area(polygon) / total_area, 0.0, 1.0)
+
+
+static func _clip_polygon_axis(points: Array, axis: int, boundary: float, keep_greater: bool) -> Array:
+	var clipped: Array = []
+	if points.is_empty():
+		return clipped
+	var previous: Vector2 = points.back()
+	var previous_value: float = previous.x if axis == 0 else previous.y
+	var previous_inside := previous_value >= boundary if keep_greater else previous_value <= boundary
+	for value in points:
+		var current: Vector2 = value
+		var current_value: float = current.x if axis == 0 else current.y
+		var current_inside := current_value >= boundary if keep_greater else current_value <= boundary
+		if current_inside != previous_inside:
+			var denominator := current_value - previous_value
+			var weight := 0.0 if is_zero_approx(denominator) else (boundary - previous_value) / denominator
+			clipped.append(previous.lerp(current, weight))
+		if current_inside:
+			clipped.append(current)
+		previous = current
+		previous_value = current_value
+		previous_inside = current_inside
+	return clipped
+
+
+static func _polygon_area(points: Array) -> float:
+	if points.size() < 3:
+		return 0.0
+	var twice_area := 0.0
+	for index in points.size():
+		var current: Vector2 = points[index]
+		var next: Vector2 = points[(index + 1) % points.size()]
+		twice_area += current.x * next.y - next.x * current.y
+	return absf(twice_area) * 0.5
+
+
 ## Sort key for painter's-algorithm ordering. Sprites are drawn in ascending
 ## order, so a larger key means "further forward, drawn later, on top".
 ##

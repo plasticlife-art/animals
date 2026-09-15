@@ -541,7 +541,10 @@ func _test_snapshot_tracks_dormant_herbivore_metrics(asserts) -> void:
 		herbivore.thirst = 0.0
 		herbivore.energy = 34.0
 		manager.world_state._sleep_sector(manager.world_state._get_sector_key(position))
-	TestHelpers.run_ticks(manager, 10)
+	# Dormant sectors now have deterministic phase offsets, so a five-tick stats
+	# window can legitimately fall between two 0.5-second aggregate steps. Three
+	# windows cover every phase at this fixture's 12 Hz tick rate.
+	TestHelpers.run_ticks(manager, 15)
 	var snapshot: Dictionary = manager.stats_system.get_snapshot()
 	asserts.is_true(float(snapshot.get("herbivore_hunger_reduced_total", 0.0)) > 0.0, "snapshot should accumulate herbivore hunger reduction across dormant ticks")
 	asserts.is_true(int(snapshot.get("dormant_steps_total", 0)) > 0, "snapshot should accumulate dormant steps across sample window")
