@@ -9,6 +9,8 @@ func run(a) -> void:
 	_test_live_reproduction_requires_health_reserve(a)
 	_test_dormant_juveniles_and_single_sex_groups_do_not_breed(a)
 	_test_dormant_pair_breeds_only_when_ready(a)
+	_test_dormant_mates_must_be_within_search_radius(a)
+	_test_dormant_female_breeds_with_her_bonded_mate(a)
 	_test_dormant_age_cohorts_remain_distinct(a)
 	_test_dormant_old_age_only_removes_old_cohort(a)
 	_test_dormant_herd_grazes_while_travelling(a)
@@ -53,15 +55,13 @@ func _test_dormant_juveniles_and_single_sex_groups_do_not_breed(a) -> void:
 	var juvenile_records := [_ready_record(male, 1.0, AgentBase.SEX_MALE),
 		_ready_record(female, 1.0, AgentBase.SEX_FEMALE)]
 	var aggregates: Array = world._build_dormant_aggregates(juvenile_records, Vector2i.ZERO)
-	aggregates[0]["birth_debt"] = 2.0
-	a.equal(world._compute_dormant_births_for_aggregate(aggregates[0], 1.0), 0,
+	a.equal(world._compute_dormant_births_for_aggregate(aggregates[0], 1.0, juvenile_records), 0,
 		"juveniles cannot breed while dormant")
 
 	var female_records := [_ready_record(male, 30.0, AgentBase.SEX_FEMALE),
 		_ready_record(female, 30.0, AgentBase.SEX_FEMALE)]
 	aggregates = world._build_dormant_aggregates(female_records, Vector2i.ZERO)
-	aggregates[0]["birth_debt"] = 2.0
-	a.equal(world._compute_dormant_births_for_aggregate(aggregates[0], 1.0), 0,
+	a.equal(world._compute_dormant_births_for_aggregate(aggregates[0], 1.0, female_records), 0,
 		"a single-sex dormant group cannot create offspring")
 	Helpers.destroy_manager(manager)
 
@@ -74,11 +74,44 @@ func _test_dormant_pair_breeds_only_when_ready(a) -> void:
 	var records := [_ready_record(male, 30.0, AgentBase.SEX_MALE),
 		_ready_record(female, 30.0, AgentBase.SEX_FEMALE)]
 	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
-	aggregate["birth_debt"] = 1.0
-	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0), 1,
-		"one ready opposite-sex dormant pair produces at most one offspring")
-	a.is_true(float(aggregate.get("avg_energy", 999.0)) < float(male.metabolism.get("max_energy", 100.0)),
-		"dormant parents pay the configured birth energy cost")
+	var energy_before := float(records[0]["energy"])
+	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 1,
+		"one ready opposite-sex dormant pair produces one offspring, without waiting")
+	var cost := float(male.reproduction.get("birth_energy_cost", 0.0))
+	a.near(float(records[0]["energy"]), energy_before - cost, 0.001, "each dormant parent pays the configured birth energy cost")
+	a.near(float(records[1]["reproduction_cooldown"]), float(male.reproduction.get("cooldown", 0.0)), 0.001,
+		"each dormant parent starts its own cooldown")
+	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 0,
+		"the same pair cannot breed again while on cooldown")
+	Helpers.destroy_manager(manager)
+
+
+func _test_dormant_mates_must_be_within_search_radius(a) -> void:
+	var manager = Helpers.create_manager(88)
+	var world = manager.world_state
+	var male = Helpers.spawn_species(world, "herbivore", Vector2(40, 40), 5, AgentBase.SEX_MALE)
+	var female = Helpers.spawn_species(world, "herbivore", Vector2(220, 220), 5, AgentBase.SEX_FEMALE)
+	var records := [_ready_record(male, 30.0, AgentBase.SEX_MALE), _ready_record(female, 30.0, AgentBase.SEX_FEMALE)]
+	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
+	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 0,
+		"ready animals farther apart than their mate search radius do not breed")
+	Helpers.destroy_manager(manager)
+
+
+func _test_dormant_female_breeds_with_her_bonded_mate(a) -> void:
+	var manager = Helpers.create_manager(89)
+	var world = manager.world_state
+	var female = Helpers.spawn_species(world, "predator", Vector2(100, 100), -1, AgentBase.SEX_FEMALE)
+	var stranger = Helpers.spawn_species(world, "predator", Vector2(110, 100), -1, AgentBase.SEX_MALE)
+	var mate = Helpers.spawn_species(world, "predator", Vector2(220, 100), -1, AgentBase.SEX_MALE)
+	female.set_preferred_mate_id(mate.id)
+	mate.set_preferred_mate_id(female.id)
+	var records := [_ready_record(female, 30.0, AgentBase.SEX_FEMALE), _ready_record(stranger, 30.0, AgentBase.SEX_MALE),
+		_ready_record(mate, 30.0, AgentBase.SEX_MALE)]
+	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
+	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 1, "the bonded pair breeds")
+	a.is_true(float(records[2]["reproduction_cooldown"]) > 0.0 and float(records[1]["reproduction_cooldown"]) <= 0.0,
+		"the female breeds with her bonded mate, not the nearer stranger")
 	Helpers.destroy_manager(manager)
 
 

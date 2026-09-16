@@ -303,6 +303,10 @@ func find_best_cell_in_set(position: Vector2, radius: float, min_biomass: float,
 	}
 
 
+func get_index_at_position(position: Vector2) -> int:
+	return _position_to_index(position)
+
+
 func consume_at_position(position: Vector2, amount: float) -> float:
 	var index := _position_to_index(position)
 	return consume_cell(index, amount)

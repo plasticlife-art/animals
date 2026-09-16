@@ -29,6 +29,7 @@ func run(a) -> void:
 	_test_split_herd_follows_one_goal(a)
 	_test_sleeping_pair_keeps_its_bond(a)
 	_test_herd_walks_around_what_blocks_its_centre(a)
+	_test_big_herd_grazes_the_ground_it_covers(a)
 
 
 func _large_manager(seed: int):
@@ -241,6 +242,10 @@ func _test_dormant_need_spread_survives_a_round_trip(a) -> void:
 	var fixture := _herd(308, 10)
 	var world = fixture[1]
 	var sector_key: Vector2i = fixture[2]
+	# No grass, so no grazing: this is about each animal keeping its own hunger, and a
+	# real meal would rightly pull the whole herd down towards zero.
+	for cell in range(world.resource_system.get_cell_count()):
+		world.resource_system.consume_cell(cell, INF)
 	var ids_by_hunger: Array = []
 	for index in range(fixture[3].size()):
 		var agent = fixture[3][index]
@@ -260,10 +265,8 @@ func _test_dormant_need_spread_survives_a_round_trip(a) -> void:
 	for index in range(1, hunger_after.size()):
 		ordered = ordered and float(hunger_after[index]) >= float(hunger_after[index - 1])
 	a.is_true(ordered, "the hungriest animal before sleep is still the hungriest after")
-	# Grazing pins the sated end of the herd at zero, so the spread narrows there. The
-	# hungry end keeps its own values: the two hungriest are still five apart.
 	var last := hunger_after.size() - 1
-	a.near(float(hunger_after[last]) - float(hunger_after[last - 1]), 5.0, 0.01,
+	a.near(float(hunger_after[last]) - float(hunger_after[0]), 45.0, 0.01,
 		"animals wake with their own hunger, not the herd's mean")
 	Helpers.destroy_manager(fixture[0])
 
@@ -522,3 +525,26 @@ func _test_herd_walks_around_what_blocks_its_centre(a) -> void:
 	a.greater(float(Vector2(aggregate["center"]).x) - start_x, 300.0,
 		"the herd passes on both sides of an obstacle in front of its centre")
 	Helpers.destroy_manager(manager)
+
+
+## A sleeping herd used to eat from the single best cell in its sector. That fed twenty
+## animals and starved a herd of a hundred and sixty on a sector still full of grass.
+func _test_big_herd_grazes_the_ground_it_covers(a) -> void:
+	var fixture := _herd(318, 81)
+	var world = fixture[1]
+	var sector_key: Vector2i = fixture[2]
+	for agent in fixture[3]:
+		agent.hunger = 60.0
+	world._sleep_sector(sector_key)
+	var state: Dictionary = world._sector_states[sector_key]
+	var biomass_before: float = world.resource_system.get_total_biomass()
+	world._apply_dormant_resource_interactions(sector_key, state, STEP_SECONDS)
+	var total_hunger := 0.0
+	for record in state["dormant_records"]:
+		total_hunger += float(record["hunger"])
+	var mean_hunger := total_hunger / float(state["dormant_records"].size())
+	a.is_true(mean_hunger < 45.0, "a big sleeping herd feeds from the ground under all of it (mean hunger %.1f)" % mean_hunger)
+	a.near(float(state["dormant_aggregates"][0]["avg_hunger"]), mean_hunger, 0.01,
+		"the group's mean follows what its members ate")
+	a.greater(biomass_before - world.resource_system.get_total_biomass(), 0.0, "the grass they ate is gone")
+	Helpers.destroy_manager(fixture[0])
