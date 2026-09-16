@@ -28,6 +28,7 @@ func run(a) -> void:
 	_test_static_waypoint_corridor_cache(a)
 	_test_navigation_queue_fairness(a)
 	_test_sliced_global_path_search(a)
+	_test_path_expansion_budget_caps_a_tick(a)
 	_test_overview_dormant_wake_policy(a)
 
 
@@ -536,6 +537,51 @@ func _test_sliced_global_path_search(a) -> void:
 		"subsequent slices finish the same saved path search")
 	a.is_true(terrain.has_cached_path_between_indices(start_index, goal_index),
 		"a completed sliced path is published through the normal cache")
+	Helpers.destroy_manager(manager)
+
+
+## The per-tick pathfinding budget counts A* node expansions, so where it cuts off
+## does not depend on how fast the machine is. The last slice is trimmed to what is
+## left, and the millisecond threshold only reports.
+func _test_path_expansion_budget_caps_a_tick(a) -> void:
+	var bundle := Helpers.build_test_bundle(87)
+	bundle["world"]["world_size"] = {"x": 2048.0, "y": 2048.0}
+	var manager = Helpers.create_manager_with(bundle, 87)
+	var world = manager.world_state
+	var terrain = world.terrain_system
+	world.navigation_config["path_expansions_per_slice"] = 32
+	world.navigation_config["path_expansion_budget_per_tick"] = 40
+	world.navigation_config["path_time_warning_ms_per_tick"] = 0.0
+	# Fifty cells apart: each search takes a few hundred expansions, far past one tick's
+	# budget. (The corner cell itself would finish in a handful.)
+	var goal: int = terrain.get_index_from_position(Vector2(400.0, 400.0))
+	var starts: Array = [Vector2(1960.0, 1960.0), Vector2(1960.0, 1920.0), Vector2(1920.0, 1960.0)]
+	for index in range(starts.size()):
+		world._enqueue_global_path(terrain.get_index_from_position(starts[index]), goal, 300 + index)
+	world._reset_performance_counters()
+	world._prepare_navigation_budget()
+	var counters: Dictionary = world.get_performance_counters()
+	a.equal(int(counters.get("path_expansions", 0)), 40,
+		"one tick expands exactly its budget: a whole slice, then the eight nodes left")
+	var first_key := Vector2i(terrain.get_index_from_position(starts[0]), goal)
+	var second_key := Vector2i(terrain.get_index_from_position(starts[1]), goal)
+	a.equal(int(terrain._path_searches.get(first_key, {}).get("visited", -1)), 32,
+		"the first request gets a full slice")
+	a.equal(int(terrain._path_searches.get(second_key, {}).get("visited", -1)), 8,
+		"the second request's slice is trimmed to the budget left over")
+	a.equal(world._pending_global_paths.size(), 3,
+		"all three unfinished searches wait for the next tick")
+	a.equal(int(counters.get("path_time_warning_ticks", 0)), 1,
+		"a zero millisecond threshold reports the tick as slow without stopping any work")
+	world._reset_performance_counters()
+	world._prepare_navigation_budget()
+	a.equal(int(world.get_performance_counters().get("path_expansions", 0)), 40,
+		"the next tick gets a fresh budget")
+	var third_key := Vector2i(terrain.get_index_from_position(starts[2]), goal)
+	a.equal(int(terrain._path_searches.get(third_key, {}).get("visited", -1)), 32,
+		"the request that waited a tick is served first")
+	a.equal(int(terrain._path_searches.get(first_key, {}).get("visited", -1)), 40,
+		"and a saved search resumes where its last slice stopped")
 	Helpers.destroy_manager(manager)
 
 

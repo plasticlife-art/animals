@@ -382,6 +382,15 @@ tick follows the camera, and full ticks do draw from `rng` - wander, attack roll
 watched differently diverges. `_test_determinism_with_lod_and_dormancy` replays one fixed headless
 context through sleep and wake.
 
+Nothing that decides what the simulation does may read the wall clock. Route search used to stop
+for the tick after `path_time_budget_ms_per_tick` of real time; on a busy machine that cut-off fell
+on a different request, two same-seed runs gave paths to different animals, and positions drifted
+while `rng.state` still matched. The per-tick budget now counts A* node expansions
+(`navigation.path_expansion_budget_per_tick`), the last slice of a tick is trimmed to what is left,
+and every `Time.get_ticks_usec()` in the simulation feeds a `_ms` counter only.
+`_test_path_budget_replays_under_any_clock` replays a path-starved map with every navigation
+millisecond setting squeezed to zero.
+
 ## Configuration Notes
 
 ### `world.json`
@@ -421,6 +430,17 @@ context through sleep and wake.
   without this an aggregate has to cover three times the distance per unit of hunger on the
   large map and cross-sector travel becomes lethal rather than merely slow. Speed is clamped
   to `sprint_speed` so a coarse aggregate never outruns a real animal.
+- `navigation.path_expansion_budget_per_tick` caps A* node expansions per tick across all
+  global route searches, alongside the count caps `path_budget_per_tick` and
+  `max_new_paths_per_tick`. Searches run in slices of `path_expansions_per_slice` and resume on a
+  later tick, so a lower budget delays routes rather than shortening them. It replaced a
+  wall-clock budget that made replays machine-dependent. The shipped 512 (about 5 ms at the
+  ~10 µs per expansion measured on the reference MacBook Air) was chosen against that budget on
+  the large balanced preset, seed 1337, 600 ticks with LOD off: the same instructions retired
+  (358 G, against 352-360 G for the wall-clock build, which varied run to run) and a global path
+  queue peaking at 12 instead of 22-28. 768 cost 6.5% more.
+  `path_time_warning_ms_per_tick` only reports: a tick whose route search took longer counts in
+  the `path_time_warning_ticks` counter and changes nothing.
 - `navigation.prey_pressure_refresh_ticks` throttles the sector-level herbivore census that
   is the simulation's only long-range prey signal. Both the dormant goal selector and the
   live predator patrol read it.

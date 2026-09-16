@@ -294,6 +294,9 @@ func find_path_between_indices(start_index: int, goal_index: int) -> Dictionary:
 	return {}
 
 
+## Runs at most `expansion_budget` node expansions of the saved search and reports
+## how many it used in `expanded`. Trivial and cached requests expand nothing and
+## leave the key out.
 func step_path_between_indices(start_index: int, goal_index: int, expansion_budget: int) -> Dictionary:
 	if start_index == -1 or goal_index == -1:
 		return {"complete": true, "result": {
@@ -351,7 +354,7 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 				"start_index": start_index, "goal_index": goal_index}
 			_path_searches.erase(cache_key)
 			_store_path_cache_entry(cache_key, result)
-			return {"complete": true, "result": result}
+			return {"complete": true, "result": result, "expanded": expanded}
 
 		var neighbor_indices: Array = get_walkable_neighbors(current_index)
 		var neighbor_costs: Array = _get_walkable_neighbor_costs(current_index)
@@ -370,19 +373,19 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 	state.best_heuristic = best_heuristic
 	state.visited = visited
 	if not open_heap.is_empty() and visited < max_search_cells:
-		return {"complete": false, "result": {}}
+		return {"complete": false, "result": {}, "expanded": expanded}
 
 	_path_searches.erase(cache_key)
 	if best_index == start_index:
 		var failed_result := {"cells": [start_index], "cost": INF,
 			"reachable": false, "start_index": start_index, "goal_index": goal_index}
 		_store_path_cache_entry(cache_key, failed_result)
-		return {"complete": true, "result": failed_result}
+		return {"complete": true, "result": failed_result, "expanded": expanded}
 	var partial_result := {"cells": _reconstruct_path(best_index, came_from),
 		"cost": float(g_score.get(best_index, INF)), "reachable": false,
 		"start_index": start_index, "goal_index": goal_index}
 	_store_path_cache_entry(cache_key, partial_result)
-	return {"complete": true, "result": partial_result}
+	return {"complete": true, "result": partial_result, "expanded": expanded}
 
 
 func cancel_path_search(start_index: int, goal_index: int) -> void:

@@ -197,6 +197,8 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		"pathfind_calls": int(perf.get("pathfind_calls", 0)),
 		"path_cache_hits": int(perf.get("path_cache_hits", 0)),
 		"pathfind_ms": float(perf.get("pathfind_ms", 0.0)),
+		"path_expansions": int(perf.get("path_expansions", 0)),
+		"path_time_warning_ticks": int(perf.get("path_time_warning_ticks", 0)),
 		"grass_query_calls": int(perf.get("grass_query_calls", 0)),
 		"grass_search_ms": float(perf.get("grass_search_ms", 0.0)),
 		"grass_search_calls": int(perf.get("grass_search_calls", 0)),
