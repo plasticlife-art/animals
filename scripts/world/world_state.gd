@@ -1669,45 +1669,47 @@ func _emit_dormant_death(species_type: String, position: Vector2, cause: String)
 
 
 func _maybe_spawn_carcass(agent, cause: String) -> void:
-	# Which species leave a body is `role.leaves_carcass` in species.json, not a
-	# name test. `role.carcass_meat_multiplier` then sizes it, so a small animal
-	# does not feed a sector the way a large one does.
-	if agent == null or not species_registry.leaves_carcass(agent.species_type):
-		return
+	if agent != null:
+		_spawn_carcass(agent.species_type, agent.position, cause, int(agent.id))
+
+
+## A body where an animal died, for a live death or a sleeping one alike. Which species
+## leave a body is `role.leaves_carcass` in species.json, not a name test, and
+## `role.carcass_meat_multiplier` sizes it, so a small animal does not feed a sector the
+## way a large one does. Returns the carcass id, or -1 when the death leaves none.
+func _spawn_carcass(species_type: String, position: Vector2, cause: String, source_agent_id: int) -> int:
+	if not species_registry.leaves_carcass(species_type):
+		return -1
 	if cause not in ["predation", "old_age", "starvation", "thirst"]:
-		return
+		return -1
 	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
 	var meat_total := maxf(0.0, float(carcass_config.get("meat_total", 84.0))
-		* species_registry.carcass_meat_multiplier(agent.species_type))
+		* species_registry.carcass_meat_multiplier(species_type))
 	if meat_total <= 0.0:
-		return
+		return -1
 	var carcass_id := next_carcass_id
 	next_carcass_id += 1
-	var carcass := {
+	carcasses[carcass_id] = {
 		"id": carcass_id,
-		"position": agent.position,
+		"position": position,
 		"created_at": current_time,
 		"ttl_seconds": maxf(0.0, float(carcass_config.get("ttl_seconds", 90.0))),
-		"source_species": agent.species_type,
+		"source_species": species_type,
 		"death_cause": cause,
 		"meat_total": meat_total,
 		"meat_remaining": meat_total,
 		"max_feeders": maxi(1, int(carcass_config.get("max_feeders", 2))),
 		"active_feeder_ids": [],
-		"source_agent_id": int(agent.id),
+		"source_agent_id": source_agent_id,
 	}
-	carcasses[carcass_id] = carcass
-	_register_carcass_sector(carcass_id, agent.position)
-	emit_event("CarcassSpawned", agent, -1, {
+	_register_carcass_sector(carcass_id, position)
+	emit_population_event("CarcassSpawned", species_type, position, {
 		"carcass_id": carcass_id,
 		"cause": cause,
 		"meat_total": meat_total,
-		"source_agent_id": int(agent.id),
-		"position": {
-			"x": agent.position.x,
-			"y": agent.position.y,
-		},
+		"source_agent_id": source_agent_id,
 	})
+	return carcass_id
 
 
 func _step_carcasses(_delta: float) -> void:
@@ -2410,7 +2412,6 @@ func _get_or_create_sector_state(sector_key: Vector2i) -> Dictionary:
 			"dormant_records": [],
 			"dormant_species": {},
 			"dormant_aggregates": [],
-			"dormant_meat_pool": 0.0,
 			"dormant_kill_debt": 0.0,
 		}
 	return _sector_states[sector_key]
@@ -2873,9 +2874,7 @@ func _wake_sector(sector_key: Vector2i) -> void:
 	sector_state["dormant_aggregates"] = []
 	sector_state["dormant_count"] = 0
 	sector_state["dormant_elapsed"] = 0.0
-	# The coarse meat pool and kill debt only mean anything while the sector is asleep;
-	# once awake its predators eat real carcasses through the normal ledger.
-	sector_state["dormant_meat_pool"] = 0.0
+	# The kill debt only means anything while the sector is asleep.
 	sector_state["dormant_kill_debt"] = 0.0
 	sector_state["last_active_tick"] = current_tick
 	_sector_states[sector_key] = sector_state
@@ -3421,9 +3420,9 @@ func _dormant_need_deaths(aggregate: Dictionary, debt_key: String, count: int, n
 	return deaths
 
 
-## The single place a dormant kill can happen. Every removed herbivore produces exactly
-## `carcass.meat_total` of meat in the sector's pool, and no meat exists without a
-## matching death - the invariant the accounting test asserts.
+## The single place a dormant kill can happen. It decides how many prey die; the
+## reconcile picks the animals and leaves each one's carcass where it stood, so every
+## piece of meat a sleeping hunter eats belongs to a body that exists.
 ##
 ## Uses a float debt rather than rounding per step, because the old per-step
 ## `int(round(count * pressure * elapsed * 0.18))` needed four co-located predators to
@@ -3434,14 +3433,6 @@ func _dormant_need_deaths(aggregate: Dictionary, debt_key: String, count: int, n
 ## stream, or every agent's rolls shift and the determinism test breaks.
 func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, aggregates: Array, elapsed: float, buckets: Dictionary = {}) -> void:
 	var dormant_config: Dictionary = config_bundle.get("balance", {}).get("dormant_ecology", {})
-	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
-	var meat_total: float = maxf(1.0, float(carcass_config.get("meat_total", 150.0)))
-	var pool: float = float(sector_state.get("dormant_meat_pool", 0.0))
-
-	# Meat rots on the same clock a real carcass does, so a sector cannot bank kills.
-	var ttl: float = maxf(1.0, float(carcass_config.get("ttl_seconds", 30.0)))
-	if pool > 0.0:
-		pool = maxf(0.0, pool - pool * minf(1.0, elapsed / ttl))
 
 	# Who counts as prey here depends on who is hunting, so the hunters are gathered
 	# first and their `role.eats_species` decides the rest. Two passes over a handful
@@ -3519,11 +3510,25 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 			# nearest the hunters, reported where they stood.
 			_queue_dormant_deaths(aggregate, "predation", taken, {"near": hunter_center, "hunter": hunter_species})
 		kills -= remaining
-		pool += float(kills) * meat_total
 		performance_counters["dormant_predation_kills"] += kills
-		performance_counters["dormant_meat_granted"] += float(kills) * meat_total
 
-	sector_state["dormant_meat_pool"] = pool
+
+## The available carcass in a sector nearest `position` that `species_type` would eat.
+func _nearest_dormant_meal(sector_state: Dictionary, position: Vector2, species_type: String) -> int:
+	var max_age: float = species_registry.carrion_max_age(species_type)
+	var best_id := -1
+	var best_distance_sq := INF
+	for carcass_id_value in sector_state.get("carcass_ids", []):
+		var carcass: Dictionary = get_carcass(int(carcass_id_value))
+		if carcass.is_empty() or float(carcass.get("meat_remaining", 0.0)) <= 0.0:
+			continue
+		if max_age != INF and current_time - float(carcass.get("created_at", 0.0)) > max_age:
+			continue
+		var distance_sq := position.distance_squared_to(Vector2(carcass.get("position", position)))
+		if distance_sq < best_distance_sq or (distance_sq == best_distance_sq and int(carcass_id_value) < best_id):
+			best_distance_sq = distance_sq
+			best_id = int(carcass_id_value)
+	return best_id
 
 
 ## Members of a group hungry enough to feed. Counted per record when the records are at
@@ -4023,11 +4028,17 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 			# A group whose count ran ahead of its records has no one left to lose.
 			if victim_index < 0:
 				break
-			var position: Vector2 = survivors[victim_index].get("position", aggregate.get("center", bounds.get_center()))
+			var victim: Dictionary = survivors[victim_index]
+			var position: Vector2 = victim.get("position", aggregate.get("center", bounds.get_center()))
 			survivors.remove_at(victim_index)
 			_emit_dormant_death(species_key, position, cause)
+			# A sleeping death leaves the same body a live one does, where the animal
+			# stood. Sleeping hunters feed on their kill from it, and scavengers find it.
+			var carcass_id := _spawn_carcass(species_key, position, cause, int(victim.get("id", -1)))
 			if cause == "predation":
 				emit_population_event("PredationSuccess", str(entry.get("hunter", "")), position, {"dormant": true})
+				if carcass_id != -1:
+					performance_counters["dormant_meat_granted"] += float(get_carcass(carcass_id).get("meat_total", 0.0))
 	aggregate.erase("deaths_this_step")
 	return survivors
 
@@ -4329,16 +4340,15 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 				var prey_pressure := _get_sector_prey_pressure(Vector2i(aggregate.get("goal_sector", sector_key)))
 				if prey_pressure <= 0:
 					aggregate["last_goal_refresh_time"] = -INF
-				# Draw from the meat this sector's kills produced in
-				# `_resolve_dormant_predation()`; the pool is the only source, so intake
-				# can never exceed what actually died here.
-				var pool: float = float(sector_state.get("dormant_meat_pool", 0.0))
-				if pool <= 0.0:
+				# Feed on a body in this sector - their own kill, left where the prey
+				# fell - through `consume_carcass()`, so whatever they leave stays there
+				# for scavengers and rots on the carcass's own clock.
+				var meal_id := _nearest_dormant_meal(sector_state, Vector2(aggregate.get("center", Vector2.ZERO)), species_key)
+				if meal_id == -1:
 					continue
-				var wanted: float = float(feeding.get("carcass_consume_rate", 24.0)) * float(head_count) * elapsed
-				var taken: float = minf(wanted, pool)
-				sector_state["dormant_meat_pool"] = pool - taken
-				_apply_dormant_meat_to_predator(aggregate, feeding, taken / float(head_count), predator_max_energy)
+				var taken := consume_carcass(meal_id, float(feeding.get("carcass_consume_rate", 24.0)) * float(head_count) * elapsed, -1)
+				if taken > 0.0:
+					_apply_dormant_meat_to_predator(aggregate, feeding, taken / float(head_count), predator_max_energy)
 
 
 ## One coarse step for a sleeping sector.

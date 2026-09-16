@@ -358,9 +358,10 @@ must be able to complete their whole loop in this abstraction, or the abstractio
 one-way sink. Two invariants keep the two paths honest:
 
 - **Kills are single-sourced.** `_resolve_dormant_predation()` is the only place a dormant
-  kill happens. Each removed herbivore adds exactly `balance.carcass.meat_total` to the
-  sector's meat pool, and no meat exists without a matching death. Predation is
-  deliberately absent from `_apply_dormant_metabolism_to_aggregate()`.
+  kill happens. `_reconcile_dormant_records()` picks the victims and leaves each one's
+  carcass where it stood, sized exactly as a live death's, so no meat exists without a
+  body and sleeping hunters eat from those bodies. Predation is deliberately absent from
+  `_apply_dormant_metabolism_to_aggregate()`.
 - **Intake goes through the same ledgers and knobs as the live path.** Dormant scavenging
   debits the real carcass via `consume_carcass()`, so a dormant aggregate and a live
   predator can never eat the same meat. Meat converts to hunger and energy through

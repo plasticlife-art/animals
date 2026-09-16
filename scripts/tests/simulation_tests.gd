@@ -33,6 +33,8 @@ func run(asserts) -> void:
 	_test_dormant_carrion_goal_uses_live_reach(asserts)
 	_test_sated_dormant_predators_do_not_kill(asserts)
 	_test_dormant_predation_grants_meat_for_every_kill(asserts)
+	_test_dormant_hunters_eat_their_kill(asserts)
+	_test_dormant_starvation_leaves_a_carcass(asserts)
 	_test_dormant_predator_recovers_energy_when_idle(asserts)
 	_test_dormant_aggregate_rebuild_keeps_accumulators(asserts)
 	_test_hungry_predator_hunts_herd_member(asserts)
@@ -796,33 +798,87 @@ func _test_dormant_predator_drinking_reduces_thirst(asserts) -> void:
 func _test_dormant_predation_grants_meat_for_every_kill(asserts) -> void:
 	var manager = TestHelpers.create_manager(63)
 	manager.lod_enabled = true
+	var world = manager.world_state
 	var herd_position := Vector2(20.0, 220.0)
 	for index in range(8):
-		TestHelpers.spawn_herbivore(manager.world_state, herd_position + Vector2(float(index) * 2.0, 0.0), 0)
-	var predator = TestHelpers.spawn_predator(manager.world_state, herd_position + Vector2(4.0, 4.0))
+		TestHelpers.spawn_herbivore(world, herd_position + Vector2(float(index) * 2.0, 0.0), 0)
+	var predator = TestHelpers.spawn_predator(world, herd_position + Vector2(4.0, 4.0))
 	predator.hunger = 60.0
 	# The shipped rate is deliberately slow, so drive it hard enough to resolve a kill in
 	# one step. Setting it here also proves the knob is actually read.
-	manager.world_state.config_bundle["balance"]["dormant_ecology"]["kill_rate_per_prey_per_second"] = 0.5
-	var slept: Array = _sleep_with_goal(manager.world_state, herd_position, "predator", "hunt")
+	world.config_bundle["balance"]["dormant_ecology"]["kill_rate_per_prey_per_second"] = 0.5
+	var slept: Array = _sleep_with_goal(world, herd_position, "predator", "hunt")
 	var sector_state: Dictionary = slept[1]
-	var herbivores_before := 0
-	for aggregate in sector_state.get("dormant_aggregates", []):
-		if str(aggregate.get("species_type", "")) == "herbivore":
-			herbivores_before += int(aggregate.get("count", 0))
-	var meat_total := float(manager.world_state.config_bundle["balance"]["carcass"]["meat_total"])
-	manager.world_state._resolve_dormant_predation(slept[0], sector_state, sector_state.get("dormant_aggregates", []), 0.75)
-	var herbivores_after := 0
-	for aggregate in sector_state.get("dormant_aggregates", []):
-		if str(aggregate.get("species_type", "")) == "herbivore":
-			herbivores_after += int(aggregate.get("count", 0))
-	var kills: int = herbivores_before - herbivores_after
+	var herbivore_positions: Dictionary = {}
+	for record in sector_state.get("dormant_records", []):
+		if str(record.get("species_type", "")) == "herbivore":
+			herbivore_positions[int(record["id"])] = Vector2(record["position"])
+	var carcasses_before: Array = world.carcasses.keys()
+	world._resolve_dormant_predation(slept[0], sector_state, sector_state.get("dormant_aggregates", []), 0.75)
+	world._reconcile_dormant_records(slept[0], sector_state, 0.75)
+	var survivors: Dictionary = {}
+	for record in sector_state.get("dormant_records", []):
+		survivors[int(record["id"])] = true
+	var victim_positions: Array = []
+	for agent_id in herbivore_positions.keys():
+		if not survivors.has(agent_id):
+			victim_positions.append(herbivore_positions[agent_id])
+	var kills: int = victim_positions.size()
 	asserts.greater(kills, 0, "a hunting dormant predator among prey should make a kill")
-	var counters: Dictionary = manager.world_state.get_performance_counters()
+	var counters: Dictionary = world.get_performance_counters()
 	asserts.equal(int(counters.get("dormant_predation_kills", -1)), kills, "counted kills should match the herbivores removed")
-	# The invariant: meat exists only because something died, in exact proportion.
-	asserts.equal(float(counters.get("dormant_meat_granted", -1.0)), float(kills) * meat_total, "every kill should grant exactly one carcass worth of meat")
-	asserts.equal(float(sector_state.get("dormant_meat_pool", -1.0)), float(kills) * meat_total, "the granted meat should be in this sector's pool")
+	# The invariant: meat exists only because something died, as the body it left.
+	var new_bodies: Array = []
+	for carcass_id in world.carcasses.keys():
+		if not carcasses_before.has(carcass_id):
+			new_bodies.append(world.carcasses[carcass_id])
+	asserts.equal(new_bodies.size(), kills, "every sleeping kill leaves exactly one carcass")
+	var meat_total := float(world.config_bundle["balance"]["carcass"]["meat_total"]) \
+		* float(world.species_registry.carcass_meat_multiplier("herbivore"))
+	var misplaced := 0
+	for body in new_bodies:
+		asserts.near(float(body["meat_total"]), meat_total, 0.001, "a sleeping kill's carcass holds what a live kill's would")
+		if not victim_positions.has(Vector2(body["position"])):
+			misplaced += 1
+	asserts.equal(misplaced, 0, "each carcass lies where its animal was killed")
+	asserts.near(float(counters.get("dormant_meat_granted", -1.0)), float(kills) * meat_total, 0.001,
+		"the counted meat is the meat in those carcasses")
+	TestHelpers.destroy_manager(manager)
+
+
+## A sleeping hunter eats from the body of its kill, and what it leaves is still there.
+func _test_dormant_hunters_eat_their_kill(asserts) -> void:
+	var manager = TestHelpers.create_manager(72)
+	manager.lod_enabled = true
+	var world = manager.world_state
+	var predator = TestHelpers.spawn_predator(world, Vector2(20.0, 220.0))
+	predator.hunger = 70.0
+	var slept: Array = _sleep_with_goal(world, predator.position, "predator", "hunt")
+	var body_id := TestHelpers.spawn_carcass(world, Vector2(30.0, 220.0), 200.0)
+	world._apply_dormant_resource_interactions(slept[0], slept[1], 0.75)
+	var left := float(world.carcasses[body_id]["meat_remaining"])
+	asserts.is_true(left < 200.0, "the sleeping hunter eats from the body in its sector")
+	asserts.greater(left, 0.0, "one step does not finish a whole carcass, so the rest stays for others")
+	asserts.is_true(float(slept[2].get("avg_hunger", 70.0)) < 70.0, "eating lowers the hunter's hunger")
+	TestHelpers.destroy_manager(manager)
+
+
+## A death from hunger in a sleeping herd leaves a body for scavengers.
+func _test_dormant_starvation_leaves_a_carcass(asserts) -> void:
+	var manager = TestHelpers.create_manager(73)
+	manager.lod_enabled = true
+	var world = manager.world_state
+	for index in range(3):
+		TestHelpers.spawn_herbivore(world, Vector2(20.0 + float(index) * 20.0, 220.0), 0)
+	var sector_key: Vector2i = world._get_sector_key(Vector2(20.0, 220.0))
+	world._sleep_sector(sector_key)
+	var state: Dictionary = world._sector_states[sector_key]
+	var aggregate: Dictionary = state["dormant_aggregates"][0]
+	aggregate["count"] = 2
+	world._queue_dormant_deaths(aggregate, "starvation", 1)
+	var before: int = world.carcasses.size()
+	world._reconcile_dormant_records(sector_key, state, 0.0)
+	asserts.equal(world.carcasses.size(), before + 1, "a sleeping animal that starves leaves a carcass")
 	TestHelpers.destroy_manager(manager)
 
 
