@@ -243,14 +243,6 @@ static func create_benchmark_manager(seed: int = 17, herbivore_count: int = 220,
 	return manager
 
 
-## Pathfinding stops for the tick once it has spent `path_time_budget_ms_per_tick` of
-## wall-clock time. On a loaded machine that cut-off lands on a different request,
-## so two same-seed runs hand paths to different agents and drift apart. Replays
-## that assert identical results must budget by count alone.
-static func disable_wall_clock_budgets(manager) -> void:
-	manager.world_state.navigation_config["path_time_budget_ms_per_tick"] = 1.0e9
-
-
 static func run_ticks(manager, ticks: int) -> void:
 	for _index in range(ticks):
 		manager.step_once()

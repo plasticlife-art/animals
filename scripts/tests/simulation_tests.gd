@@ -644,7 +644,6 @@ func _test_perf_snapshot_fields(asserts) -> void:
 
 func _test_determinism(asserts) -> void:
 	var manager_a = TestHelpers.create_manager(36)
-	TestHelpers.disable_wall_clock_budgets(manager_a)
 	var herbivore_a = TestHelpers.spawn_herbivore(manager_a.world_state, Vector2(104.0, 104.0), 0)
 	var predator_a = TestHelpers.spawn_predator(manager_a.world_state, Vector2(132.0, 104.0))
 	herbivore_a.hunger = 62.0
@@ -655,7 +654,6 @@ func _test_determinism(asserts) -> void:
 	var trace_a := TestHelpers.capture_trace(manager_a, [herbivore_a.id, predator_a.id], 18)
 
 	var manager_b = TestHelpers.create_manager(36)
-	TestHelpers.disable_wall_clock_budgets(manager_b)
 	var herbivore_b = TestHelpers.spawn_herbivore(manager_b.world_state, Vector2(104.0, 104.0), 0)
 	var predator_b = TestHelpers.spawn_predator(manager_b.world_state, Vector2(132.0, 104.0))
 	herbivore_b.hunger = 62.0
@@ -934,7 +932,6 @@ func _test_determinism_with_lod_and_dormancy(asserts) -> void:
 	var most_dormant: Array = []
 	for _run in range(2):
 		var manager = TestHelpers.create_benchmark_manager(61, 80, 8, 8)
-		TestHelpers.disable_wall_clock_budgets(manager)
 		manager.lod_enabled = true
 		manager.lod_settings["headless_active_radius"] = 120.0
 		manager.lod_settings["near_margin"] = 0.0
