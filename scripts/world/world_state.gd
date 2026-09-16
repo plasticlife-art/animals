@@ -3640,11 +3640,11 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, elapsed: float
 
 ## Moves a sleeping herd without inventing anyone's position.
 ##
-## The herd's goal-seeking is swept once, from its centre and with a real body radius,
-## so a whole herd costs one collision query. Every member then takes that same step
+## The herd's goal-seeking is swept once from its centre, so a whole herd costs one
+## collision query and slides along what it grazes. Every member then takes that step
 ## from where it actually stands, plus a drift of its own: a wander heading carried in
 ## `wander_angle`, spacing from neighbours closer than two bodies, and a pull back
-## towards the herd once it strays past the herd's comfortable spread.
+## towards its kin or the herd once it strays past a comfortable distance.
 ##
 ## A member whose step would land where it cannot stand stays put and turns its wander
 ## heading around. A herd walking into a cliff piles up against it, rather than every
@@ -3667,11 +3667,17 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 	var next_velocity: Vector2 = Vector2(aggregate.get("velocity", Vector2.ZERO)).move_toward(desired_velocity, acceleration * elapsed)
 	next_velocity = next_velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * elapsed)
 	var herd_step: Vector2 = next_velocity * elapsed
-	# A herd spread around a pond can have its centre in the water. Sweeping from
-	# there would pin a herd that has open ground on every side.
+	# The centre is a point no animal stands on. The sweep uses a point body, as the
+	# coarse step always has, and when an obstacle cuts it short the herd does not stop
+	# there: every member takes the full step and only its own landing point is
+	# checked. Sweeping with a body radius and keeping the cut-short step stalled whole
+	# herds behind a single tree or cliff cell between their members, until they died
+	# of thirst with open ground on both sides.
 	if is_walkable_position(current_center):
-		var resolved := resolve_movement_position(current_center, current_center + herd_step, body_radius)
-		herd_step = get_nearest_walkable_position(resolved) - current_center
+		var resolved := resolve_movement_position(current_center, current_center + herd_step)
+		var swept := get_nearest_walkable_position(resolved) - current_center
+		if swept.length_squared() >= herd_step.length_squared() * 0.25:
+			herd_step = swept
 	if herd_step.length_squared() + 0.01 < (next_velocity * elapsed).length_squared():
 		next_velocity = herd_step / maxf(elapsed, 0.00001)
 	aggregate["velocity"] = next_velocity
@@ -3692,14 +3698,18 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vector2, herd_step: Vector2,
 		goal_position: Vector2, drift_speed: float, body_radius: float, elapsed: float) -> Vector2:
 	var count := members.size()
+	var starts := PackedVector2Array()
+	starts.resize(count)
+	for i in range(count):
+		starts[i] = members[i].get("position", center)
 	var spacing := body_radius * 2.0
 	var nudges := PackedVector2Array()
 	nudges.resize(count)
 	if count <= _DORMANT_SPACING_MEMBER_LIMIT and spacing > 0.0:
 		for i in range(count):
-			var position_i: Vector2 = members[i].get("position", center)
+			var position_i: Vector2 = starts[i]
 			for j in range(i + 1, count):
-				var gap: Vector2 = Vector2(members[j].get("position", center)) - position_i
+				var gap: Vector2 = starts[j] - position_i
 				var distance_sq := gap.length_squared()
 				if distance_sq >= spacing * spacing:
 					continue
@@ -3711,18 +3721,44 @@ func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vecto
 				nudges[j] += push
 	var comfort_radius := maxf(float(aggregate.get("spread_radius", 0.0)) * 1.5,
 		body_radius * _DORMANT_PACKING_RADIUS * sqrt(float(count)))
+	# An animal with a partner or young in the group (`kin_ids`) holds to them, not to
+	# the group's centre. Unbonded animals of a sector share one aggregate - every
+	# predator pair sleeps in the same `predator:-1` group - so that centre means
+	# nothing to a pair, and a pair left to wander apart passes
+	# `preferred_mate_break_radius` and wakes without its bond.
+	var index_by_id: Dictionary = {}
+	for member in members:
+		if not member.get("kin_ids", []).is_empty():
+			for i in range(count):
+				index_by_id[int(members[i].get("id", -1))] = i
+			break
+	var reproduction: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {}).get("reproduction", {})
+	var kin_comfort_radius := float(reproduction.get("preferred_mate_follow_radius", 180.0)) * 0.5
 	var turn_limit := _DORMANT_WANDER_TURN_PER_SECOND * elapsed
 	var position_sum := Vector2.ZERO
 	for index in range(count):
 		var record: Dictionary = members[index]
-		var position: Vector2 = record.get("position", center)
+		var position: Vector2 = starts[index]
 		var heading := wrapf(float(record.get("wander_angle", 0.0))
 			+ (_dormant_hash_unit(int(record.get("id", 0)), current_tick) * 2.0 - 1.0) * turn_limit, -PI, PI)
 		var drift := Vector2.from_angle(heading) * drift_speed * _DORMANT_WANDER_SHARE * elapsed
-		var offset := position - center
+		var anchor := center
+		var comfort := comfort_radius
+		if not index_by_id.is_empty():
+			var kin_sum := Vector2.ZERO
+			var kin_count := 0
+			for kin_id in record.get("kin_ids", []):
+				var kin_index: int = index_by_id.get(int(kin_id), -1)
+				if kin_index >= 0 and kin_index != index:
+					kin_sum += starts[kin_index]
+					kin_count += 1
+			if kin_count > 0:
+				anchor = kin_sum / float(kin_count)
+				comfort = kin_comfort_radius
+		var offset := position - anchor
 		var offset_length := offset.length()
-		if offset_length > comfort_radius:
-			drift -= offset / offset_length * minf(offset_length - comfort_radius, drift_speed * _DORMANT_COHESION_SHARE * elapsed)
+		if offset_length > comfort:
+			drift -= offset / offset_length * minf(offset_length - comfort, drift_speed * _DORMANT_COHESION_SHARE * elapsed)
 		var move := herd_step + drift + nudges[index]
 		var next_position := _dormant_step_target(position, move)
 		if next_position != position + move:

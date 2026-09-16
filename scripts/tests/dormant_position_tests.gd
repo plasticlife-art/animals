@@ -27,6 +27,8 @@ func run(a) -> void:
 	_test_dormant_max_age_kills_once(a)
 	_test_dormant_parents_stop_counting_as_ready(a)
 	_test_split_herd_follows_one_goal(a)
+	_test_sleeping_pair_keeps_its_bond(a)
+	_test_herd_walks_around_what_blocks_its_centre(a)
 
 
 func _large_manager(seed: int):
@@ -453,4 +455,70 @@ func _test_split_herd_follows_one_goal(a) -> void:
 	var end_spread := float(Helpers.herd_spread(positions)["mean_pair_distance"])
 	a.is_true(end_spread < start_spread * 2.0,
 		"the halves travel together (pair distance %.0f at the start, %.0f after)" % [start_spread, end_spread])
+	Helpers.destroy_manager(manager)
+
+
+## Predator pairs sleep in one `predator:-1` aggregate with every other unbonded
+## predator in the sector. Holding to that aggregate's centre let each partner wander
+## off alone; five minutes asleep put a pair past `preferred_mate_break_radius`, and
+## the pair woke without its bond and stopped breeding.
+func _test_sleeping_pair_keeps_its_bond(a) -> void:
+	var manager = _large_manager(316)
+	var world = manager.world_state
+	var male = world.spawn_agent("predator", Vector2(700.0, 760.0), -1, AgentBase.SEX_MALE, {"reason": "test"})
+	var female = world.spawn_agent("predator", Vector2(740.0, 760.0), -1, AgentBase.SEX_FEMALE, {"reason": "test"})
+	male.set_preferred_mate_id(female.id)
+	female.set_preferred_mate_id(male.id)
+	for corner in [Vector2(160.0, 160.0), Vector2(1380.0, 160.0), Vector2(160.0, 1380.0), Vector2(1380.0, 1380.0)]:
+		world.spawn_agent("predator", corner, -1, AgentBase.SEX_MALE, {"reason": "test"})
+	for agent in world.get_living_agents():
+		agent.age = 30.0
+		agent.hunger = 0.0
+		agent.thirst = 0.0
+		agent.reproduction_cooldown = 999.0
+	var sector_key: Vector2i = world._get_sector_key(Vector2(700.0, 760.0))
+	world._sleep_sector(sector_key)
+	var widest := [0.0]
+	var pair_ids := [male.id, female.id]
+	_coarse_steps(world, sector_key, 400, func(_step):
+		var pair: Array = []
+		for record in world._sector_states[sector_key].get("dormant_records", []):
+			if pair_ids.has(int(record["id"])):
+				pair.append(Vector2(record["position"]))
+		if pair.size() == 2:
+			widest[0] = maxf(widest[0], pair[0].distance_to(pair[1])))
+	var follow_radius := float(male.reproduction.get("preferred_mate_follow_radius", 180.0))
+	a.is_true(float(widest[0]) > 0.0, "the pair should stay asleep and alive through the run")
+	a.is_true(float(widest[0]) <= follow_radius,
+		"a sleeping pair stays within follow range (widest %.0f, follow radius %.0f)" % [float(widest[0]), follow_radius])
+	Helpers.destroy_manager(manager)
+
+
+## A herd's centre is a point no animal stands on. With an obstacle on the line from
+## that centre to the goal, one blocked sweep used to cancel the whole herd's step
+## although every animal had open ground ahead, and herds stood still until they died
+## of thirst in sight of water.
+func _test_herd_walks_around_what_blocks_its_centre(a) -> void:
+	var manager = _large_manager(317)
+	var world = manager.world_state
+	for position in [Vector2(600.0, 690.0), Vector2(600.0, 910.0)]:
+		Helpers.spawn_herbivore(world, position, 0)
+	var terrain = world.terrain_system
+	for row in range(11, 14):
+		for column in range(11, 13):
+			terrain._walkable[row * terrain.cols + column] = 0
+	a.is_true(not world.is_walkable_position(Vector2(768.0, 800.0)), "the fixture should block the line from the herd's centre")
+	var sector_key: Vector2i = world._get_sector_key(Vector2(600.0, 800.0))
+	world._sleep_sector(sector_key)
+	world._dormant_goal_refresh_seconds = 1.0e9
+	var aggregate: Dictionary = world._sector_states[sector_key]["dormant_aggregates"][0]
+	aggregate["goal_kind"] = "water"
+	aggregate["goal_position"] = Vector2(1400.0, 800.0)
+	aggregate["goal_sector"] = sector_key
+	aggregate["last_goal_refresh_time"] = world.current_time
+	var start_x := float(Vector2(aggregate["center"]).x)
+	_coarse_steps(world, sector_key, 8)
+	aggregate = world._sector_states[sector_key]["dormant_aggregates"][0]
+	a.greater(float(Vector2(aggregate["center"]).x) - start_x, 300.0,
+		"the herd passes on both sides of an obstacle in front of its centre")
 	Helpers.destroy_manager(manager)
