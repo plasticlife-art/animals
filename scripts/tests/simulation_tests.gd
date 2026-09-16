@@ -47,6 +47,7 @@ func run(asserts) -> void:
 	_test_perf_snapshot_fields(asserts)
 	_test_determinism(asserts)
 	_test_determinism_with_lod_and_dormancy(asserts)
+	_test_path_budget_replays_under_any_clock(asserts)
 	_test_dormant_path_leaves_rng_untouched(asserts)
 	_test_worker_ticks_match_inline_ticks(asserts)
 	_test_snapshot_is_shared_read_only(asserts)
@@ -936,6 +937,67 @@ func _test_determinism_with_lod_and_dormancy(asserts) -> void:
 		TestHelpers.destroy_manager(manager)
 	asserts.is_true(int(most_dormant[0]) > 0, "the replay must actually put sectors to sleep, or it proves nothing")
 	asserts.equal(fingerprints[0], fingerprints[1], "same seed and LOD context must replay identically through sleep and wake")
+
+
+## Pathfinding used to stop for the tick after `path_time_budget_ms_per_tick` of
+## wall-clock time. On a busy machine that cut-off fell on a different request, and
+## two same-seed runs gave paths to different animals. The second run here squeezes
+## every millisecond setting in navigation to zero, which is what a starved CPU
+## looks like to a timer: if any of them still decides what gets searched, the two
+## worlds part.
+func _test_path_budget_replays_under_any_clock(asserts) -> void:
+	# Cliffs and forest between thirsty herds and two far ponds: most ticks want more
+	# route search than the budget allows, so the cut-off is exercised, not bypassed.
+	var bundle := TestHelpers.build_test_bundle(64)
+	bundle["world"]["world_size"] = {"x": 1024.0, "y": 1024.0}
+	bundle["world"]["terrain"]["obstacles"] = {
+		"dense_forest_cluster_count": 6,
+		"dense_forest_radius_min_cells": 2.0,
+		"dense_forest_radius_max_cells": 4.0,
+		"cliff_count": 8,
+		"cliff_thickness_min_cells": 1.1,
+		"cliff_thickness_max_cells": 2.0,
+		"cliff_gap_radius_cells": 1.6,
+		"border_clearance_cells": 1,
+	}
+	bundle["world"]["water_sources"] = [
+		{"x": 96.0, "y": 96.0, "radius": 40.0},
+		{"x": 928.0, "y": 928.0, "radius": 40.0},
+	]
+	bundle["world"]["spawns"]["herbivore_count"] = 16
+	bundle["world"]["spawns"]["herbivore_group_count"] = 4
+	bundle["world"]["spawns"]["predator_count"] = 2
+	var fingerprints: Array = []
+	var ticks_at_budget: Array = []
+	var slow_ticks: Array = []
+	for run in range(2):
+		var manager = TestHelpers.create_manager_with(bundle.duplicate(true), 64)
+		for agent in manager.world_state.get_living_agents():
+			agent.thirst = 80.0 + float(agent.id % 10)
+			agent.hunger = 60.0
+		var navigation: Dictionary = manager.world_state.navigation_config
+		navigation["path_expansions_per_slice"] = 32
+		navigation["path_expansion_budget_per_tick"] = 24
+		if run == 1:
+			for key in navigation.keys():
+				if str(key).contains("_ms"):
+					navigation[key] = 0.0
+		var at_budget := 0
+		var slow := 0
+		for _tick in range(60):
+			manager.step_once()
+			var counters: Dictionary = manager.world_state.get_performance_counters()
+			if int(counters.get("path_expansions", 0)) >= 24:
+				at_budget += 1
+			slow += int(counters.get("path_time_warning_ticks", 0))
+		fingerprints.append(TestHelpers.world_fingerprint(manager))
+		ticks_at_budget.append(at_budget)
+		slow_ticks.append(slow)
+		TestHelpers.destroy_manager(manager)
+	asserts.is_true(int(ticks_at_budget[0]) > 0, "the expansion budget must cut some tick's pathfinding short, or the replay proves nothing")
+	asserts.is_true(int(slow_ticks[1]) > 0, "a zero threshold should report pathfinding ticks as slow")
+	asserts.equal(ticks_at_budget[1], ticks_at_budget[0], "the budget should cut off on the same ticks in both runs")
+	asserts.equal(fingerprints[0], fingerprints[1], "same seed must replay identically however long pathfinding takes")
 
 
 func _test_dormant_path_leaves_rng_untouched(asserts) -> void:

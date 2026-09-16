@@ -39,6 +39,9 @@ func _run() -> void:
 	manager.reset_performance_windows()
 	var timings = PerformanceWindowScript.new()
 	timings.capacity = measured
+	var expansions = PerformanceWindowScript.new()
+	expansions.capacity = measured
+	var path_time_warning_ticks := 0
 	var phase_timings: Dictionary = {}
 	var worst_ticks: Array = []
 	var first_global_queue := -1
@@ -54,6 +57,8 @@ func _run() -> void:
 		var tick_ms := float(Time.get_ticks_usec() - tick_started) / 1000.0
 		timings.add(tick_ms)
 		var phases: Dictionary = manager.world_state.get_performance_counters()
+		expansions.add(float(phases.get("path_expansions", 0)))
+		path_time_warning_ticks += int(phases.get("path_time_warning_ticks", 0))
 		last_global_queue = int(phases.get("pending_global_paths", 0))
 		last_local_queue = int(phases.get("pending_local_paths", 0))
 		if first_global_queue < 0:
@@ -90,6 +95,9 @@ func _run() -> void:
 			"global_last": last_global_queue, "global_max": max_global_queue,
 			"local_first": first_local_queue, "local_last": last_local_queue,
 			"local_max": max_local_queue},
+		"path_expansions": expansions.summary(),
+		"path_expansion_budget_per_tick": int(manager.world_state.navigation_config.get("path_expansion_budget_per_tick", 0)),
+		"path_time_warning_ticks": path_time_warning_ticks,
 		"actual_speed_capacity": simulated_seconds / maxf(0.000001, elapsed_seconds),
 		"elapsed_seconds": elapsed_seconds,
 		"last_tick_phases": manager.world_state.get_performance_counters()}

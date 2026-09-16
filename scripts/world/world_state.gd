@@ -84,8 +84,9 @@ var _prey_pressure_refresh_tick: int = -9999
 var _prey_pressure_refresh_ticks: int = 9
 var _path_budget_remaining: int = 0
 var _new_path_budget_remaining: int = 0
-var _path_time_budget_ms: float = 4.0
-var _path_time_spent_ms: float = 0.0
+var _path_expansion_budget: int = 512
+var _path_expansions_spent: int = 0
+var _path_time_warning_ms: float = 4.0
 var _path_expansions_per_slice: int = 384
 var _pending_global_paths: Array = []
 var _pending_global_path_keys: Dictionary = {}
@@ -2097,6 +2098,8 @@ func _reset_performance_counters() -> void:
 		"grass_search_calls": 0,
 		"grass_cells_scanned": 0,
 		"pathfind_ms": 0.0,
+		"path_expansions": 0,
+		"path_time_warning_ticks": 0,
 		"snapshot_agent_query_ms": 0.0,
 		"snapshot_water_ms": 0.0,
 		"snapshot_group_ms": 0.0,
@@ -2113,9 +2116,10 @@ func _prepare_navigation_budget() -> void:
 	_local_path_budget = maxi(1, int(navigation_config.get("local_path_budget_per_tick", 6)))
 	_path_budget_remaining = maxi(1, int(navigation_config.get("path_budget_per_tick", 64)))
 	_new_path_budget_remaining = maxi(1, int(navigation_config.get("max_new_paths_per_tick", 18)))
-	_path_time_budget_ms = maxf(0.25, float(navigation_config.get("path_time_budget_ms_per_tick", 4.0)))
+	_path_expansion_budget = maxi(1, int(navigation_config.get("path_expansion_budget_per_tick", 512)))
+	_path_time_warning_ms = float(navigation_config.get("path_time_warning_ms_per_tick", 4.0))
 	_path_expansions_per_slice = maxi(32, int(navigation_config.get("path_expansions_per_slice", 384)))
-	_path_time_spent_ms = 0.0
+	_path_expansions_spent = 0
 	_path_served_requesters.clear()
 	_local_path_served_agents.clear()
 	_service_pending_global_paths()
@@ -2138,7 +2142,7 @@ func _find_path_with_budget(start_index: int, goal_index: int, requester_id: int
 	var has_cached := terrain_system.has_cached_path_between_indices(start_index, goal_index)
 	if not has_cached:
 		if _path_budget_remaining <= 0 or _new_path_budget_remaining <= 0 \
-				or _path_time_spent_ms >= _path_time_budget_ms \
+				or _path_expansions_spent >= _path_expansion_budget \
 				or (requester_id >= 0 and (_path_served_requesters.has(requester_id) \
 					or _has_pending_global_requester(requester_id))):
 			_enqueue_global_path(start_index, goal_index, requester_id)
@@ -2147,16 +2151,31 @@ func _find_path_with_budget(start_index: int, goal_index: int, requester_id: int
 		_new_path_budget_remaining -= 1
 		if requester_id >= 0:
 			_path_served_requesters[requester_id] = true
-	var started_at_usec: int = Time.get_ticks_usec()
-	var step: Dictionary = terrain_system.step_path_between_indices(
-		start_index, goal_index, _path_expansions_per_slice)
-	var elapsed_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
-	_path_time_spent_ms += elapsed_ms
-	performance_counters["pathfind_ms"] += elapsed_ms
+	var step := _step_path_slice(start_index, goal_index)
 	if not bool(step.get("complete", false)):
 		_enqueue_global_path(start_index, goal_index, requester_id)
 		return _pending_path_result(start_index, goal_index)
 	return step.get("result", _pending_path_result(start_index, goal_index))
+
+
+## One slice of a saved A* search, cut down to what is left of this tick's
+## expansion budget. The budget counts nodes rather than milliseconds: a wall-clock
+## cut-off lands on a different request when the machine is busy, so two same-seed
+## runs would hand paths to different animals and drift apart. Wall time is still
+## measured, and a tick past `path_time_warning_ms_per_tick` is counted in
+## `path_time_warning_ticks`, but nothing reads either to decide what to search.
+func _step_path_slice(start_index: int, goal_index: int) -> Dictionary:
+	var slice_budget := mini(_path_expansions_per_slice, maxi(1, _path_expansion_budget - _path_expansions_spent))
+	var started_at_usec: int = Time.get_ticks_usec()
+	var step: Dictionary = terrain_system.step_path_between_indices(start_index, goal_index, slice_budget)
+	var elapsed_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
+	var expanded := int(step.get("expanded", 0))
+	_path_expansions_spent += expanded
+	performance_counters["path_expansions"] += expanded
+	performance_counters["pathfind_ms"] += elapsed_ms
+	if float(performance_counters["pathfind_ms"]) > _path_time_warning_ms:
+		performance_counters["path_time_warning_ticks"] = 1
+	return step
 
 
 func _pending_path_result(start_index: int, goal_index: int) -> Dictionary:
@@ -2187,7 +2206,7 @@ func _enqueue_global_path(start_index: int, goal_index: int, requester_id: int) 
 func _service_pending_global_paths() -> void:
 	var deferred: Array = []
 	while not _pending_global_paths.is_empty() and _path_budget_remaining > 0 \
-			and _new_path_budget_remaining > 0 and _path_time_spent_ms < _path_time_budget_ms:
+			and _new_path_budget_remaining > 0 and _path_expansions_spent < _path_expansion_budget:
 		var request: Dictionary = _pending_global_paths.pop_front()
 		var key: Vector2i = request.key
 		_pending_global_path_keys.erase(key)
@@ -2203,12 +2222,7 @@ func _service_pending_global_paths() -> void:
 		_new_path_budget_remaining -= 1
 		if requester_id >= 0:
 			_path_served_requesters[requester_id] = true
-		var started_at_usec := Time.get_ticks_usec()
-		var step: Dictionary = terrain_system.step_path_between_indices(
-			start_index, goal_index, _path_expansions_per_slice)
-		var elapsed_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
-		_path_time_spent_ms += elapsed_ms
-		performance_counters["pathfind_ms"] += elapsed_ms
+		var step := _step_path_slice(start_index, goal_index)
 		if not bool(step.get("complete", false)):
 			deferred.append(request)
 	for request in deferred:
