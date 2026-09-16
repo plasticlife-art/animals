@@ -91,7 +91,7 @@ func _test_dormant_age_cohorts_remain_distinct(a) -> void:
 		_ready_record(juvenile, 2.0, AgentBase.SEX_FEMALE)]
 	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
 	var sector_state := {"dormant_records": records, "dormant_aggregates": [aggregate]}
-	world._sync_dormant_records_with_aggregates(Vector2i.ZERO, sector_state, 0.75)
+	world._reconcile_dormant_records(Vector2i.ZERO, sector_state, 0.75)
 	var ages: Array = []
 	for record in sector_state["dormant_records"]:
 		ages.append(float(record.get("age", -1.0)))
@@ -114,7 +114,7 @@ func _test_dormant_old_age_only_removes_old_cohort(a) -> void:
 	a.equal(int(aggregate.get("count", 0)), 1,
 		"a max-age dormant adult dies without taking the juvenile cohort with it")
 	var sector_state := {"dormant_records": records, "dormant_aggregates": [aggregate]}
-	world._sync_dormant_records_with_aggregates(Vector2i.ZERO, sector_state, 0.75)
+	world._reconcile_dormant_records(Vector2i.ZERO, sector_state, 0.75)
 	a.near(float(sector_state["dormant_records"][0].get("age", -1.0)), 2.75, 0.001,
 		"coarse old-age removal retains the younger record")
 	Helpers.destroy_manager(manager)

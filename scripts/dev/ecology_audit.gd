@@ -85,6 +85,7 @@ func _initialize() -> void:
 		"counters": counters,
 		"outcome": _outcome(initial_population, final_population, counters, species_ids),
 		"history": history,
+		"formation": _formation_over_run(history),
 		"lod_counts": manager.world_state.get_lod_counts(),
 		"performance_counters": manager.world_state.get_performance_counters(),
 	}
@@ -126,7 +127,83 @@ func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictio
 			"starvation_risk_%s_count" % species_id, 0))
 	row["grass_biomass"] = manager.world_state.resource_system.get_total_biomass()
 	row["carcass_meat"] = manager.world_state.get_total_carcass_meat_remaining()
+	row["formation"] = _formation(manager)
 	return row
+
+
+## The shape of herbivore herds, sleeping and awake, measured apart. `nn` is the mean
+## distance from each animal to its nearest herd-mate and `radius` the mean distance to
+## its group's centre, each the median over groups of three or more. A sleeping herd
+## packed onto a ring shows as a small `nn`; one smeared out by drift as a large
+## `radius`. The live figures are the reference the sleeping ones should resemble.
+func _formation(manager) -> Dictionary:
+	var world = manager.world_state
+	var dormant_groups: Array = []
+	for sector_state in world._sector_states.values():
+		if not bool(sector_state.get("dormant", false)):
+			continue
+		var buckets: Dictionary = {}
+		for record in sector_state.get("dormant_records", []):
+			var group_id := int(record.get("group_id", -1))
+			if str(record.get("species_type", "")) != "herbivore" or group_id < 0:
+				continue
+			if not buckets.has(group_id):
+				buckets[group_id] = []
+			buckets[group_id].append(Vector2(record.get("position", Vector2.ZERO)))
+		dormant_groups.append_array(buckets.values())
+	var live_buckets: Dictionary = {}
+	for agent in world.get_living_agents():
+		if agent.species_type != "herbivore" or agent.group_id < 0:
+			continue
+		if not live_buckets.has(agent.group_id):
+			live_buckets[agent.group_id] = []
+		live_buckets[agent.group_id].append(agent.position)
+	return {"dormant": _shape_of(dormant_groups), "live": _shape_of(live_buckets.values())}
+
+
+func _shape_of(groups: Array) -> Dictionary:
+	var radii: Array = []
+	var nearest: Array = []
+	for positions in groups:
+		if positions.size() < 3:
+			continue
+		var center := Vector2.ZERO
+		for position in positions:
+			center += position
+		center /= float(positions.size())
+		var radius_sum := 0.0
+		var nearest_sum := 0.0
+		for i in range(positions.size()):
+			radius_sum += positions[i].distance_to(center)
+			var closest := INF
+			for j in range(positions.size()):
+				if i != j:
+					closest = minf(closest, positions[i].distance_to(positions[j]))
+			nearest_sum += closest
+		radii.append(radius_sum / float(positions.size()))
+		nearest.append(nearest_sum / float(positions.size()))
+	return {"groups": radii.size(), "radius": _median(radii), "nn": _median(nearest)}
+
+
+func _formation_over_run(history: Array) -> Dictionary:
+	var summary := {}
+	for state in ["dormant", "live"]:
+		for measure in ["radius", "nn"]:
+			var values: Array = []
+			for row in history:
+				var shape: Dictionary = row.get("formation", {}).get(state, {})
+				if int(shape.get("groups", 0)) > 0:
+					values.append(float(shape.get(measure, 0.0)))
+			summary["%s_%s_median" % [state, measure]] = _median(values)
+	return summary
+
+
+func _median(values: Array) -> float:
+	if values.is_empty():
+		return 0.0
+	var sorted := values.duplicate()
+	sorted.sort()
+	return float(sorted[sorted.size() / 2])
 
 
 func _outcome(initial_population: Dictionary, final_population: Dictionary,

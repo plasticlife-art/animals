@@ -14,6 +14,7 @@ func run(a) -> void:
 	_test_depth_order_cache_policy(a)
 	_test_dormant_overview_positions(a)
 	_test_worker_delta_protocol(a)
+	_test_worker_exports_dormant_positions(a)
 	_test_worker_pause_and_single_step(a)
 	_test_worker_keeps_recoverable_backlog(a)
 	_test_worker_load_and_shutdown_boundaries(a)
@@ -94,14 +95,52 @@ func _test_depth_order_cache_policy(a) -> void:
 		"overview membership changes rebuild order immediately")
 
 
+## The overview draws a sleeping animal where its record stands. It used to draw a
+## sunflower of stand-ins around the group's centre instead.
 func _test_dormant_overview_positions(a) -> void:
-	var sector := Rect2(96, 192, 96, 96)
-	var first := SceneSpriteBatchScript.dormant_proxy_position(sector.get_center(), sector, 123)
-	var second := SceneSpriteBatchScript.dormant_proxy_position(sector.get_center(), sector, 123)
-	a.equal(first, second, "a dormant animal keeps a stable overview position")
-	a.is_true(sector.has_point(first), "a dormant overview proxy stays inside its sector")
-	a.is_true(first != SceneSpriteBatchScript.dormant_proxy_position(sector.get_center(), sector, 124),
+	var manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(88), 88)
+	var world = manager.world_state
+	Helpers.spawn_herd(world, Vector2(768.0, 768.0), 9, 0)
+	var sector_key: Vector2i = world._get_sector_key(Vector2(768.0, 768.0))
+	world._sleep_sector(sector_key)
+	world._apply_dormant_sector_step(sector_key, world._sector_states[sector_key], 0.75)
+	var recorded: Dictionary = {}
+	for record in world._sector_states[sector_key]["dormant_records"]:
+		recorded[int(record["id"])] = Vector2(record["position"])
+	var aggregate: Dictionary = world._sector_states[sector_key]["dormant_aggregates"][0]
+	var drawn: Array = []
+	var misplaced := 0
+	for index in range(aggregate["record_ids"].size()):
+		var point := SceneSpriteBatchScript.dormant_member_position(aggregate, index)
+		drawn.append(point)
+		if point != recorded.get(int(aggregate["record_ids"][index]), Vector2.INF):
+			misplaced += 1
+	a.equal(drawn.size(), 9, "every sleeping animal has an overview position")
+	a.equal(misplaced, 0, "the overview draws each sleeping animal where its record stands")
+	a.greater(float(Helpers.herd_spread(drawn)["min_pair_distance"]), 0.5,
 		"different dormant animals do not collapse onto the same overview point")
+	a.equal(SceneSpriteBatchScript.dormant_member_position({"center": Vector2(5.0, 6.0)}, 0), Vector2(5.0, 6.0),
+		"an aggregate saved without member positions falls back to its centre")
+	Helpers.destroy_manager(manager)
+
+
+func _test_worker_exports_dormant_positions(a) -> void:
+	var manager = Helpers.create_manager(89)
+	Helpers.spawn_herbivore(manager.world_state, Vector2(200.0, 200.0), 3)
+	Helpers.spawn_herbivore(manager.world_state, Vector2(236.0, 200.0), 3)
+	manager.enable_interactive_worker()
+	var worker = manager._worker
+	var sector_key: Vector2i = worker.world._get_sector_key(Vector2(200.0, 200.0))
+	worker.world._sleep_sector(sector_key)
+	var recorded: Array = []
+	for record in worker.world._sector_states[sector_key]["dormant_records"]:
+		recorded.append(Vector2(record["position"]))
+	var aggregates: Array = worker._export_presentation_sectors().get(sector_key, {}).get("dormant_aggregates", [])
+	a.equal(aggregates.size(), 1, "the sleeping pair is presented as one aggregate")
+	if not aggregates.is_empty():
+		a.equal(Array(aggregates[0].get("record_positions", PackedVector2Array())), recorded,
+			"the worker ships each sleeping animal's real position to the renderer")
+	Helpers.destroy_manager(manager)
 
 
 func _test_worker_delta_protocol(a) -> void:

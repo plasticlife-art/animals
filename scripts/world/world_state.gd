@@ -105,6 +105,9 @@ var _far_decision_interval_ticks: int = 8
 var _lod_agent_cache: Dictionary = {}
 var _lod_context_cache_key: PackedInt32Array = PackedInt32Array()
 var _very_far_sector_step_seconds: float = 0.75
+## Every sleeping group's census and goal across sectors, rebuilt at the start of each
+## `_step_dormant_sectors()` and cleared at its end. See `_index_dormant_groups()`.
+var _dormant_group_index: Dictionary = {}
 var _dormant_speed_scale: float = 0.45
 var _dormant_goal_refresh_seconds: float = 2.0
 var _dormant_stale_wake_seconds: float = 6.0
@@ -1911,17 +1914,23 @@ func _stagger_initial_agent(agent) -> void:
 	agent.thirst = rng.randf_range(0.0, thirst_ceiling * 0.75)
 
 
-## Spacing for animals rehydrated out of a sleeping sector. The first ring used
-## to sit 8 units out, well inside a sprite, so a waking herd appeared as a
-## single blob and then had to be untangled by the overlap pass. Starting at
-## roughly a body width costs nothing and puts them down already apart.
 ## Share of one tick's stride that the overlap pass may move an animal. Small
 ## on purpose: it corrects crowding over several ticks instead of teleporting.
 const _OVERLAP_RELAXATION := 0.6
 
 const PREY_PRESSURE_CACHE_LIMIT := 32
-const _REIFY_RING_START := 24.0
-const _REIFY_RING_STEP := 14.0
+
+## A sleeping herd keeps drifting inside itself, so its formation goes on changing
+## while the camera is elsewhere. Both shares are of the animal's own dormant
+## walking speed; the turn rate bounds how far a wander heading swings per second.
+const _DORMANT_WANDER_SHARE := 0.15
+const _DORMANT_WANDER_TURN_PER_SECOND := 1.6
+const _DORMANT_COHESION_SHARE := 0.5
+## Spacing is checked pair by pair. A group larger than this skips that pass for
+## the step rather than paying for it quadratically.
+const _DORMANT_SPACING_MEMBER_LIMIT := 64
+## Radius of a comfortably packed herd, in body radii per square root of its size.
+const _DORMANT_PACKING_RADIUS := 1.1
 
 
 func _normalize_lod_context(lod_context: Dictionary) -> Dictionary:
@@ -2688,6 +2697,7 @@ func _sleep_far_sectors(lod_context: Dictionary) -> void:
 
 
 func _step_dormant_sectors(delta: float, lod_context: Dictionary) -> void:
+	_index_dormant_groups()
 	var sectors_to_wake: Array = []
 	var sector_keys: Array = _sector_states.keys().duplicate()
 	for sector_key in sector_keys:
@@ -2717,6 +2727,55 @@ func _step_dormant_sectors(delta: float, lod_context: Dictionary) -> void:
 	for sector_key in unique_wakes:
 		if _sector_states.has(sector_key):
 			_wake_sector(sector_key)
+	_dormant_group_index.clear()
+
+
+## A herd whose members sit in two sectors is two aggregates, each stepping on its own.
+## With real positions that happens whenever a herd crosses a sector boundary, and two
+## halves picking their own goals would walk apart. This indexes each group once per
+## tick: its total count and weighted centre, and the goal of its largest part, which
+## the other parts follow. Groups without an id (-1) are independent animals and are
+## not indexed.
+func _index_dormant_groups() -> void:
+	_dormant_group_index.clear()
+	for sector_key in _sector_states.keys():
+		var sector_state: Dictionary = _sector_states[sector_key]
+		if not bool(sector_state.get("dormant", false)):
+			continue
+		for aggregate in sector_state.get("dormant_aggregates", []):
+			var group_id := int(aggregate.get("group_id", -1))
+			var count := int(aggregate.get("count", 0))
+			if group_id < 0 or count <= 0:
+				continue
+			var group_key := _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), group_id)
+			var entry: Dictionary = _dormant_group_index.get(group_key, {
+				"parts": 0, "count": 0, "center_sum": Vector2.ZERO, "owner_sector": sector_key, "owner_count": -1})
+			entry["parts"] = int(entry["parts"]) + 1
+			entry["count"] = int(entry["count"]) + count
+			entry["center_sum"] = Vector2(entry["center_sum"]) + Vector2(aggregate.get("center", Vector2.ZERO)) * float(count)
+			var owner_sector: Vector2i = entry["owner_sector"]
+			if count > int(entry["owner_count"]) or (count == int(entry["owner_count"]) \
+					and (sector_key.x < owner_sector.x or (sector_key.x == owner_sector.x and sector_key.y < owner_sector.y))):
+				entry["owner_sector"] = sector_key
+				entry["owner_count"] = count
+				var goal := {}
+				for goal_key in ["goal_kind", "goal_position", "goal_sector", "carcass_id", "last_goal_refresh_time"]:
+					if aggregate.has(goal_key):
+						goal[goal_key] = aggregate[goal_key]
+				entry["goal"] = goal
+			_dormant_group_index[group_key] = entry
+
+
+## The goal a part of a split group should follow, or empty when this aggregate is the
+## group's largest part (or the group is not split) and picks its own.
+func _dormant_shared_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictionary:
+	var group_id := int(aggregate.get("group_id", -1))
+	if group_id < 0:
+		return {}
+	var entry: Dictionary = _dormant_group_index.get(_get_dormant_aggregate_key(str(aggregate.get("species_type", "")), group_id), {})
+	if entry.is_empty() or int(entry.get("parts", 0)) < 2 or entry.get("owner_sector", sector_key) == sector_key:
+		return {}
+	return entry.get("goal", {})
 
 
 func _can_sleep_sector(sector_key: Vector2i, lod_context: Dictionary) -> bool:
@@ -2773,7 +2832,11 @@ func _wake_sector(sector_key: Vector2i) -> void:
 	var sector_state: Dictionary = _sector_states.get(sector_key, {})
 	if sector_state.is_empty() or not bool(sector_state.get("dormant", false)):
 		return
-	var records: Array = _materialize_dormant_records(sector_state)
+	# Records wake exactly as they slept or as the coarse step last advanced them.
+	# Waking used to re-place every animal on a ring around its group's centre and
+	# reset each one's needs and age to the group mean, which is what made a herd
+	# collapse on zoom-out and spread back apart over the next seconds.
+	var records: Array = sector_state.get("dormant_records", [])
 	# Before the restores: `_register_living_agent()` adds each one back to
 	# `species_counts`, which still holds the aggregate census standing in for them.
 	sector_state["species_counts"] = {}
@@ -2864,6 +2927,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 			"old_age_count": 0,
 			"max_age_count": 0,
 			"record_ids": [],
+			"record_positions": PackedVector2Array(),
 		})
 		aggregate["count"] = int(aggregate.get("count", 0)) + 1
 		aggregate["center_sum"] = Vector2(aggregate.get("center_sum", Vector2.ZERO)) + Vector2(record.get("position", bounds.get_center()))
@@ -2872,30 +2936,13 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		aggregate["avg_thirst_sum"] = float(aggregate.get("avg_thirst_sum", 0.0)) + float(record.get("thirst", 0.0))
 		aggregate["avg_energy_sum"] = float(aggregate.get("avg_energy_sum", 0.0)) + float(record.get("energy", 0.0))
 		aggregate["avg_age_sum"] = float(aggregate.get("avg_age_sum", 0.0)) + float(record.get("age", 0.0))
-		var species_key := str(record.get("species_type", ""))
-		var reproduction_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("reproduction", {})
-		var is_mature := float(record.get("age", 0.0)) >= float(reproduction_config.get("maturity_age", 0.0))
-		var is_ready := is_mature \
-			and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
-			and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
-			and float(record.get("hunger", 0.0)) <= float(reproduction_config.get("max_hunger", 100.0)) \
-			and float(record.get("thirst", 0.0)) <= float(reproduction_config.get("max_thirst", 100.0))
-		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
-		if is_mature:
-			var mature_key := "mature_males" if sex == AgentBaseScript.SEX_MALE else "mature_females"
-			aggregate[mature_key] = int(aggregate.get(mature_key, 0)) + 1
-		if is_ready:
-			var ready_key := "ready_males" if sex == AgentBaseScript.SEX_MALE else "ready_females"
-			aggregate[ready_key] = int(aggregate.get(ready_key, 0)) + 1
-		var aging_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("aging", {})
-		var record_age := float(record.get("age", 0.0))
-		if record_age >= float(aging_config.get("old_age_start", aging_config.get("max_age", INF))):
-			aggregate["old_age_count"] = int(aggregate.get("old_age_count", 0)) + 1
-		if record_age >= float(aging_config.get("max_age", INF)):
-			aggregate["max_age_count"] = int(aggregate.get("max_age_count", 0)) + 1
+		_tally_dormant_member(aggregate, record)
 		var record_ids: Array = aggregate.get("record_ids", [])
 		record_ids.append(int(record.get("id", -1)))
 		aggregate["record_ids"] = record_ids
+		var record_positions: PackedVector2Array = aggregate["record_positions"]
+		record_positions.append(Vector2(record.get("position", bounds.get_center())))
+		aggregate["record_positions"] = record_positions
 		grouped[aggregate_key] = aggregate
 	var aggregates: Array = []
 	for aggregate_key in grouped.keys():
@@ -2907,6 +2954,13 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		aggregate.erase("center_sum")
 		aggregate.erase("velocity_sum")
 		aggregate["center"] = center
+		# How spread out the herd was when it fell asleep. The dormant drift pulls
+		# strays back past half again this, so the formation keeps its own scale
+		# instead of freezing, collapsing, or diffusing across the sector.
+		var radius_sum := 0.0
+		for member_position in aggregate["record_positions"]:
+			radius_sum += member_position.distance_to(center)
+		aggregate["spread_radius"] = radius_sum / float(count)
 		aggregate["velocity"] = velocity if previous.is_empty() else Vector2(previous.get("velocity", velocity))
 		aggregate["avg_hunger"] = float(aggregate.get("avg_hunger_sum", 0.0)) / float(count)
 		aggregate["avg_thirst"] = float(aggregate.get("avg_thirst_sum", 0.0)) / float(count)
@@ -2933,6 +2987,32 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 				aggregate[carried_key] = previous[carried_key]
 		aggregates.append(aggregate)
 	return aggregates
+
+
+## Adds one record to the maturity, readiness and age tallies the coarse step reads.
+## Shared by the aggregate build and the per-step reconcile so the two cannot drift.
+func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
+	var species_config: Dictionary = config_bundle.get("species", {}).get(str(record.get("species_type", "")), {})
+	var reproduction_config: Dictionary = species_config.get("reproduction", {})
+	var aging_config: Dictionary = species_config.get("aging", {})
+	var record_age := float(record.get("age", 0.0))
+	var is_mature := record_age >= float(reproduction_config.get("maturity_age", 0.0))
+	var is_ready := is_mature \
+		and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
+		and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
+		and float(record.get("hunger", 0.0)) <= float(reproduction_config.get("max_hunger", 100.0)) \
+		and float(record.get("thirst", 0.0)) <= float(reproduction_config.get("max_thirst", 100.0))
+	var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
+	if is_mature:
+		var mature_key := "mature_males" if sex == AgentBaseScript.SEX_MALE else "mature_females"
+		aggregate[mature_key] = int(aggregate.get(mature_key, 0)) + 1
+	if is_ready:
+		var ready_key := "ready_males" if sex == AgentBaseScript.SEX_MALE else "ready_females"
+		aggregate[ready_key] = int(aggregate.get(ready_key, 0)) + 1
+	if record_age >= float(aging_config.get("old_age_start", aging_config.get("max_age", INF))):
+		aggregate["old_age_count"] = int(aggregate.get("old_age_count", 0)) + 1
+	if record_age >= float(aging_config.get("max_age", INF)):
+		aggregate["max_age_count"] = int(aggregate.get("max_age_count", 0)) + 1
 
 
 func _get_dormant_sector_stale_score(sector_state: Dictionary) -> float:
@@ -3102,9 +3182,17 @@ func _get_dormant_group_center(species_type: String, group_id: int, fallback_sec
 		return null
 	var total: Vector2 = Vector2.ZERO
 	var count: int = 0
-	for sector_key in _sector_states.keys():
-		var sector_state: Dictionary = _sector_states[sector_key]
-		if bool(sector_state.get("dormant", false)):
+	# Inside a dormant step the group index already holds this sum, so goal refreshes
+	# stop scanning every sector once per aggregate.
+	var indexed: Dictionary = _dormant_group_index.get(_get_dormant_aggregate_key(species_type, group_id), {})
+	if not indexed.is_empty():
+		total = indexed["center_sum"]
+		count = int(indexed["count"])
+	else:
+		for sector_key in _sector_states.keys():
+			var sector_state: Dictionary = _sector_states[sector_key]
+			if not bool(sector_state.get("dormant", false)):
+				continue
 			for aggregate in sector_state.get("dormant_aggregates", []):
 				if str(aggregate.get("species_type", "")) != species_type or int(aggregate.get("group_id", -1)) != group_id:
 					continue
@@ -3121,8 +3209,11 @@ func _get_dormant_group_center(species_type: String, group_id: int, fallback_sec
 
 
 func _resolve_dormant_wander_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictionary:
-	var home_position: Vector2 = aggregate.get("home_position", _sector_key_to_rect(sector_key).get_center())
-	var sector_center: Vector2 = _sector_key_to_rect(sector_key).get_center()
+	# The last row and column of sectors run past the map edge, so the centre of the
+	# part inside the map is used. The raw centre was clamped onto the edge itself and
+	# pinned every herd wandering there against it.
+	var sector_center: Vector2 = _sector_key_to_rect(sector_key).intersection(bounds).get_center()
+	var home_position: Vector2 = aggregate.get("home_position", sector_center)
 	var blend_target: Vector2 = sector_center.lerp(home_position, 0.65)
 	var jitter_direction: Vector2 = Vector2.RIGHT.rotated(float(int(aggregate.get("group_id", -1)) * 13 + int(aggregate.get("count", 0))))
 	var goal_position: Vector2 = get_nearest_walkable_position(clamp_position(blend_target + jitter_direction * minf(_sector_size * 0.2, 48.0)))
@@ -3335,6 +3426,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var local_prey: int = 0
 	var hunting_predators: int = 0
 	var hunter_species: String = ""
+	var hunter_center := Vector2.ZERO
 	var hunted_species: Dictionary = {}
 	for aggregate in aggregates:
 		if int(aggregate.get("count", 0)) <= 0:
@@ -3347,6 +3439,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		hunting_predators += int(aggregate.get("count", 0))
 		if hunter_species == "":
 			hunter_species = species_key
+			hunter_center = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
 		for prey_id in species_registry.prey_set(species_key).keys():
 			hunted_species[prey_id] = true
 	if hunting_predators > 0:
@@ -3376,21 +3469,25 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	sector_state["dormant_kill_debt"] = debt
 
 	if kills > 0:
-		var death_position: Vector2 = prey_aggregates[0].get("center", _sector_key_to_rect(sector_key).get_center())
 		var remaining: int = kills
 		# Largest herd first: a predator in a sector hunts where the prey actually is.
-		prey_aggregates.sort_custom(func(a, b): return int(a.get("count", 0)) > int(b.get("count", 0)))
+		# The group key breaks ties, since `sort_custom` is not stable.
+		prey_aggregates.sort_custom(func(a, b):
+			var count_a := int(a.get("count", 0))
+			var count_b := int(b.get("count", 0))
+			if count_a != count_b:
+				return count_a > count_b
+			return _get_dormant_aggregate_key(str(a.get("species_type", "")), int(a.get("group_id", -1))) \
+				< _get_dormant_aggregate_key(str(b.get("species_type", "")), int(b.get("group_id", -1))))
 		for aggregate in prey_aggregates:
 			if remaining <= 0:
 				break
 			var taken: int = mini(remaining, int(aggregate.get("count", 0)))
 			aggregate["count"] = int(aggregate.get("count", 0)) - taken
 			remaining -= taken
-			var position: Vector2 = aggregate.get("center", death_position)
-			var prey_species := str(aggregate.get("species_type", ""))
-			for _index in range(taken):
-				_emit_dormant_death(prey_species, position, "predation")
-				emit_population_event("PredationSuccess", hunter_species, position, {"dormant": true})
+			# Which animals died is settled in `_reconcile_dormant_records()`: the ones
+			# nearest the hunters, reported where they stood.
+			_queue_dormant_deaths(aggregate, "predation", taken, {"near": hunter_center, "hunter": hunter_species})
 		kills -= remaining
 		pool += float(kills) * meat_total
 		performance_counters["dormant_predation_kills"] += kills
@@ -3458,7 +3555,6 @@ func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dic
 		return
 	# The requested totals can exceed the aggregate size, so causes are drained in
 	# order until the applied budget runs out.
-	var death_position: Vector2 = aggregate.get("center", bounds.get_center())
 	var deaths_by_cause: Array = [
 		["starvation", starvation_deaths],
 		["thirst", thirst_deaths],
@@ -3466,11 +3562,23 @@ func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dic
 	]
 	for entry in deaths_by_cause:
 		var cause_deaths: int = mini(applied_deaths, int(entry[1]))
-		for _index in range(cause_deaths):
-			_emit_dormant_death(species_key, death_position, str(entry[0]))
+		_queue_dormant_deaths(aggregate, str(entry[0]), cause_deaths)
 		applied_deaths -= cause_deaths
 		if applied_deaths <= 0:
 			break
+
+
+## Records how many of a group died of `cause` this step. The step decides numbers;
+## `_reconcile_dormant_records()` decides who, the way `births_this_step` works.
+func _queue_dormant_deaths(aggregate: Dictionary, cause: String, count: int, details: Dictionary = {}) -> void:
+	if count <= 0:
+		return
+	var entry := details.duplicate()
+	entry["cause"] = cause
+	entry["count"] = count
+	var queued: Array = aggregate.get("deaths_this_step", [])
+	queued.append(entry)
+	aggregate["deaths_this_step"] = queued
 
 
 ## Births in the coarse path, rate-limited by `reproduction.cooldown`.
@@ -3516,11 +3624,25 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, elapsed: float
 	return maxi(0, births)
 
 
-func _move_dormant_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapsed: float) -> void:
+## Moves a sleeping herd without inventing anyone's position.
+##
+## The herd's goal-seeking is swept once, from its centre and with a real body radius,
+## so a whole herd costs one collision query. Every member then takes that same step
+## from where it actually stands, plus a drift of its own: a wander heading carried in
+## `wander_angle`, spacing from neighbours closer than two bodies, and a pull back
+## towards the herd once it strays past the herd's comfortable spread.
+##
+## A member whose step would land where it cannot stand stays put and turns its wander
+## heading around. A herd walking into a cliff piles up against it, rather than every
+## member being snapped onto the same nearest walkable cell.
+##
+## Nothing here reads `rng`. The wander turn is a hash of the animal's id and the tick.
+func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members: Array, elapsed: float) -> void:
 	var current_center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
 	var goal_position: Vector2 = aggregate.get("goal_position", current_center)
 	var species_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {})
 	var movement: Dictionary = species_config.get("movement", {})
+	var body_radius := float(movement.get("body_radius", 0.0))
 	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass"]
 	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed)
 	var desired_velocity: Vector2 = Vector2.ZERO
@@ -3530,9 +3652,21 @@ func _move_dormant_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapse
 	var acceleration: float = float(movement.get("acceleration", 140.0)) * _dormant_speed_scale
 	var next_velocity: Vector2 = Vector2(aggregate.get("velocity", Vector2.ZERO)).move_toward(desired_velocity, acceleration * elapsed)
 	next_velocity = next_velocity.move_toward(Vector2.ZERO, float(movement.get("drag", 3.0)) * elapsed)
-	var next_center: Vector2 = resolve_movement_position(current_center, current_center + next_velocity * elapsed)
-	var moved_distance: float = next_center.distance_to(current_center)
+	var herd_step: Vector2 = next_velocity * elapsed
+	# A herd spread around a pond can have its centre in the water. Sweeping from
+	# there would pin a herd that has open ground on every side.
+	if is_walkable_position(current_center):
+		var resolved := resolve_movement_position(current_center, current_center + herd_step, body_radius)
+		herd_step = get_nearest_walkable_position(resolved) - current_center
+	if herd_step.length_squared() + 0.01 < (next_velocity * elapsed).length_squared():
+		next_velocity = herd_step / maxf(elapsed, 0.00001)
 	aggregate["velocity"] = next_velocity
+	var count := members.size()
+	var next_center := current_center + herd_step
+	if count > 0:
+		next_center = _drift_dormant_members(aggregate, members, current_center, herd_step, goal_position,
+			float(movement.get("max_speed", 70.0)) * _dormant_speed_scale, body_radius, elapsed)
+	var moved_distance: float = next_center.distance_to(current_center)
 	aggregate["center"] = next_center
 	if moved_distance <= 2.0:
 		aggregate["stale_time"] = float(aggregate.get("stale_time", 0.0)) + elapsed
@@ -3540,95 +3674,330 @@ func _move_dormant_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapse
 		aggregate["stale_time"] = maxf(0.0, float(aggregate.get("stale_time", 0.0)) - elapsed * 0.5)
 
 
-func _sync_dormant_records_with_aggregates(sector_key: Vector2i, sector_state: Dictionary, elapsed: float = 0.0) -> void:
-	var records: Array = sector_state.get("dormant_records", [])
-	var aggregates: Array = sector_state.get("dormant_aggregates", [])
-	var grouped_records: Dictionary = {}
+## Applies the herd's step and each member's own drift. Returns the new centroid.
+func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vector2, herd_step: Vector2,
+		goal_position: Vector2, drift_speed: float, body_radius: float, elapsed: float) -> Vector2:
+	var count := members.size()
+	var spacing := body_radius * 2.0
+	var nudges := PackedVector2Array()
+	nudges.resize(count)
+	if count <= _DORMANT_SPACING_MEMBER_LIMIT and spacing > 0.0:
+		for i in range(count):
+			var position_i: Vector2 = members[i].get("position", center)
+			for j in range(i + 1, count):
+				var gap: Vector2 = Vector2(members[j].get("position", center)) - position_i
+				var distance_sq := gap.length_squared()
+				if distance_sq >= spacing * spacing:
+					continue
+				var distance := sqrt(distance_sq)
+				var push_direction := gap / distance if distance > 0.001 \
+					else Vector2.from_angle(_dormant_hash_unit(int(members[i].get("id", 0)), int(members[j].get("id", 0))) * TAU)
+				var push := push_direction * (spacing - distance) * 0.5
+				nudges[i] -= push
+				nudges[j] += push
+	var comfort_radius := maxf(float(aggregate.get("spread_radius", 0.0)) * 1.5,
+		body_radius * _DORMANT_PACKING_RADIUS * sqrt(float(count)))
+	var turn_limit := _DORMANT_WANDER_TURN_PER_SECOND * elapsed
+	var position_sum := Vector2.ZERO
+	for index in range(count):
+		var record: Dictionary = members[index]
+		var position: Vector2 = record.get("position", center)
+		var heading := wrapf(float(record.get("wander_angle", 0.0))
+			+ (_dormant_hash_unit(int(record.get("id", 0)), current_tick) * 2.0 - 1.0) * turn_limit, -PI, PI)
+		var drift := Vector2.from_angle(heading) * drift_speed * _DORMANT_WANDER_SHARE * elapsed
+		var offset := position - center
+		var offset_length := offset.length()
+		if offset_length > comfort_radius:
+			drift -= offset / offset_length * minf(offset_length - comfort_radius, drift_speed * _DORMANT_COHESION_SHARE * elapsed)
+		var move := herd_step + drift + nudges[index]
+		var next_position := _dormant_step_target(position, move)
+		if next_position != position + move:
+			heading = wrapf(heading + PI, -PI, PI)
+		record["wander_angle"] = heading
+		var moved := next_position - position
+		record["position"] = next_position
+		record["velocity"] = moved / maxf(elapsed, 0.00001)
+		if moved.length_squared() > 0.001:
+			record["direction"] = moved.normalized()
+		record["target_position"] = goal_position
+		position_sum += next_position
+	return position_sum / float(count)
+
+
+## Where a sleeping animal ends up after trying to move by `move`. It slides along the
+## map edge and along whichever axis is still open, and stays put only when neither is.
+## The spacing push rides along in every case, so animals pressed against a wall line
+## up along it instead of stacking onto one spot.
+func _dormant_step_target(from: Vector2, move: Vector2) -> Vector2:
+	for candidate in [from + move, from + Vector2(move.x, 0.0), from + Vector2(0.0, move.y)]:
+		var clamped := clamp_position(candidate)
+		if is_walkable_position(clamped):
+			return clamped
+	return from if _is_dormant_foothold(from) else get_nearest_walkable_position(from)
+
+
+func _is_dormant_foothold(position: Vector2) -> bool:
+	return clamp_position(position) == position and is_walkable_position(position)
+
+
+## A uniform value in [0, 1) from two integers, for dormant choices that must not
+## touch `rng`. Every product is cut back to 32 bits through `_mul32()`, so no
+## intermediate overflows a 64-bit int and the result is the same on any platform.
+static func _dormant_hash_unit(a: int, b: int) -> float:
+	var mixed: int = (a & 0xFFFFFFFF) ^ _mul32(b & 0xFFFFFFFF, 0x9E3779B9)
+	mixed ^= mixed >> 16
+	mixed = _mul32(mixed, 0x7FEB352D)
+	mixed ^= mixed >> 15
+	mixed = _mul32(mixed, 0x846CA68B)
+	mixed ^= mixed >> 16
+	return float(mixed & 0xFFFFFF) / 16777216.0
+
+
+## `(value * factor) mod 2^32` for 32-bit inputs, split so no partial product
+## exceeds 49 bits.
+static func _mul32(value: int, factor: int) -> int:
+	return (value * (factor & 0xFFFF) + (((value * (factor >> 16)) & 0xFFFF) << 16)) & 0xFFFFFFFF
+
+
+func _group_dormant_records(records: Array) -> Dictionary:
+	var buckets: Dictionary = {}
 	for record in records:
-		var aggregate_key: String = _get_dormant_record_aggregate_key(record)
-		if not grouped_records.has(aggregate_key):
-			grouped_records[aggregate_key] = []
-		grouped_records[aggregate_key].append(record)
+		var aggregate_key := _get_dormant_record_aggregate_key(record)
+		if not buckets.has(aggregate_key):
+			buckets[aggregate_key] = []
+		buckets[aggregate_key].append(record)
+	return buckets
+
+
+## Applies what a coarse step decided for each group to the animals in it.
+##
+## The step works in group totals: how many died of what, how many were born, how far
+## average hunger moved. This turns those into changes to real records. Deaths take
+## particular animals - nearest the hunters for predation, the hungriest or thirstiest,
+## the oldest - and are reported where that animal stands. Every survivor's hunger,
+## thirst and energy move by the group's change instead of being set to its mean, so a
+## herd's spread of needs survives dormancy. Newborns are built the way a woken animal
+## is and put down beside their mother. The group's averages, tallies, centre and
+## member list are then read back off the records.
+func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, elapsed: float = 0.0, buckets: Dictionary = {}) -> void:
+	var records: Array = sector_state.get("dormant_records", [])
+	if buckets.is_empty():
+		buckets = _group_dormant_records(records)
+	var need_max := float(config_bundle.get("balance", {}).get("need_max", 100.0))
 	var next_records: Array = []
-	for aggregate in aggregates:
-		var aggregate_key: String = _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)))
-		var bucket: Array = grouped_records.get(aggregate_key, [])
-		# When an aggregate shrinks, retain younger records first. The coarse age
-		# ledger is the main reason for that shrink, and keeping the oldest records
-		# used to let the initial cohort survive while deleting its offspring.
-		bucket.sort_custom(func(a, b):
-			var age_a := float(a.get("age", 0.0))
-			var age_b := float(b.get("age", 0.0))
-			if not is_equal_approx(age_a, age_b):
-				return age_a < age_b
-			return int(a.get("id", -1)) < int(b.get("id", -1)))
-		var target_count := int(aggregate.get("count", 0))
-		if target_count <= 0:
-			continue
-		var template: Dictionary = {} if bucket.is_empty() else bucket[0]
-		if template.is_empty():
-			template = _find_dormant_record_template(records, str(aggregate.get("species_type", "")))
-		var cluster_radius := minf(_sector_size * 0.22, 36.0 + float(target_count) * 1.5)
-		var record_ids: Array = []
-		var position_sum := Vector2.ZERO
-		var age_sum := 0.0
-		var births_to_assign := int(aggregate.get("births_this_step", 0))
-		var reproduction_config: Dictionary = config_bundle.get("species", {}).get(
-			str(aggregate.get("species_type", "")), {}).get("reproduction", {})
-		var parent_cooldown := float(reproduction_config.get("cooldown", 46.0))
-		var male_parents_left := births_to_assign
-		var female_parents_left := births_to_assign
-		for index in range(target_count):
-			var record: Dictionary = {}
-			var is_newborn := false
-			if index < bucket.size():
-				record = bucket[index]
-				record["age"] = float(record.get("age", 0.0)) + elapsed
-				record["reproduction_cooldown"] = maxf(0.0,
-					float(record.get("reproduction_cooldown", 0.0)) - elapsed)
-				var parent_ready := float(record.get("age", 0.0)) >= float(reproduction_config.get("maturity_age", 0.0)) \
-					and float(record.get("reproduction_cooldown", 0.0)) <= 0.0
-				if parent_ready and str(record.get("sex", AgentBaseScript.SEX_FEMALE)) == AgentBaseScript.SEX_MALE and male_parents_left > 0:
-					record["reproduction_cooldown"] = parent_cooldown
-					male_parents_left -= 1
-				elif parent_ready and str(record.get("sex", AgentBaseScript.SEX_FEMALE)) == AgentBaseScript.SEX_FEMALE and female_parents_left > 0:
-					record["reproduction_cooldown"] = parent_cooldown
-					female_parents_left -= 1
-			elif not template.is_empty():
-				record = template.duplicate(true)
-				record["id"] = next_agent_id
-				next_agent_id += 1
-				record["sex"] = _deterministic_sex(int(record["id"]))
-				record["age"] = 0.0
-				is_newborn = true
-			else:
-				continue
-			var angle: float = (TAU / maxf(1.0, float(target_count))) * float(index)
-			var offset: Vector2 = Vector2.RIGHT.rotated(angle) * minf(cluster_radius, _REIFY_RING_START + floor(float(index) / 4.0) * _REIFY_RING_STEP)
-			var aggregate_center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
-			var positioned := get_nearest_walkable_position(clamp_position(aggregate_center + offset))
-			record["position"] = positioned
-			record["velocity"] = Vector2(aggregate.get("velocity", Vector2.ZERO))
-			record["direction"] = Vector2.RIGHT if Vector2(record.get("velocity", Vector2.ZERO)).length_squared() <= 0.001 else Vector2(record.get("velocity", Vector2.ZERO)).normalized()
-			record["target_position"] = aggregate.get("goal_position", positioned)
-			record["hunger"] = float(aggregate.get("avg_hunger", record.get("hunger", 0.0)))
-			record["thirst"] = float(aggregate.get("avg_thirst", record.get("thirst", 0.0)))
-			record["energy"] = float(aggregate.get("avg_energy", record.get("energy", 0.0)))
-			# Existing records retain their own cohort age. Averaging every animal's
-			# age made newborns become middle-aged on the next coarse step.
-			record["group_id"] = int(aggregate.get("group_id", record.get("group_id", -1)))
-			next_records.append(record)
-			record_ids.append(int(record.get("id", -1)))
-			position_sum += Vector2(record.get("position", aggregate_center))
-			age_sum += float(record.get("age", 0.0))
-		var actual_count := record_ids.size()
-		aggregate["count"] = actual_count
-		aggregate["record_ids"] = record_ids
-		if actual_count > 0:
-			aggregate["center"] = position_sum / float(actual_count)
-			aggregate["avg_age"] = age_sum / float(actual_count)
+	var next_aggregates: Array = []
+	var claimed: Dictionary = {}
+	for aggregate in sector_state.get("dormant_aggregates", []):
+		var species_key := str(aggregate.get("species_type", ""))
+		var group_id := int(aggregate.get("group_id", -1))
+		var aggregate_key := _get_dormant_aggregate_key(species_key, group_id)
+		claimed[aggregate_key] = true
+		var bucket: Array = buckets.get(aggregate_key, [])
+		var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
+		var reproduction_config: Dictionary = species_config.get("reproduction", {})
+		var max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
+		var shift := _dormant_need_shift(aggregate, bucket)
+		var survivors := _take_dormant_victims(aggregate, bucket)
+		var births := int(aggregate.get("births_this_step", 0))
 		aggregate.erase("births_this_step")
+		var parent_cooldown := float(reproduction_config.get("cooldown", 46.0))
+		var maturity_age := float(reproduction_config.get("maturity_age", 0.0))
+		var male_parents_left := births
+		var mothers: Array = []
+		_share_dormant_need_shift(survivors, "hunger", shift.x, 0.0, need_max)
+		_share_dormant_need_shift(survivors, "thirst", shift.y, 0.0, need_max)
+		_share_dormant_need_shift(survivors, "energy", shift.z, 0.0, max_energy)
+		for record in survivors:
+			record["age"] = float(record.get("age", 0.0)) + elapsed
+			record["reproduction_cooldown"] = maxf(0.0, float(record.get("reproduction_cooldown", 0.0)) - elapsed)
+			var parent_ready := float(record.get("age", 0.0)) >= maturity_age \
+				and float(record.get("reproduction_cooldown", 0.0)) <= 0.0
+			var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
+			if parent_ready and sex == AgentBaseScript.SEX_MALE and male_parents_left > 0:
+				record["reproduction_cooldown"] = parent_cooldown
+				male_parents_left -= 1
+			elif parent_ready and sex == AgentBaseScript.SEX_FEMALE and mothers.size() < births:
+				record["reproduction_cooldown"] = parent_cooldown
+				mothers.append(record)
+		var members: Array = survivors.duplicate()
+		var body_radius := float(species_config.get("movement", {}).get("body_radius", 0.0))
+		for birth_index in range(births):
+			var mother: Dictionary = {}
+			if birth_index < mothers.size():
+				mother = mothers[birth_index]
+			elif not survivors.is_empty():
+				mother = survivors[birth_index % survivors.size()]
+			var anchor: Vector2 = mother.get("position", aggregate.get("center", _sector_key_to_rect(sector_key).get_center()))
+			var newborn := _make_dormant_newborn(species_key, group_id, anchor, body_radius)
+			if newborn.is_empty():
+				continue
+			members.append(newborn)
+			emit_population_event("AgentBorn", species_key, Vector2(newborn["position"]), {
+				"reason": "dormant",
+				"group_id": group_id,
+			})
+		_read_dormant_group_back(aggregate, members)
+		if members.is_empty():
+			continue
+		next_records.append_array(members)
+		next_aggregates.append(aggregate)
+	# Records of a group the step no longer lists would otherwise vanish uncounted.
+	var orphaned := false
+	for aggregate_key in buckets.keys():
+		if not claimed.has(aggregate_key):
+			next_records.append_array(buckets[aggregate_key])
+			orphaned = true
 	sector_state["dormant_records"] = next_records
+	if orphaned:
+		next_aggregates = _build_dormant_aggregates(next_records, sector_key,
+			_build_dormant_aggregate_previous_map(next_aggregates))
+	sector_state["dormant_aggregates"] = next_aggregates
+
+
+## How far the step moved a group's average hunger, thirst and energy, as x, y and z.
+## The averages were read off these same records when the step began, so the
+## difference is exactly what this step's metabolism, feeding and births did.
+func _dormant_need_shift(aggregate: Dictionary, bucket: Array) -> Vector3:
+	if bucket.is_empty():
+		return Vector3.ZERO
+	var sums := Vector3.ZERO
+	for record in bucket:
+		sums += Vector3(float(record.get("hunger", 0.0)), float(record.get("thirst", 0.0)), float(record.get("energy", 0.0)))
+	var means := sums / float(bucket.size())
+	return Vector3(
+		float(aggregate.get("avg_hunger", means.x)) - means.x,
+		float(aggregate.get("avg_thirst", means.y)) - means.y,
+		float(aggregate.get("avg_energy", means.z)) - means.z)
+
+
+## Moves every record's `field` by `shift` on average, within [low, high]. A record
+## already at a bound cannot take its share, so the rest take it instead: an animal
+## that is already sated eats nothing and leaves the grass to the hungry ones. The
+## group's mean then moves by exactly what the step's ledger says it did.
+static func _share_dormant_need_shift(records: Array, field: String, shift: float, low: float, high: float) -> void:
+	var remaining := shift * float(records.size())
+	var open: Array = records
+	while not open.is_empty() and absf(remaining) > 0.0001:
+		var share := remaining / float(open.size())
+		var still_open: Array = []
+		for record in open:
+			var before := float(record.get(field, 0.0))
+			var after := clampf(before + share, low, high)
+			record[field] = after
+			remaining -= after - before
+			if (share > 0.0 and after < high) or (share < 0.0 and after > low):
+				still_open.append(record)
+		if still_open.size() == open.size():
+			break
+		open = still_open
+
+
+## Removes the animals this step's queued deaths name and reports each where it stood.
+## Returns the survivors, in their original order.
+func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
+	var survivors: Array = bucket.duplicate()
+	var species_key := str(aggregate.get("species_type", ""))
+	for entry in aggregate.get("deaths_this_step", []):
+		var cause := str(entry.get("cause", ""))
+		for _index in range(int(entry.get("count", 0))):
+			var victim_index := _pick_dormant_victim(survivors, cause, entry)
+			# A group whose count ran ahead of its records has no one left to lose.
+			if victim_index < 0:
+				break
+			var position: Vector2 = survivors[victim_index].get("position", aggregate.get("center", bounds.get_center()))
+			survivors.remove_at(victim_index)
+			_emit_dormant_death(species_key, position, cause)
+			if cause == "predation":
+				emit_population_event("PredationSuccess", str(entry.get("hunter", "")), position, {"dormant": true})
+	aggregate.erase("deaths_this_step")
+	return survivors
+
+
+## The record a death of `cause` takes: nearest the hunters for predation, the
+## hungriest for starvation, the thirstiest for thirst, the oldest for old age. Ties
+## go to the lower id, so the choice never depends on array order or float noise.
+func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -> int:
+	var best_index := -1
+	var best_score := -INF
+	var best_id := 0
+	var near: Vector2 = entry.get("near", Vector2.ZERO)
+	for index in range(candidates.size()):
+		var record: Dictionary = candidates[index]
+		var score: float
+		match cause:
+			"predation":
+				score = -Vector2(record.get("position", near)).distance_squared_to(near)
+			"starvation":
+				score = float(record.get("hunger", 0.0))
+			"thirst":
+				score = float(record.get("thirst", 0.0))
+			_:
+				score = float(record.get("age", 0.0))
+		var record_id := int(record.get("id", 0))
+		if best_index < 0 or score > best_score or (score == best_score and record_id < best_id):
+			best_index = index
+			best_score = score
+			best_id = record_id
+	return best_index
+
+
+## Recomputes everything an aggregate says about its members from the members.
+func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
+	var count := members.size()
+	var record_ids: Array = []
+	var record_positions := PackedVector2Array()
+	var position_sum := Vector2.ZERO
+	var needs_sum := Vector3.ZERO
+	var age_sum := 0.0
+	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count"]:
+		aggregate[key] = 0
+	for record in members:
+		var position: Vector2 = record.get("position", bounds.get_center())
+		record_ids.append(int(record.get("id", -1)))
+		record_positions.append(position)
+		position_sum += position
+		needs_sum += Vector3(float(record.get("hunger", 0.0)), float(record.get("thirst", 0.0)), float(record.get("energy", 0.0)))
+		age_sum += float(record.get("age", 0.0))
+		_tally_dormant_member(aggregate, record)
+	aggregate["count"] = count
+	aggregate["record_ids"] = record_ids
+	aggregate["record_positions"] = record_positions
+	if count <= 0:
+		return
+	aggregate["center"] = position_sum / float(count)
+	aggregate["avg_hunger"] = needs_sum.x / float(count)
+	aggregate["avg_thirst"] = needs_sum.y / float(count)
+	aggregate["avg_energy"] = needs_sum.z / float(count)
+	aggregate["avg_age"] = age_sum / float(count)
+
+
+## A dormant birth, built the way a woken animal is so it carries every field a live
+## newborn has and inherits nothing from its herd's travel or hunting state. The
+## throwaway generator, seeded with the newborn's id, takes the wander roll
+## `configure()` makes, so the shared `rng` is never drawn.
+func _make_dormant_newborn(species_type: String, group_id: int, mother_position: Vector2, body_radius: float) -> Dictionary:
+	var agent = _create_agent(species_type)
+	if agent == null:
+		return {}
+	var newborn_id := next_agent_id
+	next_agent_id += 1
+	var birth_rng := RandomNumberGenerator.new()
+	birth_rng.seed = newborn_id
+	var position := mother_position + Vector2.from_angle(_dormant_hash_unit(newborn_id, 0x5EED) * TAU) * body_radius * 2.0
+	if not _is_dormant_foothold(position):
+		position = mother_position
+	agent.configure(
+		newborn_id,
+		species_type,
+		position,
+		_deterministic_sex(newborn_id),
+		config_bundle.get("species", {}).get(species_type, {}),
+		config_bundle.get("balance", {}),
+		birth_rng,
+		group_id
+	)
+	agent.lod_tier = LOD_TIER_2
+	return agent.export_runtime_state()
 
 
 func _migrate_dormant_sector_records(sector_key: Vector2i, lod_context: Dictionary) -> Array:
@@ -3807,6 +4176,12 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 				_apply_dormant_meat_to_predator(aggregate, feeding, taken / float(head_count), predator_max_energy)
 
 
+## One coarse step for a sleeping sector.
+##
+## An aggregate effect reaches a record as a change, never as an assignment. The step
+## decides group-level quantities - kills, deaths by cause, births, the herd's move, how
+## far average needs shift - and `_reconcile_dormant_records()` applies them to the
+## animals. No record's position, needs or age is ever replaced by its group's value.
 func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, elapsed: float) -> void:
 	var records: Array = sector_state.get("dormant_records", [])
 	if records.is_empty():
@@ -3814,17 +4189,24 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 	var aggregates: Array = sector_state.get("dormant_aggregates", [])
 	if aggregates.is_empty():
 		aggregates = _build_dormant_aggregates(records, sector_key)
+		sector_state["dormant_aggregates"] = aggregates
+	var buckets := _group_dormant_records(records)
 	# Kills resolve before metabolism, so a predator that just ate is not then starved
 	# in the same step by the hunger it had a moment earlier.
 	_resolve_dormant_predation(sector_key, sector_state, aggregates, elapsed)
-	var next_aggregates: Array = []
 	for aggregate in aggregates:
 		_apply_dormant_metabolism_to_aggregate(sector_key, aggregate, elapsed)
+		# An emptied group stays listed until the reconcile, which reports its deaths.
 		if int(aggregate.get("count", 0)) <= 0:
 			continue
+		var shared_goal := _dormant_shared_goal(sector_key, aggregate)
+		if not shared_goal.is_empty():
+			aggregate.erase("carcass_id")
+			for goal_key in shared_goal.keys():
+				aggregate[goal_key] = shared_goal[goal_key]
 		var should_refresh_goal := Vector2(aggregate.get("goal_position", Vector2.ZERO)).distance_to(Vector2(aggregate.get("center", Vector2.ZERO))) <= _sector_size * 0.18
 		should_refresh_goal = should_refresh_goal or current_time - float(aggregate.get("last_goal_refresh_time", -INF)) >= _dormant_goal_refresh_seconds
-		if should_refresh_goal:
+		if should_refresh_goal and shared_goal.is_empty():
 			var previous_goal_kind := str(aggregate.get("goal_kind", "wander"))
 			var previous_goal_sector: Vector2i = aggregate.get("goal_sector", sector_key)
 			var next_goal := _select_dormant_goal(sector_key, aggregate)
@@ -3843,67 +4225,16 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 				performance_counters["dormant_goal_refreshes"] += 1
 				if str(aggregate.get("goal_kind", "wander")) != previous_goal_kind or aggregate.get("goal_sector", sector_key) != previous_goal_sector:
 					aggregate["stale_time"] = 0.0
-		_move_dormant_aggregate(sector_key, aggregate, elapsed)
+		var aggregate_key := _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)))
+		_advance_dormant_herd(sector_key, aggregate, buckets.get(aggregate_key, []), elapsed)
 		var dormant_births := _compute_dormant_births_for_aggregate(aggregate, elapsed)
 		if dormant_births > 0:
 			aggregate["count"] = int(aggregate.get("count", 0)) + dormant_births
-			var birth_position: Vector2 = aggregate.get("center", bounds.get_center())
-			for _index in range(dormant_births):
-				emit_population_event("AgentBorn", str(aggregate.get("species_type", "")), birth_position, {
-					"reason": "dormant",
-					"group_id": int(aggregate.get("group_id", -1)),
-				})
-		next_aggregates.append(aggregate)
-	sector_state["dormant_aggregates"] = next_aggregates
 	_apply_dormant_resource_interactions(sector_key, sector_state, elapsed)
-	_sync_dormant_records_with_aggregates(sector_key, sector_state, elapsed)
+	_reconcile_dormant_records(sector_key, sector_state, elapsed, buckets)
 	sector_state["dormant_species"] = _build_dormant_species_state(sector_state.get("dormant_records", []))
-	# `_sync_dormant_records_with_aggregates()` refreshes record IDs, center and
-	# average age while materializing births/deaths. Rebuilding every aggregate
-	# from those same records here repeated the most expensive half of a coarse
-	# sector step without changing its authoritative values.
-	sector_state["dormant_aggregates"] = next_aggregates
 	sector_state["dormant_count"] = sector_state.get("dormant_records", []).size()
 	_project_dormant_counts_onto_sector(sector_state)
-
-
-func _find_dormant_record_template(records: Array, species_key: String) -> Dictionary:
-	for record in records:
-		if str(record.get("species_type", "")) == species_key:
-			return record
-	return {}
-
-
-func _materialize_dormant_records(sector_state: Dictionary) -> Array:
-	var records: Array = sector_state.get("dormant_records", []).duplicate(true)
-	var aggregates: Array = sector_state.get("dormant_aggregates", [])
-	var grouped_records: Dictionary = {}
-	for record in records:
-		var aggregate_key := _get_dormant_record_aggregate_key(record)
-		if not grouped_records.has(aggregate_key):
-			grouped_records[aggregate_key] = []
-		grouped_records[aggregate_key].append(record)
-	for aggregate in aggregates:
-		var aggregate_key := _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)))
-		var bucket: Array = grouped_records.get(aggregate_key, [])
-		var target_count := bucket.size()
-		if target_count <= 0:
-			continue
-		var aggregate_center: Vector2 = aggregate.get("center", bounds.get_center())
-		var cluster_radius := minf(_sector_size * 0.22, 36.0 + float(target_count) * 1.5)
-		for index in range(target_count):
-			var record: Dictionary = bucket[index]
-			var angle := (TAU / maxf(1.0, float(target_count))) * float(index)
-			var offset := Vector2.RIGHT.rotated(angle) * minf(cluster_radius, _REIFY_RING_START + floor(float(index) / 4.0) * _REIFY_RING_STEP)
-			record["position"] = get_nearest_walkable_position(clamp_position(aggregate_center + offset))
-			record["velocity"] = Vector2(aggregate.get("velocity", Vector2.ZERO))
-			record["direction"] = Vector2.RIGHT if Vector2(record.get("velocity", Vector2.ZERO)).length_squared() <= 0.001 else Vector2(record.get("velocity", Vector2.ZERO)).normalized()
-			record["target_position"] = aggregate.get("goal_position", record.get("target_position", aggregate_center))
-			record["hunger"] = float(aggregate.get("avg_hunger", record.get("hunger", 0.0)))
-			record["thirst"] = float(aggregate.get("avg_thirst", record.get("thirst", 0.0)))
-			record["energy"] = float(aggregate.get("avg_energy", record.get("energy", 0.0)))
-			record["age"] = float(aggregate.get("avg_age", record.get("age", 0.0)))
-	return records
 
 
 func _restore_dormant_agent(record: Dictionary):

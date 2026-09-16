@@ -128,6 +128,91 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	return bundle
 
 
+## Sectors as wide as the shipped large preset's, where a herd is small against its
+## sector. In `build_test_bundle()` a sector is 64 units, narrower than a herd, so no
+## fixture there can tell a real formation from one the dormant path invented.
+static func build_large_sector_bundle(seed: int = 17) -> Dictionary:
+	var bundle := build_test_bundle(seed)
+	bundle["world"]["world_size"] = {"x": 3072.0, "y": 3072.0}
+	bundle["world"]["spatial_cell_size"] = 256.0
+	bundle["world"]["terrain"]["cell_size"] = 64.0
+	bundle["world"]["grass"]["cell_size"] = 64.0
+	bundle["world"]["water_sources"] = [
+		{"x": 384.0, "y": 384.0, "radius": 48.0},
+		{"x": 2688.0, "y": 2688.0, "radius": 48.0},
+	]
+	bundle["world"]["simulation_lod"]["sector_size"] = 1536.0
+	bundle["world"]["simulation_lod"]["very_far_sector_step_seconds"] = 0.75
+	return bundle
+
+
+## A herd on a jittered lattice 44 units apart, wider than two herbivore bodies, so
+## the formation starts without overlap. The jitter is a function of the index, not
+## of the world's random stream.
+static func spawn_herd(world, center: Vector2, count: int, group_id: int = 0) -> Array:
+	var columns := maxi(1, ceili(sqrt(float(count))))
+	var rows := ceili(float(count) / float(columns))
+	var origin := center - Vector2(float(columns - 1), float(rows - 1)) * 22.0
+	var herd: Array = []
+	for index in range(count):
+		var jitter := Vector2(float(posmod(index * 37, 9)) - 4.0, float(posmod(index * 53, 9)) - 4.0)
+		var lattice := Vector2(float(index % columns), float(index / columns)) * 44.0
+		herd.append(spawn_herbivore(world, origin + lattice + jitter, group_id))
+	return herd
+
+
+## Centroid, mean and largest distance from it, and the nearest and mean pair
+## distances. The shape measures that tell a formation from a ring or a point.
+static func herd_spread(positions: Array) -> Dictionary:
+	var count := positions.size()
+	if count == 0:
+		return {"centroid": Vector2.ZERO, "mean_radius": 0.0, "max_radius": 0.0,
+			"min_pair_distance": 0.0, "mean_pair_distance": 0.0}
+	var centroid := Vector2.ZERO
+	for position in positions:
+		centroid += Vector2(position)
+	centroid /= float(count)
+	var radius_sum := 0.0
+	var max_radius := 0.0
+	for position in positions:
+		var radius := Vector2(position).distance_to(centroid)
+		radius_sum += radius
+		max_radius = maxf(max_radius, radius)
+	var min_pair := INF
+	var pair_sum := 0.0
+	var pairs := 0
+	for i in range(count):
+		for j in range(i + 1, count):
+			var distance := Vector2(positions[i]).distance_to(Vector2(positions[j]))
+			min_pair = minf(min_pair, distance)
+			pair_sum += distance
+			pairs += 1
+	return {
+		"centroid": centroid,
+		"mean_radius": radius_sum / float(count),
+		"max_radius": max_radius,
+		"min_pair_distance": min_pair if pairs > 0 else 0.0,
+		"mean_pair_distance": pair_sum / float(pairs) if pairs > 0 else 0.0,
+	}
+
+
+## Every dormant record of one group, across all sectors, keyed by agent id.
+static func dormant_records_by_id(world, species_type: String, group_id: int) -> Dictionary:
+	var records: Dictionary = {}
+	for sector_state in world._sector_states.values():
+		for record in sector_state.get("dormant_records", []):
+			if str(record.get("species_type", "")) == species_type and int(record.get("group_id", -1)) == group_id:
+				records[int(record.get("id", -1))] = record
+	return records
+
+
+static func positions_of(items: Array) -> Array:
+	var positions: Array = []
+	for item in items:
+		positions.append(Vector2(item.get("position", Vector2.ZERO)) if item is Dictionary else item.position)
+	return positions
+
+
 static func create_manager(seed: int = 17):
 	return create_manager_with(build_test_bundle(seed), seed)
 
@@ -156,6 +241,14 @@ static func create_benchmark_manager(seed: int = 17, herbivore_count: int = 220,
 	var manager = SimulationManagerScript.new()
 	manager.initialize(bundle, seed)
 	return manager
+
+
+## Pathfinding stops for the tick once it has spent `path_time_budget_ms_per_tick` of
+## wall-clock time. On a loaded machine that cut-off lands on a different request,
+## so two same-seed runs hand paths to different agents and drift apart. Replays
+## that assert identical results must budget by count alone.
+static func disable_wall_clock_budgets(manager) -> void:
+	manager.world_state.navigation_config["path_time_budget_ms_per_tick"] = 1.0e9
 
 
 static func run_ticks(manager, ticks: int) -> void:

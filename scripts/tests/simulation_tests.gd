@@ -23,7 +23,7 @@ func run(asserts) -> void:
 	_test_scavenger_eats_what_the_predator_refused(asserts)
 	_test_far_lod_panic_interrupt(asserts)
 	_test_sector_dormancy_and_wake(asserts)
-	_test_dormant_materializes_updated_position(asserts)
+	_test_dormant_wake_restores_recorded_position(asserts)
 	_test_dormant_herbivore_feeding_reduces_hunger(asserts)
 	_test_dormant_herbivore_drinking_reduces_thirst(asserts)
 	_test_dormant_thirst_sector_moves_toward_water(asserts)
@@ -344,7 +344,7 @@ func _test_sector_dormancy_and_wake(asserts) -> void:
 	TestHelpers.destroy_manager(manager)
 
 
-func _test_dormant_materializes_updated_position(asserts) -> void:
+func _test_dormant_wake_restores_recorded_position(asserts) -> void:
 	var manager = TestHelpers.create_manager(40)
 	manager.lod_enabled = true
 	manager.lod_settings["headless_active_radius"] = 18.0
@@ -362,12 +362,23 @@ func _test_dormant_materializes_updated_position(asserts) -> void:
 	var dormant_aggregate: Dictionary = _find_any_dormant_aggregate(manager.world_state, "herbivore")
 	var moved_center: Vector2 = dormant_aggregate.get("center", start_position)
 	asserts.is_true(moved_center.distance_to(start_position) > 8.0, "dormant aggregate should keep moving while sector sleeps")
-	manager.lod_settings["headless_active_radius"] = 400.0
-	manager.lod_settings["mid_margin"] = 400.0
-	TestHelpers.run_ticks(manager, 1)
+	var record_sector := Vector2i.ZERO
+	var record: Dictionary = {}
+	for key in manager.world_state._sector_states.keys():
+		for candidate in manager.world_state._sector_states[key].get("dormant_records", []):
+			if int(candidate.get("id", -1)) == herbivore_id:
+				record_sector = key
+				record = candidate
+	asserts.is_true(not record.is_empty(), "the sleeping herbivore should still have a dormant record")
+	var recorded_position: Vector2 = record.get("position", Vector2.ZERO)
+	var recorded_age := float(record.get("age", -1.0))
+	manager.world_state._wake_sector(record_sector)
 	var restored = manager.world_state.get_agent(herbivore_id)
 	asserts.is_true(restored != null, "dormant agent should restore when sector wakes")
-	asserts.is_true(restored.position.distance_to(start_position) > 8.0, "woken agent should materialize near updated coarse-sim position")
+	if restored != null:
+		asserts.equal(restored.position, recorded_position, "a woken animal stands exactly where its record was")
+		asserts.equal(restored.age, recorded_age, "waking keeps the animal's own age, not its group's mean")
+		asserts.is_true(restored.position.distance_to(start_position) > 8.0, "the animal travelled with its herd while asleep")
 	TestHelpers.destroy_manager(manager)
 
 
@@ -632,6 +643,7 @@ func _test_perf_snapshot_fields(asserts) -> void:
 
 func _test_determinism(asserts) -> void:
 	var manager_a = TestHelpers.create_manager(36)
+	TestHelpers.disable_wall_clock_budgets(manager_a)
 	var herbivore_a = TestHelpers.spawn_herbivore(manager_a.world_state, Vector2(104.0, 104.0), 0)
 	var predator_a = TestHelpers.spawn_predator(manager_a.world_state, Vector2(132.0, 104.0))
 	herbivore_a.hunger = 62.0
@@ -642,6 +654,7 @@ func _test_determinism(asserts) -> void:
 	var trace_a := TestHelpers.capture_trace(manager_a, [herbivore_a.id, predator_a.id], 18)
 
 	var manager_b = TestHelpers.create_manager(36)
+	TestHelpers.disable_wall_clock_budgets(manager_b)
 	var herbivore_b = TestHelpers.spawn_herbivore(manager_b.world_state, Vector2(104.0, 104.0), 0)
 	var predator_b = TestHelpers.spawn_predator(manager_b.world_state, Vector2(132.0, 104.0))
 	herbivore_b.hunger = 62.0
@@ -920,6 +933,7 @@ func _test_determinism_with_lod_and_dormancy(asserts) -> void:
 	var most_dormant: Array = []
 	for _run in range(2):
 		var manager = TestHelpers.create_benchmark_manager(61, 80, 8, 8)
+		TestHelpers.disable_wall_clock_budgets(manager)
 		manager.lod_enabled = true
 		manager.lod_settings["headless_active_radius"] = 120.0
 		manager.lod_settings["near_margin"] = 0.0
@@ -953,8 +967,9 @@ func _test_dormant_path_leaves_rng_untouched(asserts) -> void:
 		TestHelpers.destroy_manager(manager)
 		return
 	aggregates[0]["count"] = int(aggregates[0].get("count", 0)) + 6
+	aggregates[0]["births_this_step"] = 6
 	var state_before: int = world.rng.state
-	world._sync_dormant_records_with_aggregates(sector_key, dormant_state)
+	world._reconcile_dormant_records(sector_key, dormant_state)
 	asserts.equal(world.rng.state, state_before, "dormant births must not draw from the shared random stream")
 	var records: Array = dormant_state.get("dormant_records", [])
 	asserts.equal(records.size(), 10, "every member of the grown aggregate should have a record")
@@ -965,6 +980,9 @@ func _test_dormant_path_leaves_rng_untouched(asserts) -> void:
 	asserts.is_true(male_newborns > 0, "sexes derived from ids should not all come out female")
 	world._sector_states[sector_key] = dormant_state
 	state_before = world.rng.state
+	for _step in range(20):
+		world._apply_dormant_sector_step(sector_key, dormant_state, 0.75)
+	asserts.equal(world.rng.state, state_before, "twenty coarse steps of herd motion must not draw from the shared random stream")
 	world._wake_sector(sector_key)
 	asserts.equal(world.rng.state, state_before, "waking a sector must not draw from the shared random stream")
 	asserts.equal(world.get_dormant_sector_count(), 0, "the sector should be awake again")

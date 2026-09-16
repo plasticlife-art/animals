@@ -226,36 +226,6 @@ func _disconnect_manager() -> void:
 		simulation_manager.selection_changed.disconnect(_on_selection_changed)
 
 
-func _draw_agents(map_rect: Rect2) -> void:
-	var world = simulation_manager.world_state
-	for agent in world.get_living_agents():
-		var point := _world_to_map_point(agent.position, map_rect)
-		if not map_rect.has_point(point):
-			continue
-		var dot: Dictionary = _species_dots.get(agent.species_type, {})
-		draw_circle(
-			point,
-			float(dot.get("radius", 1.5)),
-			dot.get("color", UNKNOWN_SPECIES_COLOR)
-		)
-	# LOD2 sectors retain stable record IDs in compact aggregates. Draw the same
-	# overview proxies as the world batch so sleeping animals do not disappear
-	# from the minimap merely because their simulation was aggregated.
-	for sector_key in world._sector_states:
-		var sector: Dictionary = world._sector_states[sector_key]
-		if not bool(sector.get("dormant", false)):
-			continue
-		var sector_rect: Rect2 = world._sector_key_to_rect(sector_key)
-		for aggregate in sector.get("dormant_aggregates", []):
-			var species := str(aggregate.get("species_type", ""))
-			var center: Vector2 = aggregate.get("center", sector_rect.get_center())
-			var dot: Dictionary = _species_dots.get(species, {})
-			for agent_id_value in aggregate.get("record_ids", []):
-				var proxy := SceneSpriteBatch.dormant_proxy_position(center, sector_rect, int(agent_id_value))
-				draw_circle(_world_to_map_point(proxy, map_rect),
-					float(dot.get("radius", 1.5)), dot.get("color", UNKNOWN_SPECIES_COLOR))
-
-
 func _initialize_dot_batch() -> void:
 	var image := Image.create(DOT_TEXTURE_SIZE, DOT_TEXTURE_SIZE, false, Image.FORMAT_RGBA8)
 	image.fill(Color.TRANSPARENT)
@@ -310,19 +280,16 @@ func _rebuild_dot_batch(map_rect: Rect2) -> void:
 			continue
 		_write_dot(index, point, _species_dots.get(agent.species_type, {}))
 		index += 1
-	for sector_key in world._sector_states:
-		var sector: Dictionary = world._sector_states[sector_key]
+	# Sleeping animals are drawn where their records stand, so the minimap shows a
+	# dormant herd's real formation rather than a stand-in around its centre.
+	for sector in world._sector_states.values():
 		if not bool(sector.get("dormant", false)):
 			continue
-		var sector_rect: Rect2 = world._sector_key_to_rect(sector_key)
 		for aggregate in sector.get("dormant_aggregates", []):
-			var species := str(aggregate.get("species_type", ""))
-			var center: Vector2 = aggregate.get("center", sector_rect.get_center())
-			var dot: Dictionary = _species_dots.get(species, {})
-			for agent_id_value in aggregate.get("record_ids", []):
-				var proxy := SceneSpriteBatch.dormant_proxy_position(
-					center, sector_rect, int(agent_id_value))
-				_write_dot(index, _world_to_map_point(proxy, map_rect), dot)
+			var dot: Dictionary = _species_dots.get(str(aggregate.get("species_type", "")), {})
+			for member_index in range(aggregate.get("record_ids", []).size()):
+				var point := SceneSpriteBatch.dormant_member_position(aggregate, member_index)
+				_write_dot(index, _world_to_map_point(point, map_rect), dot)
 				index += 1
 	_dot_multimesh.visible_instance_count = index
 

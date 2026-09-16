@@ -129,19 +129,15 @@ func _dynamic_membership_signature(renderer, world) -> PackedInt64Array:
 	return PackedInt64Array([count, id_sum, id_xor])
 
 
-static func dormant_proxy_position(center: Vector2, sector_rect: Rect2, agent_id: int) -> Vector2:
-	# A sunflower pattern is cheap, stable and avoids stacking an entire sleeping
-	# herd on its aggregate center. Keep the spread inside its owning sector.
-	var angle := fposmod(float(agent_id) * 2.3999632297, TAU)
-	var radius := 6.0 + float(posmod(agent_id * 53, 41))
-	var margin := Vector2.ONE * 4.0
-	var safe_rect := sector_rect.grow(-4.0)
-	if safe_rect.size.x <= margin.x or safe_rect.size.y <= margin.y:
-		return sector_rect.get_center()
-	return Vector2(
-		clampf(center.x + cos(angle) * radius, safe_rect.position.x, safe_rect.end.x),
-		clampf(center.y + sin(angle) * radius, safe_rect.position.y, safe_rect.end.y)
-	)
+## Where a sleeping animal stands. The coarse step keeps each record's real position
+## and the worker ships it beside the id, so the overview shows the herd's actual
+## formation. Only an aggregate saved before `record_positions` existed falls back to
+## its centre, until its sector's next coarse step fills them in.
+static func dormant_member_position(aggregate: Dictionary, index: int) -> Vector2:
+	var positions: PackedVector2Array = aggregate.get("record_positions", PackedVector2Array())
+	if index < positions.size():
+		return positions[index]
+	return aggregate.get("center", Vector2.ZERO)
 
 
 func refresh_static(world, view: Rect2, visuals: Dictionary) -> void:
@@ -247,7 +243,6 @@ func render(renderer, alpha: float) -> void:
 			var sector: Dictionary = world._sector_states[sector_key]
 			if not bool(sector.get("dormant", false)):
 				continue
-			var sector_rect: Rect2 = world._sector_key_to_rect(sector_key)
 			for aggregate in sector.get("dormant_aggregates", []):
 				var species := str(aggregate.get("species_type", ""))
 				if not regions.has(species) or not visuals.get("species", {}).has(species):
@@ -256,11 +251,10 @@ func render(renderer, alpha: float) -> void:
 				var pixels: float = float(config.get("frame_px", 32))
 				var sprite_size: Vector2 = Vector2.ONE * pixels * float(config.get("sprite_scale", 1.0)) * renderer._world_scale()
 				var idle_row: float = float(config.get("animations", {}).get("idle", {}).get("row", 0))
-				var center: Vector2 = aggregate.get("center", sector_rect.get_center())
 				var record_ids: Array = aggregate.get("record_ids", [])
-				for agent_id_value in record_ids:
-					var agent_id := int(agent_id_value)
-					var point := dormant_proxy_position(center, sector_rect, agent_id)
+				for member_index in range(record_ids.size()):
+					var agent_id := int(record_ids[member_index])
+					var point := dormant_member_position(aggregate, member_index)
 					if not last_view.grow(sprite_size.y).has_point(point):
 						continue
 					dynamic.append({"depth": renderer._depth_of(point), "id": agent_id, "depth_tie": 1,
