@@ -228,7 +228,7 @@
     "enabled": true,
     "default_capacity_multiplier": 1.75,
     "capacity_multipliers": {
-      "herbivore": 1.75,
+      "herbivore": 3.0,
       "predator": 2.0,
       "scavenger": 1.75
     }

@@ -514,7 +514,7 @@
           "patch": {
             "world": {
               "grass": {
-                "regrowth_rate": 10.8
+                "growth_rate": 0.006
               },
               "water_generation": {
                 "sources_per_million_units": 2.363
@@ -527,7 +527,7 @@
           "patch": {
             "world": {
               "grass": {
-                "regrowth_rate": 2.7
+                "growth_rate": 0.002
               },
               "water_generation": {
                 "sources_per_million_units": 0.695

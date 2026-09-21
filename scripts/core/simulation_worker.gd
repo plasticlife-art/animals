@@ -40,7 +40,7 @@ func configure(source_world: WorldState, source_stats: StatsSystem, source_event
 func _collect_event(event: Dictionary) -> void:
 	pending_events.append(event)
 
-func step(delta: float, tick: int, time: float, lod: Dictionary, inspected_id: int, include_grass: bool = false) -> Dictionary:
+func step(delta: float, tick: int, time: float, lod: Dictionary, inspected_id: int, include_grass: bool = false, include_fear: bool = false) -> Dictionary:
 	pending_events.clear()
 	world.inspected_agent_id = inspected_id
 	var full_grass := include_grass and not _grass_was_included
@@ -58,6 +58,10 @@ func step(delta: float, tick: int, time: float, lod: Dictionary, inspected_id: i
 	presentation_time = time + delta
 	var result := _presentation_state(inspected_id, false, include_grass, full_grass)
 	_grass_was_included = include_grass
+	# The whole field while its overlay is on: a few hundred floats, against a
+	# delta protocol that would cost more to maintain than to skip.
+	if include_fear:
+		result["fear_cells"] = world.fear_field.export_cells()
 	result["kind"] = "presentation_delta"
 	result["sequence"] = sequence
 	result["tick"] = tick + 1

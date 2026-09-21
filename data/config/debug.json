@@ -27,6 +27,7 @@
     "show_herd_relations": false,
     "show_chase_lines": false,
     "show_grass_density": false,
+    "show_fear": false,
     "show_population_density": false,
     "show_water_overlay": false,
     "show_carcasses": false,

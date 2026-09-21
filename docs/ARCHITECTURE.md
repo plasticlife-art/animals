@@ -125,13 +125,36 @@ Current terrain features:
 Responsibilities:
 
 - Stores grass biomass per cell
-- Regrows biomass every tick, stepping only the cells currently below their local maximum.
-  Consumption adds a cell to that working set and a cell drops out once it refills, so the
-  per-tick cost tracks grazing pressure instead of grid size. In a warmed-up world roughly
-  1% of cells are regrowing at any moment. `get_regrowing_cell_count()` exposes the set size,
-  and the metrics snapshot reports it as `grass_regrowing_cells`.
-- Applies terrain multipliers to initial biomass, regrowth, and max biomass
-- Reports total biomass and biomass totals by biome
+- Grows it logistically: `growth_rate x biomass x (1 - biomass / cap)`, scaled by the biome
+  and the season. A grazed-down sward recovers slowly, a half-grown one fastest, so how
+  hard a range is grazed decides what it yields, and grass can run out. This is what holds
+  herbivore numbers; `balance.population_regulation` is a guard rail above it.
+- `stubble_fraction` of each cell's cap cannot be eaten. Growth restarts from it, so a
+  stripped cell comes back. The cell searches and the AI see only the grazable part
+  (`get_available_biomass()`); `get_biomass()` is the whole sward, for overlays and stats.
+- Steps one slice of the grid per tick (`growth_stride_ticks`), each cell by the time since
+  its last turn, with the phase taken from the tick so a loaded save keeps the schedule.
+  `get_regrowing_cell_count()` reports the cells below their cap, and the metrics snapshot
+  carries it as `grass_regrowing_cells`.
+- Applies terrain multipliers to initial biomass, growth, and max biomass
+- Reports total biomass, mean density, and biomass totals by biome
+
+### `FearField`
+
+Where prey have learnt to expect predators (`scripts/world/fear_field.gd`): a coarse grid,
+`fear.cell_size_in_grass_cells` grass cells to a side. A kill adds `kill_risk` where it
+happened, a grazer's scare `scare_risk` where it stood, and hungry sleeping hunters sharing
+a sector with prey add `hunt_pressure_risk` per second at the herd; each deposit lands in
+full on its cell, at half strength beside it and a quarter diagonally. Risk halves every
+`half_life_seconds`. It has no randomness and its decay schedule comes from the tick.
+
+Grazers read it when choosing grass (`WorldState.grass_target_tiers()`): fed, they want a
+good sward on ground within `perception.risk_tolerance`, then any full bite there, and
+only then risky ground; hungry, they ignore risk. The same tiers drive a sleeping herd's
+grass goal, and neither path grazes underfoot on ground above tolerance unless hungry. So
+grass regrows where predators hunt until hunger pushes a herd back in - a trophic cascade
+that nothing scripts. `ecology_audit.gd` reports it as meadow grass density on feared
+ground against the rest.
 
 ### `StatsSystem`
 
@@ -352,10 +375,23 @@ active window, which pushed nearly every sector into dormancy.
 
 ### Dormant sectors: the coarse ecology
 
-A sector whose agents are all `LOD2` sleeps: its agents are replaced by per-species,
-per-group aggregates carrying a count and mean hunger / thirst / energy / age. Both species
-must be able to complete their whole loop in this abstraction, or the abstraction becomes a
-one-way sink. Two invariants keep the two paths honest:
+A sector whose agents are all `LOD2` sleeps: its agents become records, and per-species,
+per-group aggregates decide for them as a herd. Every record keeps its own position,
+hunger, thirst, energy and age; an aggregate effect reaches a record as a change, never as
+an assignment. Every species must be able to complete its whole loop in this abstraction,
+or the abstraction becomes a one-way sink. These invariants keep the two paths honest:
+
+- **Needs kill animal by animal.** A record dies of hunger or thirst at the same
+  `lifecycle.*_death_threshold` a live animal does (`_dormant_need_deaths()`). Judged on the
+  herd's mean, a herd of eighty went in fifteen seconds once the mean passed 98, and whole
+  herds died out one after another. A herd heads for water for its thirstiest member, not
+  only once the mean is critical.
+- **A herd has to reach its food.** It looks for grass nearest itself
+  (`_find_dormant_grass_goal()`), not by the sector's centre, takes a route round terrain
+  from the same budgeted search live animals use (`_dormant_herd_waypoint()`), and its
+  hungry members walk to grass a few cells around them (`_dormant_step_towards_grass()`).
+  None of this mattered while grass was underfoot everywhere; with grass that runs out, a
+  herd that walks at a cliff or stands on a grazed patch starves.
 
 - **Kills are single-sourced.** `_resolve_dormant_predation()` is the only place a dormant
   kill happens. `_reconcile_dormant_records()` picks the victims and leaves each one's
@@ -368,10 +404,14 @@ one-way sink. Two invariants keep the two paths honest:
   `carcass_nutrition_gain` / `carcass_energy_gain`, exactly as `Predator._scavenge_or_feed()`
   does.
 
-Kill volume and death rates accumulate as float debts on the sector and the aggregate
+Kill volume and old-age deaths accumulate as float debts on the sector and the aggregate
 rather than rounding per step: rounding per step needed four co-located predators to
-produce a single kill, so dormant predation was silently always zero, and it also forced at
-least one death per step on any saturated aggregate regardless of its size.
+produce a single kill, so dormant predation was silently always zero.
+
+`_split_oversized_herds()` runs for live and sleeping animals together. Offspring join
+their parents' herd and nothing ever left one, so herds only grew, and one too big for its
+range starves and is never replaced. A herd past its species' `herd.split_size` divides
+at the median of the axis it is spread widest on; the far half takes the next group id.
 
 This path uses no `rng` calls, so it cannot perturb the shared RNG stream that determinism
 depends on. That covers waking too: a dormant newborn's sex comes from `_deterministic_sex()` on
@@ -449,6 +489,12 @@ millisecond setting squeezed to zero.
 ### `species.json`
 
 - tunes each species independently without code changes
+- Herbivore numbers are set by grass, so its food knobs are balance knobs:
+  `feeding.nutrition_gain` (hunger removed per unit of grass; lower means more grass per
+  animal), `feeding.good_sward_fraction` (how full a cell must be for a fed grazer to walk
+  to it), `perception.risk_tolerance` (the `FearField` risk a fed grazer accepts) and
+  `herd.split_size`. `reproduction.cooldown`, `maturity_age` and `max_hunger` decide how far
+  the herd overshoots its grass before starvation pulls it back.
 - Predator nutrition comes from carcasses only: a kill grants no nutrition by itself, so the
   energy-per-kill knobs are `feeding.food_restore` (the first bite taken at the kill site,
   debited through `consume_carcass()`), `feeding.carcass_consume_rate`,
@@ -520,6 +566,8 @@ Current suites cover:
 
 ## Known Gaps
 
+- Herbivores are limited by grass; predators and scavengers still sit on their
+  `population_regulation` caps
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics

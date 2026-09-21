@@ -29,6 +29,7 @@ func run(a) -> void:
 	_test_split_herd_follows_one_goal(a)
 	_test_sleeping_pair_keeps_its_bond(a)
 	_test_herd_walks_around_what_blocks_its_centre(a)
+	_test_sleeping_herd_finds_its_way_round_a_wall(a)
 	_test_big_herd_grazes_the_ground_it_covers(a)
 
 
@@ -51,6 +52,8 @@ func _coarse_steps(world, sector_key: Vector2i, steps: int, after_step: Callable
 	for step in range(steps):
 		world.current_tick += ticks_per_step
 		world.current_time += STEP_SECONDS
+		# `step()` does this once a tick; it also runs the route searches left pending.
+		world._prepare_navigation_budget()
 		world._apply_dormant_sector_step(sector_key, world._sector_states[sector_key], STEP_SECONDS)
 		if after_step.is_valid():
 			after_step.call(step)
@@ -328,9 +331,8 @@ func _test_dormant_starvation_takes_the_hungriest(a) -> void:
 	world._sleep_sector(sector_key)
 	var state: Dictionary = world._sector_states[sector_key]
 	var aggregate: Dictionary = state["dormant_aggregates"][0]
-	aggregate["avg_hunger"] = 100.0
-	world._apply_dormant_metabolism_to_aggregate(sector_key, aggregate, STEP_SECONDS)
-	a.equal(10 - int(aggregate["count"]), 3, "the fixture should starve three animals")
+	world._apply_dormant_metabolism_to_aggregate(sector_key, aggregate, STEP_SECONDS, state["dormant_records"])
+	a.equal(10 - int(aggregate["count"]), 3, "the three animals at the threshold starve, however fed the rest of the herd is")
 	world._reconcile_dormant_records(sector_key, state, STEP_SECONDS)
 	var remaining := _positions_by_id(state["dormant_records"])
 	var starved_survivors: Array = []
@@ -401,7 +403,7 @@ func _test_dormant_parents_stop_counting_as_ready(a) -> void:
 	for index in range(2):
 		var agent = fixture[3][index]
 		agent.sex = sexes[index]
-		agent.age = 40.0
+		agent.age = float(agent.reproduction.get("maturity_age", 0.0)) + 6.0
 		agent.reproduction_cooldown = 0.0
 		agent.energy = 95.0
 		agent.hunger = 0.0
@@ -543,8 +545,44 @@ func _test_big_herd_grazes_the_ground_it_covers(a) -> void:
 	for record in state["dormant_records"]:
 		total_hunger += float(record["hunger"])
 	var mean_hunger := total_hunger / float(state["dormant_records"].size())
-	a.is_true(mean_hunger < 45.0, "a big sleeping herd feeds from the ground under all of it (mean hunger %.1f)" % mean_hunger)
+	a.is_true(mean_hunger < 52.0, "a big sleeping herd feeds from the ground under all of it (mean hunger %.1f)" % mean_hunger)
 	a.near(float(state["dormant_aggregates"][0]["avg_hunger"]), mean_hunger, 0.01,
 		"the group's mean follows what its members ate")
 	a.greater(biomass_before - world.resource_system.get_total_biomass(), 0.0, "the grass they ate is gone")
+	Helpers.destroy_manager(fixture[0])
+
+
+## A sleeping herd headed for its goal in a straight line, so a cliff across the way
+## held it until it starved. It now takes a route, as a live animal would.
+func _test_sleeping_herd_finds_its_way_round_a_wall(a) -> void:
+	var fixture := _herd(319, 6)
+	var world = fixture[1]
+	var sector_key: Vector2i = fixture[2]
+	var terrain = world.terrain_system
+	# A wall three cells thick, east of the herd, seventeen cells long with open ends.
+	for row in range(4, 21):
+		for column in range(16, 19):
+			terrain._walkable[row * terrain.cols + column] = 0
+	# The route search reads neighbour lists and routes cached when the terrain was built.
+	terrain._cached_walkable_neighbors.clear()
+	terrain._path_cache.clear()
+	a.is_true(not world.scenery.terrain_clear(HERD_CENTER, Vector2(1500.0, 768.0), 0.0), "the fixture should wall off the goal")
+	world._sleep_sector(sector_key)
+	world._dormant_goal_refresh_seconds = 1.0e9
+	for agent_record in world._sector_states[sector_key]["dormant_records"]:
+		agent_record["hunger"] = 0.0
+		agent_record["thirst"] = 0.0
+	var aggregate: Dictionary = world._sector_states[sector_key]["dormant_aggregates"][0]
+	aggregate["avg_hunger"] = 0.0
+	aggregate["avg_thirst"] = 0.0
+	aggregate["goal_kind"] = "wander"
+	aggregate["goal_position"] = Vector2(1500.0, 768.0)
+	aggregate["goal_sector"] = sector_key
+	aggregate["last_goal_refresh_time"] = world.current_time
+	var furthest_east := [0.0]
+	_coarse_steps(world, sector_key, 60, func(_step):
+		var parts: Array = world._sector_states[sector_key].get("dormant_aggregates", [])
+		if not parts.is_empty():
+			furthest_east[0] = maxf(furthest_east[0], float(Vector2(parts[0]["center"]).x)))
+	a.greater(float(furthest_east[0]), 1250.0, "the herd gets past the wall instead of standing at it")
 	Helpers.destroy_manager(fixture[0])

@@ -43,7 +43,7 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	bundle["world"]["grass"] = {
 		"cell_size": 32.0,
 		"max_biomass": 100.0,
-		"regrowth_rate": 0.0,
+		"growth_rate": 0.0,
 		"initial_density_min": 1.0,
 		"initial_density_max": 1.0,
 	}
@@ -52,6 +52,9 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# season sweeping past mid-run must not reach them. `ClimateTests` builds
 	# its own bundles when it wants the clock running.
 	bundle["world"]["climate"] = {"enabled": false}
+	# Off for the same reason: a scare early in a fixture must not steer where its
+	# animals graze later. The fear tests switch it on themselves.
+	bundle["world"]["fear"] = {"enabled": false}
 	bundle["world"]["terrain"]["cell_size"] = 32.0
 	# Pinned flat on purpose: the fixtures assert on routes and reachability, so
 	# turning relief on in world.json must not reach them.

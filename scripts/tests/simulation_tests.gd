@@ -431,7 +431,11 @@ func _test_dormant_population_changes_are_counted(asserts) -> void:
 	var dormant_state: Dictionary = manager.world_state._sector_states.get(sector_key, {})
 	var dormant_aggregates: Array = dormant_state.get("dormant_aggregates", [])
 	asserts.is_true(not dormant_aggregates.is_empty(), "sleeping herd should produce a dormant aggregate")
-	dormant_aggregates[0]["avg_hunger"] = 100.0
+	# Half the herd on the brink: sleeping animals starve one by one on their own hunger.
+	var records: Array = dormant_state.get("dormant_records", [])
+	for index in range(records.size()):
+		records[index]["hunger"] = 99.5 if index < 3 else 10.0
+	dormant_aggregates[0]["avg_hunger"] = (99.5 * 3.0 + 10.0 * 3.0) / 6.0
 	dormant_state["dormant_aggregates"] = dormant_aggregates
 	manager.world_state._sector_states[sector_key] = dormant_state
 
@@ -1016,7 +1020,7 @@ func _test_dormant_aggregate_rebuild_keeps_accumulators(asserts) -> void:
 	for index in range(4):
 		TestHelpers.spawn_herbivore(manager.world_state, herd_position + Vector2(float(index) * 3.0, 0.0), 0)
 	var slept: Array = _sleep_with_goal(manager.world_state, herd_position, "herbivore", "grass", {
-		"starvation_debt": 0.3,
+		"old_age_debt": 0.3,
 		"carcass_id": 11,
 	})
 	var sector_key: Vector2i = slept[0]
@@ -1030,7 +1034,7 @@ func _test_dormant_aggregate_rebuild_keeps_accumulators(asserts) -> void:
 	if rebuilt.is_empty():
 		TestHelpers.destroy_manager(manager)
 		return
-	asserts.equal(float(rebuilt[0].get("starvation_debt", -1.0)), 0.3, "starvation debt should survive an aggregate rebuild")
+	asserts.equal(float(rebuilt[0].get("old_age_debt", -1.0)), 0.3, "old-age debt should survive an aggregate rebuild")
 	asserts.equal(int(rebuilt[0].get("carcass_id", -1)), 11, "the carcass a goal refers to should survive an aggregate rebuild")
 	TestHelpers.destroy_manager(manager)
 

@@ -604,7 +604,8 @@ func _post_worker_job() -> void:
 	_worker_mutex.lock()
 	_worker_job = {"delta": tick_duration, "tick": current_tick, "time": simulation_time,
 		"lod": _build_lod_context(), "inspected": selected_agent_id,
-		"include_grass": bool(debug_flags.get("show_grass_density", false))}
+		"include_grass": bool(debug_flags.get("show_grass_density", false)),
+		"include_fear": bool(debug_flags.get("show_fear", false))}
 	_worker_mutex.unlock()
 	_worker_started_usec = Time.get_ticks_usec()
 	_job_in_flight = true
@@ -624,7 +625,7 @@ func _worker_loop() -> void:
 		if job.is_empty():
 			continue
 		var result: Dictionary = _worker.step(float(job.delta), int(job.tick), float(job.time),
-			job.lod, int(job.inspected), bool(job.include_grass))
+			job.lod, int(job.inspected), bool(job.include_grass), bool(job.get("include_fear", false)))
 		_worker_mutex.lock()
 		_worker_result = result
 		_worker_mutex.unlock()
@@ -732,6 +733,8 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		for index in mini(indices.size(), values.size()):
 			world_state.resource_system._cells[indices[index]] = values[index]
 	world_state.resource_system.total_biomass = float(data.biomass)
+	if data.has("fear_cells"):
+		world_state.fear_field.import_cells(data.fear_cells)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes
 	if bool(data.get("full", false)):
 		world_state._sector_states.clear()

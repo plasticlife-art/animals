@@ -3,13 +3,21 @@ extends SceneTree
 ## Deterministic ecology run for the default preset.
 ##
 ## Godot --headless --path <project> --script res://scripts/dev/ecology_audit.gd \
-##   -- seed lod|off seconds [output.json]
+##   -- seed lod|off seconds [output.json] [section.path.to.key=value ...]
+##
+## Trailing `key=value` pairs override the loaded config before the world is built,
+## e.g. `world.grass.growth_rate=0.006 species.herbivore.feeding.nutrition_gain=0.25`,
+## so a balance sweep needs no edits to the shipped files.
 ##
 ## LOD is configured on SimulationManager, not by mutating debug.json after the
 ## manager has initialized. Keeping that distinction here matters: the old audit
 ## labelled runs as LOD while actually simulating every animal at LOD0.
 const SAMPLE_SECONDS := 60.0
 const PRIMARY_SPECIES := ["herbivore", "predator"]
+## Risk above which ground counts as feared in the cascade figures. The shipped grazer
+## tolerance, held here as a constant so a run with avoidance switched off (a huge
+## `risk_tolerance` override) is still measured on the same ground.
+const CASCADE_RISK := 0.5
 
 
 func _initialize() -> void:
@@ -20,6 +28,11 @@ func _initialize() -> void:
 	var output_path := str(args[3]) if args.size() > 3 else ""
 	var selection := ConfigLoader.default_selection()
 	var bundle := ConfigLoader.load_config_bundle(selection)
+	var overrides := {}
+	for index in range(4, args.size()):
+		var pair := str(args[index]).split("=", true, 1)
+		if pair.size() == 2:
+			overrides[pair[0]] = _apply_override(bundle, pair[0], pair[1])
 	var manager = preload("res://scripts/core/simulation_manager.gd").new()
 	manager.initialize(bundle, run_seed)
 	manager.set_lod_enabled(use_lod)
@@ -69,6 +82,7 @@ func _initialize() -> void:
 	var report := {
 		"schema_version": 2,
 		"selection": selection,
+		"overrides": overrides,
 		"seed": run_seed,
 		"lod": use_lod,
 		"requested_seconds": requested_seconds,
@@ -86,6 +100,7 @@ func _initialize() -> void:
 		"outcome": _outcome(initial_population, final_population, counters, species_ids),
 		"history": history,
 		"formation": _formation_over_run(history),
+		"regulation": _regulation_over_run(history, capacities, species_ids),
 		"lod_counts": manager.world_state.get_lod_counts(),
 		"performance_counters": manager.world_state.get_performance_counters(),
 	}
@@ -103,6 +118,62 @@ func _initialize() -> void:
 	manager.shutdown()
 	manager.free()
 	quit()
+
+
+## Sets `bundle[a][b][c]` from "a.b.c" and a JSON-ish value; returns the parsed value.
+func _apply_override(bundle: Dictionary, path: String, raw: String) -> Variant:
+	var value: Variant = JSON.parse_string(raw)
+	if value == null and raw != "null":
+		value = raw
+	var keys := path.split(".")
+	var node: Dictionary = bundle
+	for index in range(keys.size() - 1):
+		if not (node.get(keys[index]) is Dictionary):
+			node[keys[index]] = {}
+		node = node[keys[index]]
+	node[keys[keys.size() - 1]] = value
+	return value
+
+
+## Whether numbers are held by food or by the birth cap, from the second half of the
+## run: mean and spread of each species' count, the share of samples sitting on the
+## cap, and mean grass density.
+func _regulation_over_run(history: Array, capacities: Dictionary, species_ids: Array) -> Dictionary:
+	var late: Array = history.slice(history.size() / 2)
+	var result := {}
+	for species_id in species_ids:
+		var counts: Array = []
+		var at_cap := 0
+		for row in late:
+			counts.append(float(row.get(species_id, 0)))
+			if int(row.get(species_id, 0)) >= int(capacities.get(species_id, 2147483647)):
+				at_cap += 1
+		var mean := 0.0
+		for count in counts:
+			mean += count
+		mean /= maxf(1.0, float(counts.size()))
+		var variance := 0.0
+		for count in counts:
+			variance += pow(count - mean, 2.0)
+		result[species_id] = {"mean": snappedf(mean, 0.1), "min": counts.min() if not counts.is_empty() else 0.0,
+			"max": counts.max() if not counts.is_empty() else 0.0,
+			"cv": snappedf(sqrt(variance / maxf(1.0, float(counts.size()))) / maxf(1.0, mean), 0.001),
+			"share_at_cap": snappedf(float(at_cap) / maxf(1.0, float(late.size())), 0.01)}
+	var density := 0.0
+	for row in late:
+		density += float(row.get("grass_density", 0.0))
+	result["grass_density_mean"] = snappedf(density / maxf(1.0, float(late.size())), 0.001)
+	var feared := 0.0
+	var other := 0.0
+	var feared_cells := 0.0
+	for row in late:
+		feared += float(row.get("cascade", {}).get("feared_density", 0.0))
+		other += float(row.get("cascade", {}).get("other_density", 0.0))
+		feared_cells += float(row.get("cascade", {}).get("feared_cells", 0))
+	var samples := maxf(1.0, float(late.size()))
+	result["cascade"] = {"feared_density": snappedf(feared / samples, 0.001), "other_density": snappedf(other / samples, 0.001),
+		"feared_cells_mean": snappedf(feared_cells / samples, 0.1)}
+	return result
 
 
 func _food_chain_broken(population: Dictionary) -> bool:
@@ -126,9 +197,30 @@ func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictio
 		row["%s_starvation_risk" % species_id] = int(population.get(
 			"starvation_risk_%s_count" % species_id, 0))
 	row["grass_biomass"] = manager.world_state.resource_system.get_total_biomass()
+	row["grass_density"] = snappedf(manager.world_state.resource_system.get_mean_density(), 0.001)
 	row["carcass_meat"] = manager.world_state.get_total_carcass_meat_remaining()
 	row["formation"] = _formation(manager)
+	row["cascade"] = _cascade(manager)
 	return row
+
+
+## Grass on ground prey fear against grass elsewhere, meadow cells only so that poorer
+## biomes do not pass for grazing. Denser grass on the feared ground is the cascade.
+func _cascade(manager) -> Dictionary:
+	var world = manager.world_state
+	var resources = world.resource_system
+	var feared := Vector2.ZERO
+	var other := Vector2.ZERO
+	for index in range(resources.get_cell_count()):
+		if world.terrain_system.get_forage_init_multiplier(index) < 1.0:
+			continue
+		var density: float = resources.get_biomass(index) / resources.max_biomass
+		if world.fear_field.risk_at(resources.get_cell_center(index)) > CASCADE_RISK:
+			feared += Vector2(density, 1.0)
+		else:
+			other += Vector2(density, 1.0)
+	return {"feared_cells": int(feared.y), "feared_density": snappedf(feared.x / maxf(1.0, feared.y), 0.001),
+		"other_density": snappedf(other.x / maxf(1.0, other.y), 0.001)}
 
 
 ## The shape of herbivore herds, sleeping and awake, measured apart. `nn` is the mean

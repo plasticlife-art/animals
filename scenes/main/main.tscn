@@ -197,6 +197,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Grass density"
 
+[node name="FearCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1180226411]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Fear"
+
 [node name="PopulationDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=579245789]
 unique_name_in_owner = true
 layout_mode = 2

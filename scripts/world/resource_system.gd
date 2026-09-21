@@ -2,19 +2,29 @@ class_name ResourceSystem
 extends RefCounted
 
 var terrain_system: TerrainSystem
+## Optional `FearField`. The cell searches skip cells whose risk exceeds the caller's
+## `max_risk`; with no field, or `max_risk` left at INF, risk plays no part.
+var risk_field = null
 var world_size: Vector2 = Vector2.ZERO
 var cell_size: float = 32.0
 var cols: int = 0
 var rows: int = 0
 var max_biomass: float = 100.0
-var regrowth_rate: float = 5.0
+## Logistic growth rate per second: a sparse sward grows by this share of itself.
+var growth_rate: float = 0.0
+## Share of a cell's cap that cannot be grazed - roots and stubble. Growth starts from
+## it, so a stripped cell recovers instead of staying bare for ever.
+var stubble_fraction: float = 0.0
+## Each cell grows once every this many ticks, with the elapsed time made up in the
+## step, so a slow-growing map does not cost a full grid sweep every tick.
+var growth_stride_ticks: int = 18
 var total_biomass: float = 0.0
 var _cells: PackedFloat32Array = PackedFloat32Array()
 var _biomass_totals_by_biome: Dictionary = {}
-# Indices of cells below their local maximum. A cell at max cannot regrow, so
-# stepping the whole grid every tick costs the same whether or not anything was
-# eaten; only depleted cells need work.
-var _regrowing_cells: Dictionary = {}
+# 1 for cells below their local maximum. A cell at its cap cannot grow, so the
+# sweep skips it.
+var _below_cap: PackedByteArray = PackedByteArray()
+var _below_cap_count: int = 0
 # Counts cells visited by find_best_cell since the last drain, so the cost of grass
 # searching is attributable instead of hiding inside the agent tick.
 var _cells_scanned: int = 0
@@ -32,9 +42,10 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 		float(world_size_config.get("y", 900.0))
 	)
 	cell_size = float(grass_config.get("cell_size", 32.0))
-	# Biomass is stored per cell but means grass over an area, so both the cap
-	# and the regrowth have to scale with the square of the cell. `max_biomass`
-	# and `regrowth_rate` are the values tuned at `biomass_reference_cell_size`.
+	# Biomass is stored per cell but means grass over an area, so the cap has to
+	# scale with the square of the cell. `max_biomass` is the value tuned at
+	# `biomass_reference_cell_size`. `growth_rate` is a share per second and needs
+	# no scaling.
 	#
 	# Missing the key defaults the reference to the cell itself - factor 1, no
 	# change - which is what keeps the test fixtures' own worlds untouched.
@@ -47,14 +58,13 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 	if reference_cell_size > 0.0:
 		area_scale = pow(cell_size / reference_cell_size, 2.0)
 	max_biomass = float(grass_config.get("max_biomass", 100.0)) * area_scale
-	regrowth_rate = float(grass_config.get("regrowth_rate", 5.0)) * area_scale
+	growth_rate = maxf(0.0, float(grass_config.get("growth_rate", 0.0)))
+	stubble_fraction = clampf(float(grass_config.get("stubble_fraction", 0.0)), 0.0, 0.9)
+	growth_stride_ticks = maxi(1, int(grass_config.get("growth_stride_ticks", 18)))
 
 	cols = maxi(1, int(ceil(world_size.x / cell_size)))
 	rows = maxi(1, int(ceil(world_size.y / cell_size)))
 	_cells.resize(cols * rows)
-	total_biomass = 0.0
-	_biomass_totals_by_biome.clear()
-	_regrowing_cells.clear()
 	_dirty_cells.clear()
 
 	var density_min := float(grass_config.get("initial_density_min", 0.45))
@@ -62,11 +72,15 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, new_terrai
 	for index in range(_cells.size()):
 		var forage_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_init_multiplier(index)
 		var biomass := rng.randf_range(density_min, density_max) * max_biomass * forage_multiplier
-		_cells[index] = biomass
-		total_biomass += biomass
-		_add_biomass_to_biome(index, biomass)
-		if biomass < _get_cell_max_biomass(index):
-			_regrowing_cells[index] = true
+		# Nothing grows where nothing can walk. Grass on a cliff or in a pond could never
+		# be eaten, so it stayed the richest cell around for ever and drew sleeping herds
+		# to stand beside it and starve. The draw above still happens, so the rest of
+		# the world comes out of `rng` unchanged.
+		if terrain_system != null and not terrain_system.is_walkable_index(index):
+			_cells[index] = 0.0
+			continue
+		_cells[index] = maxf(biomass, _get_cell_max_biomass(index) * stubble_fraction)
+	_rebuild_derived()
 
 
 ## Grass biomass is the one accumulated field here; everything else - the total,
@@ -83,41 +97,60 @@ func import_cells(cells, new_terrain_system: TerrainSystem = null) -> void:
 			% [cells.size() if cells is PackedFloat32Array else -1, _cells.size()])
 		return
 	_cells = cells.duplicate()
+	# A save from before grass could run out holds several times today's cap, and
+	# grass on cells nothing can reach. Both are brought within the current rules.
+	for index in range(_cells.size()):
+		if terrain_system != null and not terrain_system.is_walkable_index(index):
+			_cells[index] = 0.0
+		else:
+			_cells[index] = minf(_cells[index], _get_cell_max_biomass(index))
+	_dirty_cells.clear()
+	_rebuild_derived()
+
+
+## The total, the per-biome totals and the below-cap flags, read off the cells.
+func _rebuild_derived() -> void:
 	total_biomass = 0.0
 	_biomass_totals_by_biome.clear()
-	_regrowing_cells.clear()
-	_dirty_cells.clear()
+	_below_cap.resize(_cells.size())
+	_below_cap_count = 0
 	for index in range(_cells.size()):
 		var biomass: float = _cells[index]
 		total_biomass += biomass
 		_add_biomass_to_biome(index, biomass)
-		if biomass < _get_cell_max_biomass(index):
-			_regrowing_cells[index] = true
+		var below := biomass < _get_cell_max_biomass(index)
+		_below_cap[index] = 1 if below else 0
+		if below:
+			_below_cap_count += 1
 
 
-## `season_regrowth_multiplier` is applied here rather than folded into
-## `regrowth_rate`, which is resolved once at init with the area scale and must
-## stay the tuned value - multiplying into it would compound every tick.
-func step(delta: float, season_regrowth_multiplier: float = 1.0) -> void:
-	if _regrowing_cells.is_empty():
+## Logistic growth: `growth_rate x biomass x (1 - biomass / cap)`, scaled by the biome
+## and the season. A grazed-down sward grows slowly, a half-grown one fastest, a full
+## one not at all, which is what lets grazing pressure decide how much a range yields.
+## Grass used to refill at a flat rate that outran every herd on the map hundreds of
+## times over, so food never limited anything.
+##
+## One slice of the grid per tick: the cells whose index falls on this tick's phase,
+## each stepped by the time since its last turn. The phase comes from `tick`, not from
+## a counter, so a loaded save resumes the same schedule.
+func step(delta: float, season_regrowth_multiplier: float = 1.0, tick: int = 0) -> void:
+	if growth_rate <= 0.0 or season_regrowth_multiplier <= 0.0 or _below_cap_count <= 0:
 		return
-	var filled_cells: Array = []
-	for index in _regrowing_cells.keys():
+	var stride := growth_stride_ticks
+	var seasonal_rate := growth_rate * season_regrowth_multiplier * delta * float(stride)
+	for index in range(posmod(tick, stride), _cells.size(), stride):
+		if _below_cap[index] == 0:
+			continue
+		var biome_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_regrowth_multiplier(index)
+		if biome_multiplier <= 0.0:
+			continue
 		var previous := _cells[index]
 		var cell_max := _get_cell_max_biomass(index)
-		var regrowth_multiplier := 1.0 if terrain_system == null else terrain_system.get_forage_regrowth_multiplier(index)
-		var base_growth := regrowth_rate * regrowth_multiplier * delta
-		var updated := minf(cell_max, previous + base_growth * season_regrowth_multiplier)
-		var delta_biomass := updated - previous
+		var updated := minf(cell_max, previous + seasonal_rate * biome_multiplier * previous * (1.0 - previous / cell_max))
 		if updated >= cell_max:
-			filled_cells.append(index)
-		elif is_zero_approx(base_growth):
-			# Only a cell whose terrain cannot regrow at all earns permanent
-			# eviction; consumption puts it back when it next matters. Testing the
-			# season-scaled growth instead would let a hard winter quietly empty
-			# the working set, and those cells would never resume.
-			filled_cells.append(index)
-			continue
+			_below_cap[index] = 0
+			_below_cap_count -= 1
+		var delta_biomass := updated - previous
 		if delta_biomass <= 0.0:
 			continue
 		_cells[index] = updated
@@ -125,12 +158,10 @@ func step(delta: float, season_regrowth_multiplier: float = 1.0) -> void:
 			_dirty_cells[index] = updated
 		total_biomass += delta_biomass
 		_add_biomass_to_biome(index, delta_biomass)
-	for index in filled_cells:
-		_regrowing_cells.erase(index)
 
 
 func get_regrowing_cell_count() -> int:
-	return _regrowing_cells.size()
+	return _below_cap_count
 
 
 func get_total_biomass() -> float:
@@ -145,6 +176,22 @@ func get_biomass(index: int) -> float:
 	if index < 0 or index >= _cells.size():
 		return 0.0
 	return _cells[index]
+
+
+## What a grazer can take from a cell: everything above the stubble.
+func get_available_biomass(index: int) -> float:
+	if index < 0 or index >= _cells.size():
+		return 0.0
+	return maxf(0.0, _cells[index] - _get_cell_max_biomass(index) * stubble_fraction)
+
+
+## Standing biomass as a share of what the map could hold.
+func get_mean_density() -> float:
+	var capacity := 0.0
+	for index in range(_cells.size()):
+		if terrain_system == null or terrain_system.is_walkable_index(index):
+			capacity += _get_cell_max_biomass(index)
+	return total_biomass / maxf(1.0, capacity)
 
 
 func get_cell_center(index: int) -> Vector2:
@@ -187,12 +234,13 @@ func query_cells(position: Vector2, radius: float) -> Array:
 			var center := Vector2((x + 0.5) * cell_size, (y + 0.5) * cell_size)
 			if center.distance_squared_to(position) > radius_sq:
 				continue
+			var available := get_available_biomass(index)
 			result.append({
 				"index": index,
 				"coords": Vector2i(x, y),
 				"center": center,
-				"biomass": _cells[index],
-				"density": _cells[index] / _get_cell_max_biomass(index),
+				"biomass": available,
+				"density": available / _get_cell_max_biomass(index),
 			})
 	return result
 
@@ -203,7 +251,8 @@ func take_cells_scanned() -> int:
 	return scanned
 
 
-func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
+func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0, max_risk: float = INF) -> Dictionary:
+	var check_risk := max_risk < INF and risk_field != null
 	var best := {}
 	var best_distance := INF
 	var best_biomass := -INF
@@ -227,8 +276,10 @@ func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) 
 			if distance_sq > radius_sq:
 				continue
 
-			var biomass := _cells[index]
+			var biomass := get_available_biomass(index)
 			if biomass < min_biomass:
+				continue
+			if check_risk and risk_field.risk_at(center) > max_risk:
 				continue
 
 			if distance_sq < best_distance or (is_equal_approx(distance_sq, best_distance) and biomass > best_biomass):
@@ -253,7 +304,8 @@ func find_best_cell(position: Vector2, radius: float, min_biomass: float = 0.0) 
 ## Nearest-first, like `find_best_cell`: one bite is a small fraction of a full cell, so a
 ## richer cell further away buys the agent nothing it cannot get underfoot, and walking to
 ## it is time spent not eating.
-func find_best_cell_in_set(position: Vector2, radius: float, min_biomass: float, allowed_indices: Dictionary) -> Dictionary:
+func find_best_cell_in_set(position: Vector2, radius: float, min_biomass: float, allowed_indices: Dictionary, max_risk: float = INF) -> Dictionary:
+	var check_risk := max_risk < INF and risk_field != null
 	var best_index := -1
 	var best_distance_sq := INF
 	var best_biomass := -INF
@@ -275,7 +327,7 @@ func find_best_cell_in_set(position: Vector2, radius: float, min_biomass: float,
 			var index := y * cols + x
 			if not allowed_indices.has(index):
 				continue
-			var biomass := _cells[index]
+			var biomass := get_available_biomass(index)
 			if biomass < min_biomass:
 				continue
 			var center := Vector2((x + 0.5) * cell_size, (y + 0.5) * cell_size)
@@ -285,6 +337,8 @@ func find_best_cell_in_set(position: Vector2, radius: float, min_biomass: float,
 			if distance_sq > best_distance_sq:
 				continue
 			if is_equal_approx(distance_sq, best_distance_sq) and biomass <= best_biomass:
+				continue
+			if check_risk and risk_field.risk_at(center) > max_risk:
 				continue
 			best_index = index
 			best_distance_sq = distance_sq
@@ -315,7 +369,7 @@ func consume_at_position(position: Vector2, amount: float) -> float:
 func consume_cell(index: int, amount: float) -> float:
 	if index == -1:
 		return 0.0
-	var consumed := minf(_cells[index], amount)
+	var consumed := minf(get_available_biomass(index), amount)
 	if consumed <= 0.0:
 		return 0.0
 	_cells[index] -= consumed
@@ -323,7 +377,9 @@ func consume_cell(index: int, amount: float) -> float:
 		_dirty_cells[index] = _cells[index]
 	total_biomass -= consumed
 	_add_biomass_to_biome(index, -consumed)
-	_regrowing_cells[index] = true
+	if _below_cap[index] == 0:
+		_below_cap[index] = 1
+		_below_cap_count += 1
 	return consumed
 
 

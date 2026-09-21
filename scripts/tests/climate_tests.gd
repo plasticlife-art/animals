@@ -184,7 +184,7 @@ func _test_per_species_perception(asserts, config: Dictionary) -> void:
 ## season named by `start_season_index`.
 func _seasonal_manager(seed_value: int, start_season_index: int, winter_regrowth: float):
 	var bundle: Dictionary = TestHelpers.build_test_bundle(seed_value)
-	bundle["world"]["grass"]["regrowth_rate"] = 4.0
+	bundle["world"]["grass"]["growth_rate"] = 0.05
 	bundle["world"]["grass"]["initial_density_min"] = 1.0
 	bundle["world"]["grass"]["initial_density_max"] = 1.0
 	var climate_config: Dictionary = _shipped_config().duplicate(true)

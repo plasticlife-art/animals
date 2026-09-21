@@ -61,6 +61,9 @@ func tick(world, delta: float) -> void:
 		threat_memory_until = world.current_time + float(perception.get("threat_memory_seconds", 2.0))
 	if not predators.is_empty() or world.current_time < threat_memory_until:
 		interaction_timer = 0.0
+		# The moment of being scared is what marks this ground as risky for the herd.
+		if ai_state != AgentAIState.PANIC and not predators.is_empty():
+			world.fear_field.deposit(position, world.fear_field.scare_risk)
 		set_ai_state(AgentAIState.PANIC)
 		force_current_action(AgentAction.FLEE_TO_SAFE_AREA, "danger or recent threat", world.current_tick)
 		var neighbors: Array = [] if cached_snapshot == null else cached_snapshot.group_neighbors
@@ -200,11 +203,12 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 		# A full bite, not a scrap. A lower bar had animals stopping for `eat_duration`
 		# on nearly bare ground instead of walking to the patch they had chosen,
 		# which fed them less than never grazing underfoot at all.
-		if world.resource_system.get_biomass(current_cell_index) >= bite_amount:
+		if world.resource_system.get_available_biomass(current_cell_index) >= bite_amount \
+				and world.grazing_ground_is_acceptable(position, hunger, perception):
 			eat_index = current_cell_index
 			reached_target_cell = true
 	if reached_target_cell or reached_target_radius:
-		var consumed: float = world.consume_grass_cell(eat_index, bite_amount)
+		var consumed: float = world.consume_grass_cell(eat_index, world.grazing_bite(feeding, hunger))
 		if consumed > 0.0:
 			set_state("eat", world.current_tick)
 			clear_navigation()
@@ -213,7 +217,7 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 			reduce_hunger(hunger_reduction)
 			if world.has_method("record_herbivore_hunger_reduction"):
 				world.record_herbivore_hunger_reduction(hunger_reduction)
-			restore_energy(consumed * 0.18)
+			restore_energy(hunger_reduction * 0.18)
 			world.emit_event("GrassConsumed", self, -1, {
 				"consumed": consumed,
 				"cell_index": eat_index,

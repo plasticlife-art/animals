@@ -41,6 +41,8 @@ func _draw() -> void:
 		_draw_obstacles(world, visible_rect)
 	if bool(debug_flags.get("show_grass_density", false)):
 		_draw_grass_density(world, visible_rect)
+	if bool(debug_flags.get("show_fear", false)):
+		_draw_fear(world, visible_rect)
 	if bool(debug_flags.get("show_water_overlay", true)):
 		_draw_water(world, visible_rect)
 	if bool(debug_flags.get("show_carcasses", false)):
@@ -145,6 +147,22 @@ func _draw_grass_density(world, visible_rect: Rect2) -> void:
 			if density <= 0.02:
 				continue
 			_draw_world_cell(world.resource_system.get_cell_rect(index), Color(0.18, 0.44, 0.2, density * 0.42))
+
+
+## Where prey expect predators: redder with risk, full strength at twice a grazer's
+## usual tolerance.
+func _draw_fear(world, visible_rect: Rect2) -> void:
+	var field = world.fear_field
+	if field == null:
+		return
+	for index in range(field.get_cell_count()):
+		var risk: float = field.get_risk(index)
+		if risk <= 0.05:
+			continue
+		var rect: Rect2 = field.get_cell_rect(index)
+		if not rect.intersects(visible_rect):
+			continue
+		_draw_world_cell(rect, Color(0.78, 0.16, 0.12, clampf(risk, 0.0, 1.0) * 0.4))
 
 
 func _draw_biomes(world, visible_rect: Rect2) -> void:

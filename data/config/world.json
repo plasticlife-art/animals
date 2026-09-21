@@ -8,11 +8,20 @@
   "spatial_cell_size": 128.0,
   "grass": {
     "cell_size": 96.0,
-    "max_biomass": 100.0,
-    "regrowth_rate": 6.0,
-    "initial_density_min": 0.5,
-    "initial_density_max": 1.0,
-    "biomass_reference_cell_size": 32.0
+    "max_biomass": 450.0,
+    "growth_rate": 0.004,
+    "stubble_fraction": 0.05,
+    "growth_stride_ticks": 18,
+    "initial_density_min": 0.3,
+    "initial_density_max": 0.65
+  },
+  "fear": {
+    "enabled": true,
+    "cell_size_in_grass_cells": 4,
+    "half_life_seconds": 480.0,
+    "kill_risk": 1.0,
+    "scare_risk": 0.05,
+    "hunt_pressure_risk": 0.1
   },
   "climate": {
     "enabled": true,

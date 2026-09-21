@@ -54,6 +54,7 @@ func _ready() -> void:
 	_try_register_overlay_checkbox("show_herd_relations", "%HerdRelationsCheck")
 	_try_register_overlay_checkbox("show_chase_lines", "%ChaseLinesCheck")
 	_try_register_overlay_checkbox("show_grass_density", "%GrassDensityCheck")
+	_try_register_overlay_checkbox("show_fear", "%FearCheck")
 	_try_register_overlay_checkbox("show_population_density", "%PopulationDensityCheck")
 	_try_register_overlay_checkbox("show_water_overlay", "%WaterOverlayCheck")
 	_try_register_overlay_checkbox("show_carcasses", "%CarcassesCheck")

@@ -21,6 +21,11 @@ func run(a) -> void:
 	_test_critical_thirst_expands_water_search(a)
 
 
+## Comfortably past the species' `maturity_age`, whatever a rebalance makes it.
+func _adult_age(agent) -> float:
+	return float(agent.reproduction.get("maturity_age", 0.0)) + 6.0
+
+
 func _ready_record(agent, age: float, sex: String) -> Dictionary:
 	agent.age = age
 	agent.sex = sex
@@ -58,8 +63,8 @@ func _test_dormant_juveniles_and_single_sex_groups_do_not_breed(a) -> void:
 	a.equal(world._compute_dormant_births_for_aggregate(aggregates[0], 1.0, juvenile_records), 0,
 		"juveniles cannot breed while dormant")
 
-	var female_records := [_ready_record(male, 30.0, AgentBase.SEX_FEMALE),
-		_ready_record(female, 30.0, AgentBase.SEX_FEMALE)]
+	var female_records := [_ready_record(male, _adult_age(male), AgentBase.SEX_FEMALE),
+		_ready_record(female, _adult_age(female), AgentBase.SEX_FEMALE)]
 	aggregates = world._build_dormant_aggregates(female_records, Vector2i.ZERO)
 	a.equal(world._compute_dormant_births_for_aggregate(aggregates[0], 1.0, female_records), 0,
 		"a single-sex dormant group cannot create offspring")
@@ -71,8 +76,8 @@ func _test_dormant_pair_breeds_only_when_ready(a) -> void:
 	var world = manager.world_state
 	var male = Helpers.spawn_species(world, "herbivore", Vector2(90, 90), 5, AgentBase.SEX_MALE)
 	var female = Helpers.spawn_species(world, "herbivore", Vector2(100, 90), 5, AgentBase.SEX_FEMALE)
-	var records := [_ready_record(male, 30.0, AgentBase.SEX_MALE),
-		_ready_record(female, 30.0, AgentBase.SEX_FEMALE)]
+	var records := [_ready_record(male, _adult_age(male), AgentBase.SEX_MALE),
+		_ready_record(female, _adult_age(female), AgentBase.SEX_FEMALE)]
 	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
 	var energy_before := float(records[0]["energy"])
 	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 1,
@@ -91,7 +96,7 @@ func _test_dormant_mates_must_be_within_search_radius(a) -> void:
 	var world = manager.world_state
 	var male = Helpers.spawn_species(world, "herbivore", Vector2(40, 40), 5, AgentBase.SEX_MALE)
 	var female = Helpers.spawn_species(world, "herbivore", Vector2(220, 220), 5, AgentBase.SEX_FEMALE)
-	var records := [_ready_record(male, 30.0, AgentBase.SEX_MALE), _ready_record(female, 30.0, AgentBase.SEX_FEMALE)]
+	var records := [_ready_record(male, _adult_age(male), AgentBase.SEX_MALE), _ready_record(female, _adult_age(female), AgentBase.SEX_FEMALE)]
 	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
 	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 0,
 		"ready animals farther apart than their mate search radius do not breed")
@@ -106,8 +111,8 @@ func _test_dormant_female_breeds_with_her_bonded_mate(a) -> void:
 	var mate = Helpers.spawn_species(world, "predator", Vector2(220, 100), -1, AgentBase.SEX_MALE)
 	female.set_preferred_mate_id(mate.id)
 	mate.set_preferred_mate_id(female.id)
-	var records := [_ready_record(female, 30.0, AgentBase.SEX_FEMALE), _ready_record(stranger, 30.0, AgentBase.SEX_MALE),
-		_ready_record(mate, 30.0, AgentBase.SEX_MALE)]
+	var records := [_ready_record(female, _adult_age(female), AgentBase.SEX_FEMALE), _ready_record(stranger, _adult_age(stranger), AgentBase.SEX_MALE),
+		_ready_record(mate, _adult_age(mate), AgentBase.SEX_MALE)]
 	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
 	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 1, "the bonded pair breeds")
 	a.is_true(float(records[2]["reproduction_cooldown"]) > 0.0 and float(records[1]["reproduction_cooldown"]) <= 0.0,

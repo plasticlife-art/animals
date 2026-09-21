@@ -19,6 +19,7 @@ const ScavengerScript = preload("res://scripts/agents/scavenger.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_perception_snapshot.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
+const FearFieldScript = preload("res://scripts/world/fear_field.gd")
 const ClimateScript = preload("res://scripts/world/climate.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
@@ -53,6 +54,7 @@ var event_bus
 var rng: RandomNumberGenerator
 var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
+var fear_field: FearField
 var climate: Climate
 var spatial_grid: SpatialGrid
 ## Which species exist and what each one eats, is eaten by, and leaves behind.
@@ -166,6 +168,9 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 
 	resource_system = ResourceSystemScript.new()
 	resource_system.initialize(world_config, rng, terrain_system)
+	fear_field = FearFieldScript.new()
+	fear_field.initialize(world_config, resource_system.world_size, resource_system.cell_size)
+	resource_system.risk_field = fear_field
 	# Sampled here and not only in `step()` because the manager writes a stats
 	# snapshot on tick 0, before the first step ever runs.
 	climate = ClimateScript.new()
@@ -221,7 +226,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	scenery.local_searches = 0
 	_prepare_navigation_budget()
 	var phase_started_usec: int = Time.get_ticks_usec()
-	resource_system.step(delta, climate.regrowth_multiplier)
+	resource_system.step(delta, climate.regrowth_multiplier, current_tick)
+	fear_field.step(delta, current_tick)
 	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
 	var lod_context_key := _lod_assignment_context_key(active_lod_context)
@@ -269,6 +275,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	phase_started_usec = Time.get_ticks_usec()
 	_step_dormant_sectors(delta, active_lod_context)
 	_sleep_far_sectors(active_lod_context)
+	if current_tick % _HERD_SPLIT_INTERVAL_TICKS == 0:
+		_split_oversized_herds()
 	performance_counters["phase_dormant_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	_flush_carcass_removals()
 	var path_stats: Dictionary = {} if terrain_system == null else terrain_system.consume_path_query_stats()
@@ -330,6 +338,8 @@ func kill_agent(agent, cause: String, other_agent_id: int = -1) -> void:
 	agent.is_alive = false
 	pending_removals.append(agent.id)
 	_maybe_spawn_carcass(agent, cause)
+	if cause == "predation":
+		fear_field.deposit(agent.position, fear_field.kill_risk)
 
 	if cause == "starvation":
 		emit_event("AgentStarved", agent, other_agent_id, {"cause": cause})
@@ -989,7 +999,11 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	var urgency_start := minf(graze_hunger_floor, critical_hunger)
 	if agent.hunger > urgency_start:
 		urgency_ratio = clampf((agent.hunger - urgency_start) / maxf(1.0, agent.need_max - urgency_start), 0.0, 1.0)
-	var min_biomass := 4.0 if urgency_ratio < 0.45 else 2.0
+	# What counts as grass worth heading for depends on how hungry the animal is. A fed
+	# one walks past a grazed-down sward to a good one, which leaves the poor patch to
+	# regrow; a hungry one takes any full bite; a starving one takes scraps.
+	var tiers := grass_target_tiers(agent.feeding, urgency_ratio >= 0.45,
+		float(agent.perception.get("risk_tolerance", INF)))
 
 	# Reuse a recent target instead of searching every decision tick. The cache
 	# is dropped early if the cell has since been grazed below the threshold, so
@@ -997,7 +1011,7 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	var cached: Dictionary = agent.grass_target_cache
 	if not cached.is_empty() and current_tick - agent.grass_target_tick < _grass_target_refresh_ticks:
 		var cached_index: int = int(cached.get("index", -1))
-		if cached_index != -1 and resource_system.get_biomass(cached_index) >= min_biomass:
+		if cached_index != -1 and resource_system.get_available_biomass(cached_index) >= float(cached.get("min_biomass", tiers[-1][0])):
 			return cached
 		agent.grass_target_cache = {}
 
@@ -1005,19 +1019,62 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	# onto neighbouring cells. It measured flat (101 vs 107 vs 111 herbivores at
 	# tick 1500 for offsets of 0, half a cell and a full cell), so the concept is
 	# not carried. Herd contention is handled by the overlap pass instead.
-	var local_grass := find_reachable_grass(agent.position, base_search_radius, min_biomass, agent.id)
-	if not local_grass.is_empty():
-		agent.grass_target_cache = local_grass
-		agent.grass_target_tick = current_tick
-		return local_grass
+	for tier in tiers:
+		var local_grass := find_reachable_grass(agent.position, base_search_radius, float(tier[0]), agent.id, float(tier[1]))
+		if not local_grass.is_empty():
+			local_grass["min_biomass"] = float(tier[0])
+			agent.grass_target_cache = local_grass
+			agent.grass_target_tick = current_tick
+			return local_grass
 	var expanded_search_radius := lerpf(base_search_radius, maxf(base_search_radius * 4.0, 720.0), urgency_ratio)
 	if expanded_search_radius <= base_search_radius:
 		return {}
-	var expanded_grass := find_reachable_grass(agent.position, expanded_search_radius, min_biomass, agent.id)
+	var expanded_grass := find_reachable_grass(agent.position, expanded_search_radius, float(tiers[-1][0]), agent.id)
 	if not expanded_grass.is_empty():
+		expanded_grass["min_biomass"] = float(tiers[-1][0])
 		agent.grass_target_cache = expanded_grass
 		agent.grass_target_tick = current_tick
 	return expanded_grass
+
+
+## What a grazer looks for, best first, as `[grazable biomass, risk limit]` pairs. Fed,
+## it wants a sward worth walking to (`feeding.good_sward_fraction` of a full cell) on
+## ground it does not fear, then any full bite there, and only then a full bite on
+## risky ground. Hungry, it takes a full bite anywhere, then scraps: hunger outweighs
+## fear, which is what ends a herd's stay in a refuge once the refuge is eaten down.
+func grass_target_tiers(feeding: Dictionary, hungry: bool, risk_tolerance: float = INF) -> Array:
+	var bite := float(feeding.get("bite_amount", 18.0))
+	if hungry:
+		return [[bite, INF], [2.0, INF]]
+	var good := maxf(bite, resource_system.max_biomass * float(feeding.get("good_sward_fraction", 0.0)))
+	var tiers: Array = []
+	for tier in [[good, risk_tolerance], [bite, risk_tolerance], [bite, INF], [4.0, INF]]:
+		if tiers.is_empty() or tiers[-1] != tier:
+			tiers.append(tier)
+	return tiers
+
+
+## Whether a grazer at `hunger` is past caring about risk and sward quality. The same
+## line `_find_grass_target_for_agent()` draws with its urgency ratio.
+func grazer_is_hungry(hunger: float) -> bool:
+	var thresholds: Dictionary = config_bundle.get("balance", {}).get("state_thresholds", {})
+	var start := minf(float(thresholds.get("graze_hunger_floor", 20.0)), float(thresholds.get("critical_hunger", 65.0)))
+	var need_max := float(config_bundle.get("balance", {}).get("need_max", 100.0))
+	return (hunger - start) / maxf(1.0, need_max - start) >= 0.45
+
+
+## Whether a grazer would eat where it stands: always when hungry, otherwise only on
+## ground within its `perception.risk_tolerance`.
+func grazing_ground_is_acceptable(position: Vector2, hunger: float, perception: Dictionary) -> bool:
+	var tolerance := float(perception.get("risk_tolerance", INF))
+	return tolerance == INF or grazer_is_hungry(hunger) or fear_field.risk_at(position) <= tolerance
+
+
+## What one bite takes and gives: no more grass than the animal's hunger can use, so a
+## nearly full animal does not strip a cell for nothing.
+static func grazing_bite(feeding: Dictionary, hunger: float, bite_scale: float = 1.0) -> float:
+	var gain := maxf(0.001, float(feeding.get("nutrition_gain", 0.8)))
+	return minf(float(feeding.get("bite_amount", 18.0)) * bite_scale, maxf(0.0, hunger) / gain)
 
 
 ## Places water on a jittered grid sized from the world's area.
@@ -1162,6 +1219,7 @@ func export_state() -> Dictionary:
 		"agents": agent_records,
 		"carcasses": carcass_records,
 		"grass": resource_system.export_cells(),
+		"fear": fear_field.export_cells(),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
 		# up to `sector_grass_refresh_ticks`, and a loaded world that recomputed
@@ -1207,6 +1265,7 @@ func import_state(data: Dictionary) -> void:
 		carcasses[int(carcass_id)] = data["carcasses"][carcass_id].duplicate(true)
 
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
+	fear_field.import_cells(data.get("fear", PackedFloat32Array()))
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
@@ -1325,17 +1384,17 @@ func record_herbivore_hunger_reduction(amount: float, herbivore_count: int = 1) 
 	performance_counters["herbivore_hunger_reduced_total"] += amount * herbivore_count
 
 
-func find_reachable_grass(position: Vector2, radius: float, min_biomass: float = 0.0, requester_id: int = -1) -> Dictionary:
+func find_reachable_grass(position: Vector2, radius: float, min_biomass: float = 0.0, requester_id: int = -1, max_risk: float = INF) -> Dictionary:
 	var started_at_usec: int = Time.get_ticks_usec()
-	var result: Dictionary = _find_reachable_grass_uncounted(position, radius, min_biomass, requester_id)
+	var result: Dictionary = _find_reachable_grass_uncounted(position, radius, min_biomass, requester_id, max_risk)
 	performance_counters["grass_search_ms"] += float(Time.get_ticks_usec() - started_at_usec) / 1000.0
 	performance_counters["grass_search_calls"] += 1
 	return result
 
 
-func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_biomass: float, requester_id: int = -1) -> Dictionary:
+func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_biomass: float, requester_id: int = -1, max_risk: float = INF) -> Dictionary:
 	if terrain_system == null:
-		return resource_system.find_best_cell(position, radius, min_biomass)
+		return resource_system.find_best_cell(position, radius, min_biomass, max_risk)
 
 	var start_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(position))
 	if start_index == -1:
@@ -1350,13 +1409,13 @@ func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_bioma
 	# Resolving it first is what keeps a herbivore eating the meadow it is standing in
 	# instead of marching off to the sector cache's candidate, which is picked relative to
 	# the sector centre and is therefore the same cell for every agent in that sector.
-	var local_grass := _find_local_grass_target(position, start_index, radius, min_biomass)
+	var local_grass := _find_local_grass_target(position, start_index, radius, min_biomass, max_risk)
 	if not local_grass.is_empty():
 		return local_grass
 
-	var candidate := _find_sector_grass_candidate(position, radius, min_biomass)
+	var candidate := _find_sector_grass_candidate(position, radius, min_biomass, max_risk)
 	if candidate.is_empty():
-		candidate = resource_system.find_best_cell(position, radius, min_biomass)
+		candidate = resource_system.find_best_cell(position, radius, min_biomass, max_risk)
 	if candidate.is_empty():
 		return {}
 	var candidate_index: int = int(candidate.get("index", -1))
@@ -1411,12 +1470,12 @@ func _collect_walk_reachable_cells(start_index: int, depth: int) -> Dictionary:
 	return reachable_cells
 
 
-func _find_local_grass_target(position: Vector2, start_index: int, radius: float, min_biomass: float = 0.0) -> Dictionary:
+func _find_local_grass_target(position: Vector2, start_index: int, radius: float, min_biomass: float = 0.0, max_risk: float = INF) -> Dictionary:
 	if resource_system == null or terrain_system == null or start_index == -1:
 		return {}
 	var local_radius := minf(radius, terrain_system.cell_size * float(_grass_local_reach_cells) + resource_system.cell_size)
 	var reachable_cells: Dictionary = _get_walk_reachable_cells(start_index)
-	var best: Dictionary = resource_system.find_best_cell_in_set(position, local_radius, min_biomass, reachable_cells)
+	var best: Dictionary = resource_system.find_best_cell_in_set(position, local_radius, min_biomass, reachable_cells, max_risk)
 	if best.is_empty():
 		return best
 	var best_index: int = int(best.get("index", -1))
@@ -1929,6 +1988,9 @@ const _OVERLAP_RELAXATION := 0.6
 
 const PREY_PRESSURE_CACHE_LIMIT := 32
 
+## How often herds are checked for having outgrown `herd.split_size`.
+const _HERD_SPLIT_INTERVAL_TICKS := 90
+
 ## A sleeping herd keeps drifting inside itself, so its formation goes on changing
 ## while the camera is elsewhere. Both shares are of the animal's own dormant
 ## walking speed; the turn rate bounds how far a wander heading swings per second.
@@ -1937,7 +1999,13 @@ const _DORMANT_WANDER_TURN_PER_SECOND := 1.6
 const _DORMANT_COHESION_SHARE := 0.5
 ## Spacing is checked pair by pair. A group larger than this skips that pass for
 ## the step rather than paying for it quadratically.
-const _DORMANT_SPACING_MEMBER_LIMIT := 64
+const _DORMANT_SPACING_MEMBER_LIMIT := 256
+## A sleeping herd heads for water when its thirstiest member is this far past
+## `critical_thirst`, even while the herd's mean is still below it.
+const _DORMANT_PEAK_THIRST_MARGIN := 20.0
+## How far, in grass cells, a hungry sleeping animal looks for a bite once the cells
+## beside it are bare.
+const _DORMANT_FORAGE_REACH_CELLS := 4.0
 ## Radius of a comfortably packed herd, in body radii per square root of its size.
 const _DORMANT_PACKING_RADIUS := 1.1
 
@@ -2587,18 +2655,20 @@ func _mark_grass_sector_dirty_by_index(index: int) -> void:
 ## empty result as a cache miss made it rescan ~625 cells on every query, every tick,
 ## forever. That cost grows as the world is grazed down, which is what made long
 ## sessions degrade.
-func _get_sector_best_grass(sector_key: Vector2i, min_biomass: float) -> Dictionary:
+func _get_sector_best_grass(sector_key: Vector2i, min_biomass: float, max_risk: float = INF) -> Dictionary:
 	var sector_state: Dictionary = _get_or_create_sector_state(sector_key)
 	var sector_cache: Dictionary = _sector_grass_cache.get(sector_key, {})
 	if bool(sector_state.get("dirty_grass", false)):
 		sector_cache = {}
-	var threshold_key := int(round(min_biomass * 10.0))
+	# One entry per biomass threshold and risk limit searched for.
+	var threshold_key := int(round(min_biomass * 10.0)) * 1024 \
+		+ (0 if max_risk == INF else 1 + mini(1022, int(round(max_risk * 100.0))))
 	var cache_entry: Dictionary = sector_cache.get(threshold_key, {})
 	var is_stale := cache_entry.is_empty() \
 		or current_tick - int(cache_entry.get("refresh_tick", -9999)) >= _sector_grass_refresh_ticks
 	if is_stale:
 		var sector_rect := _sector_key_to_rect(sector_key)
-		var best: Dictionary = resource_system.find_best_cell(sector_rect.get_center(), maxf(sector_rect.size.x, sector_rect.size.y) * 0.75, min_biomass)
+		var best: Dictionary = resource_system.find_best_cell(sector_rect.get_center(), maxf(sector_rect.size.x, sector_rect.size.y) * 0.75, min_biomass, max_risk)
 		sector_cache[threshold_key] = {
 			"result": best,
 			"refresh_tick": current_tick,
@@ -2611,7 +2681,7 @@ func _get_sector_best_grass(sector_key: Vector2i, min_biomass: float) -> Diction
 	return cache_entry.get("result", {})
 
 
-func _find_sector_grass_candidate(position: Vector2, radius: float, min_biomass: float) -> Dictionary:
+func _find_sector_grass_candidate(position: Vector2, radius: float, min_biomass: float, max_risk: float = INF) -> Dictionary:
 	var center_sector := _get_sector_key(position)
 	var sector_radius := maxi(1, int(ceil(radius / _sector_size)))
 	var best := {}
@@ -2619,7 +2689,7 @@ func _find_sector_grass_candidate(position: Vector2, radius: float, min_biomass:
 	for x in range(center_sector.x - sector_radius, center_sector.x + sector_radius + 1):
 		for y in range(center_sector.y - sector_radius, center_sector.y + sector_radius + 1):
 			var sector_key := Vector2i(x, y)
-			var candidate := _get_sector_best_grass(sector_key, min_biomass)
+			var candidate := _get_sector_best_grass(sector_key, min_biomass, max_risk)
 			if candidate.is_empty():
 				continue
 			var candidate_index := int(candidate.get("index", -1))
@@ -2749,6 +2819,77 @@ func _step_dormant_sectors(delta: float, lod_context: Dictionary) -> void:
 		if _sector_states.has(sector_key):
 			_wake_sector(sector_key)
 	_dormant_group_index.clear()
+
+
+## Splits every herd that has outgrown its species' `herd.split_size` in two.
+##
+## Offspring join their parents' herd and nothing ever left one, so herds only grew.
+## Once grass could run out that became fatal: a herd of a hundred and forty strips
+## the ground faster than it can walk to more, starves, and its range stays empty for
+## good, because no herd is ever founded. Herds died out one by one.
+##
+## The herd divides along the axis it is spread widest on, at the median, so each half
+## is a compact neighbourhood of the old herd; the half further along keeps walking
+## under a new group id. Animals awake and asleep are counted and split together. No
+## randomness: ties go to the lower id.
+func _split_oversized_herds() -> void:
+	var herds: Dictionary = {}
+	var highest_group_id := -1
+	for agent in living_agents:
+		if agent == null or not agent.is_alive or agent.group_id < 0:
+			continue
+		highest_group_id = maxi(highest_group_id, agent.group_id)
+		var key := _get_dormant_aggregate_key(agent.species_type, agent.group_id)
+		if not herds.has(key):
+			herds[key] = []
+		herds[key].append({"id": agent.id, "position": agent.position, "agent": agent})
+	for sector_key in _sector_states.keys():
+		for record in _sector_states[sector_key].get("dormant_records", []):
+			var group_id := int(record.get("group_id", -1))
+			if group_id < 0:
+				continue
+			highest_group_id = maxi(highest_group_id, group_id)
+			var key := _get_dormant_record_aggregate_key(record)
+			if not herds.has(key):
+				herds[key] = []
+			herds[key].append({"id": int(record.get("id", -1)), "position": Vector2(record.get("position", Vector2.ZERO)),
+				"record": record, "sector": sector_key})
+	var live_changed := false
+	var touched_sectors: Dictionary = {}
+	for key in herds.keys():
+		var members: Array = herds[key]
+		var species_key := str(key).get_slice(":", 0)
+		var split_size := int(config_bundle.get("species", {}).get(species_key, {}).get("herd", {}).get("split_size", 0))
+		if split_size <= 0 or members.size() <= split_size:
+			continue
+		var mean := Vector2.ZERO
+		for member in members:
+			mean += member["position"]
+		mean /= float(members.size())
+		var spread := Vector2.ZERO
+		for member in members:
+			var offset: Vector2 = member["position"] - mean
+			spread += offset * offset
+		var along_x := spread.x >= spread.y
+		members.sort_custom(func(a, b):
+			var a_at: float = a["position"].x if along_x else a["position"].y
+			var b_at: float = b["position"].x if along_x else b["position"].y
+			return a_at < b_at if a_at != b_at else int(a["id"]) < int(b["id"]))
+		highest_group_id += 1
+		@warning_ignore("integer_division")
+		for index in range(members.size() / 2, members.size()):
+			var member: Dictionary = members[index]
+			if member.has("agent"):
+				member["agent"].group_id = highest_group_id
+				live_changed = true
+			else:
+				member["record"]["group_id"] = highest_group_id
+				touched_sectors[member["sector"]] = true
+		emit_population_event("HerdSplit", species_key, mean, {"size": members.size(), "new_group_id": highest_group_id})
+	if live_changed:
+		_rebuild_group_state_cache()
+	for sector_key in touched_sectors.keys():
+		_refresh_dormant_sector_state(sector_key, true)
 
 
 ## A herd whose members sit in two sectors is two aggregates, each stepping on its own.
@@ -2979,7 +3120,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		var radius_sum := 0.0
 		for member_position in aggregate["record_positions"]:
 			radius_sum += member_position.distance_to(center)
-		aggregate["spread_radius"] = radius_sum / float(count)
+		aggregate["spread_radius"] = float(previous.get("spread_radius", radius_sum / float(count)))
 		aggregate["velocity"] = velocity if previous.is_empty() else Vector2(previous.get("velocity", velocity))
 		aggregate["avg_hunger"] = float(aggregate.get("avg_hunger_sum", 0.0)) / float(count)
 		aggregate["avg_thirst"] = float(aggregate.get("avg_thirst_sum", 0.0)) / float(count)
@@ -3001,7 +3142,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		# which suppressed births and need-deaths for any aggregate small enough that its
 		# per-step share was below 1. `carcass_id` identifies the carcass a `seek_carcass`
 		# goal refers to, so losing it broke dormant scavenging entirely.
-		for carried_key in ["starvation_debt", "thirst_debt", "old_age_debt", "carcass_id"]:
+		for carried_key in ["old_age_debt", "carcass_id"]:
 			if previous.has(carried_key):
 				aggregate[carried_key] = previous[carried_key]
 		aggregates.append(aggregate)
@@ -3086,7 +3227,14 @@ func _find_nearest_water_goal(position: Vector2) -> Dictionary:
 	return best
 
 
-func _find_dormant_grass_goal(position: Vector2, radius: float, min_biomass: float = 0.0) -> Dictionary:
+func _find_dormant_grass_goal(position: Vector2, radius: float, min_biomass: float = 0.0, max_risk: float = INF, near_radius: float = 0.0) -> Dictionary:
+	# Nearest first, the way a live grazer chooses, so a herd works outwards from
+	# where it stands. The per-sector candidates below sit by their sector's centre:
+	# good for finding grass far away, useless for leaving a patch just eaten.
+	if near_radius > 0.0:
+		var nearest: Dictionary = resource_system.find_best_cell(position, near_radius, min_biomass, max_risk)
+		if not nearest.is_empty() and is_walkable_position(nearest["center"]):
+			return {"goal_kind": "grass", "goal_position": nearest["center"], "goal_sector": _get_sector_key(nearest["center"])}
 	var center_sector: Vector2i = _get_sector_key(position)
 	var sector_radius: int = maxi(1, int(ceil(radius / _sector_size)))
 	var best: Dictionary = {}
@@ -3094,7 +3242,7 @@ func _find_dormant_grass_goal(position: Vector2, radius: float, min_biomass: flo
 	for x in range(center_sector.x - sector_radius, center_sector.x + sector_radius + 1):
 		for y in range(center_sector.y - sector_radius, center_sector.y + sector_radius + 1):
 			var candidate_sector: Vector2i = Vector2i(x, y)
-			var candidate: Dictionary = _get_sector_best_grass(candidate_sector, min_biomass)
+			var candidate: Dictionary = _get_sector_best_grass(candidate_sector, min_biomass, max_risk)
 			if candidate.is_empty():
 				continue
 			var candidate_center: Vector2 = candidate.get("center", _sector_key_to_rect(candidate_sector).get_center())
@@ -3275,14 +3423,25 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	var graze_hunger_floor := float(thresholds.get("graze_hunger_floor", 20.0))
 	var diet: String = species_registry.diet(species_key)
 	if diet == SpeciesRegistryScript.DIET_GRASS:
-		if float(aggregate.get("avg_thirst", 0.0)) >= critical_thirst:
+		# Thirst sends the herd to water unless hunger is the sharper need: hunger kills
+		# in under a minute, and a herd that marched to water past grass starved on the way.
+		# Each animal now dies of its own thirst, so the herd has to move for its
+		# thirstiest members too, not only once the mean is critical: by then an animal
+		# that fell asleep thirsty is already dead.
+		var thirst := maxf(float(aggregate.get("avg_thirst", 0.0)), float(aggregate.get("peak_thirst", 0.0)) - _DORMANT_PEAK_THIRST_MARGIN)
+		var hunger := float(aggregate.get("avg_hunger", 0.0))
+		if thirst >= critical_thirst and not (grazer_is_hungry(hunger) and hunger > thirst):
 			var water_goal: Dictionary = _find_nearest_water_goal(center)
 			if not water_goal.is_empty():
 				return water_goal
 		if float(aggregate.get("avg_hunger", 0.0)) >= graze_hunger_floor:
-			var grass_goal: Dictionary = _find_dormant_grass_goal(center, maxf(float(perception.get("grass_search_radius", 180.0)) * 2.5, _sector_size * 3.0), 2.0)
-			if not grass_goal.is_empty():
-				return grass_goal
+			var tiers := grass_target_tiers(species_config.get("feeding", {}),
+				grazer_is_hungry(float(aggregate.get("avg_hunger", 0.0))), float(perception.get("risk_tolerance", INF)))
+			for tier in tiers:
+				var grass_goal: Dictionary = _find_dormant_grass_goal(center, maxf(float(perception.get("grass_search_radius", 180.0)) * 2.5, _sector_size * 3.0), float(tier[0]), float(tier[1]),
+					float(perception.get("grass_search_radius", 180.0)))
+				if not grass_goal.is_empty():
+					return grass_goal
 		if int(aggregate.get("group_id", -1)) != -1:
 			var group_center: Variant = _get_dormant_group_center(species_key, int(aggregate.get("group_id", -1)), sector_key)
 			if group_center != null and center.distance_to(group_center) > _sector_size * 0.35:
@@ -3402,22 +3561,25 @@ func _dormant_energy_recovery_ceiling(
 	return rest_ceiling
 
 
-## Deaths from a saturated need, accumulated as a float debt on the aggregate.
-##
-## This used to be `maxi(1, ceil(count * clampf(fraction, 0.05, 0.35)))`, where `ceil`
-## already forced at least one death per step. At a 0.75 s step that is 1.33 deaths a
-## second regardless of how small the group is, so a pair could not survive dormancy at
-## all while a herd of twenty died at the intended rate. Carrying the fractional
-## remainder makes small aggregates die at the correct *rate* instead.
-func _dormant_need_deaths(aggregate: Dictionary, debt_key: String, count: int, need_value: float, elapsed: float) -> int:
-	var debt: float = float(aggregate.get(debt_key, 0.0))
-	if need_value >= 98.0:
-		debt += float(count) * clampf((need_value - 98.0) / 2.0, 0.05, 0.35) * (elapsed / 0.75)
-	else:
-		debt = 0.0
-	var deaths: int = mini(count, int(floor(debt)))
-	aggregate[debt_key] = debt - float(deaths)
-	return deaths
+## How many of `members` die of hunger and of thirst this step, as `[starved, parched]`.
+## The live rule, animal by animal: a need at `lifecycle.*_death_threshold` kills. The
+## group's mean used to decide it, and once that mean passed 98 up to a third of the
+## herd died every step whatever each animal's own hunger was - a herd of eighty was
+## gone in fifteen seconds, where live animals die one at a time and leave the rest
+## more to eat.
+func _dormant_need_deaths(members: Array, hunger_rise: float, thirst_rise: float) -> Array:
+	var lifecycle: Dictionary = config_bundle.get("balance", {}).get("lifecycle", {})
+	var need_max := float(config_bundle.get("balance", {}).get("need_max", 100.0))
+	var starvation_at := float(lifecycle.get("starvation_death_threshold", need_max))
+	var thirst_at := float(lifecycle.get("thirst_death_threshold", need_max))
+	var starved := 0
+	var parched := 0
+	for record in members:
+		if float(record.get("hunger", 0.0)) + hunger_rise >= starvation_at:
+			starved += 1
+		elif float(record.get("thirst", 0.0)) + thirst_rise >= thirst_at:
+			parched += 1
+	return [starved, parched]
 
 
 ## The single place a dormant kill can happen. It decides how many prey die; the
@@ -3476,6 +3638,10 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		performance_counters["dormant_hunting_predator_steps"] += hunting_predators
 		if local_prey > 0:
 			performance_counters["dormant_hunt_colocated_steps"] += hunting_predators
+			# A sleeping herd with hungry hunters in its sector is being stalked: the
+			# coarse stand-in for the scares a live herd would log.
+			for aggregate in prey_aggregates:
+				fear_field.deposit(Vector2(aggregate.get("center", Vector2.ZERO)), fear_field.hunt_pressure_risk * elapsed)
 	var kills: int = 0
 	var debt: float = float(sector_state.get("dormant_kill_debt", 0.0))
 	if hunting_predators > 0 and local_prey > 0:
@@ -3547,7 +3713,7 @@ func _dormant_hungry_count(aggregate: Dictionary, members: Array) -> int:
 ## Predation is deliberately absent here: it lives in `_resolve_dormant_predation()`,
 ## which is the one place a dormant kill can happen, so a herbivore can never be
 ## removed without the matching meat being granted.
-func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapsed: float) -> void:
+func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dictionary, elapsed: float, members: Array = []) -> void:
 	var species_key := str(aggregate.get("species_type", ""))
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 	var metabolism: Dictionary = species_config.get("metabolism", {})
@@ -3582,8 +3748,11 @@ func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dic
 			avg_energy = maxf(0.0, avg_energy - float(metabolism.get("dehydration_energy_penalty", 4.0)) * metabolism_scale * elapsed)
 	# Aging is not metabolic, matching the unscaled `age += delta` on the agent.
 	var avg_age: float = float(aggregate.get("avg_age", 0.0)) + elapsed
-	var starvation_deaths: int = _dormant_need_deaths(aggregate, "starvation_debt", count, avg_hunger, elapsed)
-	var thirst_deaths: int = _dormant_need_deaths(aggregate, "thirst_debt", count, avg_thirst, elapsed)
+	var need_deaths := _dormant_need_deaths(members,
+		float(metabolism.get("hunger_rate", 2.0)) * metabolism_scale * elapsed,
+		float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * elapsed)
+	var starvation_deaths: int = need_deaths[0]
+	var thirst_deaths: int = need_deaths[1]
 	# Age remains cohort based in dormancy. Applying mortality to an aggregate's
 	# mean age made one old cohort pull every newborn over the threshold together.
 	var forced_old_age_deaths := mini(count, int(aggregate.get("max_age_count", 0)))
@@ -3730,7 +3899,9 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass"]
 	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed)
 	var desired_velocity: Vector2 = Vector2.ZERO
-	var to_goal: Vector2 = goal_position - current_center
+	var waypoint := _dormant_herd_waypoint(aggregate, current_center, goal_position)
+	aggregate["waypoint"] = waypoint
+	var to_goal: Vector2 = waypoint - current_center
 	if to_goal.length_squared() > 4.0:
 		desired_velocity = to_goal.normalized() * base_speed
 	var acceleration: float = float(movement.get("acceleration", 140.0)) * _dormant_speed_scale
@@ -3762,6 +3933,51 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 		aggregate["stale_time"] = float(aggregate.get("stale_time", 0.0)) + elapsed
 	else:
 		aggregate["stale_time"] = maxf(0.0, float(aggregate.get("stale_time", 0.0)) - elapsed * 0.5)
+
+
+## Where a sleeping herd heads this step: its goal when terrain leaves the straight line
+## open, otherwise the next cell of a route around what blocks it. A herd used to walk
+## at a cliff or a pond until it starved there; with grass underfoot wherever it stood
+## that cost nothing, and overview mode never wakes a stalled sector to rescue it.
+##
+## The route comes from the same budgeted search live animals use and is kept on the
+## aggregate until the goal's cell changes or the herd leaves it. While a search is
+## pending the herd keeps heading straight.
+func _dormant_herd_waypoint(aggregate: Dictionary, from: Vector2, goal: Vector2) -> Vector2:
+	if terrain_system == null or from.distance_squared_to(goal) <= 4.0 or scenery.terrain_clear(from, goal, 0.0):
+		aggregate.erase("path_cells")
+		return goal
+	var goal_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(goal))
+	if goal_index == -1:
+		return goal
+	var path: Array = aggregate.get("path_cells", [])
+	var at := -1 if int(aggregate.get("path_goal_cell", -1)) != goal_index else _nearest_route_cell(path, from)
+	if at == -1:
+		var start_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(from))
+		var found: Array = _find_path_with_budget(start_index, goal_index).get("cells", [])
+		# A search still pending comes back empty. The herd heads straight meanwhile
+		# and asks again next step, by which time the queued search has usually run.
+		if found.size() < 2:
+			return goal
+		path = found.duplicate()
+		aggregate["path_cells"] = path
+		aggregate["path_goal_cell"] = goal_index
+		at = 0
+	return terrain_system.get_cell_center(int(path[mini(at + 1, path.size() - 1)]))
+
+
+## Index of the cell of `path` nearest `position`, or -1 when the herd has strayed more
+## than two cells from its route. The centre of a herd is an average of drifting
+## animals and rarely sits in the exact cell the route expected.
+func _nearest_route_cell(path: Array, position: Vector2) -> int:
+	var best := -1
+	var best_distance_sq := pow(terrain_system.cell_size * 2.5, 2.0)
+	for index in range(path.size()):
+		var distance_sq := position.distance_squared_to(terrain_system.get_cell_center(int(path[index])))
+		if distance_sq <= best_distance_sq:
+			best = index
+			best_distance_sq = distance_sq
+	return best
 
 
 ## Applies the herd's step and each member's own drift. Returns the new centroid.
@@ -3851,7 +4067,9 @@ func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vecto
 func _dormant_step_target(from: Vector2, move: Vector2) -> Vector2:
 	for candidate in [from + move, from + Vector2(move.x, 0.0), from + Vector2(0.0, move.y)]:
 		var clamped := clamp_position(candidate)
-		if is_walkable_position(clamped):
+		# The halfway point too: a coarse step can be longer than a cliff is thick, and
+		# checking only where it lands let animals step through one.
+		if is_walkable_position(clamped) and is_walkable_position(from.lerp(clamped, 0.5)):
 			return clamped
 	return from if _is_dormant_foothold(from) else get_nearest_walkable_position(from)
 
@@ -4032,6 +4250,8 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 			var position: Vector2 = victim.get("position", aggregate.get("center", bounds.get_center()))
 			survivors.remove_at(victim_index)
 			_emit_dormant_death(species_key, position, cause)
+			if cause == "predation":
+				fear_field.deposit(position, fear_field.kill_risk)
 			# A sleeping death leaves the same body a live one does, where the animal
 			# stood. Sleeping hunters feed on their kill from it, and scavengers find it.
 			var carcass_id := _spawn_carcass(species_key, position, cause, int(victim.get("id", -1)))
@@ -4078,6 +4298,7 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	var record_positions := PackedVector2Array()
 	var position_sum := Vector2.ZERO
 	var needs_sum := Vector3.ZERO
+	var peak_thirst := 0.0
 	var age_sum := 0.0
 	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count"]:
 		aggregate[key] = 0
@@ -4087,8 +4308,10 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 		record_positions.append(position)
 		position_sum += position
 		needs_sum += Vector3(float(record.get("hunger", 0.0)), float(record.get("thirst", 0.0)), float(record.get("energy", 0.0)))
+		peak_thirst = maxf(peak_thirst, float(record.get("thirst", 0.0)))
 		age_sum += float(record.get("age", 0.0))
 		_tally_dormant_member(aggregate, record)
+	aggregate["peak_thirst"] = peak_thirst
 	aggregate["count"] = count
 	aggregate["record_ids"] = record_ids
 	aggregate["record_positions"] = record_positions
@@ -4217,9 +4440,18 @@ func _get_sector_prey_pressure(sector_key: Vector2i) -> int:
 func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dictionary, species_config: Dictionary, elapsed: float) -> void:
 	var thresholds: Dictionary = config_bundle.get("balance", {}).get("state_thresholds", {})
 	var stop_floor := float(thresholds.get("graze_stop_hunger_floor", 4.0))
-	var bite := float(feeding.get("bite_amount", 18.0)) * maxf(1.0, elapsed / maxf(0.1, float(feeding.get("eat_duration", 0.55))))
+	var bite_scale := maxf(1.0, elapsed / maxf(0.1, float(feeding.get("eat_duration", 0.55))))
 	var nutrition := float(feeding.get("nutrition_gain", 0.8))
 	var max_energy := float(species_config.get("metabolism", {}).get("max_energy", 100.0))
+	var perception: Dictionary = species_config.get("perception", {})
+	var walk := float(species_config.get("movement", {}).get("max_speed", 70.0)) * _dormant_speed_scale * elapsed
+	var hurry := _get_dormant_travel_speed(species_config, true) * elapsed
+	var body_radius := float(species_config.get("movement", {}).get("body_radius", 0.0))
+	# Where a member with nothing in reach heads: the grass its herd is making for,
+	# otherwise the herd itself. A herd strung out around an ungrazed middle used to
+	# starve at both ends, because the goal, measured from that middle, was "reached".
+	var fallback: Vector2 = aggregate.get("waypoint", aggregate.get("goal_position", Vector2.ZERO)) if str(aggregate.get("goal_kind", "")) == "grass" \
+		else aggregate.get("center", Vector2.ZERO)
 	var wanted := 0.0
 	var eaten := 0.0
 	var hunger_removed := 0.0
@@ -4228,8 +4460,29 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		var hunger := float(record.get("hunger", 0.0))
 		if hunger <= stop_floor:
 			continue
+		var bite := grazing_bite(feeding, hunger, bite_scale)
 		wanted += bite
-		var consumed := consume_grass_cell(resource_system.get_index_at_position(Vector2(record.get("position", Vector2.ZERO))), bite)
+		var position: Vector2 = record.get("position", Vector2.ZERO)
+		var cell_index := resource_system.get_index_at_position(position)
+		# With less than a bite underfoot the animal walks towards the best grass
+		# beside it, as a live grazer would, and eats when it gets there. Eating only
+		# where the herd's step happened to put it starved herds on a map full of grass.
+		var full_bite := minf(bite, float(feeding.get("bite_amount", 18.0)))
+		if resource_system.get_available_biomass(cell_index) < full_bite:
+			var next_position := _dormant_step_towards_grass(position, cell_index, hunger, perception,
+				hurry if grazer_is_hungry(hunger) else walk, fallback, full_bite, int(record.get("id", 0)))
+			# Not onto another animal: the spacing pass only runs with the herd's step.
+			var crowded := false
+			for other in members:
+				if other != record and next_position.distance_squared_to(Vector2(other.get("position", Vector2.INF))) < body_radius * body_radius * 4.0:
+					crowded = true
+					break
+			if not crowded:
+				record["position"] = next_position
+			continue
+		if not grazing_ground_is_acceptable(position, hunger, perception):
+			continue
+		var consumed := consume_grass_cell(cell_index, bite)
 		if consumed <= 0.0:
 			continue
 		eaten += consumed
@@ -4237,7 +4490,7 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		hunger_removed += hunger - next_hunger
 		record["hunger"] = next_hunger
 		var energy := float(record.get("energy", 0.0))
-		var next_energy := minf(max_energy, energy + consumed * 0.18)
+		var next_energy := minf(max_energy, energy + consumed * nutrition * 0.18)
 		energy_added += next_energy - energy
 		record["energy"] = next_energy
 	var count := float(maxi(1, members.size()))
@@ -4247,6 +4500,45 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		record_herbivore_hunger_reduction(hunger_removed)
 	if wanted > 0.0 and eaten < wanted * 0.25:
 		aggregate["last_goal_refresh_time"] = -INF
+
+
+## One step from `position` towards the richest of the eight cells around `cell_index`
+## that holds a full bite on ground the animal accepts. A hungry animal with nothing
+## beside it looks a few cells further, nearest first, which is what spreads a large
+## sleeping herd over enough ground to feed it; failing that it heads for `fallback`.
+func _dormant_step_towards_grass(position: Vector2, cell_index: int, hunger: float, perception: Dictionary, walk: float, fallback: Vector2, min_biomass: float, agent_id: int = 0) -> Vector2:
+	if cell_index < 0 or walk <= 0.0:
+		return position
+	var columns: int = resource_system.cols
+	var column := cell_index % columns
+	@warning_ignore("integer_division")
+	var row := cell_index / columns
+	var best_index := -1
+	var best_biomass := min_biomass - 0.001
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var x := column + dx
+			var y := row + dy
+			if x < 0 or y < 0 or x >= columns or y >= resource_system.rows:
+				continue
+			var neighbor := y * columns + x
+			var biomass := resource_system.get_available_biomass(neighbor)
+			if biomass <= best_biomass:
+				continue
+			if not grazing_ground_is_acceptable(resource_system.get_cell_center(neighbor), hunger, perception):
+				continue
+			best_index = neighbor
+			best_biomass = biomass
+	if best_index == -1 and grazer_is_hungry(hunger):
+		var further: Dictionary = resource_system.find_best_cell(position, resource_system.cell_size * _DORMANT_FORAGE_REACH_CELLS, min_biomass)
+		best_index = int(further.get("index", -1))
+	# Each animal aims at its own spot in the cell, from its id, so several heading for
+	# the same cell do not converge on its centre.
+	var spot := Vector2(_dormant_hash_unit(agent_id, 0x6A55) - 0.5, _dormant_hash_unit(agent_id, 0x51DE) - 0.5) * resource_system.cell_size * 0.7
+	var target := (fallback if best_index == -1 else resource_system.get_cell_center(best_index)) + spot
+	return _dormant_step_target(position, (target - position).limit_length(walk))
 
 
 ## Meat to hunger and energy, per head, using exactly the knobs the live
@@ -4370,7 +4662,8 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 	# in the same step by the hunger it had a moment earlier.
 	_resolve_dormant_predation(sector_key, sector_state, aggregates, elapsed, buckets)
 	for aggregate in aggregates:
-		_apply_dormant_metabolism_to_aggregate(sector_key, aggregate, elapsed)
+		_apply_dormant_metabolism_to_aggregate(sector_key, aggregate, elapsed,
+			buckets.get(_get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1))), []))
 		# An emptied group stays listed until the reconcile, which reports its deaths.
 		if int(aggregate.get("count", 0)) <= 0:
 			continue
