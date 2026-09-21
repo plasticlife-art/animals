@@ -15,6 +15,8 @@ func run(a) -> void:
 	_test_wear_lands_in_the_cell_walked_through(a)
 	_test_wear_fades_by_half_each_half_life(a)
 	_test_a_walking_animal_wears_the_ground(a)
+	_test_a_long_step_marks_every_cell_it_crosses(a)
+	_test_a_grazing_herd_leaves_no_trail(a)
 	_test_a_sleeping_herd_wears_the_ground(a)
 	_test_trails_change_nothing_the_animals_do(a)
 	_test_trails_survive_a_save(a)
@@ -67,46 +69,96 @@ func _test_wear_fades_by_half_each_half_life(a) -> void:
 	a.near(field.wear_at(Vector2(40.0, 20.0)), 0.0, 0.0001, "and an unused path heals completely")
 
 
+const WATER := Vector2(384.0, 384.0)
+
+
+func _thirsty_herd(world, count: int, thirst: float) -> Array:
+	var herd: Array = Helpers.spawn_herd(world, HERD_CENTER, count, 0)
+	for agent in herd:
+		agent.thirst = thirst
+	return herd
+
+
+## Wear within `radius` of the straight way from the herd to the water, and all of it.
+func _wear_along_the_way(field: TrailField, radius: float) -> Array:
+	var cells: PackedFloat32Array = field.export_cells()
+	var along := 0.0
+	var total := 0.0
+	for index in range(cells.size()):
+		if cells[index] <= 0.0:
+			continue
+		@warning_ignore("integer_division")
+		var center: Vector2 = (Vector2(index % field.cols, index / field.cols) + Vector2(0.5, 0.5)) * field.cell_size
+		var nearest: Vector2 = Geometry2D.get_closest_point_to_segment(center, HERD_CENTER, WATER)
+		total += cells[index]
+		if center.distance_to(nearest) <= radius:
+			along += cells[index]
+	return [along, total]
+
+
 func _test_a_walking_animal_wears_the_ground(a) -> void:
 	var manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(501), 501)
 	var world = manager.world_state
-	Helpers.spawn_herd(world, HERD_CENTER, 6, 0)
+	_thirsty_herd(world, 6, 75.0)
 	Helpers.run_ticks(manager, 120)
-	a.greater(_total(world.trail_field), 0.0, "animals that walk leave wear behind")
-	var near_herd := 0.0
-	var field: TrailField = world.trail_field
-	var cells: PackedFloat32Array = field.export_cells()
-	for index in range(cells.size()):
-		@warning_ignore("integer_division")
-		var center: Vector2 = (Vector2(index % field.cols, index / field.cols) + Vector2(0.5, 0.5)) * field.cell_size
-		if center.distance_to(HERD_CENTER) < 600.0:
-			near_herd += cells[index]
-	a.near(near_herd, _total(world.trail_field), 0.001, "and only where they walked")
+	var wear: Array = _wear_along_the_way(world.trail_field, 260.0)
+	a.greater(float(wear[1]), 100.0, "a herd walking to water leaves wear behind")
+	a.near(float(wear[0]), float(wear[1]), 0.001, "and only along its way there")
+	Helpers.destroy_manager(manager)
+
+
+## A coarse step is longer than a trail cell. Marked only where it lands, a sleeping
+## herd's path would be a row of dots with bare cells between them.
+func _test_a_long_step_marks_every_cell_it_crosses(a) -> void:
+	var field := _field()
+	field.deposit_segment(Vector2(8.0, 40.0), Vector2(200.0, 40.0), 1.0)
+	var bare := 0
+	for column in range(0, 13):
+		if field.wear_at(Vector2(float(column) * 16.0 + 8.0, 40.0)) <= 0.0:
+			bare += 1
+	a.equal(bare, 0, "no cell between the two ends is left bare")
+	a.near(_total(field), 192.0, 0.001, "and the wear adds up to the distance walked")
+	field.deposit_segment(Vector2(8.0, 120.0), Vector2(20.0, 120.0), 1.0)
+	a.near(_total(field), 192.0, 0.001, "a step slower than travel marks nothing")
+
+
+## Grazing covers as much ground as travelling and goes nowhere. Counted, it put a blot
+## under every herd and no path between them.
+func _test_a_grazing_herd_leaves_no_trail(a) -> void:
+	var field := _field()
+	a.is_true(field.is_travel_action(&"drink") and field.is_travel_action(&"scavenge_carcass"),
+		"walking to water or to a carcass is travel")
+	a.is_true(not field.is_travel_action(&"graze") and not field.is_travel_action(&"explore")
+		and not field.is_travel_action(&"rest"), "grazing, wandering and resting are not")
+	a.is_true(field.is_travel_goal("water") and not field.is_travel_goal("grass") and not field.is_travel_goal("wander"),
+		"and the same holds for a sleeping herd's goals")
+	var bundle: Dictionary = Helpers.build_large_sector_bundle(509)
+	bundle["world"]["trails"] = {"travel_actions": [], "travel_goals": []}
+	var manager = Helpers.create_manager_with(bundle, 509)
+	_thirsty_herd(manager.world_state, 6, 75.0)
+	Helpers.run_ticks(manager, 120)
+	a.near(_total(manager.world_state.trail_field), 0.0, 0.0001, "movement that is not travel leaves no wear")
 	Helpers.destroy_manager(manager)
 
 
 func _test_a_sleeping_herd_wears_the_ground(a) -> void:
 	var manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(502), 502)
 	var world = manager.world_state
-	Helpers.spawn_herd(world, HERD_CENTER, 12, 0)
+	_thirsty_herd(world, 12, 75.0)
 	var sector_key: Vector2i = world._get_sector_key(HERD_CENTER)
 	world._sleep_sector(sector_key)
 	var blank := PackedFloat32Array()
 	blank.resize(world.trail_field.get_cell_count())
 	world.trail_field.import_cells(blank)
-	var before: Array = Helpers.positions_of(world._sector_states[sector_key]["dormant_records"])
-	for step in range(20):
+	for step in range(8):
 		world.current_tick += int(round(STEP_SECONDS * 12.0))
 		world.current_time += STEP_SECONDS
 		world._prepare_navigation_budget()
 		world._apply_dormant_sector_step(sector_key, world._sector_states[sector_key], STEP_SECONDS)
-	var after: Array = Helpers.positions_of(world._sector_states[sector_key]["dormant_records"])
-	var net := 0.0
-	for index in range(mini(before.size(), after.size())):
-		net += (after[index] as Vector2).distance_to(before[index])
-	a.greater(net, 0.0, "the sleeping herd moved")
-	a.is_true(_total(world.trail_field) >= net - 0.01,
-		"sleeping animals wear the ground by at least as far as they got (%.1f of %.1f)" % [_total(world.trail_field), net])
+	var field: TrailField = world.trail_field
+	var wear: Array = _wear_along_the_way(field, 260.0)
+	a.greater(float(wear[1]), 100.0, "a sleeping herd walking to water wears the ground too")
+	a.near(float(wear[0]), float(wear[1]), 0.001, "along its way there")
 	Helpers.destroy_manager(manager)
 
 
@@ -116,8 +168,8 @@ func _test_trails_change_nothing_the_animals_do(a) -> void:
 	var bundle: Dictionary = Helpers.build_large_sector_bundle(503)
 	bundle["world"]["trails"] = {"enabled": false}
 	var without = Helpers.create_manager_with(bundle, 503)
-	Helpers.spawn_herd(with_trails.world_state, HERD_CENTER, 8, 0)
-	Helpers.spawn_herd(without.world_state, HERD_CENTER, 8, 0)
+	_thirsty_herd(with_trails.world_state, 8, 75.0)
+	_thirsty_herd(without.world_state, 8, 75.0)
 	Helpers.run_ticks(with_trails, 90)
 	Helpers.run_ticks(without, 90)
 	a.greater(_total(with_trails.world_state.trail_field), 0.0, "one world has trails")

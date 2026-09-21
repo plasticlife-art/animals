@@ -18,9 +18,11 @@
   "trails": {
     "enabled": true,
     "cell_size_in_grass_cells": 0.5,
-    "half_life_seconds": 300.0,
+    "half_life_seconds": 900.0,
     "min_speed": 30.0,
-    "decay_stride_ticks": 60
+    "decay_stride_ticks": 60,
+    "travel_actions": ["drink", "investigate_water", "scavenge_carcass", "hunt_prey", "join_herd"],
+    "travel_goals": ["water", "seek_carcass", "hunt", "regroup"]
   },
   "fear": {
     "enabled": true,

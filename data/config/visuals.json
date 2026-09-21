@@ -9,7 +9,7 @@
     "lush_color": [0.16, 0.42, 0.14, 0.3],
     "lush_range": [0.62, 0.95],
     "trail_color": [0.47, 0.38, 0.26, 0.55],
-    "trail_range": [200.0, 2500.0],
+    "trail_range": [80.0, 800.0],
     "noise_size": 40.0,
     "noise_strength": 0.18
   },

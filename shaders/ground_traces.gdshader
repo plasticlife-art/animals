@@ -17,7 +17,7 @@ uniform vec4 trail_color : source_color = vec4(0.47, 0.38, 0.26, 0.55);
 uniform vec2 bare_range = vec2(0.4, 0.08);
 uniform vec2 lush_range = vec2(0.62, 0.95);
 // Distance walked through a trail cell, same meaning.
-uniform vec2 trail_range = vec2(200.0, 2500.0);
+uniform vec2 trail_range = vec2(80.0, 800.0);
 uniform float noise_size = 40.0;
 uniform float noise_strength = 0.18;
 

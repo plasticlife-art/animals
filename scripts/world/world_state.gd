@@ -267,7 +267,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 			+ float(Time.get_ticks_usec() - agent_started_usec) / 1000.0
 		_track_agent_runtime_position(agent, previous_position)
 		# Sampled one tick in a few, and credited with the ticks skipped.
-		if offset % _TRAIL_SAMPLE_STRIDE == 0:
+		if offset % _TRAIL_SAMPLE_STRIDE == 0 and trail_field.is_travel_action(agent.current_action):
 			trail_field.deposit(agent.position,
 				agent.position.distance_to(previous_position) * float(_TRAIL_SAMPLE_STRIDE),
 				delta * float(_TRAIL_SAMPLE_STRIDE))
@@ -4002,6 +4002,7 @@ func _nearest_route_cell(path: Array, position: Vector2) -> int:
 func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vector2, herd_step: Vector2,
 		goal_position: Vector2, drift_speed: float, body_radius: float, elapsed: float) -> Vector2:
 	var count := members.size()
+	var leaves_trail: bool = trail_field.is_travel_goal(str(aggregate.get("goal_kind", "wander")))
 	var starts := PackedVector2Array()
 	starts.resize(count)
 	for i in range(count):
@@ -4070,7 +4071,8 @@ func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vecto
 		record["wander_angle"] = heading
 		var moved := next_position - position
 		record["position"] = next_position
-		trail_field.deposit(next_position, moved.length(), elapsed)
+		if leaves_trail:
+			trail_field.deposit_segment(position, next_position, elapsed)
 		record["velocity"] = moved / maxf(elapsed, 0.00001)
 		if moved.length_squared() > 0.001:
 			record["direction"] = moved.normalized()

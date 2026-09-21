@@ -159,13 +159,22 @@ ground against the rest.
 ### `TrailField`
 
 Where animals have been walking (`scripts/world/trail_field.gd`): a grid
-`trails.cell_size_in_grass_cells` grass cells to a side - half a cell as shipped - holding
-the distance walked through each cell. Awake animals add to it from the main agent loop,
-sampled one tick in `_TRAIL_SAMPLE_STRIDE` and credited for the ticks skipped; sleeping ones
-add the step `_drift_dormant_members()` gave them, so a herd wears its way to water whether
-or not anyone is watching. Movement slower than `trails.min_speed` is not counted, or a
-herd milling over its pasture blots out the paths within seconds. Wear halves every `half_life_seconds`, on a strided sweep keyed
-to the tick like the other fields, and is saved with the world.
+`trails.cell_size_in_grass_cells` grass cells to a side holding the distance walked through
+each cell. Only travel counts: an awake animal whose action is in `trails.travel_actions`
+(to water, to a carcass, after prey, back to the herd) and a sleeping herd whose goal is in
+`trails.travel_goals`, and neither below `trails.min_speed`. Grazing and wandering cover as
+much ground and go nowhere; counted, they put a blot under every herd and no path between
+them. Awake animals are sampled one tick in `_TRAIL_SAMPLE_STRIDE` from the main agent loop
+and credited for the ticks skipped. Sleeping ones mark the whole of the step
+`_drift_dormant_members()` gave them (`deposit_segment()`): a coarse step is longer than a
+cell, and marking only the landing drew dotted lines. Wear halves every
+`half_life_seconds`, on a strided sweep keyed to the tick like the other fields, and is
+saved with the world.
+
+Shipped at half a grass cell and a 900 s half-life. At a quarter cell each animal drew its
+own hairline and no cell gathered enough wear to show; at 300 s a path faded before the
+herd came back along it. `scripts/dev/trail_dump.gd` writes the field to a PNG from a
+headless run, for tuning without a windowed capture.
 
 Nothing in the simulation reads it: it exists for `GroundTraces` to draw. A test runs the
 same world with the field on and off and requires identical animals.
