@@ -16,6 +16,7 @@
 [ext_resource type="Script" path="res://scripts/ui/selection_card.gd" id="14"]
 [ext_resource type="Script" path="res://scripts/ui/climate_indicator.gd" id="15"]
 [ext_resource type="Script" path="res://scripts/ui/help_screen.gd" id="16"]
+[ext_resource type="Script" path="res://scripts/ui/ground_traces.gd" id="17"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -30,6 +31,9 @@ script = ExtResource("2")
 
 [node name="TerrainTiles" type="Node2D" parent="." unique_id=612001001]
 script = ExtResource("10")
+
+[node name="GroundTraces" type="Node2D" parent="." unique_id=612001011]
+script = ExtResource("17")
 
 [node name="DayNightTint" type="CanvasModulate" parent="." unique_id=612001010]
 unique_name_in_owner = true

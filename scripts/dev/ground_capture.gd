@@ -1,0 +1,119 @@
+extends SceneTree
+
+# Screenshot harness for the ground layer. Not part of the game.
+#
+#   Godot --path . --script res://scripts/dev/ground_capture.gd -- <out_prefix> [sim_seconds] [style]
+# Runs the real main scene at top speed until `sim_seconds` have passed, so herds have
+# had time to graze pastures down and wear paths, then writes `<prefix>-map.png` with
+# the whole map in frame and `<prefix>-close.png` parked on the most worn ground.
+
+var _frames := 0
+var _main: Node = null
+var _manager = null
+var _camera = null
+var _prefix := "user://ground"
+var _seconds := 600.0
+var _style := ""
+var _stage := 0
+var _stage_started_msec := 0
+
+
+func _initialize() -> void:
+	var args := OS.get_cmdline_user_args()
+	if args.size() > 0:
+		_prefix = args[0]
+	if args.size() > 1:
+		_seconds = float(args[1])
+	if args.size() > 2:
+		_style = args[2]
+	root.size = Vector2i(1600, 900)
+	_main = load("res://scenes/main/main.tscn").instantiate()
+	root.add_child(_main)
+
+
+func _process(_delta: float) -> bool:
+	_frames += 1
+	if _frames == 10:
+		var menu = _main.get_node_or_null("CanvasLayer/StartMenu")
+		if menu != null and menu.visible:
+			var selection: Dictionary = ConfigLoader.default_selection()
+			if _style != "":
+				selection["style"] = _style
+			menu.start_requested.emit(selection)
+	if _frames < 30:
+		return false
+	if _manager == null:
+		_manager = _main.get_node("SimulationManager")
+		_camera = _main.get_node("GameCamera")
+		_manager.speed_multiplier = 64.0
+		# Daylight, so the colours in the picture are the colours of the layer; and a
+		# close camera while time runs, so the far sectors sleep and the run is quick.
+		_main.get_node("DayNightTint").visible = false
+		_aim(_manager.world_state.bounds.get_center(), 1.0)
+	match _stage:
+		0:
+			if _frames % 600 == 0:
+				print("t=%.0f" % _manager.simulation_time)
+			if _manager.simulation_time >= _seconds:
+				_manager.speed_multiplier = 1.0
+				_aim(_manager.world_state.bounds.get_center(), _map_zoom())
+				_next_stage()
+		1:
+			if _settled():
+				_save("map")
+				_aim(_most_worn_position(), 0.45)
+				_next_stage()
+		2:
+			if _settled():
+				_save("close")
+				return true
+	return false
+
+
+func _next_stage() -> void:
+	_stage += 1
+	# macOS stops presenting a window that sits behind others, and the picture saved
+	# is then the last frame it drew, minutes old.
+	DisplayServer.window_move_to_foreground()
+	_stage_started_msec = Time.get_ticks_msec()
+
+
+## Wall-clock, not frames: without vsync a hundred frames pass before the window has
+## drawn one, and the picture saved is the view from before the camera moved.
+func _settled() -> bool:
+	return Time.get_ticks_msec() - _stage_started_msec > 3000
+
+
+func _save(name: String) -> void:
+	var path := "%s-%s.png" % [_prefix, name]
+	root.get_texture().get_image().save_png(path)
+	print("saved %s at t=%.0f zoom=%s camera=%s" % [path, _manager.simulation_time, _camera.zoom, _camera.global_position])
+
+
+func _map_zoom() -> float:
+	var bounds: Rect2 = _manager.world_state.bounds
+	var corners := [bounds.position, Vector2(bounds.end.x, bounds.position.y), bounds.end, Vector2(bounds.position.x, bounds.end.y)]
+	var screen := Rect2(WorldProjection.to_screen(corners[0]), Vector2.ZERO)
+	for corner in corners:
+		screen = screen.expand(WorldProjection.to_screen(corner))
+	var view: Vector2 = root.get_visible_rect().size
+	return minf(view.x / screen.size.x, view.y / screen.size.y) * 0.97
+
+
+func _aim(world_position: Vector2, zoom: float) -> void:
+	var terrain = _manager.world_state.terrain_system
+	var level: int = 0 if terrain == null else terrain.get_height_at_position(world_position)
+	_camera.global_position = WorldProjection.to_screen(world_position, level)
+	_camera.zoom = Vector2(zoom, zoom)
+	_camera.force_update_scroll()
+
+
+func _most_worn_position() -> Vector2:
+	var field = _manager.world_state.trail_field
+	var cells: PackedFloat32Array = field.export_cells()
+	var best := 0
+	for index in range(cells.size()):
+		if cells[index] > cells[best]:
+			best = index
+	@warning_ignore("integer_division")
+	return (Vector2(best % field.cols, best / field.cols) + Vector2(0.5, 0.5)) * field.cell_size

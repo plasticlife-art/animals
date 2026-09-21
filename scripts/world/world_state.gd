@@ -20,6 +20,7 @@ const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_perception_snapshot.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const FearFieldScript = preload("res://scripts/world/fear_field.gd")
+const TrailFieldScript = preload("res://scripts/world/trail_field.gd")
 const ClimateScript = preload("res://scripts/world/climate.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
@@ -55,6 +56,7 @@ var rng: RandomNumberGenerator
 var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
 var fear_field: FearField
+var trail_field: TrailField
 var climate: Climate
 var spatial_grid: SpatialGrid
 ## Which species exist and what each one eats, is eaten by, and leaves behind.
@@ -171,6 +173,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	fear_field = FearFieldScript.new()
 	fear_field.initialize(world_config, resource_system.world_size, resource_system.cell_size)
 	resource_system.risk_field = fear_field
+	trail_field = TrailFieldScript.new()
+	trail_field.initialize(world_config, resource_system.world_size, resource_system.cell_size)
 	# Sampled here and not only in `step()` because the manager writes a stats
 	# snapshot on tick 0, before the first step ever runs.
 	climate = ClimateScript.new()
@@ -228,6 +232,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	var phase_started_usec: int = Time.get_ticks_usec()
 	resource_system.step(delta, climate.regrowth_multiplier, current_tick)
 	fear_field.step(delta, current_tick)
+	trail_field.step(delta, current_tick)
 	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
 	var lod_context_key := _lod_assignment_context_key(active_lod_context)
@@ -261,6 +266,11 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 		performance_counters[species_timing_key] = float(performance_counters.get(species_timing_key, 0.0)) \
 			+ float(Time.get_ticks_usec() - agent_started_usec) / 1000.0
 		_track_agent_runtime_position(agent, previous_position)
+		# Sampled one tick in a few, and credited with the ticks skipped.
+		if offset % _TRAIL_SAMPLE_STRIDE == 0:
+			trail_field.deposit(agent.position,
+				agent.position.distance_to(previous_position) * float(_TRAIL_SAMPLE_STRIDE),
+				delta * float(_TRAIL_SAMPLE_STRIDE))
 		if agent.stuck_timer > 0.75:
 			performance_counters["stuck_agents"] += 1
 
@@ -1220,6 +1230,7 @@ func export_state() -> Dictionary:
 		"carcasses": carcass_records,
 		"grass": resource_system.export_cells(),
 		"fear": fear_field.export_cells(),
+		"trails": trail_field.export_cells(),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
 		# up to `sector_grass_refresh_ticks`, and a loaded world that recomputed
@@ -1266,6 +1277,7 @@ func import_state(data: Dictionary) -> void:
 
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
 	fear_field.import_cells(data.get("fear", PackedFloat32Array()))
+	trail_field.import_cells(data.get("trails", PackedFloat32Array()))
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
@@ -1742,8 +1754,13 @@ func _spawn_carcass(species_type: String, position: Vector2, cause: String, sour
 	if cause not in ["predation", "old_age", "starvation", "thirst"]:
 		return -1
 	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
+	# How the animal died decides how much is left on it: a kill is a whole body, an
+	# animal that starved is skin and bone. With every death worth a full carcass, a
+	# famine among grazers was a feast for everything that eats meat, and carrion never
+	# limited anyone.
 	var meat_total := maxf(0.0, float(carcass_config.get("meat_total", 84.0))
-		* species_registry.carcass_meat_multiplier(species_type))
+		* species_registry.carcass_meat_multiplier(species_type)
+		* float(carcass_config.get("meat_by_cause", {}).get(cause, 1.0)))
 	if meat_total <= 0.0:
 		return -1
 	var carcass_id := next_carcass_id
@@ -1990,6 +2007,7 @@ const PREY_PRESSURE_CACHE_LIMIT := 32
 
 ## How often herds are checked for having outgrown `herd.split_size`.
 const _HERD_SPLIT_INTERVAL_TICKS := 90
+const _TRAIL_SAMPLE_STRIDE := 4
 
 ## A sleeping herd keeps drifting inside itself, so its formation goes on changing
 ## while the camera is elsewhere. Both shares are of the animal's own dormant
@@ -4052,6 +4070,7 @@ func _drift_dormant_members(aggregate: Dictionary, members: Array, center: Vecto
 		record["wander_angle"] = heading
 		var moved := next_position - position
 		record["position"] = next_position
+		trail_field.deposit(next_position, moved.length(), elapsed)
 		record["velocity"] = moved / maxf(elapsed, 0.00001)
 		if moved.length_squared() > 0.001:
 			record["direction"] = moved.normalized()

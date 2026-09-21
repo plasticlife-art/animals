@@ -43,7 +43,13 @@
     "ttl_seconds": 90.0,
     "meat_total": 240.0,
     "max_feeders": 5,
-    "search_radius": 840.0
+    "search_radius": 840.0,
+    "meat_by_cause": {
+      "predation": 1.0,
+      "old_age": 0.5,
+      "thirst": 0.5,
+      "starvation": 0.2
+    }
   },
   "ai": {
     "selector": {

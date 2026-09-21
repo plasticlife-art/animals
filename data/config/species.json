@@ -59,9 +59,9 @@
       "drink_duration": 0.3
     },
     "reproduction": {
-      "maturity_age": 60.0,
+      "maturity_age": 90.0,
       "energy_threshold": 66.0,
-      "cooldown": 140.0,
+      "cooldown": 200.0,
       "birth_energy_cost": 22.0,
 	  "max_hunger": 30.0,
 	  "max_thirst": 45.0,

@@ -89,6 +89,17 @@ func export_cells() -> PackedFloat32Array:
 	return _cells.duplicate()
 
 
+## What each cell can hold, and nothing where nothing can graze. The ground layer
+## reads grass against this to tell a grazed-down pasture from poor soil.
+func export_caps() -> PackedFloat32Array:
+	var caps := PackedFloat32Array()
+	caps.resize(_cells.size())
+	for index in range(_cells.size()):
+		if terrain_system == null or terrain_system.is_walkable_index(index):
+			caps[index] = _get_cell_max_biomass(index)
+	return caps
+
+
 func import_cells(cells, new_terrain_system: TerrainSystem = null) -> void:
 	if new_terrain_system != null:
 		terrain_system = new_terrain_system

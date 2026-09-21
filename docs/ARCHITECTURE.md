@@ -156,6 +156,20 @@ grass regrows where predators hunt until hunger pushes a herd back in - a trophi
 that nothing scripts. `ecology_audit.gd` reports it as meadow grass density on feared
 ground against the rest.
 
+### `TrailField`
+
+Where animals have been walking (`scripts/world/trail_field.gd`): a grid
+`trails.cell_size_in_grass_cells` grass cells to a side - half a cell as shipped - holding
+the distance walked through each cell. Awake animals add to it from the main agent loop,
+sampled one tick in `_TRAIL_SAMPLE_STRIDE` and credited for the ticks skipped; sleeping ones
+add the step `_drift_dormant_members()` gave them, so a herd wears its way to water whether
+or not anyone is watching. Movement slower than `trails.min_speed` is not counted, or a
+herd milling over its pasture blots out the paths within seconds. Wear halves every `half_life_seconds`, on a strided sweep keyed
+to the tick like the other fields, and is saved with the world.
+
+Nothing in the simulation reads it: it exists for `GroundTraces` to draw. A test runs the
+same world with the field on and off and requires identical animals.
+
 ### `StatsSystem`
 
 Responsibilities:
@@ -281,6 +295,24 @@ Utility actions inside `alive`:
 - Builds its `TileSet` at runtime from `visuals.json` instead of a `.tres`, so swapping an art
   pack needs no resource kept in sync
 - Reads `TerrainSystem` only; repainted on bind and on restart
+
+### `GroundTraces`
+
+- Shows what the ecology has done to the ground, in the normal view: earth where grass is
+  grazed below `ground.bare_range`, a richer green where it stands above `ground.lush_range`
+  (the refuges fear leaves ungrazed), and paths where `TrailField` wear passes
+  `ground.trail_range`
+- One `MeshInstance2D`: a quad per walkable terrain cell placed through `WorldProjection`
+  at the cell's elevation, UV carrying the world position. `shaders/ground_traces.gdshader`
+  reads grass, grass caps (`ResourceSystem.export_caps()`) and trails from float textures
+  built straight from the packed arrays, so a refresh runs no loop in script
+- Draws after `TerrainTiles` at the same z: above the biome tiles, below top-down obstacles,
+  animals and overlays, and under `DayNightTint`
+- Refreshes every `ground.update_interval_ticks`. With the worker running, the manager asks
+  it for the whole grass and trail grids on exactly those ticks (`ground` in the result),
+  independent of the grass debug overlay's dirty-cell delta
+- Isometric limitation: the layer is drawn over the single y-sorted tile layer, so a tinted
+  cell behind a tall cliff or tree shows through the art in front of it
 
 ### `AgentSpriteRenderer`
 
@@ -494,7 +526,9 @@ millisecond setting squeezed to zero.
   animal), `feeding.good_sward_fraction` (how full a cell must be for a fed grazer to walk
   to it), `perception.risk_tolerance` (the `FearField` risk a fed grazer accepts) and
   `herd.split_size`. `reproduction.cooldown`, `maturity_age` and `max_hunger` decide how far
-  the herd overshoots its grass before starvation pulls it back.
+  the herd overshoots its grass before starvation pulls it back. The shipped 200 s and
+  90 s were chosen for that overshoot: with 140 s and 60 s a seed-3 world went from 240
+  grazers to about 700 and crashed to 80; as shipped it peaks near 400 and holds near 200.
 - Predator nutrition comes from carcasses only: a kill grants no nutrition by itself, so the
   energy-per-kill knobs are `feeding.food_restore` (the first bite taken at the kill site,
   debited through `consume_carcass()`), `feeding.carcass_consume_rate`,
@@ -512,6 +546,10 @@ millisecond setting squeezed to zero.
 ### `balance.json`
 
 - tunes cross-species rules, shared lifecycle thresholds, selector thresholds, and utility evaluator weights
+- `carcass.meat_by_cause` scales `carcass.meat_total` by how the animal died: a kill is a
+  whole body, an animal that starved is skin and bone. With every death worth a full
+  carcass, a famine among grazers fed every meat-eater on the map and carrion never limited
+  anyone; four carcasses in five expired uneaten. A cause scaled to zero leaves no carcass.
 - `dormant_ecology` holds the coarse-path rates: `kill_rate_per_prey_per_second` (break-even
   for a lone dormant predator is `hunger_rate / carcass.meat_total`),
   `predator_thirst_trigger_ratio`, and `idle_recovery_energy_ratio`. The last one caps how
@@ -544,6 +582,9 @@ millisecond setting squeezed to zero.
 - maps biomes and obstacles onto terrain atlas coordinates
 - declares per-species sprite atlases, frame size, draw scale, and the animation rows
 - holds the speed thresholds that pick between idle, walk and run
+- `ground` switches the `GroundTraces` layer and sets its colours (RGBA), the grass-share and
+  wear ranges each tint fades in over, its refresh interval and the noise that breaks up
+  cell edges
 
 ## Built-In Tests
 
@@ -563,11 +604,16 @@ Current suites cover:
   never touches
 - worker-thread ticks matching the same ticks run inline
 - metrics CSV cells that stay in their own columns
+- trails: wear deposit and decay, live and sleeping animals, save round trip, and that the
+  field changes nothing the animals do; the ground layer's mesh, textures and worker channel
 
 ## Known Gaps
 
-- Herbivores are limited by grass; predators and scavengers still sit on their
-  `population_regulation` caps
+- Herbivores are limited by grass. Predators and scavengers are limited by meat only part
+  of the time: over 2400 s with LOD on seeds 3, 7 and 11, predators spent 24%, 29% and 67%
+  of the second half on their `population_regulation` cap and scavengers 43%, 10% and 14%.
+  Scavenger appetite is not the knob to close that gap: raising `metabolism.hunger_rate`
+  from 0.08 to 0.11 collapsed them on seed 7 and left them on the cap on seed 3
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics

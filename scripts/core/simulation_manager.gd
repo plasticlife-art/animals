@@ -521,6 +521,15 @@ func _refresh_lod_assignments() -> void:
 	world_state.refresh_lod_assignments(_build_lod_context())
 
 
+## How often the ground layer is redrawn, in ticks; 0 while it is switched off. The
+## worker ships grass and trails on these ticks and the layer reads them on the same.
+func ground_update_interval_ticks() -> int:
+	var ground: Dictionary = config_bundle.get("visuals", {}).get("ground", {})
+	if not bool(ground.get("enabled", true)):
+		return 0
+	return maxi(1, int(ground.get("update_interval_ticks", 18)))
+
+
 func enable_interactive_worker() -> void:
 	if _worker != null or world_state == null:
 		return
@@ -605,7 +614,8 @@ func _post_worker_job() -> void:
 	_worker_job = {"delta": tick_duration, "tick": current_tick, "time": simulation_time,
 		"lod": _build_lod_context(), "inspected": selected_agent_id,
 		"include_grass": bool(debug_flags.get("show_grass_density", false)),
-		"include_fear": bool(debug_flags.get("show_fear", false))}
+		"include_fear": bool(debug_flags.get("show_fear", false)),
+		"ground_interval_ticks": ground_update_interval_ticks()}
 	_worker_mutex.unlock()
 	_worker_started_usec = Time.get_ticks_usec()
 	_job_in_flight = true
@@ -625,7 +635,8 @@ func _worker_loop() -> void:
 		if job.is_empty():
 			continue
 		var result: Dictionary = _worker.step(float(job.delta), int(job.tick), float(job.time),
-			job.lod, int(job.inspected), bool(job.include_grass), bool(job.get("include_fear", false)))
+			job.lod, int(job.inspected), bool(job.include_grass), bool(job.get("include_fear", false)),
+			int(job.get("ground_interval_ticks", 0)))
 		_worker_mutex.lock()
 		_worker_result = result
 		_worker_mutex.unlock()
@@ -735,6 +746,10 @@ func _apply_worker_frame(data: Dictionary) -> void:
 	world_state.resource_system.total_biomass = float(data.biomass)
 	if data.has("fear_cells"):
 		world_state.fear_field.import_cells(data.fear_cells)
+	if data.has("ground"):
+		# After the delta above on purpose: the whole grid is the newer of the two.
+		world_state.resource_system._cells = data.ground.grass
+		world_state.trail_field.import_cells(data.ground.trails)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes
 	if bool(data.get("full", false)):
 		world_state._sector_states.clear()

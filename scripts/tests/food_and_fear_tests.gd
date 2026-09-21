@@ -27,6 +27,7 @@ func run(a) -> void:
 	_test_fear_survives_a_save(a)
 	_test_an_outgrown_herd_divides(a)
 	_test_a_sleeping_herd_divides_too(a)
+	_test_a_starved_animal_leaves_little_meat(a)
 
 
 func _bundle(seed: int, growth_rate: float = 0.0, fear: bool = false) -> Dictionary:
@@ -383,4 +384,21 @@ func _test_a_sleeping_herd_divides_too(a) -> void:
 	counts.sort()
 	a.equal(counts, [(split_size + 8) / 2, (split_size + 8) / 2], "a sleeping herd divides into two aggregates")
 	a.equal(state["dormant_records"].size(), split_size + 8, "and loses no one doing it")
+	Helpers.destroy_manager(manager)
+
+
+## A famine among grazers must not be a feast for everything that eats meat.
+func _test_a_starved_animal_leaves_little_meat(a) -> void:
+	var bundle := _bundle(417)
+	bundle["balance"]["carcass"]["meat_total"] = 200.0
+	bundle["balance"]["carcass"]["meat_by_cause"] = {"starvation": 0.25, "thirst": 0.0}
+	var manager = Helpers.create_manager_with(bundle, 417)
+	var world = manager.world_state
+	var size: float = world.species_registry.carcass_meat_multiplier("herbivore")
+	var killed: int = world._spawn_carcass("herbivore", Vector2(100.0, 100.0), "predation", -1)
+	var starved: int = world._spawn_carcass("herbivore", Vector2(120.0, 100.0), "starvation", -1)
+	var parched: int = world._spawn_carcass("herbivore", Vector2(140.0, 100.0), "thirst", -1)
+	a.near(float(world.carcasses[killed]["meat_total"]), 200.0 * size, 0.001, "a kill is a whole body")
+	a.near(float(world.carcasses[starved]["meat_total"]), 50.0 * size, 0.001, "a starved animal is a quarter of one")
+	a.equal(parched, -1, "and a cause worth nothing leaves no carcass at all")
 	Helpers.destroy_manager(manager)

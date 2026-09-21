@@ -15,6 +15,13 @@
     "initial_density_min": 0.3,
     "initial_density_max": 0.65
   },
+  "trails": {
+    "enabled": true,
+    "cell_size_in_grass_cells": 0.5,
+    "half_life_seconds": 300.0,
+    "min_speed": 30.0,
+    "decay_stride_ticks": 60
+  },
   "fear": {
     "enabled": true,
     "cell_size_in_grass_cells": 4,

@@ -1,6 +1,18 @@
 {
   "projection": "isometric",
   "level_height_px": 16,
+  "ground": {
+    "enabled": true,
+    "update_interval_ticks": 18,
+    "bare_color": [0.54, 0.43, 0.27, 0.6],
+    "bare_range": [0.4, 0.08],
+    "lush_color": [0.16, 0.42, 0.14, 0.3],
+    "lush_range": [0.62, 0.95],
+    "trail_color": [0.47, 0.38, 0.26, 0.55],
+    "trail_range": [200.0, 2500.0],
+    "noise_size": 40.0,
+    "noise_strength": 0.18
+  },
   "tile_px": 32,
   "terrain": {
     "atlas": "res://assets/tiles/terrain_atlas.png",

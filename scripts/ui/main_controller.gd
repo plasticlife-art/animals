@@ -3,6 +3,7 @@ extends Node2D
 
 @onready var simulation_manager: SimulationManager = $SimulationManager
 @onready var terrain_tiles = $TerrainTiles
+@onready var ground_traces = $GroundTraces
 @onready var agent_renderer = $AgentRenderer
 @onready var world_view = $WorldView
 @onready var overlay_renderer = $OverlayRenderer
@@ -109,6 +110,7 @@ func _adopt_running_simulation() -> void:
 		# grid is square or diamond. Repainting cells cannot express any of that,
 		# so the tile set and the sprite batches are rebuilt outright.
 		terrain_tiles.rebuild_layers()
+		ground_traces.rebuild()
 		agent_renderer.rebuild_batches()
 	else:
 		_bind_view()
@@ -170,6 +172,7 @@ func _hide_start_menu() -> void:
 
 func _bind_view() -> void:
 	terrain_tiles.bind_manager(simulation_manager)
+	ground_traces.bind_manager(simulation_manager)
 	agent_renderer.bind_manager(simulation_manager)
 	world_view.bind_manager(simulation_manager)
 	overlay_renderer.bind_manager(simulation_manager)
