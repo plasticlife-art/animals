@@ -12,7 +12,7 @@ uniform vec2 grass_extent = vec2(1.0);
 uniform vec2 trail_extent = vec2(1.0);
 uniform vec4 bare_color : source_color = vec4(0.54, 0.43, 0.27, 0.6);
 uniform vec4 lush_color : source_color = vec4(0.16, 0.42, 0.14, 0.3);
-uniform vec4 trail_color : source_color = vec4(0.47, 0.38, 0.26, 0.55);
+uniform vec4 trail_color : source_color = vec4(0.86, 0.79, 0.6, 0.6);
 // Grass as a share of what the cell can hold: the tint starts at `x` and is full at `y`.
 uniform vec2 bare_range = vec2(0.4, 0.08);
 uniform vec2 lush_range = vec2(0.62, 0.95);

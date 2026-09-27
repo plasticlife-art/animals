@@ -24,6 +24,8 @@ func run(a) -> void:
 	_test_worker_ships_the_ground_on_its_interval(a)
 	_test_layer_covers_walkable_ground_only(a)
 	_test_layer_is_off_when_switched_off(a)
+	_test_isometric_ground_and_sprites_rise_together(a)
+	_test_isometric_rows_sort_with_the_tiles(a)
 
 
 func _field(half_life: float = 10.0) -> TrailField:
@@ -279,4 +281,112 @@ func _test_layer_is_off_when_switched_off(a) -> void:
 	layer.bind_manager(manager)
 	a.is_true(not layer.visible and layer._mesh_instance == null, "and draws nothing")
 	layer.free()
+	Helpers.destroy_manager(manager)
+
+
+## A world with relief, the isometric projection set up the way `MainController` sets
+## it, and the terrain layer built.
+func _isometric_fixture(seed: int) -> Array:
+	var bundle: Dictionary = _obstacle_bundle(seed)
+	bundle["world"]["terrain"]["height"] = {"levels": 4, "frequency": 0.004, "octaves": 2,
+		"max_climb_step": 1, "slope_cost": 0.35}
+	bundle["visuals"]["projection"] = "isometric"
+	var manager = Helpers.create_manager_with(bundle, seed)
+	var terrain = manager.world_state.terrain_system
+	var visuals: Dictionary = manager.config_bundle["visuals"]
+	WorldProjection.configure(visuals, terrain.get_max_height_level(),
+		TerrainTileRenderer.iso_art_scale(visuals, terrain.cell_size))
+	var tiles := TerrainTileRenderer.new()
+	tiles.bind_manager(manager)
+	return [manager, tiles]
+
+
+## The tile art rises one skirt step per level, scaled with the art; a sprite placed
+## through `WorldProjection` has to rise exactly as far. The tiles used to sink by
+## three steps per level while sprites rose by one, so everything on raised ground
+## stood a cell or more away from it and no relief showed at all.
+func _test_isometric_ground_and_sprites_rise_together(a) -> void:
+	var fixture := _isometric_fixture(510)
+	var manager = fixture[0]
+	var tiles: TerrainTileRenderer = fixture[1]
+	var terrain = manager.world_state.terrain_system
+	var layer: TileMapLayer = tiles.get_iso_layer()
+	var terrain_config: Dictionary = manager.config_bundle["visuals"]["terrain"]
+	@warning_ignore("integer_division")
+	var base_lift: int = (int(terrain_config["iso_region_size"][1]) - int(terrain_config["iso_tile_size"][1])) / 2
+	var checked := {}
+	var worst := 0.0
+	for index in range(terrain.get_cell_count()):
+		var level: int = terrain.get_height_at_index(index)
+		if checked.has(level):
+			continue
+		var coords: Vector2i = terrain.get_cell_coords(index)
+		var source: TileSetAtlasSource = layer.tile_set.get_source(layer.get_cell_source_id(coords))
+		var data: TileData = source.get_tile_data(layer.get_cell_atlas_coords(coords), layer.get_cell_alternative_tile(coords))
+		# A tile is drawn centred on its cell less `texture_origin`, and its top face
+		# sits `base_lift` above the centre of the art.
+		var face: Vector2 = layer.transform * (layer.map_to_local(coords) - Vector2(data.texture_origin) - Vector2(0, base_lift))
+		var sprite := WorldProjection.to_screen(terrain.get_cell_center(index), level)
+		worst = maxf(worst, face.distance_to(sprite))
+		checked[level] = face.y - WorldProjection.to_screen(terrain.get_cell_center(index), 0).y
+	a.greater(checked.size(), 2, "the fixture has ground at three levels or more")
+	a.near(worst, 0.0, 0.5, "at every level a cell's top face is where a sprite on it is drawn")
+	var rises := true
+	for level in checked.keys():
+		if level > 0 and float(checked[level]) >= 0.0:
+			rises = false
+	a.is_true(rises, "raised ground is drawn higher on screen, not lower (%s)" % str(checked))
+	tiles.free()
+	WorldProjection.configure({"projection": "orthogonal"})
+	Helpers.destroy_manager(manager)
+
+
+## Ground in front hides ground behind it. Drawn as one mesh over the tiles, the tint of
+## a low cell painted over the raised cell in front; in the terrain layer's own y-sort
+## the tiles in front cover it.
+func _test_isometric_rows_sort_with_the_tiles(a) -> void:
+	var fixture := _isometric_fixture(511)
+	var manager = fixture[0]
+	var tiles: TerrainTileRenderer = fixture[1]
+	var terrain = manager.world_state.terrain_system
+	var layer: TileMapLayer = tiles.get_iso_layer()
+	var layer_node = GroundTracesScript.new()
+	layer_node.bind_manager(manager, tiles)
+	a.is_true(layer_node._mesh_instance == null, "no mesh drawn over the whole terrain")
+	var walkable := 0
+	var rows := {}
+	for index in range(terrain.get_cell_count()):
+		if terrain.is_walkable_index(index):
+			walkable += 1
+			var coords: Vector2i = terrain.get_cell_coords(index)
+			rows[coords.x + coords.y] = true
+	a.equal(layer_node._row_meshes.size(), rows.size(), "one mesh per diagonal row with ground to tint")
+	var quads := 0
+	var misplaced := 0
+	var missorted := 0
+	var elsewhere := 0
+	for node in layer_node._row_meshes:
+		if node.get_parent() != layer:
+			elsewhere += 1
+		var row: int = node.get_meta("row")
+		var own_y: float = layer.map_to_local(Vector2i(row, 0)).y
+		var next_y: float = layer.map_to_local(Vector2i(row + 1, 0)).y
+		if not (node.position.y > own_y and node.position.y < next_y):
+			missorted += 1
+		var arrays: Array = node.mesh.surface_get_arrays(0)
+		var anchor: Vector2 = layer.transform * node.position
+		quads += arrays[Mesh.ARRAY_VERTEX].size() / 4
+		for vertex_index in range(0, arrays[Mesh.ARRAY_VERTEX].size(), 4):
+			var corner: Vector2 = arrays[Mesh.ARRAY_TEX_UV][vertex_index]
+			var level: int = terrain.get_height_at_position(corner + Vector2.ONE)
+			var drawn: Vector2 = arrays[Mesh.ARRAY_VERTEX][vertex_index] + anchor
+			if not drawn.is_equal_approx(WorldProjection.to_screen(corner, level)):
+				misplaced += 1
+	a.equal(elsewhere, 0, "rows live in the terrain layer")
+	a.equal(quads, walkable, "every walkable cell is in exactly one row")
+	a.equal(missorted, 0, "each row sorts after its own tiles and before the next row's")
+	a.equal(misplaced, 0, "and each quad lands where its ground is drawn")
+	layer_node.free()
+	tiles.free()
+	WorldProjection.configure({"projection": "orthogonal"})
 	Helpers.destroy_manager(manager)

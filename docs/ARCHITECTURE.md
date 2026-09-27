@@ -293,14 +293,23 @@ Utility actions inside `alive`:
 
 ### `WorldProjection`
 
-- Single seam between simulation space and screen space, currently the identity transform
+- Single seam between simulation space and screen space: the identity in the top-down style,
+  a 2:1 diamond plus a lift per elevation level in the isometric one
 - Everything that draws a simulation position goes through `to_screen()`; mouse picking, view
   culling and the LOD focus rect come back through `to_world()` / `world_rect_covering()`
-- Exists so an isometric view stays a change to this file plus the tile shape
+- `visuals.level_height_px` is in art pixels, the skirt step drawn in the isometric atlas. The
+  lift on screen is that times `TerrainTileRenderer.iso_art_scale()` (3 with 96-unit cells),
+  which `MainController` passes to `configure()`, so a sprite rises exactly as far as the
+  ground under it. Until 2026-09-27 it was not scaled, and the tiles sank instead of rising:
+  sprites, overlays and the ground layer stood 64 px per level away from their ground and
+  no relief showed
 
 ### `TerrainTileRenderer`
 
-- Paints the terrain grid into two `TileMapLayer` children, biomes below obstacles
+- Top-down, paints the terrain grid into two `TileMapLayer` children, biomes below obstacles.
+  Isometric, one y-sorted layer: each cell picks the tile alternative for its level, whose
+  `texture_origin` raises the art one skirt step per level (Godot draws a tile at its cell
+  minus `texture_origin`, so raising means a larger y)
 - Builds its `TileSet` at runtime from `visuals.json` instead of a `.tres`, so swapping an art
   pack needs no resource kept in sync
 - Reads `TerrainSystem` only; repainted on bind and on restart
@@ -311,17 +320,19 @@ Utility actions inside `alive`:
   grazed below `ground.bare_range`, a richer green where it stands above `ground.lush_range`
   (the refuges fear leaves ungrazed), and paths where `TrailField` wear passes
   `ground.trail_range`
-- One `MeshInstance2D`: a quad per walkable terrain cell placed through `WorldProjection`
-  at the cell's elevation, UV carrying the world position. `shaders/ground_traces.gdshader`
-  reads grass, grass caps (`ResourceSystem.export_caps()`) and trails from float textures
-  built straight from the packed arrays, so a refresh runs no loop in script
-- Draws after `TerrainTiles` at the same z: above the biome tiles, below top-down obstacles,
-  animals and overlays, and under `DayNightTint`
+- A quad per walkable terrain cell placed through `WorldProjection` at the cell's elevation,
+  UV carrying the world position. `shaders/ground_traces.gdshader` reads grass, grass caps
+  (`ResourceSystem.export_caps()`) and trails from float textures built straight from the
+  packed arrays, so a refresh runs no loop in script
+- Top-down: one `MeshInstance2D` after `TerrainTiles` at the same z, above the biome tiles
+  and below obstacles, animals and overlays, under `DayNightTint`
+- Isometric: one mesh per diagonal row of cells, each a child of the terrain's y-sorted layer
+  placed just after its row's tiles, so raised ground in front covers the tint behind it as
+  it covers the ground. A single mesh drawn over the tiles painted the tint of low cells
+  over the cliffs in front of them
 - Refreshes every `ground.update_interval_ticks`. With the worker running, the manager asks
   it for the whole grass and trail grids on exactly those ticks (`ground` in the result),
   independent of the grass debug overlay's dirty-cell delta
-- Isometric limitation: the layer is drawn over the single y-sorted tile layer, so a tinted
-  cell behind a tall cliff or tree shows through the art in front of it
 
 ### `AgentSpriteRenderer`
 

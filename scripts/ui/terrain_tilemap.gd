@@ -219,9 +219,9 @@ func _build_isometric_layer(visuals: Dictionary, terrain_config: Dictionary) -> 
 		for entry_id in entries.keys():
 			_iso_rows[str(entry_id)] = int(entries[entry_id].get("iso_row", 0))
 
-	# The art hangs below its top face, so the whole region has to be lifted
-	# until the diamond sits on the cell. One alternative per elevation level
-	# then lifts it further, which is how height reaches the screen at all.
+	# The art hangs below its top face, so the region is drawn lower until the
+	# diamond sits on the cell. One alternative per elevation level then raises it
+	# by one skirt step, which is how height reaches the screen at all.
 	var max_level: int = 0
 	if simulation_manager != null and simulation_manager.world_state != null:
 		var terrain: TerrainSystem = simulation_manager.world_state.terrain_system
@@ -239,21 +239,45 @@ func _build_isometric_layer(visuals: Dictionary, terrain_config: Dictionary) -> 
 			var coords := Vector2i(skirt, row)
 			source.create_tile(coords)
 			source.get_tile_data(coords, 0).texture_origin = Vector2i(0, -base_lift)
+			# A tile is drawn at its cell minus `texture_origin`: a negative y moves the
+			# art down, a positive one up. The sign was once the other way round, which
+			# sank high ground instead of raising it and hid every skirt behind the
+			# cells in front.
 			for level in range(1, max_level + 1):
 				var alternative := source.create_alternative_tile(coords, level)
 				source.get_tile_data(coords, alternative).texture_origin = Vector2i(
-					0, -base_lift - level * _iso_level_lift)
+					0, -base_lift + level * _iso_level_lift)
 
 	# The diamond a cell projects to is twice the cell wide and one cell tall, so
 	# the art only sits on the grid unscaled while the world uses 32-unit cells.
 	# Deriving the scale keeps larger cells - the cheap way to grow the map -
 	# working instead of silently drifting off the grid.
-	var iso_scale: float = _cell_size() * 2.0 / float(tile_size.x)
+	var iso_scale: float = iso_art_scale(visuals, _cell_size())
 	_iso_layer = _make_layer(tile_set, iso_scale, BIOME_LAYER_Z, true)
 	# Godot anchors isometric cell (0,0) half a tile to the right of where
 	# WorldProjection puts it, a constant offset for every cell. Shifting the
 	# layer once keeps tiles, sprites and overlays on the same grid.
 	_iso_layer.position = Vector2(-_cell_size(), 0.0)
+
+
+## How much the isometric tile art is enlarged to fit a terrain cell. A diamond is twice
+## the cell wide on screen, so 32-unit cells show the art unscaled and 96-unit cells at
+## three times. `WorldProjection` scales `level_height_px` by the same factor: the skirts
+## in the art are drawn one step per level, and a sprite has to rise exactly as far as
+## the ground under it.
+static func iso_art_scale(visuals: Dictionary, cell_size: float) -> float:
+	var terrain_config: Dictionary = visuals.get("terrain", {})
+	var tile_size = terrain_config.get("iso_tile_size", [64, 32])
+	var tile_width := 64.0
+	if tile_size is Array and tile_size.size() >= 1:
+		tile_width = maxf(1.0, float(tile_size[0]))
+	return cell_size * 2.0 / tile_width
+
+
+## The y-sorted layer the isometric ground is drawn in, or null in the top-down view.
+## `GroundTraces` puts its rows in it so that ground in front covers them.
+func get_iso_layer() -> TileMapLayer:
+	return _iso_layer
 
 
 func _cell_size() -> float:

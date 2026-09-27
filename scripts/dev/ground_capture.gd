@@ -2,10 +2,15 @@ extends SceneTree
 
 # Screenshot harness for the ground layer. Not part of the game.
 #
-#   Godot --path . --script res://scripts/dev/ground_capture.gd -- <out_prefix> [sim_seconds] [style]
+#   Godot --path . --script res://scripts/dev/ground_capture.gd -- <out_prefix> [sim_seconds] [style] [variants.json]
 # Runs the real main scene at top speed until `sim_seconds` have passed, so herds have
 # had time to graze pastures down and wear paths, then writes `<prefix>-map.png` with
-# the whole map in frame and `<prefix>-close.png` parked on the most worn ground.
+# the whole map in frame, `<prefix>-mid.png` at play distance and `<prefix>-close.png`
+# up close, both on the most worn ground.
+#
+# `variants.json` maps a name to a patch of `visuals.ground` keys. Each variant is put on
+# the ground layer in turn and shot from the same three views, as `<prefix>-<name>-<view>.png`,
+# so colours can be compared on one world instead of one twenty-minute run each.
 
 var _frames := 0
 var _main: Node = null
@@ -14,8 +19,11 @@ var _camera = null
 var _prefix := "user://ground"
 var _seconds := 600.0
 var _style := ""
+var _variants_path := ""
 var _stage := 0
 var _stage_started_msec := 0
+var _shots: Array = []
+var _shot: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -26,6 +34,8 @@ func _initialize() -> void:
 		_seconds = float(args[1])
 	if args.size() > 2:
 		_style = args[2]
+	if args.size() > 3:
+		_variants_path = args[3]
 	root.size = Vector2i(1600, 900)
 	_main = load("res://scenes/main/main.tscn").instantiate()
 	root.add_child(_main)
@@ -55,19 +65,47 @@ func _process(_delta: float) -> bool:
 			if _frames % 600 == 0:
 				print("t=%.0f" % _manager.simulation_time)
 			if _manager.simulation_time >= _seconds:
-				_manager.speed_multiplier = 1.0
-				_aim(_manager.world_state.bounds.get_center(), _map_zoom())
+				_manager.speed_multiplier = 0.0
+				_queue_shots()
 				_next_stage()
 		1:
-			if _settled():
-				_save("map")
-				_aim(_most_worn_position(), 0.45)
+			if _shot.is_empty():
+				if _shots.is_empty():
+					return true
+				_shot = _shots.pop_front()
+				if _shot.has("variant"):
+					# On top of the shipped settings, so one variant's keys never leak into the next.
+					var ground: Dictionary = _manager.config_bundle.get("visuals", {}).get("ground", {}).duplicate()
+					ground.merge(_shot["variant"], true)
+					_main.get_node("GroundTraces")._apply_config(ground)
+				_aim(_shot["position"], _shot["zoom"])
 				_next_stage()
-		2:
-			if _settled():
-				_save("close")
-				return true
+				_stage = 1
+			elif _settled():
+				_save(_shot["name"])
+				_shot = {}
 	return false
+
+
+## Every view of every variant, taken on a paused world so they show the same ground.
+func _queue_shots() -> void:
+	var views := [
+		["map", _manager.world_state.bounds.get_center(), _map_zoom()],
+		["mid", _most_worn_position(), 0.2],
+		["close", _most_worn_position(), 0.45],
+	]
+	var variants := {"": {}}
+	if _variants_path != "":
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string(_variants_path))
+		if parsed is Dictionary and not parsed.is_empty():
+			variants = parsed
+	for variant_name in variants.keys():
+		for view in views:
+			var shot := {"name": view[0] if variant_name == "" else "%s-%s" % [variant_name, view[0]],
+				"position": view[1], "zoom": view[2]}
+			if variant_name != "":
+				shot["variant"] = variants[variant_name]
+			_shots.append(shot)
 
 
 func _next_stage() -> void:

@@ -25,7 +25,8 @@ extends RefCounted
 
 enum Mode { ORTHOGONAL, ISOMETRIC }
 
-## Screen pixels a sprite rises per elevation level.
+## Art pixels the terrain rises per elevation level: the skirt step drawn in the
+## isometric tile atlas. On screen it is scaled with the art (`art_scale`).
 const DEFAULT_LEVEL_HEIGHT_PX := 16.0
 
 static var _mode: int = Mode.ORTHOGONAL
@@ -35,11 +36,15 @@ static var _max_height_level: int = 0
 
 ## Called once at boot from `MainController`. `max_height_level` comes from
 ## `TerrainSystem` and is what `world_rect_covering()` uses to decide how far
-## past the visible edge tall ground can still reach.
-static func configure(visuals_config: Dictionary, max_height_level: int = 0) -> void:
+## past the visible edge tall ground can still reach. `art_scale` is how much the
+## terrain art is enlarged (`TerrainTileRenderer.iso_art_scale()`): the ground rises
+## `level_height_px` art pixels per level, so a sprite must rise that many times it.
+## Left at 1 while cells grew from 32 to 96 units, sprites rose a third as far as
+## the ground.
+static func configure(visuals_config: Dictionary, max_height_level: int = 0, art_scale: float = 1.0) -> void:
 	var mode_name := str(visuals_config.get("projection", "orthogonal")).to_lower()
 	_mode = Mode.ISOMETRIC if mode_name == "isometric" else Mode.ORTHOGONAL
-	_level_height_px = maxf(1.0, float(visuals_config.get("level_height_px", DEFAULT_LEVEL_HEIGHT_PX)))
+	_level_height_px = maxf(1.0, float(visuals_config.get("level_height_px", DEFAULT_LEVEL_HEIGHT_PX)) * maxf(art_scale, 0.0001))
 	_max_height_level = maxi(0, max_height_level)
 
 

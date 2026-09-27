@@ -172,7 +172,7 @@ func _hide_start_menu() -> void:
 
 func _bind_view() -> void:
 	terrain_tiles.bind_manager(simulation_manager)
-	ground_traces.bind_manager(simulation_manager)
+	ground_traces.bind_manager(simulation_manager, terrain_tiles)
 	agent_renderer.bind_manager(simulation_manager)
 	world_view.bind_manager(simulation_manager)
 	overlay_renderer.bind_manager(simulation_manager)
@@ -452,10 +452,14 @@ func _apply_ui_theme() -> void:
 
 
 func _configure_projection() -> void:
+	var visuals: Dictionary = simulation_manager.config_bundle.get("visuals", {})
 	var max_level := 0
+	var art_scale := 1.0
 	if simulation_manager.world_state != null and simulation_manager.world_state.terrain_system != null:
-		max_level = simulation_manager.world_state.terrain_system.get_max_height_level()
-	WorldProjection.configure(simulation_manager.config_bundle.get("visuals", {}), max_level)
+		var terrain: TerrainSystem = simulation_manager.world_state.terrain_system
+		max_level = terrain.get_max_height_level()
+		art_scale = TerrainTileRenderer.iso_art_scale(visuals, terrain.cell_size)
+	WorldProjection.configure(visuals, max_level, art_scale)
 
 
 func _apply_debug_configuration() -> void:

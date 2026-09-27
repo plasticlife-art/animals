@@ -11,23 +11,35 @@ extends Node2D
 ##
 ## The grids reach the GPU as float textures built straight from the packed arrays, so
 ## a refresh costs no loop in script. The mesh is one quad per walkable terrain cell,
-## placed through `WorldProjection` with the cell's elevation, so the tint sits on
-## raised ground in the isometric view as it does on flat ground in the top-down one.
-## It draws above the biome tiles and below obstacles, animals and overlays.
+## placed through `WorldProjection` with the cell's elevation.
+##
+## Top-down, it is one mesh drawn above the biome tiles and below obstacles, animals and
+## overlays. Isometric, ground in front hides ground behind it, which a single mesh
+## drawn after the tiles cannot respect: the tint of a low cell painted over the raised
+## cell in front of it. There the quads go into the terrain's own y-sorted layer, one
+## mesh per diagonal row of cells, each sorted just after its row's tiles and before
+## the next row's, so the tiles in front cover it as they cover the ground.
 
 const GROUND_SHADER := preload("res://shaders/ground_traces.gdshader")
 
+## Layer-local units a row mesh is sorted after the tiles of its own row. Rows are half
+## a tile apart, so this lands between one row and the next.
+const ROW_SORT_NUDGE := 1.0
+
 var simulation_manager: SimulationManager
+var terrain_tiles: TerrainTileRenderer
 
 var _mesh_instance: MeshInstance2D
+var _row_meshes: Array = []
 var _material: ShaderMaterial
 var _grass_texture: ImageTexture
 var _trail_texture: ImageTexture
 var _interval_ticks: int = 0
 
 
-func bind_manager(manager: SimulationManager) -> void:
+func bind_manager(manager: SimulationManager, tiles: TerrainTileRenderer = null) -> void:
 	simulation_manager = manager
+	terrain_tiles = tiles
 	if not manager.tick_completed.is_connected(_on_tick_completed):
 		manager.tick_completed.connect(_on_tick_completed)
 	rebuild()
@@ -40,6 +52,11 @@ func rebuild() -> void:
 		remove_child(_mesh_instance)
 		_mesh_instance.queue_free()
 		_mesh_instance = null
+	# The rows live in the terrain layer, which a style change may already have freed.
+	for row in _row_meshes:
+		if is_instance_valid(row):
+			row.queue_free()
+	_row_meshes.clear()
 	_grass_texture = null
 	_trail_texture = null
 	if simulation_manager == null or simulation_manager.world_state == null:
@@ -60,10 +77,14 @@ func rebuild() -> void:
 	_material.set_shader_parameter("trail_extent", Vector2(trails.cols, trails.rows) * trails.cell_size)
 	_material.set_shader_parameter("cap_tex", ImageTexture.create_from_image(
 		_float_image(grass.export_caps(), grass.cols, grass.rows)))
-	_mesh_instance = MeshInstance2D.new()
-	_mesh_instance.mesh = _build_mesh(world.terrain_system)
-	_mesh_instance.material = _material
-	add_child(_mesh_instance)
+	var iso_layer: TileMapLayer = null if terrain_tiles == null else terrain_tiles.get_iso_layer()
+	if iso_layer != null and not WorldProjection.is_identity():
+		_build_rows(world.terrain_system, iso_layer)
+	else:
+		_mesh_instance = MeshInstance2D.new()
+		_mesh_instance.mesh = _build_mesh(world.terrain_system, _all_walkable(world.terrain_system))
+		_mesh_instance.material = _material
+		add_child(_mesh_instance)
 	refresh()
 	simulation_manager.record_render_phase("ground_rebuild",
 		float(Time.get_ticks_usec() - started) / 1000.0)
@@ -119,20 +140,54 @@ func _apply_config(config: Dictionary) -> void:
 			_material.set_shader_parameter(key, float(config[key]))
 
 
-## One quad per walkable cell. UV holds the world position, which is all the shader
-## needs to find its place in either grid.
-static func _build_mesh(terrain: TerrainSystem) -> ArrayMesh:
-	var vertices := PackedVector2Array()
-	var uvs := PackedVector2Array()
-	var indices := PackedInt32Array()
+## One mesh per diagonal row of cells (x + y), each a child of the terrain layer so it
+## is y-sorted with the tiles. A row's node sits just after that row's tiles; its
+## vertices are laid out in the same space as everything else `WorldProjection` places,
+## offset by where the node itself lands, so the layer's scale and shift cancel out.
+func _build_rows(terrain: TerrainSystem, iso_layer: TileMapLayer) -> void:
+	var rows: Dictionary = {}
 	for index in range(terrain.get_cell_count()):
 		if not terrain.is_walkable_index(index):
 			continue
+		var coords: Vector2i = terrain.get_cell_coords(index)
+		var row := coords.x + coords.y
+		if not rows.has(row):
+			rows[row] = PackedInt32Array()
+		rows[row].append(index)
+	var to_parent: Transform2D = iso_layer.transform
+	for row in rows.keys():
+		var anchor_local := Vector2(0.0, iso_layer.map_to_local(Vector2i(row, 0)).y + ROW_SORT_NUDGE)
+		var anchor := to_parent * anchor_local
+		var node := MeshInstance2D.new()
+		node.mesh = _build_mesh(terrain, rows[row], anchor)
+		node.material = _material
+		node.position = anchor_local
+		node.scale = Vector2.ONE / iso_layer.scale
+		node.set_meta("row", row)
+		iso_layer.add_child(node)
+		_row_meshes.append(node)
+
+
+static func _all_walkable(terrain: TerrainSystem) -> PackedInt32Array:
+	var cells := PackedInt32Array()
+	for index in range(terrain.get_cell_count()):
+		if terrain.is_walkable_index(index):
+			cells.append(index)
+	return cells
+
+
+## One quad per listed cell, less `origin`. UV holds the world position, which is all
+## the shader needs to find its place in either grid.
+static func _build_mesh(terrain: TerrainSystem, cells: PackedInt32Array, origin: Vector2 = Vector2.ZERO) -> ArrayMesh:
+	var vertices := PackedVector2Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	for index in cells:
 		var rect: Rect2 = terrain.get_cell_rect(index)
 		var level: int = terrain.get_height_at_index(index)
 		var base := vertices.size()
 		for corner in [rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]:
-			vertices.append(WorldProjection.to_screen(corner, level))
+			vertices.append(WorldProjection.to_screen(corner, level) - origin)
 			uvs.append(corner)
 		indices.append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
 	var arrays := []
