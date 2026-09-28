@@ -28,6 +28,8 @@ func run(a) -> void:
 	_test_an_outgrown_herd_divides(a)
 	_test_a_sleeping_herd_divides_too(a)
 	_test_a_starved_animal_leaves_little_meat(a)
+	_test_a_grazer_moves_on_from_a_grazed_out_cell(a)
+	_test_a_hungry_grazer_eats_a_half_grazed_sward_underfoot(a)
 
 
 func _bundle(seed: int, growth_rate: float = 0.0, fear: bool = false) -> Dictionary:
@@ -401,4 +403,70 @@ func _test_a_starved_animal_leaves_little_meat(a) -> void:
 	a.near(float(world.carcasses[killed]["meat_total"]), 200.0 * size, 0.001, "a kill is a whole body")
 	a.near(float(world.carcasses[starved]["meat_total"]), 50.0 * size, 0.001, "a starved animal is a quarter of one")
 	a.equal(parched, -1, "and a cause worth nothing leaves no carcass at all")
+	Helpers.destroy_manager(manager)
+
+
+## A cell grazed to its stubble regrows by crumbs, a few hundredths a second. Taking
+## those crumbs used to count as eating: the animal stood `eat_duration`, came back on
+## the same phase of its decision interval, found its old target still in reach and
+## nibbled again - until it starved, grass all round it. Half the herbivores that
+## starved at full fidelity died like that. The fixture runs at the game's own tick
+## rate and decision interval, because deciding every tick hid it.
+func _test_a_grazer_moves_on_from_a_grazed_out_cell(a) -> void:
+	var bundle := _bundle(418, 0.05)
+	bundle["world"]["tick_rate"] = 18.0
+	bundle["balance"]["ai"]["decision_interval_ticks"] = 3
+	bundle["world"]["grass"]["stubble_fraction"] = 0.05
+	var manager = Helpers.create_manager_with(bundle, 418)
+	var world = manager.world_state
+	var grazed := _cell(2, 3)
+	var good := _cell(5, 3)
+	var beyond := _cell(6, 3)
+	var stubble: float = world.resource_system._get_cell_max_biomass(grazed) * 0.05
+	# One bite on the first cell and a bit over, so it is eaten down to crumbs; then
+	# more grass than twenty seconds of hunger can use, over two cells.
+	_lay_grass(world, {grazed: stubble + 35.0, good: 100.0, beyond: 100.0})
+	var grazer = Helpers.spawn_herbivore(world, Vector2(80.0, 112.0), 0)
+	grazer.hunger = 70.0
+	grazer.thirst = 0.0
+	Helpers.run_ticks(manager, 18 * 20)
+	a.is_true(world.resource_system.get_biomass(good) < 100.0 - 20.0,
+		"the grazer walked on and ate the good cell (it holds %.1f of 100)" % world.resource_system.get_biomass(good))
+	a.is_true(grazer.is_alive and grazer.hunger < 50.0,
+		"and is fed, not starving on stubble (hunger %.1f)" % grazer.hunger)
+	Helpers.destroy_manager(manager)
+
+
+## Fed, a grazer walks on to the patch it chose rather than stop for less than a bite.
+## Hungry, it eats what it stands on if that beats its hunger while it chews: herds
+## crawling out of energy past half-grazed swards, towards patches their herd-mates ate
+## first, were the largest group of herbivores starving at full fidelity.
+func _test_a_hungry_grazer_eats_a_half_grazed_sward_underfoot(a) -> void:
+	var bundle := _bundle(419)
+	var manager = Helpers.create_manager_with(bundle, 419)
+	var world = manager.world_state
+	var feeding: Dictionary = bundle["species"]["herbivore"]["feeding"]
+	var metabolism: Dictionary = bundle["species"]["herbivore"]["metabolism"]
+	var bite := float(feeding["bite_amount"])
+	var floor_hungry: float = world.underfoot_bite_floor(feeding, metabolism, 80.0)
+	a.equal(world.underfoot_bite_floor(feeding, metabolism, 15.0), bite, "fed, only a full bite will do underfoot")
+	a.is_true(floor_hungry < bite * 0.5 and floor_hungry >= WorldStateScript.GRASS_SCRAP_BIOMASS,
+		"hungry, a much smaller sward will (%.1f of a %.0f bite)" % [floor_hungry, bite])
+	var underfoot := _cell(2, 3)
+	# Within the few cells a grazer reaches without planning a route.
+	var chosen := _cell(4, 3)
+	var half := bite * 0.5
+	for hunger in [15.0, 80.0]:
+		_lay_grass(world, {underfoot: half, chosen: 100.0})
+		var grazer = Helpers.spawn_herbivore(world, Vector2(80.0, 112.0), 0)
+		grazer.hunger = hunger
+		grazer.thirst = 0.0
+		var grass: Dictionary = world._find_grass_target_for_agent(grazer)
+		a.equal(int(grass.get("index", -1)), chosen, "the patch it heads for is the full one")
+		grazer._move_to_grass_target(world, 1.0 / 12.0, [], grass)
+		var left: float = world.resource_system.get_available_biomass(underfoot)
+		if hunger < 20.0:
+			a.near(left, half, 0.001, "a fed grazer walks over the half-grazed cell")
+		else:
+			a.is_true(left < half, "a hungry one eats it on the way (%.1f left of %.1f)" % [left, half])
 	Helpers.destroy_manager(manager)

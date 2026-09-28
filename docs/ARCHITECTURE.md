@@ -119,6 +119,10 @@ Current terrain features:
   slow movement and attenuate sight, and minor biome decoration stays passable
 - Refines terrain routes on a body-sized local grid and slides collision-limited
   movement along a clear tangent
+- `segment_clear()` lets a body that starts a hair inside a solid's reach move away from
+  it or along it, never deeper; a point query still reports the contact. A neighbour's
+  push, rounded, can leave a body there, and blocking every move from such a spot froze
+  it for good: the local grid found a way round but its first leg was rejected
 
 ### `ResourceSystem`
 
@@ -268,6 +272,21 @@ Utility actions inside `alive`:
 - join herd
 
 `panic` restricts the decision space to flee and herd-join behavior.
+
+Grazing rules that full fidelity depends on (each was a cause of herbivores starving
+with grass all around them, found with a probe that followed every starving animal):
+
+- A bite counts only if the cell holds `WorldState.GRASS_SCRAP_BIOMASS`, or the bite
+  wanted if that is less. A cell grazed to its stubble regrows by hundredths a second;
+  taking those crumbs counted as eating, and between decisions the grazer acted on its
+  stale target, so it stood and nibbled until it starved. The decision snapshot's
+  target is replaced when the grazer moves on.
+- On its way to the patch it chose, a fed grazer stops only for a full bite underfoot;
+  a hungry one for anything that repays twice the hunger it gains while chewing
+  (`WorldState.underfoot_bite_floor()`). Herds out of energy crawled past half-grazed
+  swards towards patches their herd-mates ate first.
+- The unit tests run the game's tick rate and decision interval where a behaviour
+  depends on them: deciding every tick, as the base fixture does, hid the first cause.
 
 ### Predator
 

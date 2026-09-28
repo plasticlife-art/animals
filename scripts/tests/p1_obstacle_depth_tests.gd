@@ -11,6 +11,7 @@ func run(a) -> void:
 	_test_bush_motion_cost(a)
 	_test_local_refinement_edges(a)
 	_test_overlap_correction_respects_solids(a)
+	_test_a_body_touching_a_solid_can_leave_it(a)
 	_test_common_depth_ties(a)
 
 
@@ -158,6 +159,35 @@ func _test_overlap_correction_respects_solids(a) -> void:
 		"overlap separation keeps the first animal outside the trunk")
 	a.is_true(world.scenery.segment_clear(second.position, second.position, 6.0),
 		"overlap separation keeps the second animal outside the trunk")
+	Helpers.destroy_manager(manager)
+
+
+## A body can end up a hair inside a solid's reach: nudged there by a neighbour through
+## rounding, or born there. Every move from such a spot used to count as blocked, even
+## one straight away from the trunk, so the animal never moved again. A seventh of the
+## herbivores that starved at full fidelity stood like that beside a bush, grass in
+## sight. Leaving, or sliding along, must be allowed; going deeper must not.
+func _test_a_body_touching_a_solid_can_leave_it(a) -> void:
+	var manager = Helpers.create_manager(906)
+	var world = manager.world_state
+	_add_solid(world, 6001, Vector2(112, 128), 12.0)
+	var inside := Vector2(94.5, 128)
+	a.is_true(not world.scenery.segment_clear(inside, inside, 6.0),
+		"the spot itself still counts as touching the trunk")
+	a.is_true(world.scenery.segment_clear(inside, Vector2(60, 128), 6.0), "moving straight away is clear")
+	a.is_true(world.scenery.segment_clear(inside, Vector2(94.5, 100), 6.0), "sliding along the trunk is clear")
+	a.is_true(not world.scenery.segment_clear(inside, Vector2(100, 128), 6.0), "moving deeper is still blocked")
+	var animal = Helpers.spawn_herbivore(world, inside)
+	animal.movement = animal.movement.duplicate(true)
+	animal.movement["body_radius"] = 6.0
+	# Placed, not spawned: spawning finds a free spot first.
+	animal.position = inside
+	for step in range(6):
+		animal.move_with_vector(world, Vector2.LEFT, 70.0, 0.1)
+	a.is_true(animal.position.x < inside.x - 5.0,
+		"an animal touching a trunk walks away from it (x %.1f)" % animal.position.x)
+	var path: PackedVector2Array = world.scenery.local_path(inside, Vector2(160, 128), 6.0)
+	a.is_true(not path.is_empty(), "and can plan a way round it")
 	Helpers.destroy_manager(manager)
 
 

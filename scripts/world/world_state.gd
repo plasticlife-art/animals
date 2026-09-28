@@ -21,6 +21,11 @@ const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_percep
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const FearFieldScript = preload("res://scripts/world/fear_field.gd")
 const TrailFieldScript = preload("res://scripts/world/trail_field.gd")
+
+## The least grass worth a bite: what a starving grazer will still head for, and what a
+## cell must hold for a bite to count as eating. A cell grazed to its stubble regrows by
+## crumbs, and a grazer that took crumbs for a meal stood on it until it starved.
+const GRASS_SCRAP_BIOMASS := 2.0
 const ClimateScript = preload("res://scripts/world/climate.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
@@ -1055,13 +1060,27 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 func grass_target_tiers(feeding: Dictionary, hungry: bool, risk_tolerance: float = INF) -> Array:
 	var bite := float(feeding.get("bite_amount", 18.0))
 	if hungry:
-		return [[bite, INF], [2.0, INF]]
+		return [[bite, INF], [GRASS_SCRAP_BIOMASS, INF]]
 	var good := maxf(bite, resource_system.max_biomass * float(feeding.get("good_sward_fraction", 0.0)))
 	var tiers: Array = []
 	for tier in [[good, risk_tolerance], [bite, risk_tolerance], [bite, INF], [4.0, INF]]:
 		if tiers.is_empty() or tiers[-1] != tier:
 			tiers.append(tier)
 	return tiers
+
+
+## The least grass a grazer stops for where it stands, on its way to the patch it chose.
+## Fed, a full bite: stopping for less fed it less than walking on. Hungry, anything that
+## repays twice over the hunger it gains while chewing. A hungry grazer out of energy
+## crawls, and walking past a half-grazed sward to a better patch that its herd-mates
+## ate first starved more herbivores at full fidelity than anything else.
+func underfoot_bite_floor(feeding: Dictionary, metabolism: Dictionary, hunger: float) -> float:
+	var bite := float(feeding.get("bite_amount", 18.0))
+	if not grazer_is_hungry(hunger):
+		return bite
+	var gain := maxf(0.001, float(feeding.get("nutrition_gain", 0.8)))
+	var break_even := float(metabolism.get("hunger_rate", 2.0)) * float(feeding.get("eat_duration", 0.55)) / gain
+	return clampf(break_even * 2.0, GRASS_SCRAP_BIOMASS, bite)
 
 
 ## Whether a grazer at `hunger` is past caring about risk and sward quality. The same

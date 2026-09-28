@@ -197,18 +197,23 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 	# apart - twenty animals at arm's length need more than a 96-unit square - so
 	# insisting on the chosen cell left most of the herd shuffling at its edge,
 	# never eating. Any cell underfoot with grass on it is food.
-	var bite_amount := float(feeding.get("bite_amount", 18.0))
 	var eat_index: int = int(grass.get("index", -1))
 	if not (reached_target_cell or reached_target_radius) and current_cell_index != -1:
-		# A full bite, not a scrap. A lower bar had animals stopping for `eat_duration`
-		# on nearly bare ground instead of walking to the patch they had chosen,
-		# which fed them less than never grazing underfoot at all.
-		if world.resource_system.get_available_biomass(current_cell_index) >= bite_amount \
+		# A full bite while fed, not a scrap: a lower bar had animals stopping for
+		# `eat_duration` on nearly bare ground instead of walking to the patch they had
+		# chosen. Hungry, less will do (`underfoot_bite_floor()`).
+		if world.resource_system.get_available_biomass(current_cell_index) >= world.underfoot_bite_floor(feeding, metabolism, hunger) \
 				and world.grazing_ground_is_acceptable(position, hunger, perception):
 			eat_index = current_cell_index
 			reached_target_cell = true
 	if reached_target_cell or reached_target_radius:
-		var consumed: float = world.consume_grass_cell(eat_index, world.grazing_bite(feeding, hunger))
+		# A mouthful or nothing. Crumbs of regrowth on a cell grazed to its stubble used
+		# to count as a meal: the grazer stood `eat_duration`, came back to the same
+		# stale target and nibbled again until it starved, with grass all around it.
+		var bite: float = world.grazing_bite(feeding, hunger)
+		var consumed := 0.0
+		if world.resource_system.get_available_biomass(eat_index) >= minf(bite, WorldState.GRASS_SCRAP_BIOMASS):
+			consumed = world.consume_grass_cell(eat_index, bite)
 		if consumed > 0.0:
 			set_state("eat", world.current_tick)
 			clear_navigation()
@@ -224,7 +229,12 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 			})
 			return true
 		clear_targets()
+		grass_target_cache = {}
 		var fallback_grass: Dictionary = _find_grass_target(world)
+		# The decision snapshot still names the eaten cell, and ticks between decisions
+		# act on it; point it at the new grass so they do not walk back.
+		if cached_snapshot != null:
+			cached_snapshot.grass_target = fallback_grass
 		if fallback_grass.is_empty():
 			return false
 		if int(fallback_grass.get("index", -1)) == int(grass.get("index", -1)):

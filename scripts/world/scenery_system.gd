@@ -136,12 +136,22 @@ func segment_clear(a: Vector2, b: Vector2, radius: float = 0.0) -> bool:
 		nearby = _near_cache[ai]
 	else:
 		nearby = query_rect(segment_bounds(a, b, radius + max_extent))
+	var moving := not a.is_equal_approx(b)
 	for entry in nearby:
 		var solid := float(entry.get("radius", 0.0))
 		if solid <= 0.0:
 			continue
+		var reach_sq := pow(solid + radius, 2.0)
 		var closest := Geometry2D.get_closest_point_to_segment(entry.position, a, b)
-		if closest.distance_squared_to(entry.position) < pow(solid + radius, 2.0):
+		if closest.distance_squared_to(entry.position) < reach_sq:
+			# A body can start a hair inside a solid's reach: nudged there by a
+			# neighbour through rounding, or born there. It may leave or slide along -
+			# the segment's nearest point to the solid is its start - but not go deeper.
+			# Blocking every move from inside froze such an animal for good; a seventh
+			# of the herbivores that starved at full fidelity stood so beside a bush.
+			# A point query (`a == b`) still reports the contact.
+			if moving and closest.is_equal_approx(a) and a.distance_squared_to(entry.position) < reach_sq:
+				continue
 			return false
 	return true
 
