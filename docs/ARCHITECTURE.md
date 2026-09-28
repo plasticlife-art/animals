@@ -685,6 +685,33 @@ Current suites cover:
 - trails: wear deposit and decay, live and sleeping animals, save round trip, and that the
   field changes nothing the animals do; the ground layer's mesh, textures and worker channel
 
+## Measuring Balance
+
+`scripts/dev/ecology_audit.gd` runs one seed deterministically, LOD or full fidelity, with
+config overrides as `key=value` arguments, and writes a JSON report: populations over time,
+the late-half `regulation` block, counters, timing. One seed says little. The same change
+has moved herbivores +44% on one map and -20% on the next.
+
+`scripts/dev/audit_matrix.py` runs variants over many seeds and compares each with a
+baseline seed by seed:
+
+```
+python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --seconds 1440 --jobs 4 \
+    --variant base --variant slow species.herbivore.metabolism.hunger_rate=1.0
+```
+
+- Per metric, the mean and spread over seeds, and against the baseline the mean
+  difference with its 95% interval (paired t) and on how many seeds the variant was
+  higher. An arrow marks an interval clear of zero.
+- `@path=DIR` in a variant runs it from another imported checkout, to compare code.
+- Reports are kept per variant and seed and reused when they match, so a matrix resumes
+  after an interruption; `--summary-only` rebuilds `summary.md` / `summary.json`.
+- Timing is not compared: runs share the machine. Compare instructions retired with
+  `/usr/bin/time -l` for cost. A 1440 s LOD run takes 10-25 minutes with four in
+  parallel, a full-fidelity one 45-60.
+- `scripts/dev/run_p3_matrix.py` is the older acceptance check: survival and
+  reproduction per seed, without variants.
+
 ## Known Gaps
 
 - Herbivores are limited by grass. Predators and scavengers are limited by meat only part
