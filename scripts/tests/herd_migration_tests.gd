@@ -19,6 +19,7 @@ func run(a) -> void:
 	_test_a_sleeping_herd_walks_to_its_new_pasture(a)
 	_test_migrations_survive_a_save(a)
 	_test_a_herd_moves_on_only_when_its_pasture_is_half_gone(a)
+	_test_sleeping_parts_can_be_left_out(a)
 
 
 func _bundle(seed: int, fear: bool = false) -> Dictionary:
@@ -291,4 +292,30 @@ func _test_a_herd_moves_on_only_when_its_pasture_is_half_gone(a) -> void:
 	world.current_time += 31.0
 	world._update_herd_migrations()
 	a.is_true(_goal(world) != null, "and once settled it may move on again")
+	Helpers.destroy_manager(manager)
+
+
+## `follow_asleep` off: the herd still decides, but its sleeping parts keep to their own
+## grass search.
+func _test_sleeping_parts_can_be_left_out(a) -> void:
+	var bundle := _bundle(610)
+	bundle["species"]["herbivore"]["herd"]["migration"]["follow_asleep"] = false
+	var manager = Helpers.create_manager_with(bundle, 610)
+	var world = manager.world_state
+	_fed(Helpers.spawn_herd(world, Vector2(700, 700), 8, 0))
+	_lay_pastures(world, [Vector2i(7, 3)])
+	var sector_key: Vector2i = world._get_sector_key(Vector2(700, 700))
+	world._sleep_sector(sector_key)
+	world._update_herd_migrations()
+	a.is_true(_goal(world) != null, "the herd still decides to move on")
+	var kinds: Dictionary = {}
+	for step in range(8):
+		world.current_tick += int(round(STEP_SECONDS * 12.0))
+		world.current_time += STEP_SECONDS
+		world._prepare_navigation_budget()
+		var state: Dictionary = world._sector_states[sector_key]
+		world._apply_dormant_sector_step(sector_key, state, STEP_SECONDS)
+		for aggregate in state.get("dormant_aggregates", []):
+			kinds[str(aggregate.get("goal_kind", ""))] = true
+	a.is_true(not kinds.has("migrate"), "but its sleeping part never takes the migrate goal (%s)" % str(kinds.keys()))
 	Helpers.destroy_manager(manager)

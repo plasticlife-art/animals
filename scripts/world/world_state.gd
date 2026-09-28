@@ -3674,8 +3674,10 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 			var water_goal: Dictionary = _find_nearest_water_goal(center)
 			if not water_goal.is_empty():
 				return water_goal
-		# Moving on with the herd, as its awake members do (`herd_migration_goal()`).
-		var migration_goal: Variant = herd_migration_goal(species_key, int(aggregate.get("group_id", -1)), hunger)
+		# Moving on with the herd, as its awake members do (`herd_migration_goal()`), unless
+		# `follow_asleep` is off: a sleeping herd already heads for the grass nearest it.
+		var migration_goal: Variant = herd_migration_goal(species_key, int(aggregate.get("group_id", -1)), hunger) \
+			if bool(_migration_config(species_key).get("follow_asleep", true)) else null
 		if migration_goal != null and center.distance_to(migration_goal) > _pasture_radius(species_key):
 			return {
 				"goal_kind": "migrate",

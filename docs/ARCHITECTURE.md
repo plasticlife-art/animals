@@ -323,6 +323,8 @@ ground it had eaten until the weakest starved, with fresh pasture a few cells aw
   mean herbivores 268 against 230 and grass eaten down to 0.46 against 0.52; LOD seed 3
   mean 242 against 288 but no late crash (lowest 222 against 165); seed 7 mean 401
   against 279; seed 11 mean 211 against 263. A win on balance, not on every map.
+- `follow_asleep` off leaves sleeping parts to their own grass search: the herd still
+  decides, and only its awake members follow.
 - No randomness: ties go to the first candidate on the lattice and the check runs on
   the tick.
 
