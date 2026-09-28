@@ -22,7 +22,7 @@
     "min_speed": 30.0,
     "decay_stride_ticks": 60,
     "travel_actions": ["drink", "investigate_water", "scavenge_carcass", "hunt_prey", "join_herd"],
-    "travel_goals": ["water", "seek_carcass", "hunt", "regroup"]
+    "travel_goals": ["water", "seek_carcass", "hunt", "regroup", "migrate"]
   },
   "fear": {
     "enabled": true,

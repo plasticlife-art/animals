@@ -13,7 +13,17 @@
       "ai": "res://scripts/agents/ai/herbivore_ai.gd"
     },
     "herd": {
-      "split_size": 40
+      "split_size": 40,
+      "migration": {
+        "enabled": true,
+        "pasture_radius_cells": 3,
+        "horizon_seconds": 30.0,
+        "search_radius": 2400.0,
+        "give_up_seconds": 180.0,
+        "leave_fraction": 0.5,
+        "settle_seconds": 30.0,
+        "exempt_hunger": 50.0
+      }
     },
     "movement": {
       "max_speed": 70.0,

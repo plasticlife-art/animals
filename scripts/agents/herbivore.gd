@@ -439,6 +439,8 @@ func _rest(world, delta: float) -> void:
 
 
 func _explore(world, delta: float, neighbors: Array) -> void:
+	if _migrate(world, delta, neighbors):
+		return
 	var weights: Dictionary = balance.get("herd_weights", {})
 	var wander_vector: Vector2 = Steering.wander(self, world.rng)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, true)
@@ -447,6 +449,22 @@ func _explore(world, delta: float, neighbors: Array) -> void:
 	var combined: Vector2 = Steering.combine_two(
 		wander_vector, float(weights.get("wander", 0.45)), herd_vector, 1.0)
 	move_with_vector(world, combined, float(movement.get("max_speed", 70.0)) * 0.9, delta)
+
+
+## Walks on with the herd towards the pasture it is moving to (`WorldState` herd
+## migration), keeping its place in the herd. False when the herd is not moving on or
+## this animal is already there.
+func _migrate(world, delta: float, neighbors: Array) -> bool:
+	var goal: Variant = world.herd_migration_goal(species_type, group_id, hunger)
+	if goal == null or position.distance_to(goal) <= world._pasture_radius(species_type):
+		return false
+	set_state("migrate", world.current_tick)
+	target_position = goal
+	var waypoint: Vector2 = world.get_next_waypoint(position, goal, id)
+	var move_vector: Vector2 = Steering.combine_two(
+		Steering.seek(position, waypoint), 1.0, _herd_vector(world, neighbors, false), 0.6)
+	move_with_vector(world, move_vector, float(movement.get("max_speed", 70.0)) * 0.8, delta)
+	return true
 
 
 func _wander_or_graze(world, delta: float, neighbors: Array) -> void:

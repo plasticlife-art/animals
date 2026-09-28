@@ -11,7 +11,8 @@ extends RefCounted
 ## Half a grass cell is about the width of a herd on the move. At a quarter, each
 ## animal drew its own hairline and no cell gathered enough wear to show.
 ##
-## Only travel counts - walking to water, to a carcass, after prey, back to the herd.
+## Only travel counts - walking to water, to a carcass, after prey, back to the herd,
+## or on to fresh pasture with it.
 ## Grazing and wandering cover as much ground but go nowhere, and counting them put a
 ## blot under every herd and no path between them.
 ##
@@ -44,7 +45,7 @@ func initialize(world_config: Dictionary, world_size: Vector2, grass_cell_size: 
 	decay_stride_ticks = maxi(1, int(config.get("decay_stride_ticks", 60)))
 	travel_actions = _name_set(config.get("travel_actions",
 		["drink", "investigate_water", "scavenge_carcass", "hunt_prey", "join_herd"]), true)
-	travel_goals = _name_set(config.get("travel_goals", ["water", "seek_carcass", "hunt", "regroup"]), false)
+	travel_goals = _name_set(config.get("travel_goals", ["water", "seek_carcass", "hunt", "regroup", "migrate"]), false)
 	cols = maxi(1, int(ceil(world_size.x / cell_size)))
 	rows = maxi(1, int(ceil(world_size.y / cell_size)))
 	_wear.resize(cols * rows)

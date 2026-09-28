@@ -288,6 +288,44 @@ with grass all around them, found with a probe that followed every starving anim
 - The unit tests run the game's tick rate and decision interval where a behaviour
   depends on them: deciding every tick, as the base fixture does, hid the first cause.
 
+### Herd migration
+
+A herd moves on before its pasture is gone (`WorldState._update_herd_migrations()`,
+config `species.<id>.herd.migration`). Left to their own grass searches, members took the
+nearest cell with a bite left, their neighbours ate it first, and the herd lingered on
+ground it had eaten until the weakest starved, with fresh pasture a few cells away.
+
+- Every `_MIGRATION_CHECK_INTERVAL_TICKS` each herd - awake members and sleeping records
+  counted together - weighs the grass within `pasture_radius_cells` of its centre
+  against what its members eat in `horizon_seconds` (`hunger_rate / nutrition_gain` each).
+- Below `leave_fraction` of that, it picks the pasture that feeds it best per second of walking there and
+  eating, from candidates one pasture radius apart, each weighed exactly as the herd
+  weighs its own ground: grass it can use (at most its need) over
+  `horizon_seconds` plus the walk, among patches within `search_radius` - and no further
+  than the herd covers at half speed before its average member reaches `exempt_hunger`
+  - that still hold its need once other migrating herds' shares are taken off, on ground
+  within the species' `risk_tolerance`, with water in `water_search_radius`.
+- The destination (`herd_migrations`, saved with the world) holds until the herd's
+  centre is within the pasture radius of it, another herd has eaten it, or
+  `give_up_seconds` pass. On arrival the herd stays `settle_seconds` before it weighs its
+  ground again. The gap between arriving where the whole need is and leaving at
+  `leave_fraction` of it is what lets a herd eat a pasture down: without it, herds
+  re-weighed the new ground from a centre a little off the destination and moved on
+  after five seconds, all day long (seed 7: herbivores 279 -> 130 with grass at 0.73).
+- Awake members walk there with the herd when idle (state `migrate`) and take their
+  grass targets at the destination, eating underfoot on the way; sleeping parts get the
+  goal kind `migrate`, a directed goal. A member at `exempt_hunger` (50) or hungrier ignores the
+  destination and takes the nearest grass, following its herd by cohesion alone. With the
+  line at 80, hungry members dragged towards grass hundreds of units ahead were two
+  thirds of the herbivores that starved at full fidelity; fed to dead is fifty seconds.
+  Migrating herds wear trails.
+- Measured over 1440 s against the same build with migration off: full fidelity seed 3,
+  mean herbivores 268 against 230 and grass eaten down to 0.46 against 0.52; LOD seed 3
+  mean 242 against 288 but no late crash (lowest 222 against 165); seed 7 mean 401
+  against 279; seed 11 mean 211 against 263. A win on balance, not on every map.
+- No randomness: ties go to the first candidate on the lattice and the check runs on
+  the tick.
+
 ### Predator
 
 High-level states:
@@ -564,7 +602,8 @@ millisecond setting squeezed to zero.
   `feeding.nutrition_gain` (hunger removed per unit of grass; lower means more grass per
   animal), `feeding.good_sward_fraction` (how full a cell must be for a fed grazer to walk
   to it), `perception.risk_tolerance` (the `FearField` risk a fed grazer accepts) and
-  `herd.split_size`. `reproduction.cooldown`, `maturity_age` and `max_hunger` decide how far
+  `herd.split_size`, and the `herd.migration` block (see Herd migration).
+  `reproduction.cooldown`, `maturity_age` and `max_hunger` decide how far
   the herd overshoots its grass before starvation pulls it back. The shipped 200 s and
   90 s were chosen for that overshoot: with 140 s and 60 s a seed-3 world went from 240
   grazers to about 700 and crashed to 80; as shipped it peaks near 400 and holds near 200.

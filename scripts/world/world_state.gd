@@ -62,6 +62,10 @@ var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
 var fear_field: FearField
 var trail_field: TrailField
+## Herds on their way to fresh pasture, by herd key (`species:group`): the destination
+## and when they set out, or - once there - until when they stay. Shared by a herd's
+## awake and sleeping members, and saved.
+var herd_migrations: Dictionary = {}
 var climate: Climate
 var spatial_grid: SpatialGrid
 ## Which species exist and what each one eats, is eaten by, and leaves behind.
@@ -272,7 +276,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 			+ float(Time.get_ticks_usec() - agent_started_usec) / 1000.0
 		_track_agent_runtime_position(agent, previous_position)
 		# Sampled one tick in a few, and credited with the ticks skipped.
-		if offset % _TRAIL_SAMPLE_STRIDE == 0 and trail_field.is_travel_action(agent.current_action):
+		if offset % _TRAIL_SAMPLE_STRIDE == 0 and (trail_field.is_travel_action(agent.current_action)
+				or herd_migration_goal(agent.species_type, agent.group_id) != null):
 			trail_field.deposit(agent.position,
 				agent.position.distance_to(previous_position) * float(_TRAIL_SAMPLE_STRIDE),
 				delta * float(_TRAIL_SAMPLE_STRIDE))
@@ -292,6 +297,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	_sleep_far_sectors(active_lod_context)
 	if current_tick % _HERD_SPLIT_INTERVAL_TICKS == 0:
 		_split_oversized_herds()
+	if current_tick % _MIGRATION_CHECK_INTERVAL_TICKS == 0:
+		_update_herd_migrations()
 	performance_counters["phase_dormant_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	_flush_carcass_removals()
 	var path_stats: Dictionary = {} if terrain_system == null else terrain_system.consume_path_query_stats()
@@ -1020,6 +1027,19 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	var tiers := grass_target_tiers(agent.feeding, urgency_ratio >= 0.45,
 		float(agent.perception.get("risk_tolerance", INF)))
 
+	# On the move with its herd, a grazer heads for the grass at the destination and
+	# eats on the way (`underfoot_bite_floor()`), rather than turning back to the eaten
+	# ground for the last full bite on it.
+	var migration_goal: Variant = herd_migration_goal(agent.species_type, agent.group_id, agent.hunger)
+	if migration_goal != null and agent.position.distance_to(migration_goal) > _pasture_radius(agent.species_type):
+		var ahead: Dictionary = resource_system.find_best_cell(migration_goal, _pasture_radius(agent.species_type),
+			float(tiers[-1][0]))
+		if not ahead.is_empty():
+			ahead["min_biomass"] = float(tiers[-1][0])
+			agent.grass_target_cache = ahead
+			agent.grass_target_tick = current_tick
+			return ahead
+
 	# Reuse a recent target instead of searching every decision tick. The cache
 	# is dropped early if the cell has since been grazed below the threshold, so
 	# a herd cannot keep walking to grass that is already gone.
@@ -1250,6 +1270,7 @@ func export_state() -> Dictionary:
 		"grass": resource_system.export_cells(),
 		"fear": fear_field.export_cells(),
 		"trails": trail_field.export_cells(),
+		"herd_migrations": herd_migrations.duplicate(true),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
 		# up to `sector_grass_refresh_ticks`, and a loaded world that recomputed
@@ -1297,6 +1318,7 @@ func import_state(data: Dictionary) -> void:
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
 	fear_field.import_cells(data.get("fear", PackedFloat32Array()))
 	trail_field.import_cells(data.get("trails", PackedFloat32Array()))
+	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
@@ -2027,6 +2049,9 @@ const PREY_PRESSURE_CACHE_LIMIT := 32
 ## How often herds are checked for having outgrown `herd.split_size`.
 const _HERD_SPLIT_INTERVAL_TICKS := 90
 const _TRAIL_SAMPLE_STRIDE := 4
+## How often herds weigh the pasture they stand on. A herd strips a few cells in
+## seconds, so this is short; the decision itself is a few hundred sums.
+const _MIGRATION_CHECK_INTERVAL_TICKS := 90
 
 ## A sleeping herd keeps drifting inside itself, so its formation goes on changing
 ## while the camera is elsewhere. Both shares are of the animal's own dormant
@@ -2216,6 +2241,7 @@ func _reset_performance_counters() -> void:
 		"grass_consumed_total": 0.0,
 		"herbivore_hunger_reduced_total": 0.0,
 		"grass_target_budget_misses": 0,
+		"herd_migrations_started": 0,
 		"grass_search_ms": 0.0,
 		"grass_search_calls": 0,
 		"grass_cells_scanned": 0,
@@ -2929,6 +2955,183 @@ func _split_oversized_herds() -> void:
 		_refresh_dormant_sector_state(sector_key, true)
 
 
+## Herd migration: moving on before the pasture is gone.
+##
+## Each herd eats grass by the patch, and a patch stripped to its stubble regrows in
+## minutes, not seconds. Left to their own grass searches, members took the nearest
+## cell with a bite left, their neighbours ate it first, and the herd lingered on
+## ground it had already eaten until the weakest starved - with fresh pasture a few
+## cells away. So the herd decides together: every `_MIGRATION_CHECK_INTERVAL_TICKS`
+## it weighs the grass within `pasture_radius_cells` of its centre against what its
+## members eat in `horizon_seconds`, and when that falls short it sets out for the
+## patch that feeds it best per second of walking there and eating. Awake and sleeping
+## members count together and follow the same destination. No randomness: ties go to
+## the first candidate on the lattice, and the check runs on the tick, so saves resume
+## it exactly.
+
+
+func _migration_config(species_key: String) -> Dictionary:
+	return config_bundle.get("species", {}).get(species_key, {}).get("herd", {}).get("migration", {})
+
+
+func _pasture_radius(species_key: String) -> float:
+	return resource_system.cell_size * float(_migration_config(species_key).get("pasture_radius_cells", 3.0))
+
+
+## Grass a herd member eats per second when it eats as fast as it gets hungry.
+func _herd_member_intake(species_key: String) -> float:
+	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
+	var gain := maxf(0.001, float(species_config.get("feeding", {}).get("nutrition_gain", 0.8)))
+	return float(species_config.get("metabolism", {}).get("hunger_rate", 2.0)) / gain
+
+
+## The herd's destination, or null: none, or `hunger` at `exempt_hunger` or past it. A
+## hungry member eats the nearest grass and follows its herd by cohesion alone: dragged
+## to grass hundreds of units ahead, hungry members were two thirds of the herbivores
+## that starved at full fidelity, at fifty seconds from fed to dead.
+func herd_migration_goal(species_key: String, group_id: int, hunger: float = 0.0) -> Variant:
+	if group_id < 0 or herd_migrations.is_empty():
+		return null
+	var migration: Dictionary = herd_migrations.get(_get_dormant_aggregate_key(species_key, group_id), {})
+	if not migration.has("goal"):
+		return null
+	if hunger >= float(_migration_config(species_key).get("exempt_hunger", 50.0)):
+		return null
+	return migration.get("goal", null)
+
+
+## Available grass within `radius` of `center`.
+func _forage_within(center: Vector2, radius: float) -> float:
+	var total := 0.0
+	for cell in resource_system.query_cells(center, radius):
+		total += float(cell.get("biomass", 0.0))
+	return total
+
+
+func _update_herd_migrations() -> void:
+	var herds: Dictionary = {}
+	for agent in living_agents:
+		if agent == null or not agent.is_alive or agent.group_id < 0:
+			continue
+		_tally_herd_member(herds, agent.species_type, agent.group_id, agent.position, agent.hunger)
+	for sector_key in _sector_states.keys():
+		for record in _sector_states[sector_key].get("dormant_records", []):
+			var group_id := int(record.get("group_id", -1))
+			if group_id >= 0:
+				_tally_herd_member(herds, str(record.get("species_type", "")), group_id,
+					Vector2(record.get("position", Vector2.ZERO)), float(record.get("hunger", 0.0)))
+	for key in herd_migrations.keys():
+		if not herds.has(key):
+			herd_migrations.erase(key)
+	for key in herds.keys():
+		var herd: Dictionary = herds[key]
+		var species_key: String = herd["species"]
+		var config := _migration_config(species_key)
+		if not bool(config.get("enabled", false)) or species_registry.diet(species_key) != SpeciesRegistryScript.DIET_GRASS:
+			herd_migrations.erase(key)
+			continue
+		var center: Vector2 = herd["sum"] / float(herd["count"])
+		var need := float(herd["count"]) * _herd_member_intake(species_key) * float(config.get("horizon_seconds", 30.0))
+		var pasture_radius := _pasture_radius(species_key)
+		var migration: Dictionary = herd_migrations.get(key, {})
+		if migration.has("goal"):
+			var goal: Vector2 = migration.get("goal", center)
+			var arrived := center.distance_to(goal) <= pasture_radius
+			var gave_up := current_time - float(migration.get("since", current_time)) >= float(config.get("give_up_seconds", 180.0))
+			# Another herd may have eaten the destination meanwhile.
+			var gone := _forage_within(goal, pasture_radius) < need * 0.5
+			if not (arrived or gave_up or gone):
+				continue
+			herd_migrations.erase(key)
+			if arrived:
+				# Stay and eat. Weighing the ground again at once, from a herd centre a
+				# little off the destination, sent herds on after five seconds, over and
+				# over: they walked all day and starved with the map three-quarters green.
+				herd_migrations[key] = {"rest_until": current_time + float(config.get("settle_seconds", 30.0))}
+				continue
+		elif migration.has("rest_until"):
+			if current_time < float(migration["rest_until"]):
+				continue
+			herd_migrations.erase(key)
+		# Leave at `leave_fraction` of the need, arrive only where the whole need is: the
+		# gap is what lets a herd eat a pasture down before it moves on.
+		if _forage_within(center, pasture_radius) >= need * float(config.get("leave_fraction", 0.5)):
+			continue
+		var destination: Variant = _find_migration_pasture(key, species_key, center, need,
+			float(herd["hunger"]) / float(herd["count"]))
+		if destination == null:
+			continue
+		herd_migrations[key] = {"goal": destination, "since": current_time}
+		performance_counters["herd_migrations_started"] += 1
+		emit_population_event("HerdMigrates", species_key, center, {"to_x": destination.x, "to_y": destination.y,
+			"size": int(herd["count"])})
+
+
+func _tally_herd_member(herds: Dictionary, species_key: String, group_id: int, position: Vector2, hunger: float) -> void:
+	var key := _get_dormant_aggregate_key(species_key, group_id)
+	if not herds.has(key):
+		herds[key] = {"species": species_key, "count": 0, "sum": Vector2.ZERO, "hunger": 0.0}
+	herds[key]["count"] += 1
+	herds[key]["sum"] += position
+	herds[key]["hunger"] += hunger
+
+
+## The pasture that feeds this herd best per second, counting the walk: the grass it
+## can use there (at most `need`) over `horizon_seconds` plus the time to get there.
+## Candidates sit on a lattice one pasture radius apart and are weighed exactly as the
+## herd weighs the ground it stands on (`_forage_within()`), so a herd that arrives does
+## not find its new pasture short and leave again. Only pastures that still hold `need`
+## once other migrating herds' shares are taken off, on ground within the species' risk
+## tolerance and in reach of water. Null if none.
+func _find_migration_pasture(key: String, species_key: String, center: Vector2, need: float,
+		mean_hunger: float = 0.0) -> Variant:
+	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
+	var config := _migration_config(species_key)
+	var perception: Dictionary = species_config.get("perception", {})
+	var risk_tolerance := float(perception.get("risk_tolerance", INF))
+	var water_reach := float(perception.get("water_search_radius", 1920.0))
+	var speed := maxf(1.0, float(species_config.get("movement", {}).get("max_speed", 70.0)))
+	var horizon := float(config.get("horizon_seconds", 30.0))
+	# No further than the herd walks at half speed before its average member is too
+	# hungry to follow: a pasture forty seconds off is one the herd arrives at hungry.
+	var hunger_rate := maxf(0.001, float(species_config.get("metabolism", {}).get("hunger_rate", 2.0)))
+	var headroom := maxf(0.0, float(config.get("exempt_hunger", 50.0)) - mean_hunger) / hunger_rate
+	var search_radius := minf(float(config.get("search_radius", 2400.0)), headroom * speed * 0.5)
+	var pasture_radius := _pasture_radius(species_key)
+	var claims: Array = []
+	for other_key in herd_migrations.keys():
+		if other_key != key and herd_migrations[other_key].has("goal"):
+			claims.append(herd_migrations[other_key]["goal"])
+	var best: Variant = null
+	var best_score := 0.0
+	var reach := int(ceil(search_radius / pasture_radius))
+	for gy in range(-reach, reach + 1):
+		for gx in range(-reach, reach + 1):
+			var candidate := center + Vector2(gx, gy) * pasture_radius
+			if not bounds.has_point(candidate):
+				continue
+			var distance := center.distance_to(candidate)
+			if distance > search_radius or distance <= pasture_radius:
+				continue
+			var forage := _forage_within(candidate, pasture_radius)
+			for goal in claims:
+				if candidate.distance_to(goal) < pasture_radius * 2.0:
+					forage -= need
+			if forage < need:
+				continue
+			var score := minf(forage, need) / (horizon + distance / speed)
+			if score <= best_score:
+				continue
+			var destination := get_nearest_walkable_position(candidate)
+			if fear_field.risk_at(destination) > risk_tolerance:
+				continue
+			if _resolve_water_source(destination, water_reach).is_empty():
+				continue
+			best = destination
+			best_score = score
+	return best
+
+
 ## A herd whose members sit in two sectors is two aggregates, each stepping on its own.
 ## With real positions that happens whenever a herd crosses a sector boundary, and two
 ## halves picking their own goals would walk apart. This indexes each group once per
@@ -3471,6 +3674,14 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 			var water_goal: Dictionary = _find_nearest_water_goal(center)
 			if not water_goal.is_empty():
 				return water_goal
+		# Moving on with the herd, as its awake members do (`herd_migration_goal()`).
+		var migration_goal: Variant = herd_migration_goal(species_key, int(aggregate.get("group_id", -1)), hunger)
+		if migration_goal != null and center.distance_to(migration_goal) > _pasture_radius(species_key):
+			return {
+				"goal_kind": "migrate",
+				"goal_position": migration_goal,
+				"goal_sector": _get_sector_key(migration_goal),
+			}
 		if float(aggregate.get("avg_hunger", 0.0)) >= graze_hunger_floor:
 			var tiers := grass_target_tiers(species_config.get("feeding", {}),
 				grazer_is_hungry(float(aggregate.get("avg_hunger", 0.0))), float(perception.get("risk_tolerance", INF)))
@@ -3933,7 +4144,7 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 	var species_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {})
 	var movement: Dictionary = species_config.get("movement", {})
 	var body_radius := float(movement.get("body_radius", 0.0))
-	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass"]
+	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass", "migrate"]
 	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed)
 	var desired_velocity: Vector2 = Vector2.ZERO
 	var waypoint := _dormant_herd_waypoint(aggregate, current_center, goal_position)

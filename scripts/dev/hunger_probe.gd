@@ -64,7 +64,9 @@ func _initialize() -> void:
 				"interact": snappedf(agent.interaction_timer, 0.01),
 				"tavail": snappedf(res.get_available_biomass(int(agent.grass_target_cache.get("index", -1))), 0.001) if agent.grass_target_cache is Dictionary and not agent.grass_target_cache.is_empty() else -1.0,
 				"tdist": snappedf(agent.position.distance_to(agent.grass_target_cache.get("center", agent.position)), 1) if agent.grass_target_cache is Dictionary and not agent.grass_target_cache.is_empty() else -1.0,
-				"tmin": agent.grass_target_cache.get("min_biomass", -1) if agent.grass_target_cache is Dictionary else -1}
+				"tmin": agent.grass_target_cache.get("min_biomass", -1) if agent.grass_target_cache is Dictionary else -1,
+				"mig": snappedf(agent.position.distance_to(world.herd_migration_goal(agent.species_type, agent.group_id)), 1)
+					if world.herd_migration_goal(agent.species_type, agent.group_id) != null else -1.0}
 			if not histories.has(agent.id):
 				histories[agent.id] = []
 			histories[agent.id].append(row)

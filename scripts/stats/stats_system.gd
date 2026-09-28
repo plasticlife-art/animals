@@ -15,6 +15,8 @@ var counters := {
 	"deaths_old_age": 0,
 	"water_events": 0,
 	"grass_events": 0,
+	# Herds setting out for fresh pasture (`WorldState._update_herd_migrations()`).
+	"herd_migrations": 0,
 	"hunt_success": 0,
 	"hunt_fail": 0,
 	# Why chases end. `PredationFailed` already carries the reason; without the split, a low
@@ -348,6 +350,8 @@ func _on_event_emitted(event: Dictionary) -> void:
 				"old_age":
 					counters["deaths_old_age"] += 1
 			_count_death_detail(cause, species, bool(data.get("dormant", false)))
+		"HerdMigrates":
+			counters["herd_migrations"] += 1
 		"HuntStarted":
 			counters["hunts_started"] += 1
 		"AttackAttempt":
