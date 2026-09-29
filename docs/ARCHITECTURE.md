@@ -319,12 +319,16 @@ ground it had eaten until the weakest starved, with fresh pasture a few cells aw
   line at 80, hungry members dragged towards grass hundreds of units ahead were two
   thirds of the herbivores that starved at full fidelity; fed to dead is fifty seconds.
   Migrating herds wear trails.
-- Measured over 1440 s against the same build with migration off: full fidelity seed 3,
-  mean herbivores 268 against 230 and grass eaten down to 0.46 against 0.52; LOD seed 3
-  mean 242 against 288 but no late crash (lowest 222 against 165); seed 7 mean 401
-  against 279; seed 11 mean 211 against 263. A win on balance, not on every map.
-- `follow_asleep` off leaves sleeping parts to their own grass search: the herd still
-  decides, and only its awake members follow.
+- `follow_asleep` (off by default) decides whether sleeping parts take the `migrate`
+  goal. Off, the herd still decides and its awake members follow, while sleeping parts
+  keep to their own grass search, which already heads for the grass nearest them.
+- Measured with `audit_matrix.py`, seeds 1-8, 1440 s, against migration off. LOD:
+  with sleeping parts following, herbivore late mean 222 against 259, lower on 6 of 8
+  seeds; with awake members only, 280 against 259, higher on 6 of 8 (lowest 200
+  against 182, higher on 7 of 8). Full fidelity, where every herd is awake: 221 against
+  220, higher on 5 of 8, with the spread over seeds down from 66 to 42 - migration lifts
+  the poor maps and trims the rich ones. No interval clears zero; an earlier reading of
+  three seeds had called it a clear win.
 - No randomness: ties go to the first candidate on the lattice and the check runs on
   the tick.
 

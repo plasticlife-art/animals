@@ -212,8 +212,11 @@ func _test_an_awake_herd_walks_to_its_new_pasture(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
+## With `follow_asleep` on (off by default: see the migration notes in ARCHITECTURE.md).
 func _test_a_sleeping_herd_walks_to_its_new_pasture(a) -> void:
-	var manager = Helpers.create_manager_with(_bundle(607), 607)
+	var bundle := _bundle(607)
+	bundle["species"]["herbivore"]["herd"]["migration"]["follow_asleep"] = true
+	var manager = Helpers.create_manager_with(bundle, 607)
 	var world = manager.world_state
 	_fed(Helpers.spawn_herd(world, Vector2(700, 700), 8, 0))
 	var ahead := Vector2i(7, 3)
