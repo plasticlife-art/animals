@@ -323,9 +323,12 @@ func _test_dormant_starvation_takes_the_hungriest(a) -> void:
 	var world = fixture[1]
 	var sector_key: Vector2i = fixture[2]
 	var starving_ids: Array = []
+	# Half a step's hunger short of the threshold, whatever the shipped hunger rate.
+	var rise: float = float(fixture[0].config_bundle["species"]["herbivore"]["metabolism"]["hunger_rate"]) * STEP_SECONDS
+	var threshold: float = float(fixture[0].config_bundle["balance"]["lifecycle"]["starvation_death_threshold"])
 	for index in range(fixture[3].size()):
 		var agent = fixture[3][index]
-		agent.hunger = 99.0 if index >= 7 else 10.0
+		agent.hunger = threshold - rise * 0.5 if index >= 7 else 10.0
 		if index >= 7:
 			starving_ids.append(agent.id)
 	world._sleep_sector(sector_key)
@@ -545,7 +548,12 @@ func _test_big_herd_grazes_the_ground_it_covers(a) -> void:
 	for record in state["dormant_records"]:
 		total_hunger += float(record["hunger"])
 	var mean_hunger := total_hunger / float(state["dormant_records"].size())
-	a.is_true(mean_hunger < 52.0, "a big sleeping herd feeds from the ground under all of it (mean hunger %.1f)" % mean_hunger)
+	# At least half of what one step's bite takes off, derived from the shipped feeding.
+	var feeding: Dictionary = fixture[0].config_bundle["species"]["herbivore"]["feeding"]
+	var bite: float = world.grazing_bite(feeding, 60.0, STEP_SECONDS / float(feeding["eat_duration"]))
+	var ceiling: float = 60.0 - 0.5 * bite * float(feeding["nutrition_gain"])
+	a.is_true(mean_hunger < ceiling,
+		"a big sleeping herd feeds from the ground under all of it (mean hunger %.1f, below %.1f)" % [mean_hunger, ceiling])
 	a.near(float(state["dormant_aggregates"][0]["avg_hunger"]), mean_hunger, 0.01,
 		"the group's mean follows what its members ate")
 	a.greater(biomass_before - world.resource_system.get_total_biomass(), 0.0, "the grass they ate is gone")

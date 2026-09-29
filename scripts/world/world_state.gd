@@ -2988,7 +2988,7 @@ func _herd_member_intake(species_key: String) -> float:
 ## The herd's destination, or null: none, or `hunger` at `exempt_hunger` or past it. A
 ## hungry member eats the nearest grass and follows its herd by cohesion alone: dragged
 ## to grass hundreds of units ahead, hungry members were two thirds of the herbivores
-## that starved at full fidelity, at fifty seconds from fed to dead.
+## that starved at full fidelity, when fed to dead took fifty seconds.
 func herd_migration_goal(species_key: String, group_id: int, hunger: float = 0.0) -> Variant:
 	if group_id < 0 or herd_migrations.is_empty():
 		return null

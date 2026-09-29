@@ -432,8 +432,11 @@ func _test_a_grazer_moves_on_from_a_grazed_out_cell(a) -> void:
 	Helpers.run_ticks(manager, 18 * 20)
 	a.is_true(world.resource_system.get_biomass(good) < 100.0 - 20.0,
 		"the grazer walked on and ate the good cell (it holds %.1f of 100)" % world.resource_system.get_biomass(good))
-	a.is_true(grazer.is_alive and grazer.hunger < 50.0,
-		"and is fed, not starving on stubble (hunger %.1f)" % grazer.hunger)
+	# Below where twenty seconds without food would leave it, by at least sixty grass.
+	var gain := float(bundle["species"]["herbivore"]["feeding"]["nutrition_gain"])
+	var unfed := 70.0 + float(bundle["species"]["herbivore"]["metabolism"]["hunger_rate"]) * 20.0
+	a.is_true(grazer.is_alive and grazer.hunger < unfed - 60.0 * gain,
+		"and is fed, not starving on stubble (hunger %.1f, unfed %.1f)" % [grazer.hunger, unfed])
 	Helpers.destroy_manager(manager)
 
 

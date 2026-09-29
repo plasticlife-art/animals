@@ -54,7 +54,7 @@
       "max_energy": 100.0,
       "energy_decay": 2.4,
       "rest_recovery": 9.0,
-      "hunger_rate": 2.0,
+      "hunger_rate": 0.6667,
       "thirst_rate": 0.35,
       "dehydration_energy_penalty": 4.8,
       "sprint_energy_cost": 2.0
@@ -62,7 +62,7 @@
     "feeding": {
       "eat_distance": 36.0,
       "bite_amount": 33.0,
-      "nutrition_gain": 0.3,
+      "nutrition_gain": 0.1,
       "good_sward_fraction": 0.3,
       "drink_distance": 50.0,
       "drink_restore": 52.0,

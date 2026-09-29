@@ -74,8 +74,9 @@ func _herd_centre(world, group_id: int = 0) -> Vector2:
 
 
 func _fed(herd: Array) -> Array:
+	# Past the grazing floor, so members graze on arrival, and far from `exempt_hunger`.
 	for animal in herd:
-		animal.hunger = 5.0
+		animal.hunger = 15.0
 		animal.thirst = 0.0
 	return herd
 
@@ -190,15 +191,18 @@ func _test_an_awake_herd_walks_to_its_new_pasture(a) -> void:
 	var grass_before: float = world._forage_within(goal, PATCH)
 	var closest := INF
 	var arrived_at := -1
-	for second in range(30):
+	var settled_on_arrival := false
+	# A minute: long enough for fed members to grow hungry and come to the only grass.
+	for second in range(60):
 		Helpers.run_ticks(manager, 12)
 		closest = minf(closest, _herd_centre(world).distance_to(goal))
 		if arrived_at < 0 and _goal(world) == null:
 			arrived_at = second
+			settled_on_arrival = world.herd_migrations.get("herbivore:0", {}).has("rest_until")
 	a.is_true(closest <= PATCH,
 		"the herd walked there (from %.0f units off to %.0f)" % [start.distance_to(goal), closest])
 	a.is_true(arrived_at >= 0 and arrived_at < 20, "and the migration ended on arrival (after %d s)" % arrived_at)
-	a.is_true(world.herd_migrations.get("herbivore:0", {}).has("rest_until"), "after which the herd stays a while")
+	a.is_true(settled_on_arrival, "after which the herd stays a while")
 	var awake := 0
 	for animal in herd:
 		if animal.is_alive and world.living_agents.has(animal):

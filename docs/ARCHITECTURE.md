@@ -317,7 +317,8 @@ ground it had eaten until the weakest starved, with fresh pasture a few cells aw
   goal kind `migrate`, a directed goal. A member at `exempt_hunger` (50) or hungrier ignores the
   destination and takes the nearest grass, following its herd by cohesion alone. With the
   line at 80, hungry members dragged towards grass hundreds of units ahead were two
-  thirds of the herbivores that starved at full fidelity; fed to dead is fifty seconds.
+  thirds of the herbivores that starved at full fidelity, when fed to dead took fifty
+  seconds.
   Migrating herds wear trails.
 - `follow_asleep` (off by default) decides whether sleeping parts take the `migrate`
   goal. Off, the herd still decides and its awake members follow, while sleeping parts
@@ -613,6 +614,17 @@ millisecond setting squeezed to zero.
   the herd overshoots its grass before starvation pulls it back. The shipped 200 s and
   90 s were chosen for that overshoot: with 140 s and 60 s a seed-3 world went from 240
   grazers to about 700 and crashed to 80; as shipped it peaks near 400 and holds near 200.
+- `metabolism.hunger_rate` and `feeding.nutrition_gain` move together: their ratio is the
+  grass a herbivore eats per second (6.7 as shipped), and the rate alone is how long it
+  lasts between meals. At 2.0 and 0.3 a grazer went from fed to dead in 50 s, so any walk,
+  queue at water or crowded pasture killed. At 0.6667 and 0.1 (150 s, same grass) an
+  eight-seed LOD matrix gave 392 herbivores against 280 in the late half (higher on 8 of
+  8), starvation 299 against 474 (lower on 7 of 8), grass eaten down to 0.43 from 0.51;
+  predators and scavengers unchanged. At full fidelity, same seeds: 293 against 221
+  (higher on 7 of 8, interval +19..+125), starvation 192 against 360 (lower on all 8),
+  peaks 361 against 332 and a smaller fall after them (47% against 57%). A quarter
+  (0.5, 0.075) gained a little more in LOD with bigger swings between maps. The graze utility weighs hunger as it stands, not as time
+  to starvation, so a fed grazer now wanders for longer before it eats again.
 - Predator nutrition comes from carcasses only: a kill grants no nutrition by itself, so the
   energy-per-kill knobs are `feeding.food_restore` (the first bite taken at the kill site,
   debited through `consume_carcass()`), `feeding.carcass_consume_rate`,
