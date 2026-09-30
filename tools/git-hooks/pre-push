@@ -1,0 +1,42 @@
+#!/bin/sh
+# Refuses a push that would publish CraftPix source files.
+#
+# The CraftPix licence does not allow redistributing the packs, so only each pack's
+# SOURCE.md and .gdignore are tracked (see .gitignore). Old local history still holds
+# the raw files (branch backup/main-before-craftpix-scrub), and one careless push of it
+# would publish them for good. This hook looks at every blob the push would add to the
+# remote and stops it if any lies under assets/craftpix*.
+#
+# Install once per clone:
+#   cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
+
+zero=0000000000000000000000000000000000000000
+found=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+	# Deleting a remote branch publishes nothing.
+	[ "$local_sha" = "$zero" ] && continue
+	if [ "$remote_sha" = "$zero" ]; then
+		# A new remote branch: everything the remote does not already have.
+		objects=$(git rev-list --objects "$local_sha" --not --remotes)
+	else
+		objects=$(git rev-list --objects "$remote_sha..$local_sha")
+	fi
+	bad=$(printf '%s\n' "$objects" \
+		| git cat-file --batch-check='%(objecttype) %(rest)' \
+		| awk '$1 == "blob" { sub(/^blob /, ""); print }' \
+		| grep '^assets/craftpix' \
+		| grep -v -e '/SOURCE\.md$' -e '/\.gdignore$')
+	if [ -n "$bad" ]; then
+		found="$found$local_ref -> $remote_ref
+$(printf '%s\n' "$bad" | head -5 | sed 's/^/    /')
+"
+	fi
+done
+
+if [ -n "$found" ]; then
+	echo "pre-push: refusing to publish CraftPix source files (licence):" >&2
+	printf '%s' "$found" >&2
+	echo "Remove them from the history being pushed; see tools/git-hooks/pre-push." >&2
+	exit 1
+fi
+exit 0

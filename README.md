@@ -70,6 +70,14 @@ To rebuild those atlases, download each pack into the folder whose `SOURCE.md` n
 Each folder keeps a `.gdignore`, so Godot neither imports the raw files nor exports them with the
 game.
 
+`.gitignore` keeps new copies out of commits, but older local history may still hold them. A
+`pre-push` hook refuses any push that would put CraftPix source files on the remote; install it
+once per clone:
+
+```bash
+cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
+```
+
 ## Run
 
 ### Interactive Scene
