@@ -105,7 +105,9 @@ func _initialize() -> void:
 		"performance_counters": manager.world_state.get_performance_counters(),
 	}
 	var encoded := JSON.stringify(report, "  ")
-	print("AUDIT=" + JSON.stringify(report))
+	# The report goes to disk before anything is printed: a caller that stopped reading
+	# stdout makes the print raise SIGPIPE, which kills the process, and an hour of run
+	# was lost that way once.
 	if output_path != "":
 		var file := FileAccess.open(output_path, FileAccess.WRITE)
 		if file == null:
@@ -115,6 +117,8 @@ func _initialize() -> void:
 			quit(2)
 			return
 		file.store_string(encoded + "\n")
+		file.close()
+	print("AUDIT=" + JSON.stringify(report))
 	manager.shutdown()
 	manager.free()
 	quit()

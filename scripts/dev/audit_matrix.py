@@ -45,6 +45,13 @@ T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8:
        9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
        16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 25: 2.060, 30: 2.042}
 
+def late_mean(report: dict, key: str) -> float:
+    """Mean of a history column over the second half of the run, as `regulation` averages."""
+    rows = report.get("history", [])
+    late = rows[len(rows) // 2:]
+    return sum(float(row.get(key, 0.0)) for row in late) / max(1, len(late))
+
+
 # (key, label, how to read it from a report). Late-half figures come from the audit's
 # `regulation` block, which averages the second half of the run.
 METRICS = [
@@ -53,12 +60,21 @@ METRICS = [
     ("herbivore_end", "herbivores at the end", lambda r: r["population"]["herbivore"]),
     ("predator_mean", "predators, late mean", lambda r: r["regulation"]["predator"]["mean"]),
     ("predator_cap", "predators, share on cap", lambda r: r["regulation"]["predator"]["share_at_cap"]),
+    ("predator_low", "predators, late low", lambda r: r["regulation"]["predator"]["min"]),
     ("scavenger_mean", "scavengers, late mean", lambda r: r["regulation"]["scavenger"]["mean"]),
     ("scavenger_cap", "scavengers, share on cap", lambda r: r["regulation"]["scavenger"]["share_at_cap"]),
+    ("scavenger_low", "scavengers, late low", lambda r: r["regulation"]["scavenger"]["min"]),
     ("grass", "grass density, late", lambda r: r["regulation"]["grass_density_mean"]),
     ("births_herbivore", "herbivore births", lambda r: r["counters"].get("births_herbivore", 0)),
     ("starved_herbivore", "herbivores starved", lambda r: r["counters"].get("deaths_starvation_herbivore", 0)),
     ("preyed_herbivore", "herbivores killed", lambda r: r["counters"].get("deaths_predation_herbivore", 0)),
+    ("births_predator", "predator births", lambda r: r["counters"].get("births_predator", 0)),
+    ("starved_predator", "predators starved", lambda r: r["counters"].get("deaths_starvation_predator", 0)),
+    ("births_scavenger", "scavenger births", lambda r: r["counters"].get("births_scavenger", 0)),
+    ("starved_scavenger", "scavengers starved", lambda r: r["counters"].get("deaths_starvation_scavenger", 0)),
+    ("carcasses_wasted", "carcasses expired, share",
+     lambda r: r["counters"].get("carcasses_expired", 0) / max(1, r["counters"].get("carcasses_spawned", 0))),
+    ("meat_lying", "meat lying on the map, late", lambda r: late_mean(r, "carcass_meat")),
     ("herd_migrations", "herd migrations", lambda r: r["counters"].get("herd_migrations", 0)),
     ("chain_broken", "food chain broke", lambda r: 0 if r.get("stop_reason") == "duration" else 1),
 ]
@@ -127,8 +143,11 @@ def run_one(out: Path, variant: dict, seed: int, lod: bool, seconds: float) -> d
             return cached
     command = [str(GODOT), "--headless", "--path", str(variant["path"]), "--script", AUDIT, "--",
                str(seed), "lod" if lod else "off", str(seconds), str(report_path), *variant["overrides"]]
-    completed = subprocess.run(command, cwd=variant["path"], text=True, capture_output=True)
-    (folder / f"seed-{seed:02d}.log").write_text(completed.stdout + completed.stderr, encoding="utf-8")
+    # Output goes straight to the log file, not through a pipe: if this matrix is stopped,
+    # runs already going keep writing and finish their reports, which the next matrix
+    # picks up. Through a pipe they died of SIGPIPE on their last print.
+    with open(folder / f"seed-{seed:02d}.log", "w", encoding="utf-8") as log:
+        completed = subprocess.run(command, cwd=variant["path"], stdout=log, stderr=subprocess.STDOUT)
     if completed.returncode != 0 or not report_path.exists():
         raise RuntimeError(f"{variant['name']} seed {seed}: exit {completed.returncode}, see its log")
     return json.loads(report_path.read_text(encoding="utf-8"))

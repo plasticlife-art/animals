@@ -723,7 +723,14 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   higher. An arrow marks an interval clear of zero.
 - `@path=DIR` in a variant runs it from another imported checkout, to compare code.
 - Reports are kept per variant and seed and reused when they match, so a matrix resumes
-  after an interruption; `--summary-only` rebuilds `summary.md` / `summary.json`.
+  after an interruption; `--summary-only` rebuilds `summary.md` / `summary.json`. Godot's
+  output goes straight to each run's log file, so stopping the matrix leaves the runs
+  already going to finish and write their reports. It used to go through a pipe, and a
+  stopped matrix killed its runs with SIGPIPE at their last print; `ecology_audit.gd` now
+  also writes its report before printing.
+- Long matrices are best run from a frozen copy of the checkout (`git checkout-index -a
+  --prefix=DIR/`, copy `.godot`, `--import`), so edits in the working tree cannot mix code
+  versions between runs.
 - Timing is not compared: runs share the machine. Compare instructions retired with
   `/usr/bin/time -l` for cost. A 1440 s LOD run takes 10-25 minutes with four in
   parallel, a full-fidelity one 45-60.
