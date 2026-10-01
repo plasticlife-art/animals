@@ -2806,9 +2806,6 @@ func _wake_relevant_dormant_sectors(lod_context: Dictionary) -> void:
 		if selected_agent_id != -1 and _dormant_sector_has_agent(sector_state, selected_agent_id):
 			sectors_to_wake.append(sector_key)
 			continue
-		if _dormant_sector_should_force_wake(sector_key, sector_state, lod_context):
-			sectors_to_wake.append(sector_key)
-			continue
 		# Stale reification is a recovery mechanism for the camera vicinity. In a
 		# whole-world overview it used to wake one far sector every tick until almost
 		# the entire world was materialized again, defeating semantic LOD over time.
@@ -2848,6 +2845,62 @@ func _sleep_far_sectors(lod_context: Dictionary) -> void:
 			sectors_to_sleep.append(sector_key)
 	for sector_key in sectors_to_sleep:
 		_sleep_sector(sector_key)
+	_absorb_strays_into_dormant_sectors(lod_context)
+
+
+## An animal that walks out of the LOD window into a sleeping sector joins it at the end
+## of the tick, unless it is busy with something the coarse step cannot carry on - a
+## chase, a flight, a mating (`_is_priority_lod_agent()`) - or selected.
+##
+## Sleeping sectors beside the window used to be woken instead, whenever a predator was
+## in one or in the window next to it, and this pass put them back to sleep at the end of
+## the same tick: a thousand times a minute. Nothing there ever got a coarse step, since
+## the sector was awake whenever steps ran, so its animals lived as far-tier agents - one
+## full tick in 24 in overview - with their group goals rebuilt every tick. Predators
+## starved there beside fresh carcasses, and the prey nobody ate drew more of them in:
+## in 48-minute runs most predator starvation happened in that ring.
+func _absorb_strays_into_dormant_sectors(lod_context: Dictionary) -> void:
+	var selected_agent_id := int(lod_context.get("selected_agent_id", -1))
+	for sector_key in _sector_states.keys():
+		var sector_state: Dictionary = _sector_states[sector_key]
+		if not bool(sector_state.get("dormant", false)) or sector_state.get("agent_ids", []).is_empty():
+			continue
+		if _resolve_sector_lod_tier(sector_key, lod_context) != LOD_TIER_2:
+			continue
+		var joining: Array = []
+		for agent_id in sector_state.get("agent_ids", []).duplicate():
+			var agent = get_agent(int(agent_id))
+			if agent == null or not agent.is_alive or agent.id == selected_agent_id or _is_priority_lod_agent(agent):
+				continue
+			joining.append(agent.export_runtime_state())
+			_unregister_living_agent(agent)
+			agents.erase(agent.id)
+		if joining.is_empty():
+			continue
+		sector_state = _sector_states[sector_key]
+		var records: Array = sector_state.get("dormant_records", [])
+		records.append_array(joining)
+		sector_state["dormant_records"] = records
+		_sector_states[sector_key] = sector_state
+		_refresh_dormant_sector_state(sector_key, true)
+		# The refresh counts the records alone; whoever stayed awake is still here.
+		_count_awake_animals(_sector_states[sector_key])
+
+
+## Adds the animals awake in a sector to its census (`species_counts`, `threat_score`).
+## For the moments the census is rebuilt from the records while some of the sector's
+## animals are awake - a chase that crossed out of the LOD window, an animal that walked
+## into a sector about to wake.
+func _count_awake_animals(sector_state: Dictionary) -> void:
+	var counts: Dictionary = sector_state.get("species_counts", {})
+	for agent_id in sector_state.get("agent_ids", []):
+		var agent = get_agent(int(agent_id))
+		if agent == null:
+			continue
+		counts[agent.species_type] = int(counts.get(agent.species_type, 0)) + 1
+		if species_registry.is_threat(agent.species_type):
+			sector_state["threat_score"] = float(sector_state.get("threat_score", 0.0)) + 1.0
+	sector_state["species_counts"] = counts
 
 
 func _step_dormant_sectors(delta: float, lod_context: Dictionary) -> void:
@@ -2867,11 +2920,11 @@ func _step_dormant_sectors(delta: float, lod_context: Dictionary) -> void:
 		_apply_dormant_sector_step(sector_key, sector_state, step_seconds)
 		_sector_states[sector_key] = sector_state
 		performance_counters["dormant_steps"] += 1
-		sectors_to_wake.append_array(_migrate_dormant_sector_records(sector_key, lod_context))
+		_migrate_dormant_sector_records(sector_key, lod_context)
 		var refreshed_state: Dictionary = _sector_states.get(sector_key, {})
 		if refreshed_state.is_empty() or not bool(refreshed_state.get("dormant", false)):
 			continue
-		if _resolve_sector_lod_tier(sector_key, lod_context) != LOD_TIER_2 or _dormant_sector_should_force_wake(sector_key, refreshed_state, lod_context):
+		if _resolve_sector_lod_tier(sector_key, lod_context) != LOD_TIER_2:
 			sectors_to_wake.append(sector_key)
 	var unique_wakes: Array = []
 	for sector_key in sectors_to_wake:
@@ -3241,8 +3294,10 @@ func _wake_sector(sector_key: Vector2i) -> void:
 	var records: Array = sector_state.get("dormant_records", [])
 	# Before the restores: `_register_living_agent()` adds each one back to
 	# `species_counts`, which still holds the aggregate census standing in for them.
+	# Anyone already awake here keeps their place in it.
 	sector_state["species_counts"] = {}
 	sector_state["threat_score"] = 0.0
+	_count_awake_animals(sector_state)
 	_sector_states[sector_key] = sector_state
 	for record in records:
 		var agent = _restore_dormant_agent(record)
@@ -4606,23 +4661,27 @@ func _make_dormant_newborn(species_type: String, group_id: int, mother_position:
 	return agent.export_runtime_state()
 
 
-func _migrate_dormant_sector_records(sector_key: Vector2i, lod_context: Dictionary) -> Array:
-	var sectors_to_wake: Array = []
+## Moves records that walked out of their sector into the one they are in now. One that
+## walked into the LOD window, or into a sector kept awake by an animal busy there, wakes
+## on its own and the sector it left sleeps on. Both sectors used to be woken for it, and
+## the one it left was put back to sleep at the end of the tick with its group goals
+## rebuilt and its coarse step postponed, every time one of its herd reached the window.
+func _migrate_dormant_sector_records(sector_key: Vector2i, lod_context: Dictionary) -> void:
 	var sector_state: Dictionary = _sector_states.get(sector_key, {})
 	if sector_state.is_empty() or not bool(sector_state.get("dormant", false)):
-		return sectors_to_wake
+		return
 	var retained_records: Array = []
 	var moved_by_sector: Dictionary = {}
+	var waking: Array = []
 	for record in sector_state.get("dormant_records", []):
 		var destination_sector := _get_sector_key(Vector2(record.get("position", _sector_key_to_rect(sector_key).get_center())))
 		if destination_sector == sector_key:
 			retained_records.append(record)
 			continue
-		var destination_state: Dictionary = _get_or_create_sector_state(destination_sector)
-		if _resolve_sector_lod_tier(destination_sector, lod_context) != LOD_TIER_2 or not destination_state.get("agent_ids", []).is_empty():
-			retained_records.append(record)
-			sectors_to_wake.append(sector_key)
-			sectors_to_wake.append(destination_sector)
+		var destination_state: Dictionary = _sector_states.get(destination_sector, {})
+		if _resolve_sector_lod_tier(destination_sector, lod_context) != LOD_TIER_2 \
+				or (not bool(destination_state.get("dormant", false)) and not destination_state.get("agent_ids", []).is_empty()):
+			waking.append(record)
 			continue
 		if not moved_by_sector.has(destination_sector):
 			moved_by_sector[destination_sector] = []
@@ -4640,31 +4699,10 @@ func _migrate_dormant_sector_records(sector_key: Vector2i, lod_context: Dictiona
 		destination_state["dormant_elapsed"] = float(destination_state.get("dormant_elapsed", 0.0))
 		_sector_states[destination_sector] = destination_state
 		_refresh_dormant_sector_state(destination_sector, true)
-	return sectors_to_wake
-
-
-func _sector_adjacent_to_active_ring(sector_key: Vector2i, lod_context: Dictionary) -> bool:
-	for x in range(sector_key.x - 1, sector_key.x + 2):
-		for y in range(sector_key.y - 1, sector_key.y + 2):
-			var neighbor_key := Vector2i(x, y)
-			if neighbor_key == sector_key:
-				continue
-			if _resolve_sector_lod_tier(neighbor_key, lod_context) != LOD_TIER_2:
-				return true
-	return false
-
-
-func _dormant_sector_should_force_wake(sector_key: Vector2i, sector_state: Dictionary, lod_context: Dictionary) -> bool:
-	if _dormant_sector_should_wake_for_neighboring_threat(sector_key, lod_context):
-		return true
-	var threat_count := _sector_species_count(sector_state, _threat_species_ids)
-	var prey_count := _sector_species_count(sector_state, _prey_species_ids)
-	if threat_count > 0 and prey_count > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
-		return true
-	# Co-located predators and prey are resolved by the dormant predation ledger.
-	# Water is sector state as well, so it does not require materializing a far
-	# sector. The active-ring check above still wakes a chase approaching LOD0/1.
-	return false
+	for record in waking:
+		var agent = _restore_dormant_agent(record)
+		if agent != null:
+			_register_living_agent(agent)
 
 
 func _dormant_aggregate_reached_goal(sector_key: Vector2i, aggregate: Dictionary) -> bool:
@@ -4996,25 +5034,6 @@ func _dormant_sector_has_agent(sector_state: Dictionary, agent_id: int) -> bool:
 	for record in sector_state.get("dormant_records", []):
 		if int(record.get("id", -1)) == agent_id:
 			return true
-	return false
-
-
-func _dormant_sector_should_wake_for_neighboring_threat(sector_key: Vector2i, lod_context: Dictionary) -> bool:
-	var sector_state: Dictionary = _sector_states.get(sector_key, {})
-	if _sector_species_count(sector_state, _threat_species_ids) > 0 and _sector_species_count(sector_state, _prey_species_ids) > 0 and _sector_adjacent_to_active_ring(sector_key, lod_context):
-		return true
-	for x in range(sector_key.x - 1, sector_key.x + 2):
-		for y in range(sector_key.y - 1, sector_key.y + 2):
-			var neighbor_key := Vector2i(x, y)
-			if neighbor_key == sector_key:
-				continue
-			var neighbor_state: Dictionary = _sector_states.get(neighbor_key, {})
-			if neighbor_state.is_empty():
-				continue
-			if _resolve_sector_lod_tier(neighbor_key, lod_context) == LOD_TIER_2:
-				continue
-			if float(neighbor_state.get("threat_score", 0.0)) > 0.0 or float(sector_state.get("threat_score", 0.0)) > 0.0:
-				return true
 	return false
 
 

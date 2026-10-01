@@ -467,13 +467,15 @@ Interactive LOD is conservative and camera-driven.
 - `LOD1`: full behavior tick at a slower interval
 - `LOD2`: full behavior tick at the slowest interval
 
-Agents are forced into `LOD0` when:
+Agents are forced into `LOD0` (`_is_priority_lod_agent()`) when:
 
 - selected
-- currently interacting
-- chasing, fleeing, attacking, reproducing, feeding, drinking, or scavenging
+- seeking or chasing prey, searching where it was last seen, attacking, fleeing, or reproducing
 - in `panic`
 - actively targeting another agent
+
+Eating, drinking and feeding on a carcass are not on the list: an animal doing them in the
+`LOD1` / `LOD2` rings does so on its full ticks only.
 
 On skipped ticks, distant agents still:
 
@@ -523,6 +525,21 @@ or the abstraction becomes a one-way sink. These invariants keep the two paths h
 Kill volume and old-age deaths accumulate as float debts on the sector and the aggregate
 rather than rounding per step: rounding per step needed four co-located predators to
 produce a single kill, so dormant predation was silently always zero.
+
+Only the LOD window is awake. A sector outside it sleeps even with a predator and prey in
+it, or beside a window full of predators: the coarse step settles that hunt. An animal that
+walks out of the window joins the sleeping sector it walked into at the end of the tick
+(`_absorb_strays_into_dormant_sectors()`), unless it is a priority agent (above) or
+selected, and a sleeper that walks into the window, or into a sector kept awake by a chase,
+wakes on its own (`_migrate_dormant_sector_records()`). Until 2026-09-30 the sectors around
+the window were woken whenever a predator was in one or in the window beside it, and
+`_sleep_far_sectors()` put them back to sleep at the end of the same tick, each of them
+about a thousand times a minute. The coarse step never ran there, since the sector was
+awake whenever steps ran, and its animals lived as `LOD2` agents - one full tick in 24 in
+overview - with their group goals rebuilt every tick. Predators starved in that ring beside
+fresh carcasses, and the prey nobody ate there drew more predators in: in one 48-minute LOD
+run 39 of the 45 predators that starved died in those twelve sectors, a quarter of the map
+(`scripts/dev/predator_probe.gd`).
 
 `_split_oversized_herds()` runs for live and sleeping animals together. Offspring join
 their parents' herd and nothing ever left one, so herds only grew, and one too big for its

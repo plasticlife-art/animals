@@ -30,6 +30,7 @@ func run(a) -> void:
 	_test_sliced_global_path_search(a)
 	_test_path_expansion_budget_caps_a_tick(a)
 	_test_overview_dormant_wake_policy(a)
+	_test_window_edge_stays_asleep(a)
 
 
 func _test_overview_hysteresis(a) -> void:
@@ -621,7 +622,51 @@ func _test_overview_dormant_wake_policy(a) -> void:
 	sector["water"] = true
 	world._sector_states[sector_key] = sector
 	world._sleep_sector(sector_key)
-	sector = world._sector_states[sector_key]
-	a.is_true(not world._dormant_sector_should_force_wake(sector_key, sector, lod),
+	world._wake_relevant_dormant_sectors(lod)
+	a.is_true(bool(world._sector_states[sector_key].get("dormant", false)),
 		"far water with predators and prey stays in the aggregate predation path")
+	Helpers.destroy_manager(manager)
+
+
+## The sleeping sectors beside the LOD window stay asleep with a predator and prey in
+## them, and an animal that walks out of the window into one joins it at the end of the
+## tick unless it is busy. They used to be woken and put back to sleep every tick, so
+## nothing there ever got a coarse step.
+func _test_window_edge_stays_asleep(a) -> void:
+	var manager = Helpers.create_manager(89)
+	manager.lod_enabled = true
+	var world = manager.world_state
+	var size: float = world._sector_size
+	var edge := Vector2i(1, 0)
+	var lod := {"enabled": true, "overview": true, "selected_agent_id": -1,
+		"focus_rect": Rect2(Vector2.ONE * (size * 0.5 - 1.0), Vector2.ONE * 2.0), "near_margin": 0.0, "mid_margin": 0.0}
+	a.equal(world._resolve_sector_lod_tier(Vector2i.ZERO, lod), world.LOD_TIER_0, "fixture: sector (0, 0) is the window")
+	a.equal(world._resolve_sector_lod_tier(edge, lod), world.LOD_TIER_2, "fixture: sector (1, 0) is beside it")
+	Helpers.spawn_herbivore(world, Vector2(size * 1.5, size * 0.5), 0)
+	Helpers.spawn_predator(world, Vector2(size * 1.5 + 8.0, size * 0.5))
+	Helpers.spawn_predator(world, Vector2(size * 0.5, size * 0.5))
+	world.refresh_lod_assignments(lod)
+	world._sleep_sector(edge)
+	world._wake_relevant_dormant_sectors(lod)
+	a.is_true(bool(world._sector_states[edge].get("dormant", false)),
+		"a predator and prey beside the window, with a predator in it, stay asleep")
+	var stray = Helpers.spawn_herbivore(world, Vector2(size * 1.25, size * 0.25), 1)
+	var runner = Helpers.spawn_herbivore(world, Vector2(size * 1.25, size * 0.75), 1)
+	runner.state = "flee"
+	world._sleep_far_sectors(lod)
+	a.is_true(world.get_agent(stray.id) == null, "an idle animal that walked out of the window joins the sleeping sector")
+	a.is_true(world._dormant_sector_has_agent(world._sector_states[edge], stray.id), "as one of its records")
+	a.is_true(world.get_agent(runner.id) != null, "one still fleeing stays awake")
+	a.equal(world._sector_species_count(world._sector_states[edge], ["herbivore"]), 3,
+		"and the sector's census counts the sleepers and the one awake")
+	# A sleeper that walks into the window wakes by itself; its herd sleeps on.
+	var records: Array = world._sector_states[edge].get("dormant_records", [])
+	var walker: Dictionary = records[0]
+	var walker_id := int(walker.get("id", -1))
+	walker["position"] = Vector2(size * 0.75, size * 0.5)
+	world._migrate_dormant_sector_records(edge, lod)
+	a.is_true(world.get_agent(walker_id) != null, "a sleeper that walked into the window is awake")
+	a.is_true(not world._dormant_sector_has_agent(world._sector_states[edge], walker_id), "and no longer a record behind it")
+	a.is_true(bool(world._sector_states[edge].get("dormant", false)), "while the sector it left sleeps on")
+	a.equal(world._sector_states[edge].get("dormant_records", []).size(), records.size() - 1, "with the rest of its animals")
 	Helpers.destroy_manager(manager)
