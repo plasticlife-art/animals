@@ -19,6 +19,7 @@ func run(a) -> void:
 	_test_critical_hunger_expands_carrion_search(a)
 	_test_exhausted_predator_does_not_start_hunt(a)
 	_test_critical_thirst_expands_water_search(a)
+	_test_founders_start_at_spread_ages(a)
 
 
 ## Comfortably past the species' `maturity_age`, whatever a rebalance makes it.
@@ -242,3 +243,73 @@ func _test_critical_thirst_expands_water_search(a) -> void:
 	a.is_true(manager.world_state.water_search_radius(scavenger) > normal_radius * 2.5,
 		"a critically thirsty animal searches beyond its normal water memory radius")
 	Helpers.destroy_manager(manager)
+
+
+func _founder_bundle(seed: int, share: float) -> Dictionary:
+	var bundle: Dictionary = Helpers.build_large_sector_bundle(seed)
+	bundle["world"]["spawns"]["herbivore_count"] = 60
+	bundle["world"]["spawns"]["herbivore_group_count"] = 3
+	bundle["world"]["spawns"]["predator_count"] = 10
+	bundle["balance"]["lifecycle"]["founder_age_share"] = share
+	return bundle
+
+
+func _founders(manager, species_id: String) -> Array:
+	var found: Array = []
+	for agent in manager.world_state.living_agents:
+		if agent != null and agent.species_type == species_id:
+			found.append(agent)
+	return found
+
+
+## Founders born together grew old together: every predator reached old age between
+## 1200 and 1440 s, and in 48-minute runs the predators died out with prey all round.
+## With `founder_age_share` the starting cohort spans that share of the way to old age.
+func _test_founders_start_at_spread_ages(a) -> void:
+	var manager = Helpers.create_manager_with(_founder_bundle(96, 0.8), 96)
+	for species_id in ["herbivore", "predator"]:
+		var founders := _founders(manager, species_id)
+		a.greater(founders.size(), 0, "the fixture founds some %ss" % species_id)
+		var old_age_start := float(founders[0].aging.get("old_age_start", 0.0))
+		var lowest := INF
+		var highest := -INF
+		var buckets := {}
+		var cooling := 0
+		var outside := 0
+		for agent in founders:
+			lowest = minf(lowest, agent.age)
+			highest = maxf(highest, agent.age)
+			var bucket := int(agent.age / (old_age_start * 0.1))
+			buckets[bucket] = int(buckets.get(bucket, 0)) + 1
+			if agent.age < 0.0 or agent.age >= old_age_start * 0.8:
+				outside += 1
+			var cooldown := float(agent.reproduction.get("cooldown", 0.0))
+			if agent.reproduction_cooldown < 0.0 or agent.reproduction_cooldown > cooldown:
+				outside += 1
+			if agent.reproduction_cooldown > 0.0:
+				cooling += 1
+		var fullest := 0
+		for count in buckets.values():
+			fullest = maxi(fullest, int(count))
+		a.equal(outside, 0, "%s founders are between newborn and 80%% of the way to old age, with a cooldown no longer than their own" % species_id)
+		a.greater(highest - lowest, old_age_start * 0.5, "%s founder ages spread over most of that span" % species_id)
+		a.is_true(fullest <= maxi(3, founders.size() / 3),
+			"no tenth of the span holds a third of the %s founders (%d of %d)" % [species_id, fullest, founders.size()])
+		a.greater(cooling, 0, "grown %s founders start part-way through a breeding cooldown" % species_id)
+	var again = Helpers.create_manager_with(_founder_bundle(96, 0.8), 96)
+	var first: Array = []
+	var second: Array = []
+	for agent in _founders(manager, "herbivore"):
+		first.append(snappedf(agent.age, 0.001))
+	for agent in _founders(again, "herbivore"):
+		second.append(snappedf(agent.age, 0.001))
+	a.equal(first, second, "the same seed founds the same ages")
+	Helpers.destroy_manager(again)
+	Helpers.destroy_manager(manager)
+	var newborn = Helpers.create_manager_with(_founder_bundle(96, 0.0), 96)
+	var aged := 0
+	for agent in _founders(newborn, "herbivore") + _founders(newborn, "predator"):
+		if agent.age != 0.0 or agent.reproduction_cooldown != 0.0:
+			aged += 1
+	a.equal(aged, 0, "at a share of 0 every founder starts newborn, as before")
+	Helpers.destroy_manager(newborn)

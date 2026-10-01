@@ -659,6 +659,18 @@ millisecond setting squeezed to zero.
 ### `balance.json`
 
 - tunes cross-species rules, shared lifecycle thresholds, selector thresholds, and utility evaluator weights
+- `lifecycle.founder_age_share` spreads the ages of the animals placed at world generation:
+  each starts between newborn and that share of its species' `aging.old_age_start`, and one
+  already grown starts part-way through its breeding cooldown. Founders born together grew
+  old together - every predator between 1200 and 1440 s - and 48-minute runs lost their
+  predators on seeds with prey to spare. Measured with `audit_matrix.py`, seeds 1-8, 2880 s
+  LOD: 0.9 against 0 raised the late-half predator low from 19 to 38 and the late mean from
+  33 to 45, higher on all eight seeds, and no seed's predators fell below 14. At full
+  fidelity, 1440 s, predators held 46-47 to the end instead of falling to 36, and herbivores
+  no longer boomed to 338 and crashed with their founders: they peaked at 288 and ended at
+  the same 197, with a third fewer starving. The first litters still form a cohort of their
+  own, since they fill the predator cap within six minutes and the cap then stops births
+  until they age. 0 makes no draws and starts everyone newborn.
 - `carcass.meat_by_cause` scales `carcass.meat_total` by how the animal died: a kill is a
   whole body, an animal that starved is skin and bone. With every death worth a full
   carcass, a famine among grazers fed every meat-eater on the map and carrion never limited

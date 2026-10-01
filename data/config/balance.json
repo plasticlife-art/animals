@@ -215,7 +215,8 @@
   },
   "lifecycle": {
     "starvation_death_threshold": 100.0,
-    "thirst_death_threshold": 100.0
+    "thirst_death_threshold": 100.0,
+    "founder_age_share": 0.9
   },
   "stats": {
     "sample_interval_ticks": 18,

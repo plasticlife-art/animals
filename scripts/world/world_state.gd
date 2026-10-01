@@ -2024,9 +2024,15 @@ func _spawn_initial_solitary(species_id: String, count: int) -> void:
 ## before the survivors desynchronized on their own. Staggering the start turns
 ## that cliff into ordinary churn.
 ##
-## Age is deliberately NOT staggered. Tried, and it cost three quarters of the
-## population by tick 900: age gates reproduction, so a cohort spread across the
-## lifespan cannot breed its way back from the first famine.
+## Ages the same way, when `lifecycle.founder_age_share` is above 0: each founder
+## starts between newborn and that share of the way to its species' `old_age_start`,
+## and one already grown starts part-way through a breeding cooldown, so the first
+## litters spread out instead of all landing at once. Founders born together also
+## grew old together: every predator reached old age between 1200 and 1440 s, and in
+## 48-minute runs the predators died out on seeds where prey was plentiful. At 0
+## everyone starts newborn and no draws are made, exactly as before. An earlier try
+## spread ages over the whole lifespan while that famine still struck, and cost three
+## quarters of the population: old founders died and the young could not yet breed.
 ##
 ## Draws from `rng`, deliberately - this is world generation, the same stream
 ## that already places herds and grass.
@@ -2038,6 +2044,13 @@ func _stagger_initial_agent(agent) -> void:
 	var thirst_ceiling := float(thresholds.get("critical_thirst", 50.0))
 	agent.hunger = rng.randf_range(0.0, hunger_ceiling * 0.75)
 	agent.thirst = rng.randf_range(0.0, thirst_ceiling * 0.75)
+	var age_share := clampf(float(config_bundle.get("balance", {}).get("lifecycle", {}).get("founder_age_share", 0.0)), 0.0, 1.0)
+	if age_share <= 0.0:
+		return
+	var old_age_start := float(agent.aging.get("old_age_start", agent.aging.get("max_age", 0.0)))
+	agent.age = rng.randf_range(0.0, old_age_start * age_share)
+	if agent.age >= float(agent.reproduction.get("maturity_age", 0.0)):
+		agent.reproduction_cooldown = rng.randf_range(0.0, float(agent.reproduction.get("cooldown", 0.0)))
 
 
 ## Share of one tick's stride that the overlap pass may move an animal. Small
