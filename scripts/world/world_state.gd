@@ -3618,7 +3618,8 @@ func _refresh_prey_pressure_sectors() -> void:
 ## Best prey-bearing sector within `radius`, scored as the dormant selector always scored
 ## it: pressure dominates and distance breaks ties. A sleeping hunter counts the prey by
 ## how readily it catches them (`catchable`, see `_sector_catchable_prey()`); a live one
-## counts heads and finds out for itself which of them get away.
+## counts heads and finds out for itself which of them get away. The goal carries its
+## `score`: ten points for each head of prey, less one for every ten units of distance.
 func find_prey_pressure_goal(position: Vector2, radius: float, catchable: bool = false) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score: float = -INF
@@ -3635,6 +3636,7 @@ func find_prey_pressure_goal(position: Vector2, radius: float, catchable: bool =
 			"goal_kind": "hunt",
 			"goal_position": center,
 			"goal_sector": entry["sector"],
+			"score": score,
 		}
 	return best
 
@@ -3827,11 +3829,23 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	if diet != SpeciesRegistryScript.DIET_PREY:
 		return _resolve_dormant_wander_goal(sector_key, aggregate)
 	if predator_hunger >= feed_hunger_floor:
-		# Already standing among prey: hunt here. Without this the goal refresh that fires
-		# on arrival could send the aggregate off to another sector, so it spent most of its
-		# time travelling between herds rather than beside one - and a dormant kill can only
-		# resolve while predator and prey share a sector.
-		if _get_sector_prey_pressure(sector_key) > 0:
+		var hunger_headroom := maxf(1.0, 98.0 - predator_hunger) / maxf(0.01, float(species_config.get("metabolism", {}).get("hunger_rate", 1.6)))
+		# The 0.6 covers terrain move cost, water detours and prey that keeps moving. The
+		# floor matters as much as the cap: heading for prey it may not reach still beats
+		# wandering, so a nearly starved aggregate must not fall back to a random walk.
+		var prey_reach := maxf(hunger_headroom * travel_speed * 0.6, _sector_size * 1.5)
+		var prey_goal: Dictionary = _find_dormant_prey_goal(center, prey_reach)
+		# Hunt where it stands while that is as good a hunt as any within reach, scored as
+		# the sectors are (`find_prey_pressure_goal()`) with no way to go. Without staying,
+		# the goal refresh that fires on arrival could send the aggregate off to another
+		# sector, so it spent most of its time travelling between herds rather than beside
+		# one - and a dormant kill can only resolve while predator and prey share a sector.
+		# Staying wherever there was any prey at all kept packs among flocks of scavengers
+		# they could hardly catch while herds grazed a sector away: half of sleeping
+		# predators' kills were made with no herbivore within 768 units, against a fifth
+		# of live ones'.
+		var here_score := _get_sector_prey_pressure(sector_key) * 10.0
+		if here_score > 0.0 and here_score >= float(prey_goal.get("score", -INF)):
 			return {
 				"goal_kind": "hunt",
 				"goal_position": center,
@@ -3849,12 +3863,6 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 				"goal_position": aggregate.get("goal_position", center),
 				"goal_sector": aggregate.get("goal_sector", sector_key),
 			}
-		var hunger_headroom := maxf(1.0, 98.0 - predator_hunger) / maxf(0.01, float(species_config.get("metabolism", {}).get("hunger_rate", 1.6)))
-		# The 0.6 covers terrain move cost, water detours and prey that keeps moving. The
-		# floor matters as much as the cap: heading for prey it may not reach still beats
-		# wandering, so a nearly starved aggregate must not fall back to a random walk.
-		var prey_reach := maxf(hunger_headroom * travel_speed * 0.6, _sector_size * 1.5)
-		var prey_goal: Dictionary = _find_dormant_prey_goal(center, prey_reach)
 		if not prey_goal.is_empty():
 			return prey_goal
 	return _resolve_dormant_wander_goal(sector_key, aggregate)

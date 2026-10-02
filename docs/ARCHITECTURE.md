@@ -573,8 +573,30 @@ None of this reaches a run at full fidelity, which stays identical. Measured wit
 species was lost on any seed, against five seeds (without the water change: two);
 scavengers' late-half low 92 against 36 and predators' 45 against 35; herbivores dying of
 thirst 214 a run against 616, and scavengers 11 against 19. Herbivores now reach water and
-are held by grass instead: 1482 starved against 996. Sleeping predators still take half
-their kills from scavengers, against a fifth live (see Known Gaps).
+are held by grass instead: 1482 starved against 996. Sleeping predators still took half
+their kills from scavengers, against a fifth live.
+
+That was where they hunted, not what they could catch. A hungry pack used to stay in its
+sector whenever there was any prey in it at all, and scavengers follow packs for their
+leavings. The coarse ledger has no chase, so its kills are limited by hunger alone, and a
+pack among a flock ate whatever was at hand. On three seeds half of sleeping predators'
+kills were made with no herbivore within 768 units, against 18% of live ones', and a
+sleeping pack took its scavengers from among some 58 of them with 25 predators about,
+where a live one took them from among 9 with 4. A pack now hunts where it stands only
+while that is as good a hunt as any within its reach, scored as the sectors it picks
+between are (`find_prey_pressure_goal()`), with no way to go. A lower `prey_catchability`
+only slowed the same kills: at 0.05 and 0.03 the share of scavengers fell on some seeds and
+not others, predators starved twice as often, and at 0.05 the scavengers died out on one
+seed of eight.
+
+Measured with `audit_matrix.py`, seeds 1-8, 96-minute LOD runs, against the code before:
+scavengers are 0.30 of predators' kills against 0.56 (0.21 at full fidelity), 0.022 a
+predator-minute against 0.055 (0.023), and herbivores 0.044 against 0.035 (0.088). No
+species was lost. Predators spent less of the late half on their cap, 0.79 against 0.90,
+and starved 0.22 times an hour a head against 0.11 (0.37 at full fidelity). On two seeds
+they fell to 10 and 29 and came back; on the one probed, their first cohort was dying of
+age and too few pairs reached breeding energy to replace it (see Known Gaps). Full
+fidelity stays identical.
 
 `_split_oversized_herds()` runs for live and sleeping animals together. Offspring join
 their parents' herd and nothing ever left one, so herds only grew, and one too big for its
@@ -809,10 +831,17 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   of the second half on their `population_regulation` cap and scavengers 43%, 10% and 14%.
   Scavenger appetite is not the knob to close that gap: raising `metabolism.hunger_rate`
   from 0.08 to 0.11 collapsed them on seed 7 and left them on the cap on seed 3
-- Sleeping and live predators still eat differently. A sleeping pack shares each body and
-  finishes it, where a live hunter eats its fill and leaves the rest, so sleeping predators
-  kill fewer herbivores per head (0.04 a minute against 0.09) and more scavengers (half of
-  their kills against a fifth)
+- Sleeping and live predators still eat differently. Both eat about half of a herbivore they
+  kill and leave the rest (52% and 53% on three seeds), but a sleeping pack eats about what
+  its hunger needs, 10.5 meat a minute a head against 15.4, since a chase costs it no energy
+  and resting restores it: it kills 0.044 herbivores a minute a head against 0.088. A pack
+  also shares each kill among all its members, so they reach breeding energy only when kills
+  come close together, and while an age cohort dies births can fall behind. Two ways to
+  change that did worse over 96-minute LOD runs: feeding at most `max_feeders` members, each
+  to the breeding reserve, halved scavenger births on one seed, and scavengers died out or
+  nearly on two seeds of three while herbivores fell to 8 on the third; letting a pack
+  eating its kill recover energy as one at a carcass does lost the predators on one seed of
+  eight
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics

@@ -28,6 +28,7 @@ func run(asserts) -> void:
 	_test_dormant_herbivore_drinking_reduces_thirst(asserts)
 	_test_dormant_thirst_sector_moves_toward_water(asserts)
 	_test_dormant_predator_goal_tracks_prey_pressure(asserts)
+	_test_dormant_pack_leaves_poor_hunting_for_a_herd(asserts)
 	_test_dormant_predator_hunts_from_feed_floor(asserts)
 	_test_dormant_rebuild_keeps_peak_needs(asserts)
 	_test_dormant_predator_drinking_reduces_thirst(asserts)
@@ -535,6 +536,38 @@ func _test_dormant_predator_goal_tracks_prey_pressure(asserts) -> void:
 	asserts.is_true(not predator_aggregate.is_empty(), "predator aggregate should remain represented in dormant sectors")
 	asserts.equal(str(predator_aggregate.get("goal_kind", "")), "hunt", "hungry dormant predator should target prey pressure")
 	TestHelpers.destroy_manager(manager)
+
+
+## A hungry sleeping pack hunts where it stands only while that is as good a hunt as any
+## within reach. Among a few scavengers, with a herd in the next sector, it goes for the
+## herd: it used to stay with whatever prey was at hand. With the herd beside it, it stays.
+func _test_dormant_pack_leaves_poor_hunting_for_a_herd(asserts) -> void:
+	var pack_position := Vector2(700.0, 700.0)
+	for herd_position in [Vector2(2300.0, 700.0), Vector2(900.0, 1100.0)]:
+		var manager = TestHelpers.create_manager_with(TestHelpers.build_large_sector_bundle(75), 75)
+		manager.lod_enabled = true
+		var world = manager.world_state
+		var predator = TestHelpers.spawn_predator(world, pack_position)
+		predator.hunger = 60.0
+		predator.thirst = 0.0
+		for index in range(8):
+			TestHelpers.spawn_species(world, "scavenger", pack_position + Vector2(40.0 + float(index) * 6.0, 30.0), 3)
+		TestHelpers.spawn_herd(world, herd_position, 30)
+		var pack_sector: Vector2i = world._get_sector_key(pack_position)
+		var herd_sector: Vector2i = world._get_sector_key(herd_position)
+		world._sleep_sector(pack_sector)
+		if herd_sector != pack_sector:
+			world._sleep_sector(herd_sector)
+		world._refresh_prey_pressure_sectors()
+		var goal: Dictionary = world._select_dormant_goal(pack_sector, _find_any_dormant_aggregate(world, "predator"))
+		asserts.equal(str(goal.get("goal_kind", "")), "hunt", "fixture: the pack is hungry enough to hunt")
+		if herd_sector != pack_sector:
+			asserts.equal(Vector2i(goal.get("goal_sector", pack_sector)), herd_sector,
+				"a hungry pack among a few scavengers goes for the herd in the next sector")
+		else:
+			asserts.equal(Vector2i(goal.get("goal_sector", Vector2i(-1, -1))), pack_sector,
+				"and with the herd in its own sector it hunts where it stands")
+		TestHelpers.destroy_manager(manager)
 
 
 func _test_dormant_stale_sector_forced_wake(asserts) -> void:
