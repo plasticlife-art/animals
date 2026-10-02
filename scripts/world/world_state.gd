@@ -3458,7 +3458,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		# which suppressed births and need-deaths for any aggregate small enough that its
 		# per-step share was below 1. `carcass_id` identifies the carcass a `seek_carcass`
 		# goal refers to, so losing it broke dormant scavenging entirely.
-		for carried_key in ["old_age_debt", "carcass_id"]:
+		for carried_key in ["old_age_debt", "carcass_id", "unreachable_water"]:
 			if previous.has(carried_key):
 				aggregate[carried_key] = previous[carried_key]
 		aggregates.append(aggregate)
@@ -3529,11 +3529,17 @@ func _refresh_dormant_sector_state(sector_key: Vector2i, preserve_existing: bool
 	_sector_states[sector_key] = sector_state
 
 
-func _find_nearest_water_goal(position: Vector2) -> Dictionary:
+## The water nearest `position` in a straight line, passing over the sources a sleeping
+## group has already found no route to (`unreachable`, positions). Nearest by line of
+## sight was often across a cliff: a flock walked to the edge of the nearest pond, stood
+## there, and died of thirst with a pond it could reach a little further on.
+func _find_nearest_water_goal(position: Vector2, unreachable: Array = []) -> Dictionary:
 	var best: Dictionary = {}
 	var best_distance_sq: float = INF
 	for source in water_sources:
 		var source_position: Vector2 = source.get("position", bounds.get_center())
+		if unreachable.has(source_position):
+			continue
 		var distance_sq: float = position.distance_squared_to(source_position)
 		if distance_sq < best_distance_sq:
 			best_distance_sq = distance_sq
@@ -3759,7 +3765,7 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 		var thirst := maxf(float(aggregate.get("avg_thirst", 0.0)), float(aggregate.get("peak_thirst", 0.0)) - _DORMANT_PEAK_THIRST_MARGIN)
 		var hunger := float(aggregate.get("avg_hunger", 0.0))
 		if thirst >= critical_thirst and not (grazer_is_hungry(hunger) and hunger > thirst):
-			var water_goal: Dictionary = _find_nearest_water_goal(center)
+			var water_goal: Dictionary = _find_nearest_water_goal(center, aggregate.get("unreachable_water", []))
 			if not water_goal.is_empty():
 				return water_goal
 		# Moving on with the herd, as its awake members do (`herd_migration_goal()`), unless
@@ -3794,7 +3800,7 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	# could send a thirsty predator across the map and kill it on the way.
 	var predator_thirst := maxf(float(aggregate.get("avg_thirst", 0.0)), float(aggregate.get("peak_thirst", 0.0)) - _DORMANT_PEAK_THIRST_MARGIN)
 	if predator_thirst >= critical_thirst * float(dormant_config.get("predator_thirst_trigger_ratio", 0.6)):
-		var predator_water_goal: Dictionary = _find_nearest_water_goal(center)
+		var predator_water_goal: Dictionary = _find_nearest_water_goal(center, aggregate.get("unreachable_water", []))
 		if not predator_water_goal.is_empty():
 			return predator_water_goal
 	var travel_speed := _get_dormant_travel_speed(species_config)
@@ -4312,7 +4318,17 @@ func _dormant_herd_waypoint(aggregate: Dictionary, from: Vector2, goal: Vector2)
 	var at := -1 if int(aggregate.get("path_goal_cell", -1)) != goal_index else _nearest_route_cell(path, from)
 	if at == -1:
 		var start_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(from))
-		var found: Array = _find_path_with_budget(start_index, goal_index).get("cells", [])
+		var search: Dictionary = _find_path_with_budget(start_index, goal_index)
+		# A finished search that cannot reach water rules that water out for this group,
+		# and the next goal refresh, made at once, picks other water.
+		if not bool(search.get("pending", false)) and not bool(search.get("reachable", true)) \
+				and str(aggregate.get("goal_kind", "")) == "water":
+			var unreachable: Array = aggregate.get("unreachable_water", [])
+			if not unreachable.has(goal):
+				unreachable.append(goal)
+			aggregate["unreachable_water"] = unreachable
+			aggregate["last_goal_refresh_time"] = -INF
+		var found: Array = search.get("cells", [])
 		# A search still pending comes back empty. The herd heads straight meanwhile
 		# and asks again next step, by which time the queued search has usually run.
 		if found.size() < 2:

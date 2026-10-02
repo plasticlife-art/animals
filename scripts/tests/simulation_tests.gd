@@ -31,6 +31,7 @@ func run(asserts) -> void:
 	_test_dormant_predator_hunts_from_feed_floor(asserts)
 	_test_dormant_rebuild_keeps_peak_needs(asserts)
 	_test_dormant_predator_drinking_reduces_thirst(asserts)
+	_test_dormant_herd_skips_unreachable_water(asserts)
 	_test_dormant_carrion_goal_uses_live_reach(asserts)
 	_test_sated_dormant_predators_do_not_kill(asserts)
 	_test_dormant_kills_follow_prey_catchability(asserts)
@@ -858,6 +859,48 @@ func _test_dormant_kills_follow_prey_catchability(asserts) -> void:
 	ecology["prey_catchability"] = {"scavenger": 0.25}
 	# The census changes at the reconcile, so the four herbivores are all still in it.
 	asserts.near(world._get_sector_prey_pressure(slept[0]), 6.0, 0.001, "four herbivores, and eight scavengers counting for two")
+	TestHelpers.destroy_manager(manager)
+
+
+## A sleeping herd whose nearest water has no route to it rules that water out and goes
+## for other water. It used to stand at the edge of the walled-off pond until it died.
+func _test_dormant_herd_skips_unreachable_water(asserts) -> void:
+	var manager = TestHelpers.create_manager(73)
+	manager.lod_enabled = true
+	var world = manager.world_state
+	var terrain = world.terrain_system
+	var walled: Vector2 = world.water_sources[0]["position"]
+	var other: Vector2 = world.water_sources[1]["position"]
+	# Wall the first pond in: every cell two cells out from it is blocked.
+	var size: float = terrain.cell_size
+	for dx in range(-2, 3):
+		for dy in range(-2, 3):
+			if maxi(absi(dx), absi(dy)) != 2:
+				continue
+			var cell: int = terrain.get_index_from_position(walled + Vector2(dx, dy) * size)
+			if cell != -1:
+				terrain._set_obstacle(cell, "test_wall")
+	terrain._refresh_cached_values()
+	var herd_position := walled + Vector2(-0.75, 3.6) * size
+	for index in range(3):
+		var animal = TestHelpers.spawn_herbivore(world, herd_position + Vector2(float(index) * 4.0, 0.0), 0)
+		animal.thirst = 80.0
+		animal.hunger = 0.0
+	asserts.is_true(herd_position.distance_to(walled) < herd_position.distance_to(other), "fixture: the walled pond is the nearer one")
+	var slept: Array = _sleep_with_goal(world, herd_position, "herbivore", "wander")
+	var aggregate: Dictionary = slept[2]
+	var goal: Dictionary = world._select_dormant_goal(slept[0], aggregate)
+	asserts.equal(Vector2(goal.get("goal_position", Vector2.ZERO)), walled, "a thirsty herd first heads for the nearest water")
+	for key in goal.keys():
+		aggregate[key] = goal[key]
+	for _attempt in range(20):
+		world._prepare_navigation_budget()
+		world._dormant_herd_waypoint(aggregate, Vector2(aggregate["center"]), walled)
+		if aggregate.get("unreachable_water", []).has(walled):
+			break
+	asserts.is_true(aggregate.get("unreachable_water", []).has(walled), "a finished search with no route rules that water out")
+	goal = world._select_dormant_goal(slept[0], aggregate)
+	asserts.equal(Vector2(goal.get("goal_position", Vector2.ZERO)), other, "and the herd goes for the water it can reach")
 	TestHelpers.destroy_manager(manager)
 
 

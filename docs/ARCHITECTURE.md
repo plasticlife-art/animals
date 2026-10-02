@@ -560,11 +560,21 @@ kills against a fifth of live ones'; over 96 minutes of LOD they were eaten out 
 seeds of eight. A group of carrion eaters no longer sets out for a body that will have
 rotted (`carcass.ttl_seconds`) before it arrives.
 
+A sleeping group heads for the water nearest it in a straight line, and a route search that
+finishes without reaching it rules that water out for the group (`unreachable_water`), so
+the next goal refresh picks other water. Nearest in a straight line was often across a
+cliff: on seed 1 a flock of 54 scavengers stood 700 units from a pond it had no route to,
+the four nearest sources all out of its reach, and was down to 13 five minutes later, dying
+of thirst 1360 units from water it could reach. The list lasts as long as the group sleeps,
+even once it has moved somewhere it could reach that water from.
+
 None of this reaches a run at full fidelity, which stays identical. Measured with
-`audit_matrix.py`, seeds 1-8, 96-minute LOD runs, against the code of 2026-10-01: a
-species was lost on two seeds against five; scavengers were two in five of sleeping
-predators' kills against three in four; herbivores dying of thirst 296 a run against 616,
-fewer on every seed, and starving 1226 against 996.
+`audit_matrix.py`, seeds 1-8, 96-minute LOD runs, against the code of 2026-10-01: no
+species was lost on any seed, against five seeds (without the water change: two);
+scavengers' late-half low 92 against 36 and predators' 45 against 35; herbivores dying of
+thirst 214 a run against 616, and scavengers 11 against 19. Herbivores now reach water and
+are held by grass instead: 1482 starved against 996. Sleeping predators still take half
+their kills from scavengers, against a fifth live (see Known Gaps).
 
 `_split_oversized_herds()` runs for live and sleeping animals together. Offspring join
 their parents' herd and nothing ever left one, so herds only grew, and one too big for its
@@ -801,8 +811,8 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   from 0.08 to 0.11 collapsed them on seed 7 and left them on the cap on seed 3
 - Sleeping and live predators still eat differently. A sleeping pack shares each body and
   finishes it, where a live hunter eats its fill and leaves the rest, so sleeping predators
-  kill fewer herbivores per head (0.04 a minute against 0.09) and more scavengers (two
-  kills in five against one in five)
+  kill fewer herbivores per head (0.04 a minute against 0.09) and more scavengers (half of
+  their kills against a fifth)
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics
