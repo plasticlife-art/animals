@@ -27,13 +27,17 @@ func _initialize() -> void:
 	var seconds := float(args[2])
 	var out := str(args[3])
 	var bundle: Dictionary = ConfigLoader.load_config_bundle(ConfigLoader.default_selection())
+	# Overrides as `ecology_audit.gd` takes them: JSON values, missing sections created.
 	for index in range(4, args.size()):
 		var pair := str(args[index]).split("=", true, 1)
 		var keys := pair[0].split(".")
 		var node: Dictionary = bundle
 		for k in range(keys.size() - 1):
+			if not (node.get(keys[k]) is Dictionary):
+				node[keys[k]] = {}
 			node = node[keys[k]]
-		node[keys[keys.size() - 1]] = float(pair[1]) if pair[1].is_valid_float() else (pair[1] == "true" if pair[1] in ["true", "false"] else pair[1])
+		var value: Variant = JSON.parse_string(pair[1])
+		node[keys[keys.size() - 1]] = value if value != null or pair[1] == "null" else pair[1]
 	var manager = preload("res://scripts/core/simulation_manager.gd").new()
 	manager.initialize(bundle, run_seed)
 	manager.set_lod_enabled(use_lod)
@@ -170,9 +174,40 @@ func _on_event(event: Dictionary) -> void:
 
 ## Who could breed right now, and what stops the rest: each failed condition of
 ## `AgentBase.can_reproduce()` is counted once per animal it stops. `matched` counts ready
-## females with a ready male within `mate_search_radius`.
+## females with a ready male within `mate_search_radius`; `partnered` counts animals of
+## either sex with one of the other within that radius, ready or not, and `alone` those
+## with no animal of their species within it.
 func _breeding_readiness(hunters: Array, reproduction: Dictionary, mate_radius: float) -> Dictionary:
-	var result := {"ready_female": 0, "ready_male": 0, "matched": 0, "young": 0, "cooldown": 0, "energy": 0, "hunger": 0, "thirst": 0}
+	var result := {"ready_female": 0, "ready_male": 0, "matched": 0, "young": 0, "cooldown": 0, "energy": 0, "hunger": 0, "thirst": 0,
+		"partnered": 0, "alone": 0, "males": 0, "females": 0, "male_energy": 0, "male_cooldown": 0, "male_age": 0.0, "female_age": 0.0}
+	var males := PackedVector2Array()
+	var females := PackedVector2Array()
+	for hunter in hunters:
+		if str(hunter.sex) == AgentBase.SEX_MALE:
+			males.append(hunter.pos)
+			result.males += 1
+			result.male_age += float(hunter.age)
+			if float(hunter.e) < float(reproduction.get("energy_threshold", INF)):
+				result.male_energy += 1
+			if float(hunter.cd) > 0.0:
+				result.male_cooldown += 1
+		else:
+			females.append(hunter.pos)
+			result.females += 1
+			result.female_age += float(hunter.age)
+	result.male_age = snappedf(result.male_age / maxf(1.0, float(result.males)), 1.0)
+	result.female_age = snappedf(result.female_age / maxf(1.0, float(result.females)), 1.0)
+	for hunter in hunters:
+		var is_male := str(hunter.sex) == AgentBase.SEX_MALE
+		if _nearest(hunter.pos, females if is_male else males) <= mate_radius:
+			result.partnered += 1
+		var own := males if is_male else females
+		var others := 0
+		for point in own:
+			if point.distance_to(hunter.pos) <= mate_radius:
+				others += 1
+		if others <= 1 and _nearest(hunter.pos, females if is_male else males) > mate_radius:
+			result.alone += 1
 	var ready_males := PackedVector2Array()
 	var ready_females := PackedVector2Array()
 	for hunter in hunters:

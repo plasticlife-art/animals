@@ -228,6 +228,9 @@
   },
   "dormant_ecology": {
     "kill_rate_per_prey_per_second": 0.006,
+    "prey_catchability": {
+      "scavenger": 0.1
+    },
     "predator_thirst_trigger_ratio": 0.6,
     "idle_recovery_energy_ratio": 0.75
   },

@@ -541,6 +541,31 @@ fresh carcasses, and the prey nobody ate there drew more predators in: in one 48
 run 39 of the 45 predators that starved died in those twelve sectors, a quarter of the map
 (`scripts/dev/predator_probe.gd`).
 
+Every predator in a sleeping sector shares one aggregate, a pack, and a pack looks for food
+or water when its hungriest or thirstiest member is a margin past the floor
+(`_DORMANT_PEAK_HUNGER_MARGIN`, `_DORMANT_PEAK_THIRST_MARGIN`), as a herd goes to water for
+its thirstiest. By the mean alone a pack of twenty sat just under the feeding floor and
+wandered while half of it was hungry. The peaks are tallied when a group is built as well as
+at the reconcile (`_tally_dormant_member()`): each coarse step ends by rebuilding its
+sector's groups (`_migrate_dormant_sector_records()`), and the next step picks goals before
+it reconciles, so whatever goal selection reads has to survive the rebuild. Until 2026-10-02
+the peak thirst did not, and no sleeping herd ever went to water for its thirstiest member.
+
+Sleeping hunters catch each prey species as readily as `dormant_ecology.prey_catchability`
+says: it scales the kill debt, chooses which herd a kill comes from, and weighs the prey
+pressure that draws sleeping hunters to a sector, from a list ranked by it apart from the
+head count live hunters patrol by. The coarse ledger has no chase, and scavengers - which
+outrun a predator at a sprint and see it at 260 - were three quarters of sleeping predators'
+kills against a fifth of live ones'; over 96 minutes of LOD they were eaten out on four
+seeds of eight. A group of carrion eaters no longer sets out for a body that will have
+rotted (`carcass.ttl_seconds`) before it arrives.
+
+None of this reaches a run at full fidelity, which stays identical. Measured with
+`audit_matrix.py`, seeds 1-8, 96-minute LOD runs, against the code of 2026-10-01: a
+species was lost on two seeds against five; scavengers were two in five of sleeping
+predators' kills against three in four; herbivores dying of thirst 296 a run against 616,
+fewer on every seed, and starving 1226 against 996.
+
 `_split_oversized_herds()` runs for live and sleeping animals together. Offspring join
 their parents' herd and nothing ever left one, so herds only grew, and one too big for its
 range starves and is never replaced. A herd past its species' `herd.split_size` divides
@@ -676,8 +701,9 @@ millisecond setting squeezed to zero.
   carcass, a famine among grazers fed every meat-eater on the map and carrion never limited
   anyone; four carcasses in five expired uneaten. A cause scaled to zero leaves no carcass.
 - `dormant_ecology` holds the coarse-path rates: `kill_rate_per_prey_per_second` (break-even
-  for a lone dormant predator is `hunger_rate / carcass.meat_total`),
-  `predator_thirst_trigger_ratio`, and `idle_recovery_energy_ratio`. The last one caps how
+  for a lone dormant predator is `hunger_rate / carcass.meat_total`), `prey_catchability`
+  (per prey species, 1 if unlisted; see Dormant sectors), `predator_thirst_trigger_ratio`,
+  and `idle_recovery_energy_ratio`. The last one caps how
   far resting alone can carry a dormant aggregate, as a fraction of its own
   `reproduction.energy_threshold`: high enough to leave chase energy for when the sector
   wakes, low enough that a litter still has to be paid for with food. It is deliberately
@@ -773,6 +799,10 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   of the second half on their `population_regulation` cap and scavengers 43%, 10% and 14%.
   Scavenger appetite is not the knob to close that gap: raising `metabolism.hunger_rate`
   from 0.08 to 0.11 collapsed them on seed 7 and left them on the cap on seed 3
+- Sleeping and live predators still eat differently. A sleeping pack shares each body and
+  finishes it, where a live hunter eats its fill and leaves the rest, so sleeping predators
+  kill fewer herbivores per head (0.04 a minute against 0.09) and more scavengers (two
+  kills in five against one in five)
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics

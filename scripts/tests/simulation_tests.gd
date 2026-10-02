@@ -29,9 +29,11 @@ func run(asserts) -> void:
 	_test_dormant_thirst_sector_moves_toward_water(asserts)
 	_test_dormant_predator_goal_tracks_prey_pressure(asserts)
 	_test_dormant_predator_hunts_from_feed_floor(asserts)
+	_test_dormant_rebuild_keeps_peak_needs(asserts)
 	_test_dormant_predator_drinking_reduces_thirst(asserts)
 	_test_dormant_carrion_goal_uses_live_reach(asserts)
 	_test_sated_dormant_predators_do_not_kill(asserts)
+	_test_dormant_kills_follow_prey_catchability(asserts)
 	_test_dormant_predation_grants_meat_for_every_kill(asserts)
 	_test_dormant_hunters_eat_their_kill(asserts)
 	_test_dormant_starvation_leaves_a_carcass(asserts)
@@ -734,6 +736,35 @@ func _test_dormant_predator_hunts_from_feed_floor(asserts) -> void:
 	aggregates[0]["avg_hunger"] = 20.0
 	goal = manager.world_state._select_dormant_goal(sector_key, aggregates[0])
 	asserts.is_true(str(goal.get("goal_kind", "")) != "hunt", "a dormant predator below the feeding floor does not hunt")
+	# A pack goes for its hungriest member once that one is a margin past the floor,
+	# whatever the pack's mean says.
+	aggregates[0]["peak_hunger"] = 45.0
+	goal = manager.world_state._select_dormant_goal(sector_key, aggregates[0])
+	asserts.equal(str(goal.get("goal_kind", "")), "hunt", "a pack whose hungriest member is well past the floor hunts")
+	TestHelpers.destroy_manager(manager)
+
+
+## A group is rebuilt from its records after every coarse step, and its next goal is
+## chosen before the step's reconcile tallies it again, so the peaks the goal reads have
+## to survive the rebuild. They did not: a sleeping herd never went to water for its
+## thirstiest member.
+func _test_dormant_rebuild_keeps_peak_needs(asserts) -> void:
+	var manager = TestHelpers.create_manager(74)
+	manager.lod_enabled = true
+	var world = manager.world_state
+	var position := Vector2(220.0, 20.0)
+	var thirsts := [80.0, 10.0, 10.0]
+	for index in range(thirsts.size()):
+		var animal = TestHelpers.spawn_herbivore(world, position + Vector2(float(index) * 3.0, 0.0), 0)
+		animal.thirst = thirsts[index]
+		animal.hunger = 0.0
+	var sector_key: Vector2i = world._get_sector_key(position)
+	world._sleep_sector(sector_key)
+	world._refresh_dormant_sector_state(sector_key, true)
+	var aggregate: Dictionary = _find_any_dormant_aggregate(world, "herbivore")
+	asserts.near(float(aggregate.get("peak_thirst", -1.0)), 80.0, 0.001, "a rebuilt group keeps its thirstiest member's thirst")
+	asserts.equal(str(world._select_dormant_goal(sector_key, aggregate).get("goal_kind", "")), "water",
+		"and goes to water for it while the group's mean is still low")
 	TestHelpers.destroy_manager(manager)
 
 
@@ -758,6 +789,11 @@ func _test_dormant_carrion_goal_uses_live_reach(asserts) -> void:
 	world.carcasses[stale_id]["created_at"] = world.current_time
 	asserts.equal(int(world._find_dormant_carcass_goal(sector_key, from, radius, max_age, 100.0).get("carcass_id", -1)), stale_id,
 		"fresh carrion within reach is a goal")
+	# A carrion eater has no age limit, but the body still rots on its own clock.
+	var ttl := float(world.carcasses[stale_id]["ttl_seconds"])
+	world.carcasses[stale_id]["created_at"] = world.current_time - (ttl - 2.0)
+	asserts.is_true(world._find_dormant_carcass_goal(sector_key, from, radius, INF, 100.0).is_empty(),
+		"carrion that will have rotted on arrival is no goal, even for an animal that eats any age")
 	TestHelpers.destroy_manager(manager)
 
 
@@ -784,6 +820,44 @@ func _test_sated_dormant_predators_do_not_kill(asserts) -> void:
 	manager.world_state._resolve_dormant_predation(slept[0], sector_state, sector_state.get("dormant_aggregates", []), 0.75, buckets)
 	asserts.greater(float(manager.world_state.get_performance_counters().get("dormant_predation_kills", 0)), 0.0,
 		"the same predator hungry again makes a kill")
+	TestHelpers.destroy_manager(manager)
+
+
+## Sleeping hunters catch each species as readily as `dormant_ecology.prey_catchability`
+## says: a kill goes to the herd with the most catchable animals, not simply the largest,
+## and a species at 0 is never caught.
+func _test_dormant_kills_follow_prey_catchability(asserts) -> void:
+	var manager = TestHelpers.create_manager(72)
+	manager.lod_enabled = true
+	var world = manager.world_state
+	var position := Vector2(20.0, 220.0)
+	for index in range(8):
+		TestHelpers.spawn_species(world, "scavenger", position + Vector2(float(index) * 2.0, 6.0), 3)
+	for index in range(4):
+		TestHelpers.spawn_herbivore(world, position + Vector2(float(index) * 2.0, 0.0), 0)
+	var predator = TestHelpers.spawn_predator(world, position + Vector2(4.0, 4.0))
+	predator.hunger = 60.0
+	var ecology: Dictionary = world.config_bundle["balance"]["dormant_ecology"]
+	ecology["kill_rate_per_prey_per_second"] = 0.5
+	ecology["prey_catchability"] = {"scavenger": 0.25}
+	var slept: Array = _sleep_with_goal(world, position, "predator", "hunt")
+	var sector_state: Dictionary = slept[1]
+	var buckets: Dictionary = world._group_dormant_records(sector_state.get("dormant_records", []))
+	# One hunter, four herbivores and eight scavengers worth two: 6 x 0.5 x 0.75 = 2.25.
+	world._resolve_dormant_predation(slept[0], sector_state, sector_state.get("dormant_aggregates", []), 0.75, buckets)
+	var left := {}
+	for aggregate in sector_state.get("dormant_aggregates", []):
+		left[str(aggregate.get("species_type", ""))] = int(aggregate.get("count", 0))
+	asserts.equal(int(left.get("herbivore", -1)), 2, "two kills, both from the four herbivores")
+	asserts.equal(int(left.get("scavenger", -1)), 8, "not from the larger flock of scavengers that are hard to catch")
+	ecology["prey_catchability"] = {"scavenger": 0.0, "herbivore": 0.0}
+	sector_state["dormant_kill_debt"] = 0.0
+	world._resolve_dormant_predation(slept[0], sector_state, sector_state.get("dormant_aggregates", []), 0.75, buckets)
+	asserts.equal(float(sector_state.get("dormant_kill_debt", -1.0)), 0.0, "prey nobody can catch builds no kill debt")
+	asserts.equal(world._get_sector_prey_pressure(slept[0]), 0.0, "and draws no hunter to its sector")
+	ecology["prey_catchability"] = {"scavenger": 0.25}
+	# The census changes at the reconcile, so the four herbivores are all still in it.
+	asserts.near(world._get_sector_prey_pressure(slept[0]), 6.0, 0.001, "four herbivores, and eight scavengers counting for two")
 	TestHelpers.destroy_manager(manager)
 
 

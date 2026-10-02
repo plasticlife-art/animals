@@ -93,6 +93,7 @@ var _sector_states: Dictionary = {}
 var _sector_size: float = 512.0
 var _sector_grass_cache: Dictionary = {}
 var _prey_pressure_sectors: Array = []
+var _catchable_prey_sectors: Array = []
 var _prey_pressure_refresh_tick: int = -9999
 var _prey_pressure_refresh_ticks: int = 9
 var _path_budget_remaining: int = 0
@@ -220,6 +221,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_sector_states.clear()
 	_sector_grass_cache.clear()
 	_prey_pressure_sectors.clear()
+	_catchable_prey_sectors.clear()
 	_prey_pressure_refresh_tick = -9999
 	_reset_performance_counters()
 	_spawn_initial_agents()
@@ -560,6 +562,7 @@ func shutdown() -> void:
 	_lod_agent_cache.clear()
 	_lod_context_cache_key = PackedInt32Array()
 	_prey_pressure_sectors.clear()
+	_catchable_prey_sectors.clear()
 	_prey_pressure_refresh_tick = -9999
 	spatial_grid = null
 	resource_system = null
@@ -2078,6 +2081,9 @@ const _DORMANT_SPACING_MEMBER_LIMIT := 256
 ## A sleeping herd heads for water when its thirstiest member is this far past
 ## `critical_thirst`, even while the herd's mean is still below it.
 const _DORMANT_PEAK_THIRST_MARGIN := 20.0
+## A sleeping pack of hunters or carrion eaters looks for food when its hungriest member
+## is this far past `feed_hunger_floor`, even while the pack's mean is still below it.
+const _DORMANT_PEAK_HUNGER_MARGIN := 10.0
 ## How far, in grass cells, a hungry sleeping animal looks for a bite once the cells
 ## beside it are bare.
 const _DORMANT_FORAGE_REACH_CELLS := 4.0
@@ -3394,6 +3400,8 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 			"ready_females": 0,
 			"old_age_count": 0,
 			"max_age_count": 0,
+			"peak_hunger": 0.0,
+			"peak_thirst": 0.0,
 			"record_ids": [],
 			"record_positions": PackedVector2Array(),
 		})
@@ -3457,9 +3465,11 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 	return aggregates
 
 
-## Adds one record to the maturity, readiness and age tallies the coarse step reads.
+## Adds one record to the maturity, readiness, age and peak need tallies the coarse step reads.
 ## Shared by the aggregate build and the per-step reconcile so the two cannot drift.
 func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
+	aggregate["peak_hunger"] = maxf(float(aggregate.get("peak_hunger", 0.0)), float(record.get("hunger", 0.0)))
+	aggregate["peak_thirst"] = maxf(float(aggregate.get("peak_thirst", 0.0)), float(record.get("thirst", 0.0)))
 	var species_config: Dictionary = config_bundle.get("species", {}).get(str(record.get("species_type", "")), {})
 	var reproduction_config: Dictionary = species_config.get("reproduction", {})
 	var aging_config: Dictionary = species_config.get("aging", {})
@@ -3587,24 +3597,31 @@ func _refresh_prey_pressure_sectors() -> void:
 			"sector": sector_key,
 			"center": _sector_key_to_rect(sector_key).get_center(),
 			"pressure": pressure,
+			"catchable": _sector_catchable_prey(sector_state),
 		})
+	# Ranked twice, since the best sectors by heads are not the best by what a sleeping
+	# hunter can catch: by heads alone, big flocks of scavengers pushed the herds a
+	# sleeping pack should go for out of the list.
+	var catchable: Array = entries.duplicate()
 	entries.sort_custom(func(a, b): return int(a["pressure"]) > int(b["pressure"]))
-	if entries.size() > PREY_PRESSURE_CACHE_LIMIT:
-		entries = entries.slice(0, PREY_PRESSURE_CACHE_LIMIT)
-	_prey_pressure_sectors = entries
+	catchable.sort_custom(func(a, b): return float(a["catchable"]) > float(b["catchable"]))
+	_prey_pressure_sectors = entries.slice(0, PREY_PRESSURE_CACHE_LIMIT)
+	_catchable_prey_sectors = catchable.slice(0, PREY_PRESSURE_CACHE_LIMIT)
 
 
 ## Best prey-bearing sector within `radius`, scored as the dormant selector always scored
-## it: pressure dominates and distance breaks ties.
-func find_prey_pressure_goal(position: Vector2, radius: float) -> Dictionary:
+## it: pressure dominates and distance breaks ties. A sleeping hunter counts the prey by
+## how readily it catches them (`catchable`, see `_sector_catchable_prey()`); a live one
+## counts heads and finds out for itself which of them get away.
+func find_prey_pressure_goal(position: Vector2, radius: float, catchable: bool = false) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score: float = -INF
-	for entry in _prey_pressure_sectors:
+	for entry in (_catchable_prey_sectors if catchable else _prey_pressure_sectors):
 		var center: Vector2 = entry["center"]
 		var distance: float = position.distance_to(center)
 		if distance > radius:
 			continue
-		var score: float = float(entry["pressure"]) * 10.0 - distance * 0.1
+		var score: float = float(entry["catchable" if catchable else "pressure"]) * 10.0 - distance * 0.1
 		if score <= best_score:
 			continue
 		best_score = score
@@ -3617,7 +3634,7 @@ func find_prey_pressure_goal(position: Vector2, radius: float) -> Dictionary:
 
 
 func _find_dormant_prey_goal(position: Vector2, radius: float) -> Dictionary:
-	return find_prey_pressure_goal(position, radius)
+	return find_prey_pressure_goal(position, radius, true)
 
 
 ## `max_age` mirrors `AgentBase.accepts_carcass()`, so a sleeping aggregate is
@@ -3642,9 +3659,12 @@ func _find_dormant_carcass_goal(sector_key: Vector2i, position: Vector2, radius:
 				var distance_sq: float = position.distance_squared_to(carcass_position)
 				if distance_sq >= best_distance_sq or distance_sq > radius * radius:
 					continue
-				# A body that will be too old to eat by the time the group arrives is no goal.
-				if max_age != INF and travel_speed > 0.0 \
-						and current_time - float(carcass.get("created_at", 0.0)) + sqrt(distance_sq) / travel_speed > max_age:
+				# A body that will be too old to eat, or gone, by the time the group arrives is
+				# no goal. Carrion eaters have no age limit, but a body still rots on its own
+				# `ttl_seconds`, and they used to walk to ones that were gone on arrival.
+				var eatable_for := minf(max_age, float(carcass.get("ttl_seconds", INF)))
+				if eatable_for != INF and travel_speed > 0.0 \
+						and current_time - float(carcass.get("created_at", 0.0)) + sqrt(distance_sq) / travel_speed > eatable_for:
 					continue
 				best_distance_sq = distance_sq
 				best = {
@@ -3772,13 +3792,17 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	# Thirst first: it is the tighter clock. A predator has 36.7 s of headroom between
 	# `critical_thirst` and death, against 53.75 s for hunger, so checking prey first
 	# could send a thirsty predator across the map and kill it on the way.
-	var predator_thirst := float(aggregate.get("avg_thirst", 0.0))
+	var predator_thirst := maxf(float(aggregate.get("avg_thirst", 0.0)), float(aggregate.get("peak_thirst", 0.0)) - _DORMANT_PEAK_THIRST_MARGIN)
 	if predator_thirst >= critical_thirst * float(dormant_config.get("predator_thirst_trigger_ratio", 0.6)):
 		var predator_water_goal: Dictionary = _find_nearest_water_goal(center)
 		if not predator_water_goal.is_empty():
 			return predator_water_goal
 	var travel_speed := _get_dormant_travel_speed(species_config)
-	var predator_hunger := float(aggregate.get("avg_hunger", 0.0))
+	# Its hungriest member decides, less a margin, as the thirstiest decides a herd's trip
+	# to water. Every predator in a sector sleeps in one pack, and by the mean alone a pack
+	# of twenty sat just under the feeding floor and wandered while half of it was hungry
+	# and one member was close to starving.
+	var predator_hunger := maxf(float(aggregate.get("avg_hunger", 0.0)), float(aggregate.get("peak_hunger", 0.0)) - _DORMANT_PEAK_HUNGER_MARGIN)
 	# Eat from the floor the live path eats from (`is_hungry_enough_to_feed()`), and look
 	# for carrion as far as a live animal would (`carcass_search_radius_for()`). The coarse
 	# search used to reach `carcass.ttl_seconds * travel speed` - most of the map - below
@@ -3919,6 +3943,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	# of per-sector aggregates.
 	var prey_aggregates: Array = []
 	var local_prey: int = 0
+	var catchable_prey: float = 0.0
+	var catchability: Dictionary = dormant_config.get("prey_catchability", {})
 	var hunting_predators: int = 0
 	var hunter_species: String = ""
 	var hunter_center := Vector2.ZERO
@@ -3951,6 +3977,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 			if hunted_species.has(str(aggregate.get("species_type", ""))):
 				prey_aggregates.append(aggregate)
 				local_prey += count
+				catchable_prey += float(count) * _prey_catchability(catchability, aggregate)
 
 	if hunting_predators > 0:
 		performance_counters["dormant_hunting_predator_steps"] += hunting_predators
@@ -3964,7 +3991,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var debt: float = float(sector_state.get("dormant_kill_debt", 0.0))
 	if hunting_predators > 0 and local_prey > 0:
 		var kill_rate: float = float(dormant_config.get("kill_rate_per_prey_per_second", 0.001667))
-		debt += float(hunting_predators) * float(local_prey) * kill_rate * elapsed
+		debt += float(hunting_predators) * catchable_prey * kill_rate * elapsed
 		kills = mini(local_prey, int(floor(debt)))
 		debt -= float(kills)
 	else:
@@ -3975,11 +4002,12 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 
 	if kills > 0:
 		var remaining: int = kills
-		# Largest herd first: a predator in a sector hunts where the prey actually is.
-		# The group key breaks ties, since `sort_custom` is not stable.
+		# Largest herd first: a predator in a sector hunts where the prey actually is,
+		# counted by how catchable it is. The group key breaks ties, since `sort_custom`
+		# is not stable.
 		prey_aggregates.sort_custom(func(a, b):
-			var count_a := int(a.get("count", 0))
-			var count_b := int(b.get("count", 0))
+			var count_a := float(a.get("count", 0)) * _prey_catchability(catchability, a)
+			var count_b := float(b.get("count", 0)) * _prey_catchability(catchability, b)
 			if count_a != count_b:
 				return count_a > count_b
 			return _get_dormant_aggregate_key(str(a.get("species_type", "")), int(a.get("group_id", -1))) \
@@ -3995,6 +4023,18 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 			_queue_dormant_deaths(aggregate, "predation", taken, {"near": hunter_center, "hunter": hunter_species})
 		kills -= remaining
 		performance_counters["dormant_predation_kills"] += kills
+
+
+## How readily a sleeping hunter catches one of this group's species, against 1 for a
+## species it runs down as easily as the kill rate assumes
+## (`dormant_ecology.prey_catchability`). The coarse ledger has no chase, so this stands
+## in for the escapes a live hunt has: a scavenger outruns a predator at a sprint (132
+## against 128) and sees it coming at 260, and at full fidelity scavengers were a third
+## of the prey and a fifth of the kills. At 1 for everyone they were three quarters of
+## the coarse ledger's kills, and in 96-minute LOD runs predators held on their cap ate
+## them out on half the seeds.
+static func _prey_catchability(catchability: Dictionary, aggregate: Dictionary) -> float:
+	return clampf(float(catchability.get(str(aggregate.get("species_type", "")), 1.0)), 0.0, 1.0)
 
 
 ## The available carcass in a sector nearest `position` that `species_type` would eat.
@@ -4619,9 +4659,8 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	var record_positions := PackedVector2Array()
 	var position_sum := Vector2.ZERO
 	var needs_sum := Vector3.ZERO
-	var peak_thirst := 0.0
 	var age_sum := 0.0
-	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count"]:
+	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count", "peak_hunger", "peak_thirst"]:
 		aggregate[key] = 0
 	for record in members:
 		var position: Vector2 = record.get("position", bounds.get_center())
@@ -4629,10 +4668,8 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 		record_positions.append(position)
 		position_sum += position
 		needs_sum += Vector3(float(record.get("hunger", 0.0)), float(record.get("thirst", 0.0)), float(record.get("energy", 0.0)))
-		peak_thirst = maxf(peak_thirst, float(record.get("thirst", 0.0)))
 		age_sum += float(record.get("age", 0.0))
 		_tally_dormant_member(aggregate, record)
-	aggregate["peak_thirst"] = peak_thirst
 	aggregate["count"] = count
 	aggregate["record_ids"] = record_ids
 	aggregate["record_positions"] = record_positions
@@ -4728,11 +4765,26 @@ func _dormant_aggregate_reached_goal(sector_key: Vector2i, aggregate: Dictionary
 	return center.distance_to(goal_position) <= proximity
 
 
-func _get_sector_prey_pressure(sector_key: Vector2i) -> int:
+func _get_sector_prey_pressure(sector_key: Vector2i) -> float:
 	var sector_state: Dictionary = _sector_states.get(sector_key, {})
 	if sector_state.is_empty():
-		return 0
-	return _sector_species_count(sector_state, _prey_species_ids)
+		return 0.0
+	return _sector_catchable_prey(sector_state)
+
+
+## A sector's prey, each counted by how readily a sleeping hunter catches its species
+## (`_prey_catchability()`): what draws sleeping hunters there and what keeps them hunting
+## where they stand. Counted by heads alone, a flock of scavengers that nothing could catch
+## held hungry hunters beside it.
+func _sector_catchable_prey(sector_state: Dictionary) -> float:
+	var counts: Dictionary = sector_state.get("species_counts", {})
+	if counts.is_empty():
+		return 0.0
+	var catchability: Dictionary = config_bundle.get("balance", {}).get("dormant_ecology", {}).get("prey_catchability", {})
+	var total := 0.0
+	for species_id in _prey_species_ids:
+		total += float(counts.get(species_id, 0)) * clampf(float(catchability.get(species_id, 1.0)), 0.0, 1.0)
+	return total
 
 
 ## Each hungry member grazes the cell it stands on, the way a live herbivore takes a
