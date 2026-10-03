@@ -128,7 +128,9 @@ pipeline instead, which reports success even when tests fail:
 
 ## Controls
 
-- `Esc`: open or close the pause menu
+- `Esc`: open or close the pause menu (on the setup screen it does nothing)
+- `F11`: full screen on or off; «Настройки» in the pause menu and on the setup screen also sets
+  the size of the interface (75-125 %), saved in `user://settings.cfg`
 - `F1`: open or close the help screen
 - `L`: open or close the chronicle («Летопись»): the selected animal's family and the records
 - `F12`: switch developer mode; in it `Tab` shows or hides the developer panel and charts
@@ -185,7 +187,7 @@ best hunters. The card's «родословная» link opens it on that animal
 
 When a pinned animal dies, or the selected one, or one that held a record, it gets an epitaph:
 how long it lived, its young and its living descendants, its kills, how and where it died. It
-stays on a card at the top right for a few seconds - «Где это» takes the camera there - and in
+stays on a card at the right for a few seconds - «Где это» takes the camera there - and in
 the feed in gold, and the dead pinned row keeps it as a tooltip.
 
 Every watering hole has a name, and so has every district of the map, after what grows there:
@@ -308,6 +310,8 @@ scripts/ui/
   epitaph_card.gd
   chronicle_window.gd
   why_text.gd
+  settings_store.gd
+  settings_panel.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

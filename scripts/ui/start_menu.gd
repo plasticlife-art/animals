@@ -19,6 +19,7 @@ extends CenterContainer
 signal start_requested(selection: Dictionary)
 signal continue_requested()
 signal help_requested()
+signal settings_requested()
 signal exit_requested()
 
 const TITLE_TEXT := "Engine of Ecosystem"
@@ -81,6 +82,11 @@ func _build_root_page() -> PanelContainer:
 	help_button.text = "Помощь"
 	help_button.pressed.connect(func(): help_requested.emit())
 	column.add_child(help_button)
+
+	var settings_button := Button.new()
+	settings_button.text = "Настройки"
+	settings_button.pressed.connect(func(): settings_requested.emit())
+	column.add_child(settings_button)
 
 	var exit_button := Button.new()
 	exit_button.text = "Выход"

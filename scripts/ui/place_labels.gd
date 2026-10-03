@@ -79,7 +79,8 @@ func _draw() -> void:
 	if places == null:
 		return
 	var zoom: float = maxf(camera.zoom.x, 0.0001)
-	var strength: Array = fade(_config, zoom)
+	# Fading follows the zoom the player chose; the text's size, the camera's own.
+	var strength: Array = fade(_config, camera.user_zoom() if camera.has_method("user_zoom") else zoom)
 	var view: Rect2 = camera.get_visible_world_rect() if camera.has_method("get_visible_world_rect") else Rect2()
 	var margin := 600.0 / zoom
 	view = view.grow(margin)

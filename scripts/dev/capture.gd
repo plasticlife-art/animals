@@ -6,7 +6,9 @@ extends SceneTree
 # Presets: `selected` / `selected_hud` select an animal (with the Tab panels for the
 # second), `herd` selects a grazer in a herd so its herd card shows, `story` also pins it
 # and two others, `chronicle` then opens the chronicle on it, `epitaph` tells the death of one
-# pinned animal far away, `water` turns on the minimap's water, `menu` shoots the setup screen.
+# pinned animal far away, `scaled` is `story` under a 125 % interface (applied, not saved),
+# `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
+# the setup screen.
 # Loads the real main scene, parks the camera, waits for
 # LOD sectors around it to reify, then writes a PNG.
 #
@@ -56,7 +58,7 @@ func _process(_delta: float) -> bool:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
-					"epitaph"]:
+					"epitaph", "scaled", "settings"]:
 				selection["style"] = _preset
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
@@ -112,7 +114,11 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	var story_like := _preset in ["story", "chronicle", "epitaph"]
+	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled"]
+	if _preset == "scaled":
+		SettingsStore.apply({"fullscreen": false, "ui_scale": 1.25}, root, _camera)
+	if _preset == "settings":
+		_main._open_settings("pause")
 	if _preset == "herd" or story_like:
 		# A grazer in a herd, so the herd card is up above the animal's own.
 		for agent in agents:

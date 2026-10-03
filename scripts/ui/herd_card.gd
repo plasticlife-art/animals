@@ -26,6 +26,7 @@ var losses = HerdLossLogScript.new()
 ## What the card shows now (`HerdReadout.summarize()`), empty while hidden.
 var summary: Dictionary = {}
 var _allowed: bool = true
+var has_room: bool = true
 var _bars: Array = []
 var _title: Label
 var _counts: Label
@@ -95,6 +96,15 @@ func set_allowed(value: bool) -> void:
 	refresh()
 
 
+## False when the selected animal's card and the pinned list leave no room above (a large
+## interface, many pins): the card gives way rather than covering them.
+func set_room(value: bool) -> void:
+	if has_room == value:
+		return
+	has_room = value
+	refresh()
+
+
 ## Pressed while the camera follows the herd. Following the animal alone is the card
 ## below's button, so this one shows only the flock mode.
 func set_follow_state(mode: String) -> void:
@@ -121,7 +131,7 @@ func refresh() -> void:
 	if simulation_manager != null and simulation_manager.world_state != null:
 		world = simulation_manager.world_state
 		agent = simulation_manager.get_selected_agent()
-	if not _allowed or agent == null or not agent.is_alive or not HerdReadoutScript.has_herd(world, agent):
+	if not _allowed or not has_room or agent == null or not agent.is_alive or not HerdReadoutScript.has_herd(world, agent):
 		summary = {}
 		_bars = []
 		visible = false

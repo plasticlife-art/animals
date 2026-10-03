@@ -23,6 +23,7 @@ extends Node2D
 @onready var story_feed = $CanvasLayer/StoryFeed
 @onready var epitaph_card = $CanvasLayer/EpitaphCard
 @onready var chronicle_window = $CanvasLayer/ChronicleWindow
+@onready var settings_panel = $CanvasLayer/SettingsPanel
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -30,6 +31,7 @@ extends Node2D
 @onready var help_screen = $CanvasLayer/HelpScreen
 @onready var resume_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/ResumeButton
 @onready var help_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/HelpButton
+@onready var settings_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/SettingsButton
 @onready var restart_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/RestartButton
 @onready var exit_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/ExitButton
 
@@ -62,6 +64,14 @@ var _pending_focus_id: int = -1
 ## Where `_close_help()` goes back to: "start", "pause", "game", or "" when the
 ## help screen is down.
 var _help_return: String = ""
+## The player's own settings (`SettingsStore`), and where `_close_settings()` goes back to.
+var _settings: Dictionary = {}
+var _settings_return: String = ""
+## The season bar's and the strip's offsets as the scene has them, before `_layout_hud()` moves
+## them aside, and the herd card's height when last shown.
+var _climate_offsets := Vector2.ZERO
+var _strip_offsets := Vector2.ZERO
+var _herd_height: float = 0.0
 var _overview_mode: bool = false
 
 
@@ -72,6 +82,15 @@ var _overview_mode: bool = false
 ## binding lives in `_start_simulation` rather than here.
 func _ready() -> void:
 	_apply_ui_theme()
+	_climate_offsets = Vector2(climate_indicator.offset_left, climate_indicator.offset_right)
+	_strip_offsets = Vector2(ecology_strip.offset_left, ecology_strip.offset_right)
+	# Before the first frame, so the window opens at the size and scale the player left it.
+	_settings = SettingsStore.load_settings()
+	SettingsStore.apply(_settings, get_window(), world_camera)
+	start_menu.settings_requested.connect(_open_settings.bind("start"))
+	settings_button.pressed.connect(_open_settings.bind("pause"))
+	settings_panel.changed.connect(_on_settings_changed)
+	settings_panel.closed.connect(_close_settings)
 	set_hud_visible(false)
 	_set_pause_menu_visible(false)
 	start_menu.start_requested.connect(_on_start_requested)
@@ -273,6 +292,7 @@ func _process(_delta: float) -> void:
 	var started := Time.get_ticks_usec()
 	_sync_lod_focus_rect()
 	_sync_day_night_tint()
+	_layout_hud()
 	if simulation_manager != null and simulation_manager.world_state != null:
 		simulation_manager.record_render_phase("ui",
 			float(Time.get_ticks_usec() - started) / 1000.0)
@@ -375,6 +395,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_follow_pressed = toggle_follow_pressed or event.keycode == KEY_F
 		toggle_help_pressed = toggle_help_pressed or event.keycode == KEY_F1
 
+	# F11 switches full screen whatever is up.
+	if _is_key(event, "toggle_fullscreen", KEY_F11):
+		_settings["fullscreen"] = not bool(_settings.get("fullscreen", false))
+		_on_settings_changed(_settings)
+		settings_panel.show_settings(_settings)
+		get_viewport().set_input_as_handled()
+		return
+	# Settings, like help, answer Esc themselves and leave nothing behind them to act on.
+	if settings_panel.visible:
+		if cancel_pressed:
+			_close_settings()
+		get_viewport().set_input_as_handled()
+		return
+
 	# Help is answered before anything else: while it is up both Esc and F1 mean
 	# "go back", and Tab and F have nothing behind it to act on.
 	if help_screen.visible:
@@ -415,8 +449,39 @@ func _unhandled_input(event: InputEvent) -> void:
 			_apply_focus_mode("off" if simulation_manager.focus_mode != "off" else "agent")
 		get_viewport().set_input_as_handled()
 	elif cancel_pressed:
-		toggle_pause_menu()
+		# The setup screen has no pause menu behind it: before the first world its buttons are
+		# not even wired, and closing it would hand the mouse back to a world under the menu.
+		if not start_menu.visible:
+			toggle_pause_menu()
 		get_viewport().set_input_as_handled()
+
+
+## Keeps the HUD from overlapping on a small canvas - a large interface, a small window, many
+## pins: the season bar and the strip step right of the player bar, and the herd card gives way
+## when the selected animal's card and the pinned list leave it no room. A few rects a frame.
+func _layout_hud() -> void:
+	var shift := 0.0
+	if player_bar.visible:
+		var view_width: float = get_viewport().get_visible_rect().size.x
+		shift = maxf(0.0, player_bar.get_global_rect().end.x + 12.0 - (view_width * 0.5 + _climate_offsets.x))
+	if not is_equal_approx(climate_indicator.offset_left, _climate_offsets.x + shift):
+		climate_indicator.offset_left = _climate_offsets.x + shift
+		climate_indicator.offset_right = _climate_offsets.y + shift
+		ecology_strip.offset_left = _strip_offsets.x + shift
+		ecology_strip.offset_right = _strip_offsets.y + shift
+	if herd_card.visible:
+		_herd_height = herd_card.size.y
+	if not selection_card.visible or _herd_height <= 0.0:
+		herd_card.set_room(true)
+		return
+	var ceiling := 0.0
+	if pinned_bar.visible:
+		ceiling = pinned_bar.get_global_rect().end.y
+	elif player_bar.visible:
+		ceiling = player_bar.get_global_rect().end.y
+	var top: float = card_stack.get_global_rect().end.y - selection_card.size.y - 8.0 - _herd_height
+	# A little slack before it comes back, so it does not blink at the edge.
+	herd_card.set_room(top >= ceiling + (8.0 if herd_card.has_room else 24.0))
 
 
 ## An action, or its key by where it sits on the keyboard, so a Russian layout presses it too.
@@ -517,6 +582,37 @@ func _close_help() -> void:
 			_exit_menu_overlay()
 
 
+func _open_settings(from: String) -> void:
+	if settings_panel.visible:
+		return
+	_settings_return = from
+	start_menu.visible = false
+	pause_menu.visible = false
+	settings_panel.show_settings(_settings)
+	settings_panel.visible = true
+	_sync_overlay_blur()
+
+
+func _close_settings() -> void:
+	if not settings_panel.visible:
+		return
+	settings_panel.visible = false
+	var came_from := _settings_return
+	_settings_return = ""
+	if came_from == "start":
+		_show_start_menu(SaveSystem.latest_slot() != "")
+	else:
+		_set_pause_menu_visible(true)
+		resume_button.grab_focus()
+
+
+## A setting changed: on the window and the camera at once, and in the file.
+func _on_settings_changed(values: Dictionary) -> void:
+	_settings = values.duplicate()
+	SettingsStore.save_settings(_settings)
+	SettingsStore.apply(_settings, get_window(), world_camera)
+
+
 ## The pause menu's second button reopens the setup screen rather than silently
 ## restarting: choosing options is the point, and Continue goes back.
 func _on_new_simulation_pressed() -> void:
@@ -576,7 +672,7 @@ func _apply_ui_theme() -> void:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact
-	for path in ["CanvasLayer/PauseMenu", "CanvasLayer/StartMenu", "CanvasLayer/HelpScreen"]:
+	for path in ["CanvasLayer/PauseMenu", "CanvasLayer/StartMenu", "CanvasLayer/HelpScreen", "CanvasLayer/SettingsPanel"]:
 		var menu_node := get_node_or_null(path)
 		if menu_node is Control:
 			menu_node.theme = roomy
@@ -689,7 +785,7 @@ func _set_pause_menu_visible(value: bool) -> void:
 ## so it is derived from all three rather than owned by any one of them. Setting
 ## it per screen used to mean whichever ran last won, and the setup screen lost.
 func _sync_overlay_blur() -> void:
-	pause_blur.visible = start_menu.visible or pause_menu.visible or help_screen.visible
+	pause_blur.visible = start_menu.visible or pause_menu.visible or help_screen.visible or settings_panel.visible
 
 
 func _sync_lod_focus_rect() -> void:

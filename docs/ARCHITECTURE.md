@@ -628,6 +628,25 @@ Utility actions inside `alive`:
 - Its tooltip names the place under the cursor (`PlaceNames.place_at()`); `PixelUiTheme` styles
   tooltips on parchment
 
+### `SettingsStore`, `SettingsPanel`
+
+- The player's own settings, apart from the game's config: full screen and the interface's size
+  (75, 90, 100, 110, 125 %; at 150 % the selected animal's card alone fills the left column of
+  the 1600x900 layout), in `user://settings.cfg` through `ConfigFile`, read and applied in
+  `MainController._ready()` before the first frame and written on every change. The panel opens
+  from the pause menu's «Настройки» and the setup screen's, like help, and goes back there; F11
+  switches full screen from anywhere. Volume waits for sound
+- The interface's size is the window's `content_scale_factor`. With `canvas_items` stretch that
+  scales the world too, so `GameCamera.set_ui_scale()` divides its zoom (and its zoom limit) by
+  the same factor and the map keeps its size on screen; `user_zoom()` is the magnification the
+  player chose, which `PlaceLabels` fades on
+- `MainController._layout_hud()` keeps a small canvas tidy each frame: the season bar and the
+  strip step right of the player bar, and `HerdCard.set_room(false)` lets the herd card give way
+  when the selected animal's card and the pinned list leave it no room (with slack before it
+  comes back)
+- Esc on the setup screen no longer opens the pause menu behind it, which before the first world
+  had no buttons wired and on closing handed the mouse to a world under the menu
+
 ### `WhyText`
 
 - The card's «Почему:» line: the selected animal's last reason (shipped for the inspected animal
@@ -652,7 +671,8 @@ Utility actions inside `alive`:
 
 ### `EpitaphCard`
 
-- Parchment card at the top right, clear of the selected animal in the middle, with the epitaph of a death worth remembering, «Где
+- Parchment card at the right under the strip's level, clear of the selected animal in the middle
+  and of the strip at any interface size, with the epitaph of a death worth remembering, «Где
   это» (camera to the place) and «Родословная» (the chronicle); ten seconds each, counted only
   while the game runs, several queued; hidden by the start menu
 

@@ -2,7 +2,8 @@ class_name EpitaphCard
 extends PanelContainer
 
 ## A death worth remembering - a pinned animal's, the selected one's, a record holder's - on
-## parchment at the top right, clear of the animal in the middle, for a few seconds: its epitaph (`Epitaph`), «Где это» to
+## parchment at the right, below the ecology strip and clear of the animal in the middle, for a
+## few seconds: its epitaph (`Epitaph`), «Где это» to
 ## take the camera to where it died, «Родословная» to open its family in the chronicle. Several
 ## at once wait their turn; the countdown stops while the game is paused. Hidden by the start
 ## menu and in photo mode.

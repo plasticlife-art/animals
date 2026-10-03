@@ -21,6 +21,10 @@ var input_enabled: bool = true
 var simulation_manager: SimulationManager
 var _zoom_min: float = 0.1
 var _zoom_max: float = 4.0
+## The interface's size (`SettingsStore`). The window's content scale grows the world with the
+## interface, so the camera's own zoom is divided by it and the map keeps its size on screen;
+## `user_zoom()` is the magnification the player chose, for anything that thresholds on zoom.
+var _ui_scale: float = 1.0
 var _screen_bounds: Rect2 = Rect2()
 var _agent_renderer = null
 var _dragging: bool = false
@@ -50,7 +54,7 @@ func reset_to_world(bounds: Rect2) -> void:
 	make_current()
 	_refresh_screen_bounds()
 	_recalculate_zoom_limits()
-	_set_zoom_factor(default_zoom)
+	_set_zoom_factor(default_zoom / _ui_scale)
 	global_position = WorldProjection.to_screen(world_bounds.get_center())
 	_clamp_to_bounds()
 
@@ -69,6 +73,24 @@ func get_visible_world_rect() -> Rect2:
 	if world_bounds.size.is_zero_approx():
 		return Rect2()
 	return WorldProjection.world_rect_covering(_get_camera_view_rect()).intersection(world_bounds)
+
+
+## The magnification the player chose, whatever the interface's size.
+func user_zoom() -> float:
+	return zoom.x * _ui_scale
+
+
+## Follows the interface's size (`SettingsStore.apply()`, after the window's content scale is
+## set): the same view of the map, now under a larger or smaller interface.
+func set_ui_scale(scale: float) -> void:
+	var chosen := user_zoom()
+	_ui_scale = maxf(0.1, scale)
+	if world_bounds.size.is_zero_approx():
+		# No world yet to clamp against: `reset_to_world()` sets the zoom when one comes.
+		zoom = Vector2.ONE * (chosen / _ui_scale)
+		return
+	_recalculate_zoom_limits()
+	_set_zoom_factor(chosen / _ui_scale)
 
 
 func move_to_world_position(position: Vector2, clear_focus: bool = true) -> void:
@@ -202,7 +224,7 @@ func _recalculate_zoom_limits() -> void:
 	var viewport_size := get_viewport_rect().size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		_zoom_min = 0.1
-		_zoom_max = maxf(0.1, max_zoom)
+		_zoom_max = maxf(0.1, max_zoom / _ui_scale)
 		return
 
 	if _screen_bounds.size.is_zero_approx():
@@ -212,7 +234,7 @@ func _recalculate_zoom_limits() -> void:
 		_zoom_min = 0.1
 	else:
 		_zoom_min = clampf(minf(viewport_size.x / extent.x, viewport_size.y / extent.y), 0.02, 1.0)
-	_zoom_max = maxf(_zoom_min, max_zoom)
+	_zoom_max = maxf(_zoom_min, max_zoom / _ui_scale)
 
 
 func _set_zoom_factor(value: float, anchor_screen_position: Variant = null) -> void:
