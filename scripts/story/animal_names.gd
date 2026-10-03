@@ -1,0 +1,165 @@
+class_name AnimalNames
+extends RefCounted
+
+## A name for every animal, in Russian, from a list for its species and sex: «Ветка», and
+## «Ветка II» while another Ветка is alive. Names belong to the view - nothing in the
+## simulation reads them - and are kept with the save, so an animal keeps its name.
+##
+## Which name an animal gets is a hash of its id - the first of a few hashed picks that no
+## living animal answers to - so the same world names the same animals the same way. Only
+## when every pick is taken does the name get a number, the lowest one no living animal of
+## that name holds: a death frees it, as a herd names a calf after one it lost.
+## The order animals are named in - founders by id at the start, then each birth as it is
+## heard - is the order of the world's events, so it repeats with them.
+
+const LISTS := {
+	"herbivore": {
+		"female": ["Ветка", "Звёздочка", "Ласка", "Берёзка", "Росинка", "Тучка", "Зорька", "Лань", "Искра",
+			"Капля", "Ромашка", "Былинка", "Дымка", "Пушинка", "Снежинка", "Рябинка", "Калинка",
+			"Ягодка", "Тихоня", "Вербочка", "Метелица", "Зарянка", "Иволга", "Мята", "Липа", "Купава",
+			"Заря", "Поляна", "Осока", "Ива", "Черника", "Брусника", "Синичка", "Белянка", "Пёстрая",
+			"Кроха", "Пчёлка", "Ольха", "Незабудка", "Василиса", "Ракита", "Сирень", "Кувшинка",
+			"Веснянка", "Голубка", "Ласточка", "Певунья", "Ночка", "Дубрава", "Ёлочка", "Малина",
+			"Смородина", "Осинка", "Снежана", "Вьюжка", "Морошка", "Земляника", "Медуница", "Душица",
+			"Фиалка", "Мальва", "Лебёдушка", "Синева", "Радуга", "Светлянка", "Луна", "Зимушка",
+			"Хвоинка", "Полынь", "Вербена", "Арника", "Ежевика", "Голубика", "Клюква", "Черёмуха",
+			"Яблонька", "Вишня", "Тропинка", "Капелька", "Росава"],
+		"male": ["Бурый", "Рогач", "Ветер", "Гром", "Дубок", "Боровик", "Стриж", "Сокол", "Яр", "Туман",
+			"Буян", "Пепел", "Клён", "Тополь", "Лесник", "Странник", "Ясень", "Вихрь", "Кедр", "Мох",
+			"Бор", "Каштан", "Орех", "Граф", "Князь", "Крепыш", "Смельчак", "Седой", "Ясный", "Тихон",
+			"Ярило", "Овраг", "Камень", "Ручей", "Горец", "Удалец", "Север", "Беркут", "Явор",
+			"Багульник", "Валун", "Утёс", "Перевал", "Гранит", "Дозор", "Рассвет", "Закат", "Полдень",
+			"Зенит", "Бурелом", "Валежник", "Можжевельник", "Вереск", "Чертополох", "Лопух", "Репей",
+			"Желудь", "Дуб", "Вяз", "Граб", "Осокорь", "Рокот", "Набат", "Звон", "Гул", "Шорох",
+			"Шёпот", "Зарево", "Холм", "Курган", "Перекат", "Плёс", "Омут", "Брод", "Ветрогон",
+			"Сугроб", "Иней", "Мороз", "Ливень", "Гордей"],
+	},
+	"predator": {
+		"female": ["Огнёвка", "Рыжуха", "Лисичка", "Патрикеевна", "Алиса", "Хитрюга", "Искорка", "Рябина",
+			"Медь", "Осень", "Ржавка", "Плутовка", "Злата", "Огневица", "Шустрая", "Краса", "Кумушка",
+			"Лучина", "Заряна", "Жарка", "Рыжинка", "Вьюга", "Лиска", "Зоряна", "Багрянка", "Калина",
+			"Ночка", "Тень", "Смута", "Веста", "Лукавка", "Огнея", "Пламенка", "Каштанка", "Бестия",
+			"Проказа", "Затея", "Хитринка", "Рыжая", "Янтарка", "Охра", "Корица", "Умница", "Сказка",
+			"Зарница", "Ворожея", "Мгла", "Полночь", "Заноза", "Огонька"],
+		"male": ["Рыжик", "Огонёк", "Хитрец", "Лукавый", "Пламень", "Медяк", "Ржавый", "Шельмец", "Хват",
+			"Плут", "Жар", "Багрец", "Сполох", "Вьюн", "Кузя", "Рыж", "Ловкач", "Шустрик", "Факел",
+			"Костёр", "Огнедар", "Сумрак", "Мираж", "Патрик", "Уголь", "Колос", "Ухарь", "Рассвет",
+			"Сорвиголова", "Вихрун", "Пройдоха", "Проныра", "Шалун", "Озорник", "Задор", "Жгучий",
+			"Червонец", "Янтарь", "Медовик", "Ржавчик", "Хитрован", "Ловец", "Следопыт", "Бродяга",
+			"Скиталец", "Полуночник", "Хвостатый", "Огнёвик", "Лучик", "Шмель"],
+	},
+	"scavenger": {
+		"female": ["Чернушка", "Рябушка", "Пеструшка", "Крапинка", "Хохлатка", "Серушка", "Курочка",
+			"Малинка", "Брусничка", "Голубка", "Пятнашка", "Пёрышко", "Вертушка", "Чечётка",
+			"Невеличка", "Хлопотунья", "Ряба", "Крошка", "Смородинка", "Вишенка", "Метла", "Полушка",
+			"Копейка", "Зернинка", "Росянка", "Говорушка", "Тетёрочка", "Сойка", "Капелька", "Тишина",
+			"Хлопушка", "Щебетунья", "Болтушка", "Квочка", "Наседка", "Серёжка", "Бусинка",
+			"Горошинка", "Пшёнка", "Крупинка", "Гречка", "Клюковка", "Черничка", "Шишечка", "Веточка",
+			"Пестрянка", "Чернавка", "Хохотушка", "Непоседа", "Тараторка"],
+		"male": ["Уголёк", "Чернец", "Косач", "Бровастый", "Токарь", "Лирохвост", "Гребешок", "Буран",
+			"Смоль", "Сажа", "Барин", "Задира", "Певун", "Бормотун", "Шумила", "Черныш", "Коготь",
+			"Ветрогон", "Крикун", "Хохолок", "Щёголь", "Франт", "Бас", "Токун", "Петушок", "Перун",
+			"Чернобров", "Гордец", "Забияка", "Трубач", "Дьячок", "Звонарь", "Глашатай", "Гусляр",
+			"Балагур", "Хвастун", "Красавчик", "Кавалер", "Модник", "Вожак", "Сторож", "Дозорный",
+			"Ворчун", "Бубнила", "Чумазый", "Смолян", "Кремень", "Пижон", "Гуляка", "Запевала"],
+	},
+}
+
+## Hashes tried for a name no living animal holds before taking a number.
+const PROBES := 8
+
+var _names: Dictionary = {}
+## The numbered names living animals hold: `"<species>:<name>"` -> {number: id}.
+var _held: Dictionary = {}
+## The key and number each named animal holds, by id, so a death frees the right one.
+var _holding: Dictionary = {}
+
+
+## The animal's name, given now if it has none yet. An unknown species gets «№<id>».
+func name_of(agent_id: int, species: String, sex: String) -> String:
+	if _names.has(agent_id):
+		return _names[agent_id]
+	var listed: Array = LISTS.get(species, {}).get(sex, LISTS.get(species, {}).get("female", []))
+	if listed.is_empty():
+		_names[agent_id] = "№%d" % agent_id
+		return _names[agent_id]
+	# The first of a few hashed picks no living animal answers to; only when all are taken
+	# does the first pick get a number.
+	var base: String = listed[mix(agent_id) % listed.size()]
+	for probe in range(PROBES):
+		var candidate: String = listed[mix(agent_id + probe * 7919) % listed.size()]
+		if _held.get("%s:%s" % [species, candidate], {}).is_empty():
+			base = candidate
+			break
+	var key := "%s:%s" % [species, base]
+	var held: Dictionary = _held.get(key, {})
+	var number := 1
+	while held.has(number):
+		number += 1
+	held[number] = agent_id
+	_held[key] = held
+	_holding[agent_id] = [key, number]
+	_names[agent_id] = base if number == 1 else "%s %s" % [base, roman(number)]
+	return _names[agent_id]
+
+
+## The name already given, or empty.
+func known(agent_id: int) -> String:
+	return str(_names.get(agent_id, ""))
+
+
+## The animal died: its number goes back for the next of its name. It keeps the name.
+func release(agent_id: int) -> void:
+	var holding: Array = _holding.get(agent_id, [])
+	if holding.is_empty():
+		return
+	_holding.erase(agent_id)
+	var held: Dictionary = _held.get(holding[0], {})
+	if int(held.get(holding[1], -1)) == agent_id:
+		held.erase(holding[1])
+
+
+## Forgets animals the family tree no longer keeps.
+func forget(agent_id: int) -> void:
+	release(agent_id)
+	_names.erase(agent_id)
+
+
+func size() -> int:
+	return _names.size()
+
+
+func export_state() -> Dictionary:
+	return {"names": _names.duplicate(), "held": _held.duplicate(true), "holding": _holding.duplicate(true)}
+
+
+func import_state(data: Dictionary) -> void:
+	_names = data.get("names", {}).duplicate()
+	_held = data.get("held", {}).duplicate(true)
+	_holding = data.get("holding", {}).duplicate(true)
+
+
+func clear() -> void:
+	_names.clear()
+	_held.clear()
+	_holding.clear()
+
+
+## Spreads neighbouring ids across the list.
+static func mix(value: int) -> int:
+	var h: int = value * 0x2c1b3c6d + 0x9e3779b9
+	h = (h ^ (h >> 15)) * 0x297a2d39
+	h = h ^ (h >> 13)
+	return h & 0x7fffffff
+
+
+static func roman(number: int) -> String:
+	var values := [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+	var letters := ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"]
+	var out := ""
+	var left := maxi(1, number)
+	for index in range(values.size()):
+		while left >= values[index]:
+			out += letters[index]
+			left -= values[index]
+	return out

@@ -13,11 +13,13 @@ extends Node2D
 @onready var selection_tag = $CanvasLayer/HUD/SelectionTag
 @onready var card_stack = $CanvasLayer/HUD/CardStack
 @onready var player_bar = $CanvasLayer/HUD/PlayerBar
+@onready var pinned_bar = $CanvasLayer/HUD/PinnedBar
 @onready var herd_card = $CanvasLayer/HUD/CardStack/HerdCard
 @onready var selection_card = $CanvasLayer/HUD/CardStack/SelectionCard
 @onready var minimap = $CanvasLayer/MiniMap
 @onready var climate_indicator = $CanvasLayer/ClimateIndicator
 @onready var ecology_strip = $CanvasLayer/EcologyStrip
+@onready var story_feed = $CanvasLayer/StoryFeed
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -48,6 +50,12 @@ var _autosave_interval: int = 0
 ## (`debug.developer_mode`; F12 switches it while playing). Off, a player gets the small
 ## Russian bar at the top left instead and Tab does nothing.
 var developer_mode: bool = false
+## Names, family tree and pins of the world on screen, saved with it (`StoryBook`).
+var story_book = preload("res://scripts/story/story_book.gd").new()
+## What the save being loaded kept of the story, until the world it belongs to is adopted.
+var _pending_story: Dictionary = {}
+## An animal asked for while asleep, selected as soon as it wakes.
+var _pending_focus_id: int = -1
 ## Where `_close_help()` goes back to: "start", "pause", "game", or "" when the
 ## help screen is down.
 var _help_return: String = ""
@@ -100,6 +108,7 @@ func _on_continue_requested() -> void:
 	_selection = data.get("selection", {})
 	if not SaveSystem.restore(simulation_manager, data):
 		return
+	_pending_story = data.get("story", {})
 	_adopt_running_simulation()
 
 
@@ -127,6 +136,11 @@ func _adopt_running_simulation() -> void:
 	# bundle, and the herd card's losses belong to the world they were heard in.
 	ecology_strip.bind_manager(simulation_manager)
 	herd_card.bind_manager(simulation_manager)
+	# Before the worker starts stepping, so no birth or death of the new world is missed.
+	story_book.bind(simulation_manager)
+	story_book.begin(_pending_story)
+	_pending_story = {}
+	_pending_focus_id = -1
 	_apply_debug_configuration()
 	debug_panel.set_paused_state(false)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
@@ -152,7 +166,9 @@ func _show_start_menu(continue_available: bool) -> void:
 	help_screen.visible = false
 	_help_return = ""
 	minimap.visible = false
+	story_feed.visible = false
 	player_bar.visible = false
+	pinned_bar.set_allowed(false)
 	climate_indicator.visible = false
 	ecology_strip.visible = false
 	selection_tag.visible = false
@@ -172,6 +188,7 @@ func _hide_start_menu() -> void:
 	_help_return = ""
 	_sync_overlay_blur()
 	minimap.visible = true
+	story_feed.visible = true
 	climate_indicator.visible = true
 	ecology_strip.visible = true
 	selection_tag.visible = true
@@ -200,6 +217,15 @@ func _bind_view() -> void:
 	selection_tag.bind_manager(simulation_manager)
 	selection_tag.bind_agent_renderer(agent_renderer)
 	selection_card.bind_manager(simulation_manager)
+	selection_card.story = story_book
+	selection_tag.story = story_book
+	pinned_bar.bind(story_book, simulation_manager)
+	story_feed.bind(story_book.feed, simulation_manager)
+	story_book.feed.context_provider = _story_context
+	selection_card.family_clicked.connect(_focus_animal)
+	pinned_bar.focus_requested.connect(_focus_animal)
+	story_feed.line_clicked.connect(_on_feed_line_clicked)
+	simulation_manager.tick_completed.connect(_on_tick_for_story)
 	world_camera.bind_manager(simulation_manager)
 	world_camera.bind_agent_renderer(agent_renderer)
 
@@ -450,7 +476,7 @@ func _on_new_simulation_pressed() -> void:
 func _on_tick_for_autosave(tick: int, _snapshot: Dictionary) -> void:
 	if _autosave_interval <= 0 or tick <= 0 or tick % _autosave_interval != 0:
 		return
-	SaveSystem.save(simulation_manager, _selection)
+	SaveSystem.save(simulation_manager, _selection, "", story_book.export_state())
 
 
 ## The selection tag and card are deliberately absent from this: they are the one
@@ -492,7 +518,8 @@ func _apply_ui_theme() -> void:
 	# toggles, and at menu type size the panel runs off the bottom of the screen.
 	var compact := PixelUiTheme.build(true)
 	var roomy := PixelUiTheme.build(false)
-	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip"]:
+	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip",
+			"CanvasLayer/StoryFeed"]:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact
@@ -513,6 +540,51 @@ func _configure_projection() -> void:
 	WorldProjection.configure(visuals, max_level, art_scale)
 
 
+## Puts the camera on an animal from the story - a pinned one, a parent on the card: selected
+## and followed when it is awake; asleep, the camera goes where its sector keeps it and it is
+## selected as soon as it wakes; dead, the camera goes to where it died.
+func _focus_animal(agent_id: int) -> void:
+	_pending_focus_id = -1
+	if simulation_manager.select_agent_by_id(agent_id):
+		_apply_focus_mode("agent")
+		return
+	var status: Dictionary = story_book.pin_status(agent_id)
+	var at: Vector2 = status.get("position", Vector2.INF)
+	if at != Vector2.INF:
+		world_camera.move_to_world_position(at)
+	if not bool(status.get("dead", false)):
+		_pending_focus_id = agent_id
+
+
+func _on_tick_for_story(tick: int, _snapshot: Dictionary) -> void:
+	if _pending_focus_id >= 0 and simulation_manager.select_agent_by_id(_pending_focus_id):
+		_apply_focus_mode("agent")
+		_pending_focus_id = -1
+	if simulation_manager.should_refresh_ui_on_tick(tick):
+		story_book.tick(simulation_manager.simulation_time)
+
+
+## What the player is looking at, for the feed to tell apart from the rest of the map: the
+## ground in view and the selected animal's herd.
+func _story_context() -> Dictionary:
+	var context := {"view": agent_renderer._visible_rect}
+	var agent = simulation_manager.get_selected_agent()
+	if agent != null and agent.group_id >= 0:
+		context["herd"] = [agent.species_type, int(agent.group_id)]
+	return context
+
+
+## A line of the feed: the animal it names while it lives, otherwise where it happened.
+func _on_feed_line_clicked(line: Dictionary) -> void:
+	var agent_id := int(line.get("focus_id", -1))
+	if agent_id >= 0 and not story_book.lineage.is_dead(agent_id):
+		_focus_animal(agent_id)
+		return
+	var at: Vector2 = line.get("position", Vector2.INF)
+	if at != Vector2.INF:
+		world_camera.move_to_world_position(at)
+
+
 ## Switches developer mode; leaving it puts the developer panel away.
 func set_developer_mode(value: bool) -> void:
 	developer_mode = value
@@ -527,6 +599,7 @@ func _sync_player_bar() -> void:
 		return
 	player_bar.visible = _bound and not hud_visible and not _pause_menu_open \
 		and not start_menu.visible and not help_screen.visible
+	pinned_bar.set_allowed(player_bar.visible)
 
 
 func _apply_debug_configuration() -> void:

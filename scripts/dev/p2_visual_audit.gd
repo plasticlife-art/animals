@@ -103,6 +103,9 @@ func _stage_scene() -> void:
 	main.minimap.visible = false
 	main.climate_indicator.visible = false
 	main.ecology_strip.visible = false
+	main.story_feed.visible = false
+	main.player_bar.visible = false
+	main.pinned_bar.set_allowed(false)
 	main.selection_tag.visible = false
 	main.selection_card.visible = false
 	main.herd_card.set_allowed(false)

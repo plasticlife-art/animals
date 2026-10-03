@@ -22,7 +22,7 @@ const NEUTRAL := {
 	"year": 0,
 	"season_index": 0,
 	"season_id": "spring",
-	"season_label": "Spring",
+	"season_label": "Весна",
 	"season_progress": 0.0,
 	"day_phase": 0.5,
 	"night_ratio": 0.0,

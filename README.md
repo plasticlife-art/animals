@@ -150,8 +150,12 @@ The interface is in Russian throughout. From the bar at the top left you can:
 - switch on three layers of the map: grass, danger (where predators have struck) and chases
 - open the help screen
 
-The selected animal has a card at the bottom left and a tag over it; a grazer or a scavenger
-also gets its herd's card above its own: how many there are, near and far, how many are young,
+Every animal has a name, from a list for its species and sex («Ветка», «Рыжик»), and a family:
+the selected animal's card at the bottom left names it, links its mother and father, and counts
+its children, its living descendants and its generation. «Закрепить» on the card keeps the
+animal in a list at the top left wherever it goes, asleep far away or dead - up to eight; a
+click there brings the camera to it. A grazer or a scavenger also gets its herd's card above
+its own: how many there are, near and far, how many are young,
 how fed, watered and rested they are, whether anything is hunting them, what they lost last,
 and a button to follow the herd.
 
@@ -165,6 +169,11 @@ charts behind `Tab`, in place of the bar. From there you can also:
 - toggle LOD on or off
 - toggle every layer: biomes, obstacles, carcasses, paths, densities, water and the AI's own
 - export telemetry snapshots and event logs
+
+Above the minimap an event feed tells what happens to the animals you are looking at, in short
+lines with the time of day: a kill in view with both names, a calf born in the selected herd,
+the death of a pinned animal far away, a herd splitting. Everything else on the map is summed
+up once a minute; a click on a line takes the camera there.
 
 Always on screen during play, in Russian: the season and the clock at the top, and under
 them how the land is doing - per species how many there are and which way the number is
@@ -195,7 +204,7 @@ Exports are written to `user://exports` by default:
 - `summary_<timestamp>_seed_<seed>.json`
 
 The summary includes population metrics, death causes, hunt success, carcass metrics, blocked terrain ratio, and LOD counters.
-The metrics carry, per species, how many animals are at risk of starvation (`starvation_risk_<species>_count`) and of thirst (`thirst_risk_<species>_count`); death events carry the herd the animal belonged to (`data.group_id`, -1 for none).
+The metrics carry, per species, how many animals are at risk of starvation (`starvation_risk_<species>_count`) and of thirst (`thirst_risk_<species>_count`); death events carry the herd the animal belonged to (`data.group_id`, -1 for none). Births carry the newborn's sex (`data.sex`); a birth or a death in a sleeping sector, which has no `agent_id`, carries the animal's id as `data.record_id` and a birth its mother's as `data.mother_id`; a herd split names the herd it came out of and how many left (`data.group_id`, `data.moved`).
 
 ## Configuration
 
@@ -253,13 +262,26 @@ scripts/agents/
 scripts/stats/
   stats_system.gd
   telemetry_logger.gd
+scripts/story/
+  animal_names.gd
+  lineage.gd
+  story_book.gd
+  story_log.gd
 scripts/ui/
   charts_panel.gd
   debug_panel.gd
+  ecology_strip.gd
+  event_effects.gd
   game_camera.gd
+  herd_card.gd
+  hud_text.gd
   main_controller.gd
   minimap.gd
   overlay_renderer.gd
+  pinned_bar.gd
+  player_bar.gd
+  selection_card.gd
+  story_feed.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

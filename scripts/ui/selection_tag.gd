@@ -27,6 +27,8 @@ const LINE_GAP := 3.0
 const OFFSCREEN_MARGIN := 240.0
 
 var simulation_manager: SimulationManager
+## The world's names (`StoryBook`); without it the tag shows the animal's number.
+var story = null
 var _agent_renderer: Node2D
 var _screen_point: Vector2 = Vector2.ZERO
 var _visible_now: bool = false
@@ -131,7 +133,7 @@ func _refresh_values() -> void:
 		_action = ""
 		_vitals = []
 		return
-	_title = AgentReadout.title(agent)
+	_title = AgentReadout.title(agent, "" if story == null else story.name_of(agent))
 	_action = AgentReadout.action_label(agent)
 	_vitals = AgentReadout.vitals(agent)
 

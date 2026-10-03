@@ -55,13 +55,17 @@ Key behavior:
   worker hand-off pass that dictionary by reference; `StatsSystem.get_snapshot()` still returns an
   editable copy.
 - `world_event` re-emits the events the view acts on (`VIEW_EVENT_TYPES`: `AgentDied`,
-  `AgentBorn`, `HerdSplit`), always on the main thread: from the frame `_apply_worker_frame()`
+  `AgentBorn`, `AgentReproduced`, `HerdSplit`), always on the main thread: from the frame `_apply_worker_frame()`
   applies, or as they happen in `step_once()`. The view listens there, not on `event_bus`, which
   is replaced on every start and load. The bus `initialize()` creates moves to the worker thread
   in `enable_interactive_worker()`, so the manager stops watching it first; watching starts after
   the world is built, so the founders' births are not forwarded. Death events carry
   `data.group_id`, the herd the animal belonged to, awake (`kill_agent()`) or asleep
-  (`_emit_dormant_death()`, where `agent_id` stays -1)
+  (`_emit_dormant_death()`, where `agent_id` stays -1 and `data.record_id` is the id the
+  animal had). Births carry the newborn's `data.sex`, and asleep its `data.record_id` and its
+  mother's `data.mother_id`; a herd split carries the herd it came out of (`data.group_id`)
+  and how many left (`data.moved`). All of it is reporting for the view's story; none of it
+  is read back by the world
 - `get_display_time()` is the view's clock: the last tick plus how far the next has come. Effects
   run on it, so they stop while paused and keep pace at 4x and 10x
 
@@ -485,6 +489,46 @@ Utility actions inside `alive`:
   to the world they were heard in
 - The herd card and the selection card stand in one bottom-left `CardStack`, which steps
   right of the Tab panel as a whole
+
+### Story: names, family tree, pins (`scripts/story/`)
+
+- `StoryBook` tells the world as a story about its animals and is what the animal's card, its
+  tag, the pinned list and the event feed read. It hears `world_event` on the main thread and
+  is saved with the world (`SaveSystem.save()`'s `story`; a save without one starts a new
+  story). Nothing in it reaches the simulation
+- `AnimalNames`: a Russian name for every animal from a list for its species and sex (80 a
+  sex for deer, 50 for foxes and grouse), the first of a few picks hashed from its id that no
+  living animal answers to, so the same world names the same animals. Only when every pick is
+  taken does a name get a number, «Ветка II», the lowest one no living Ветка holds; a death
+  gives it back. Founders are named in id order as the world is adopted, newborns as they are
+  heard, animals waking far off when the interface next refreshes
+- `Lineage`: parents (an awake birth's `AgentReproduced` names both, told apart by sex; a birth
+  asleep its mother), birth and death times, the cause and the killer, where it died, the
+  generation (founders are the first), children and living descendants. The longest dead are
+  forgotten past 30000 animals
+- Pins: up to eight animals the player keeps an eye on, from the card's «Закрепить». A pin
+  does not keep an animal's sector awake, so a world plays the same with pins or without; a
+  pinned animal asleep is followed through its sector's aggregate, and its death and its young
+  there through the ids sleeping births and deaths carry
+- `PinnedBar`: the pinned animals at the top left by name and kind, «вдали» while asleep,
+  «погиб(ла)» once dead. A click selects and follows one awake, sends the camera to where one
+  sleeps (and selects it when it wakes) or fell; a right click unpins
+- The animal's card names it («Ветка ♀ · олениха») and gives its family: the parents as links
+  that do the same, children and how many live, living descendants and the generation
+- `StoryLog` writes the event feed: what happened to whom in a short Russian line («Ветка,
+  олениха из Стада №3, погибла: задрал лис Рыжик», «Пополнение в Стаде №3: оленёнок Звёздочка,
+  мать — Ветка», «Стадо №3 разделилось: 12 голов ушли в новое Стадо №8»), with the grammar from
+  `HudText`. Only what the player looks at gets a line of its own - an event in view (the
+  renderer's visible rect), in the selected animal's herd, or of a pinned animal, its death,
+  its young or its kill, asleep or awake; the rest is counted and summed up for the whole map
+  once a simulated minute («За минуту по всей карте: хищники — 4 оленя · голод — 2 лисы ·
+  родились — 6 оленят»). A run of the same thing in one herd within 12 s folds into one line
+  with a number. 40 lines are kept; they are not saved. The log holds its book weakly, since
+  the book holds the log
+- `StoryFeed` shows the newest seven above the minimap with the time of day, pinned animals in
+  gold and the summaries dimmer; a click selects the animal the line names while it lives (the
+  hunter, the newborn) or sends the camera to where it happened. Dark like the season bar and
+  the strip, hidden by the start menu like the minimap
 
 ### `HerdCard`
 
@@ -941,7 +985,11 @@ Current suites cover:
   attached ending exactly as one run without it
 - the always-on readouts: the strip's minute window, trends, levels and grass against each
   biome's capacity, through the worker too; the herd card's counts near and far, young,
-  hunters, texts, loss log and when it shows
+  hunters, texts, loss log and when it shows; the Russian words and their grammar, no English
+  label left in the main scene, developer mode and the player's bar
+- the story: names that stay and number while alive, the family tree from the world's own
+  events awake and asleep, pins anywhere, the story's save round trip, the card's family line;
+  the feed's lines for what is looked at, folding, the minute's summary and the newest shown
 
 ## Measuring Balance
 

@@ -14,11 +14,15 @@ extends PanelContainer
 ## listens to `focus_mode_changed` rather than tracking its own idea of the state.
 
 signal follow_toggled(enabled: bool)
+## A parent's name was clicked in the family line.
+signal family_clicked(agent_id: int)
 
 @onready var title_label: Label = get_node_or_null("%TitleLabel")
 @onready var bars_view: Control = get_node_or_null("%BarsView")
 @onready var action_label: Label = get_node_or_null("%ActionLabel")
 @onready var follow_button: Button = get_node_or_null("%FollowButton")
+@onready var family_text: RichTextLabel = get_node_or_null("%FamilyText")
+@onready var pin_button: Button = get_node_or_null("%PinButton")
 
 const BAR_HEIGHT := 10.0
 const BAR_SPACING := 8.0
@@ -26,12 +30,18 @@ const BAR_SPACING := 8.0
 const VALUE_COLUMN := 74.0
 
 var simulation_manager: SimulationManager
+## The world's names and family tree (`StoryBook`); without it the card shows numbers.
+var story = null
 var _vitals: Array = []
 
 
 func _ready() -> void:
 	if follow_button != null:
 		follow_button.pressed.connect(_on_follow_button_pressed)
+	if pin_button != null:
+		pin_button.pressed.connect(_on_pin_button_pressed)
+	if family_text != null:
+		family_text.meta_clicked.connect(func(meta) -> void: family_clicked.emit(int(str(meta))))
 	if bars_view != null:
 		bars_view.draw.connect(_on_bars_view_draw)
 		# The strip is drawn, so nothing about it reaches the container's own sizing.
@@ -67,6 +77,52 @@ func set_follow_state(mode: String) -> void:
 	follow_button.button_pressed = following
 
 
+func _show_pin(agent) -> void:
+	var pinned: bool = story != null and story.is_pinned(agent.id)
+	var full: bool = story != null and story.pins.size() >= story.MAX_PINS
+	pin_button.set_pressed_no_signal(pinned)
+	pin_button.text = "Закреплено" if pinned else "Закрепить"
+	pin_button.disabled = story == null or (full and not pinned)
+	if pin_button.disabled and story != null:
+		pin_button.tooltip_text = "Не больше %d закреплённых" % story.MAX_PINS
+	else:
+		pin_button.tooltip_text = "Держать в списке вверху слева, где бы оно ни было"
+
+
+func _on_pin_button_pressed() -> void:
+	if story != null and simulation_manager != null:
+		story.toggle_pin(simulation_manager.get_selected_agent())
+	refresh()
+
+
+## «Мать: Ветка · Отец: Бурый» with the names as links, then «Детей: 3 (живы 2) · Потомков
+## живых: 5 · Поколение 2». A parent who died is marked so.
+static func family_line(story_book, agent) -> String:
+	var entry: Dictionary = story_book.lineage.entry(agent.id)
+	var parents: Array = []
+	for role in [["mother", "Мать"], ["father", "Отец"]]:
+		var parent_id := int(entry.get(role[0], -1))
+		if parent_id >= 0:
+			parents.append("%s: %s" % [role[1], _parent_link(story_book, parent_id)])
+	if parents.is_empty():
+		parents.append("Родители неизвестны")
+	var children: Array = story_book.lineage.children(agent.id)
+	var living := 0
+	for child in children:
+		if not story_book.lineage.is_dead(int(child)):
+			living += 1
+	return "%s\nДетей: %d (живы %d) · Потомков живых: %d · Поколение %d" % [" · ".join(parents),
+		children.size(), living, story_book.lineage.descendants_alive(agent.id), int(entry.get("generation", 1))]
+
+
+static func _parent_link(story_book, parent_id: int) -> String:
+	var name: String = story_book.name_of_id(parent_id)
+	if story_book.lineage.is_dead(parent_id):
+		var sex := str(story_book.lineage.entry(parent_id).get("sex", ""))
+		name += " (%s)" % HudText.verb(sex, "погиб", "погибла")
+	return "[url=%d]%s[/url]" % [parent_id, name]
+
+
 func _on_follow_button_pressed() -> void:
 	follow_toggled.emit(simulation_manager == null or simulation_manager.focus_mode != "agent")
 
@@ -94,7 +150,11 @@ func refresh() -> void:
 
 	visible = true
 	if title_label != null:
-		title_label.text = AgentReadout.title(agent)
+		title_label.text = AgentReadout.title(agent, "" if story == null else story.name_of(agent))
+	if family_text != null:
+		family_text.text = "" if story == null else family_line(story, agent)
+	if pin_button != null:
+		_show_pin(agent)
 	if action_label != null:
 		action_label.text = "%s  ·  %s" % [AgentReadout.action_label(agent), HudText.state_label(agent.state)]
 	_vitals = AgentReadout.vitals(agent)

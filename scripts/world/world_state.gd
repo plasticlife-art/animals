@@ -340,6 +340,8 @@ func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, se
 	emit_event("AgentBorn", agent, -1, {
 		"reason": reason,
 		"group_id": group_id,
+		# For the view's names, which come in a list per sex.
+		"sex": agent.sex,
 	})
 	return agent
 
@@ -1786,8 +1788,11 @@ func emit_population_event(event_type: String, species_type: String, position: V
 	})
 
 
-func _emit_dormant_death(species_type: String, position: Vector2, cause: String, group_id: int = -1) -> void:
-	var death := {"cause": cause, "dormant": true, "group_id": group_id}
+## `record_id` is the id the animal had: `agent_id` stays -1, since no agent died, but the
+## view keeps a family tree and a name for every animal, asleep or awake.
+func _emit_dormant_death(species_type: String, position: Vector2, cause: String, group_id: int = -1,
+		record_id: int = -1) -> void:
+	var death := {"cause": cause, "dormant": true, "group_id": group_id, "record_id": record_id}
 	if cause == "starvation":
 		emit_population_event("AgentStarved", species_type, position, death)
 	elif cause == "old_age":
@@ -3032,7 +3037,9 @@ func _split_oversized_herds() -> void:
 			else:
 				member["record"]["group_id"] = highest_group_id
 				touched_sectors[member["sector"]] = true
-		emit_population_event("HerdSplit", species_key, mean, {"size": members.size(), "new_group_id": highest_group_id})
+		@warning_ignore("integer_division")
+		emit_population_event("HerdSplit", species_key, mean, {"size": members.size(), "new_group_id": highest_group_id,
+			"group_id": int(str(key).get_slice(":", 1)), "moved": members.size() - members.size() / 2})
 	if live_changed:
 		_rebuild_group_state_cache()
 	for sector_key in touched_sectors.keys():
@@ -4574,6 +4581,10 @@ func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, 
 			emit_population_event("AgentBorn", species_key, Vector2(newborn["position"]), {
 				"reason": "dormant",
 				"group_id": group_id,
+				# Who was born, to whom, for the view's names and family tree.
+				"record_id": int(newborn.get("id", -1)),
+				"mother_id": int(mother.get("id", -1)),
+				"sex": str(newborn.get("sex", "")),
 			})
 		_read_dormant_group_back(aggregate, members)
 		if members.is_empty():
@@ -4646,7 +4657,8 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 			var victim: Dictionary = survivors[victim_index]
 			var position: Vector2 = victim.get("position", aggregate.get("center", bounds.get_center()))
 			survivors.remove_at(victim_index)
-			_emit_dormant_death(species_key, position, cause, int(victim.get("group_id", aggregate.get("group_id", -1))))
+			_emit_dormant_death(species_key, position, cause, int(victim.get("group_id", aggregate.get("group_id", -1))),
+				int(victim.get("id", -1)))
 			if cause == "predation":
 				fear_field.deposit(position, fear_field.kill_risk)
 			# A sleeping death leaves the same body a live one does, where the animal

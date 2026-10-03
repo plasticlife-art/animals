@@ -13,7 +13,8 @@ signal world_event(event: Dictionary)
 
 ## The event types `world_event` carries. Everything else stays on the bus: grazing and
 ## drinking alone fire many times a tick.
-const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "HerdSplit": true}
+## `AgentReproduced` names both parents of an awake birth, for the family tree.
+const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")
@@ -388,6 +389,22 @@ func select_agent_at_position(position: Vector2, radius: float) -> void:
 		set_focus_mode("agent")
 	_refresh_lod_assignments()
 	selection_changed.emit(selected_agent_id)
+
+
+## Selects the animal with this id if it is awake, and puts the camera on it with `follow`.
+## False when there is no such animal to select - asleep, dead or never there.
+func select_agent_by_id(agent_id: int, follow := true) -> bool:
+	if world_state == null:
+		return false
+	var agent = world_state.get_agent(agent_id)
+	if agent == null or not agent.is_alive:
+		return false
+	selected_agent_id = agent_id
+	if follow:
+		set_focus_mode("agent")
+	_refresh_lod_assignments()
+	selection_changed.emit(selected_agent_id)
+	return true
 
 
 func get_selected_agent():

@@ -4,8 +4,8 @@ extends SceneTree
 #
 #   Godot --path . --script res://scripts/dev/capture.gd -- <out.png> [zoom] [preset]
 # Presets: `selected` / `selected_hud` select an animal (with the Tab panels for the
-# second), `herd` selects a grazer in a herd so its herd card shows, `water` turns on the
-# minimap's water, `menu` shoots the setup screen.
+# second), `herd` selects a grazer in a herd so its herd card shows, `story` also pins it
+# and two others, `water` turns on the minimap's water, `menu` shoots the setup screen.
 # Loads the real main scene, parks the camera, waits for
 # LOD sectors around it to reify, then writes a PNG.
 #
@@ -54,7 +54,7 @@ func _process(_delta: float) -> bool:
 		if menu != null and menu.visible:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
-			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd"]:
+			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story"]:
 				selection["style"] = _preset
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
@@ -110,14 +110,21 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	if _preset == "herd":
+	if _preset == "herd" or _preset == "story":
 		# A grazer in a herd, so the herd card is up above the animal's own.
 		for agent in agents:
 			if agent.species_type == "herbivore" and int(agent.group_id) >= 0:
 				target = agent
 				break
 	_aim(target.position)
-	if _preset == "selected" or _preset == "selected_hud" or _preset == "herd":
+	if _preset == "story":
+		# Three animals pinned - the one in view and two others - for the list at the top left.
+		var pinned := 0
+		for agent in agents:
+			if pinned < 3 and (agent == target or agent.species_type != target.species_type):
+				_main.story_book.toggle_pin(agent)
+				pinned += 1
+	if _preset == "selected" or _preset == "selected_hud" or _preset == "herd" or _preset == "story":
 		# Centring is not selecting, and the tag and card only exist for a selection.
 		var radius := float(_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
 		_manager.select_agent_at_position(target.position, radius)

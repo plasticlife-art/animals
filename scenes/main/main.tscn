@@ -20,6 +20,8 @@
 [ext_resource type="Script" path="res://scripts/ui/ecology_strip.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/ui/herd_card.gd" id="19"]
 [ext_resource type="Script" path="res://scripts/ui/player_bar.gd" id="20"]
+[ext_resource type="Script" path="res://scripts/ui/pinned_bar.gd" id="21"]
+[ext_resource type="Script" path="res://scripts/ui/story_feed.gd" id="22"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -292,6 +294,16 @@ offset_right = 12.0
 offset_bottom = 12.0
 script = ExtResource("20")
 
+[node name="PinnedBar" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=900000031]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+offset_left = 12.0
+offset_top = 60.0
+offset_right = 12.0
+offset_bottom = 60.0
+script = ExtResource("21")
+
 [node name="CardStack" type="VBoxContainer" parent="CanvasLayer/HUD" unique_id=900000020]
 unique_name_in_owner = true
 layout_mode = 0
@@ -343,9 +355,28 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "-"
 
-[node name="FollowButton" type="Button" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000008]
+[node name="FamilyText" type="RichTextLabel" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000040]
 unique_name_in_owner = true
 layout_mode = 2
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+
+[node name="ButtonsRow" type="HBoxContainer" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000041]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PinButton" type="Button" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox/ButtonsRow" unique_id=900000042]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "Закрепить"
+
+[node name="FollowButton" type="Button" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox/ButtonsRow" unique_id=900000008]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
 toggle_mode = true
 text = "Следить"
 
@@ -379,6 +410,22 @@ offset_bottom = 92.0
 grow_horizontal = 2
 mouse_filter = 2
 script = ExtResource("15")
+
+[node name="StoryFeed" type="PanelContainer" parent="CanvasLayer" unique_id=370118994]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -376.0
+offset_top = -262.0
+offset_right = -16.0
+offset_bottom = -252.0
+grow_horizontal = 0
+grow_vertical = 0
+script = ExtResource("22")
 
 [node name="EcologyStrip" type="Control" parent="CanvasLayer" unique_id=370118993]
 unique_name_in_owner = true

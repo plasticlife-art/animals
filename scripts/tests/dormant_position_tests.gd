@@ -361,9 +361,11 @@ func _test_dormant_death_is_reported_where_the_victim_stood(a) -> void:
 	world._reconcile_dormant_records(sector_key, state, 0.0)
 	var after := _positions_by_id(state["dormant_records"])
 	var victim_position := Vector2.INF
+	var victim_id := -1
 	for agent_id in before.keys():
 		if not after.has(agent_id):
 			victim_position = before[agent_id]
+			victim_id = int(agent_id)
 	var reported := Vector2.INF
 	var death: Dictionary = {}
 	for event in world.event_bus.get_events():
@@ -375,6 +377,7 @@ func _test_dormant_death_is_reported_where_the_victim_stood(a) -> void:
 	a.equal(int(death.get("data", {}).get("group_id", -2)), 0, "and names the herd it died out of")
 	a.is_true(bool(death.get("data", {}).get("dormant", false)) and int(death.get("agent_id", 0)) == -1,
 		"as a sleeping death, with no animal id")
+	a.equal(int(death.get("data", {}).get("record_id", -2)), victim_id, "but with the id the animal had")
 	Helpers.destroy_manager(fixture[0])
 
 

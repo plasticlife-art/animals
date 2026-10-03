@@ -68,7 +68,9 @@ static func next_slot() -> String:
 	return oldest
 
 
-static func save(manager, selection: Dictionary, path: String = "") -> bool:
+## `story` is the view's story of the world (`StoryBook.export_state()`): names, family tree
+## and pins. The simulation never reads it; a save without it loads with none.
+static func save(manager, selection: Dictionary, path: String = "", story: Dictionary = {}) -> bool:
 	if manager == null or manager.world_state == null:
 		return false
 	var world_data: Dictionary = manager.export_simulation_state()
@@ -91,6 +93,7 @@ static func save(manager, selection: Dictionary, path: String = "") -> bool:
 		"rng_state": manager.rng.state,
 		"world": world_data,
 		"stats": manager.stats_system.counters.duplicate(),
+		"story": story.duplicate(true),
 	}, true)
 	file.close()
 	return true
