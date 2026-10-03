@@ -7,6 +7,8 @@ extends PanelContainer
 ## the animal the line names while it lives - the hunter of a kill, the newborn of a birth -
 ## and otherwise to where it happened. Drawn dark like the season bar and the strip, so the
 ## readouts about the world read as one family; hidden by the start menu like the minimap.
+## It grows upwards from its bottom edge, and keeps below a card standing over it in the right
+## column (`fit_below()`): fewer rows, the newest kept.
 
 signal line_clicked(line: Dictionary)
 
@@ -85,6 +87,37 @@ func clock_text(time: float) -> String:
 	var minutes := int(round(phase * 1440.0)) % 1440
 	@warning_ignore("integer_division")
 	return "%02d:%02d" % [minutes / 60, minutes % 60]
+
+
+## Shows only as many of the newest rows as fit between `ceiling` - the lowest edge of a card in
+## the right column, in the canvas's coordinates, or 0 with none - and the feed's bottom edge,
+## so a season card or an epitaph never has the feed running on under it. The newest stay at
+## the top, the oldest go first; the feed's bottom is anchored, so its top comes down.
+func fit_below(ceiling: float) -> void:
+	var rows: Array = _rows.get_children()
+	if rows.is_empty():
+		return
+	var room := INF if ceiling <= 0.0 else get_global_rect().end.y - ceiling
+	# What the panel holds besides its rows: margins, the title and the gaps.
+	var used := get_combined_minimum_size().y - _rows.get_combined_minimum_size().y
+	var separation := float(_rows.get_theme_constant("separation"))
+	var full := false
+	for row in rows:
+		var height: float = row.get_combined_minimum_size().y
+		var fits := not full and used + height <= room
+		full = not fits
+		if row.visible != fits:
+			row.visible = fits
+		if fits:
+			used += height + separation
+
+
+func shown_rows() -> int:
+	var count := 0
+	for row in _rows.get_children():
+		if row.visible:
+			count += 1
+	return count
 
 
 func _on_row_input(event: InputEvent, line: Dictionary) -> void:

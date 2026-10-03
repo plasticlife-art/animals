@@ -5,8 +5,9 @@ extends PanelContainer
 ## parchment at the right, below the ecology strip and clear of the animal in the middle, for a
 ## few seconds: its epitaph (`Epitaph`), «Где это» to
 ## take the camera to where it died, «Родословная» to open its family in the chronicle. Several
-## at once wait their turn; the countdown stops while the game is paused. Hidden by the start
-## menu and in photo mode.
+## at once wait their turn; the countdown stops while the game is paused or the card is held
+## back (`set_allowed(false)`: the start menu, and the season card, which stands in its place).
+## Hidden in photo mode too.
 
 signal place_requested(position: Vector2)
 signal family_requested(agent_id: int)
@@ -82,6 +83,10 @@ func set_allowed(value: bool) -> void:
 	visible = _allowed and not _current.is_empty()
 
 
+func is_allowed() -> bool:
+	return _allowed
+
+
 func clear() -> void:
 	_queue.clear()
 	_current = {}
@@ -98,7 +103,7 @@ func waiting() -> int:
 
 
 func _process(delta: float) -> void:
-	if _current.is_empty():
+	if _current.is_empty() or not _allowed:
 		return
 	if simulation_manager != null and bool(simulation_manager.paused):
 		return

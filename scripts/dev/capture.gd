@@ -8,7 +8,9 @@ extends SceneTree
 # and two others, `chronicle` then opens the chronicle on it, `epitaph` tells the death of one
 # pinned animal far away, `traits` opens the chronicle's «Черты» on a made-up history of
 # three years, `ponds` / `ponds_iso` shows watering holes at made-up levels (a quarter dry, the
-# rest a tenth, a third and three quarters full) top-down or isometric,
+# rest a tenth, a third and three quarters full) top-down or isometric, `season` shows a made-up
+# summer's card with an epitaph under it, `seasons` opens the chronicle's «Сезоны» on two
+# made-up years,
 # `scaled` is `story` under a 125 % interface (applied, not saved),
 # `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
 # the setup screen.
@@ -61,7 +63,7 @@ func _process(_delta: float) -> bool:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
-					"epitaph", "scaled", "settings", "traits", "ponds", "ponds_iso"]:
+					"epitaph", "scaled", "settings", "traits", "ponds", "ponds_iso", "season", "seasons"]:
 				selection["style"] = _preset
 			if _preset == "ponds_iso":
 				selection["style"] = "isometric_craftpix"
@@ -138,7 +140,7 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits"]
+	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits", "season", "seasons"]
 	if _preset == "scaled":
 		SettingsStore.apply({"fullscreen": false, "ui_scale": 1.25}, root, _camera)
 	if _preset == "settings":
@@ -157,7 +159,7 @@ func _park_on_agent() -> void:
 			if pinned < 3 and (agent == target or agent.species_type != target.species_type):
 				_main.story_book.toggle_pin(agent)
 				pinned += 1
-	if _preset == "epitaph":
+	if _preset == "epitaph" or _preset == "season":
 		# The last pinned one dies far away, told the way a sleeping sector tells it.
 		var dying := int(_main.story_book.pins.back())
 		var where: Vector2 = _manager.world_state.water_sources[0]["position"] if not _manager.world_state.water_sources.is_empty() \
@@ -209,6 +211,14 @@ func _park_on_agent() -> void:
 		# No real point after the made-up ones.
 		history._next_at = INF
 		_main.chronicle_window.open(target.id, "traits")
+	if _preset == "season":
+		_main.story_book.season_closed.emit(_made_up_season(5, true))
+	if _preset == "seasons":
+		# Two years made up, since a fresh world has none closed. The harness only.
+		_main.story_book.seasons.closed.clear()
+		for ordinal in range(7):
+			_main.story_book.seasons.closed.append(_made_up_season(ordinal, ordinal == 5))
+		_main.open_seasons()
 	var rect: Rect2 = _camera.get_visible_screen_rect()
 	var in_frame := 0
 	for agent in agents:
@@ -216,3 +226,33 @@ func _park_on_agent() -> void:
 			in_frame += 1
 	print("tick=%d camera=%s zoom=%s agents_in_frame=%d/%d" % [
 		_manager.current_tick, _camera.global_position, _camera.zoom, in_frame, agents.size()])
+
+
+## A season's summary made up for the shots, with the world's own pond names and a hunter's.
+func _made_up_season(ordinal: int, drought: bool) -> Dictionary:
+	var book = _main.story_book
+	var season_id: String = ["spring", "summer", "autumn", "winter"][ordinal % 4]
+	var label: String = ["Весна", "Лето", "Осень", "Зима"][ordinal % 4]
+	var breeding := ordinal % 4 <= 1
+	var ponds: Array = []
+	var genders := {}
+	for index in range(mini(5, book.places.ponds.size())):
+		ponds.append(str(book.places.ponds[index]["name"]))
+		genders[ponds.back()] = str(book.places.ponds[index].get("gender", "m"))
+	var hunter := -1
+	for agent in _manager.world_state.get_living_agents():
+		if agent.species_type == "predator":
+			hunter = agent.id
+			break
+	return {"ordinal": ordinal, "year": ordinal / 4, "season_id": season_id, "label": label, "partial": false,
+		"drought": drought and ordinal % 4 in [1, 2],
+		"species": {
+			"herbivore": {"start": 240 + ordinal * 6, "end": 278 + ordinal * 6 if breeding else 228 + ordinal * 6,
+				"births": 74 if breeding else 0, "deaths": {"predation": 11, "starvation": 5, "thirst": 4, "old_age": 16}, "died": 36},
+			"predator": {"start": 47, "end": 41, "births": 12 if breeding else 0, "deaths": {"starvation": 4, "old_age": 14}, "died": 18},
+			"scavenger": {"start": 106, "end": 118, "births": 40 if breeding else 0, "deaths": {"predation": 20, "old_age": 8}, "died": 28},
+		},
+		"hunter": {} if hunter < 0 else {"id": hunter, "name": book.name_of_id(hunter), "kills": 5,
+			"species": "predator", "sex": str(book.lineage.entry(hunter).get("sex", "male"))},
+		"dried": ponds if ordinal % 4 == 1 else [], "refilled": ponds if ordinal % 4 == 0 and ordinal > 0 else [],
+		"genders": genders}

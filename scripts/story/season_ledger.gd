@@ -82,8 +82,21 @@ func observe(now: float, manager, book) -> Dictionary:
 
 ## The open season as it stands at `now`, closed: `{ordinal, year, season_id, label, start, end,
 ## partial, drought, species: {id: {start, end, births, deaths: {cause: n}, died}}, species_end,
-## hunter: {id, name, species, sex, kills} or {}, dried: [names], refilled: [names]}`.
+## hunter: {id, name, species, sex, kills} or {}, dried: [names], refilled: [names],
+## genders: {pond name: "m" | "f" | "n"}}`. `drought` only for a season a drought year makes
+## harsher: one whose water balance is a loss.
 func close(now: float, manager, book) -> Dictionary:
+	var summary := preview(now, manager, book)
+	closed.append(summary)
+	while closed.size() > MAX_SEASONS:
+		closed.pop_front()
+	return summary
+
+
+## The open season so far, as `close()` would give it at `now`, left open; {} when none is.
+func preview(now: float, manager, book) -> Dictionary:
+	if open.is_empty():
+		return {}
 	var climate_config: Dictionary = manager.config_bundle.get("world", {}).get("climate", {})
 	var calendar := ClimateScript.calendar(climate_config)
 	var per_year := maxi(1, int(calendar[1]))
@@ -103,17 +116,18 @@ func close(now: float, manager, book) -> Dictionary:
 		species[species_id] = {"start": int(starts.get(species_id, 0)), "end": int(ends.get(species_id, 0)),
 			"births": int(open["births"].get(species_id, 0)), "deaths": deaths.duplicate(), "died": died}
 	var water = manager.world_state.water if manager.world_state != null else null
-	var summary := {
-		"ordinal": ordinal, "year": year, "season_id": str(season.get("id", "")),
-		"label": str(season.get("label", season.get("id", ""))), "start": float(open["start"]), "end": now,
-		"partial": bool(open["partial"]), "drought": water != null and water.enabled and water.is_drought_year(year),
+	var season_id := str(season.get("id", ""))
+	var drought: bool = water != null and water.enabled and water.is_drought_year(year) \
+		and float(water.settings["balance"].get(season_id, 0.0)) < 0.0
+	var genders := {}
+	return {
+		"ordinal": ordinal, "year": year, "season_id": season_id,
+		"label": str(season.get("label", season_id)), "start": float(open["start"]), "end": now,
+		"partial": bool(open["partial"]), "drought": drought,
 		"species": species, "species_end": ends, "hunter": _best_hunter(open["kills"], book),
-		"dried": _pond_names(open["dried"], book), "refilled": _pond_names(open["refilled"], book),
+		"dried": _pond_names(open["dried"], book, genders), "refilled": _pond_names(open["refilled"], book, genders),
+		"genders": genders,
 	}
-	closed.append(summary)
-	while closed.size() > MAX_SEASONS:
-		closed.pop_front()
-	return summary
 
 
 ## Each species' count as the world stands: `{id: n}`, asleep and awake.
@@ -164,14 +178,20 @@ static func _best_hunter(kills: Dictionary, book) -> Dictionary:
 		"species": str(entry.get("species", "")), "sex": str(entry.get("sex", ""))}
 
 
-static func _pond_names(indices: Array, book) -> Array:
+## The ponds' names, once each, in the order they first changed; each name's gender goes into
+## `genders` for the verb that agrees with it.
+static func _pond_names(indices: Array, book, genders: Dictionary) -> Array:
 	var names: Array = []
 	for index in indices:
-		var name := "№%d" % int(index)
+		var name := "водоём №%d" % int(index)
+		var gender := "m"
 		if book != null and book.places != null and int(index) >= 0 and int(index) < book.places.ponds.size():
-			name = str(book.places.ponds[int(index)]["name"])
+			var pond: Dictionary = book.places.ponds[int(index)]
+			name = str(pond["name"])
+			gender = str(pond.get("gender", "m"))
 		if not names.has(name):
 			names.append(name)
+			genders[name] = gender
 	return names
 
 

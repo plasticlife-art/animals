@@ -700,8 +700,10 @@ Utility actions inside `alive`:
   with the clock off) has moved on, the season closes with each species' count as the world
   stands (`get_population_metrics()`, asleep and awake), so a species' change is exactly its
   births less its deaths; the best hunter (most kills, the lower id on a tie) and the ponds are
-  named as strings then, since names are given back at death, and the drought flag is the
-  water's own (`WaterSystem.is_drought_year()`). `season_closed(summary)` tells it. Through the
+  named as strings then (with each pond's gender for the verb), since names are given back at
+  death, and the drought flag is the water's own (`WaterSystem.is_drought_year()`), set only on
+  the seasons whose balance is a loss. `season_closed(summary)` tells it; `preview()` gives the
+  season going as it would close now, for «Сезоны». Through the
   worker a frame of several ticks lands at once, its events before its `tick_completed`, so a
   season ends on the first frame past its boundary and keeps everything up to it. Kept with the
   story under an optional `"seasons"` key, 200 seasons (fifty years); a season met half-way - a
@@ -740,7 +742,10 @@ Utility actions inside `alive`:
 - `StoryFeed` shows the newest seven above the minimap with the time of day, pinned animals in
   gold and the summaries dimmer; a click selects the animal the line names while it lives (the
   hunter, the newborn) or sends the camera to where it happened. Dark like the season bar and
-  the strip, hidden by the start menu like the minimap
+  the strip, hidden by the start menu like the minimap. It grows upwards from its bottom edge,
+  and while a season card or an epitaph stands in the right column it shows only the newest
+  rows that fit below it (`fit_below()`, from `MainController._layout_hud()`), not running on
+  under the card
 
 ### `HerdCard`
 
@@ -868,17 +873,41 @@ Utility actions inside `alive`:
   `StoryRecords`; a click opens that animal's family. «Черты» draws `TraitHistory`: a chart a
   trait, a line a species in its interface colour darkened for the parchment, the species
   dashed across the middle, the scale reaching the furthest point and the latest value at each
-  line's end. Refreshed every 1.5 s while open
+  line's end. «Сезоны» lists `SeasonLedger`'s seasons in `SeasonReport`'s words, newest first,
+  under the one still going («Лето · год 2 · идёт», its numbers so far from `preview()`, refreshed
+  in place); the closed seasons' rows are built again only when a season closes, as two hundred
+  of them would be too many to rebuild every refresh. With the clock off: «В этом мире нет
+  смены сезонов». Refreshed every 1.5 s while open
 - Opened by L (`toggle_chronicle`, by physical key so a Russian layout presses it too), the
-  player bar's «Летопись», the card's «родословная» link and the epitaph card; Esc closes it
-  before the pause menu would open
+  player bar's «Летопись», the card's «родословная» link, the epitaph card and the season card
+  (on «Сезоны»); Esc closes it before the pause menu would open
 
 ### `EpitaphCard`
 
 - Parchment card at the right under the strip's level, clear of the selected animal in the middle
   and of the strip at any interface size, with the epitaph of a death worth remembering, «Где
   это» (camera to the place) and «Родословная» (the chronicle); ten seconds each, counted only
-  while the game runs, several queued; hidden by the start menu
+  while the game runs, several queued; hidden by the start menu. While the season card shows,
+  it waits with its countdown stopped (`MainController._layout_hud()`): stacked, the two reached
+  down over the event feed
+
+### `SeasonCard`
+
+- The season just over, on the same parchment in the same place as the epitaph card, which
+  waits behind it:
+  `SeasonReport`'s title and lines from `StoryBook.season_closed` - «Итоги лета · год 2 ·
+  засуха», «Олени 278 (+38) · лисы 41 (−6) · тетерева 118 (+12)», «Родились: 74 оленёнка, 12
+  лисят, 40 птенцов», «Погибли: хищники — 31, голод — 9, жажда — 4, старость — 38», «Лучший
+  охотник: лис Рыжик — 5 добыч», «Пересохли Тихая заводь, Кривой брод и ещё 3 водоёма». Eight
+  seconds, counted only while the game runs; a new season's card replaces the old (at 10x a
+  season is twelve seconds, so it is on screen two thirds of the time rather than queueing
+  behind itself). «Летопись» opens «Сезоны» and puts the card away. Hidden by the start menu, by
+  the developer panels (the charts stand where it does) and in photo mode
+- `SeasonReport` words a summary: years from 1 as the season bar counts them, «засуха» only on a
+  drought year's summer and autumn, «не с начала» for a season met half-way, the young in
+  their own nouns, the dead by cause over every species, «Лучшая охотница» for a vixen, a single
+  pond's verb in its gender, three ponds named and more cut to «и ещё N водоёмов»; a line with
+  nothing to say is left out
 
 ### `PlaceLabels`
 
@@ -1325,7 +1354,11 @@ Current suites cover:
 - the season ledger (`SeasonTests`): which season a moment falls in, a season closing on its
   tick with each species changed by exactly its births less its deaths, the best hunter with a
   tie and a kill asleep, dried ponds by name and once each, a season met half-way, the ledger
-  through a save and a story saved before it, and nothing without a clock
+  through a save and a story saved before it, nothing without a clock, the drought flag only on
+  a drought year's summer and autumn, and the season going left open; the report's words (the
+  title three ways, each line, a huntress, signs, a pond's gender, the long list cut), the card
+  replacing, waiting while paused, going after eight seconds and opening the chronicle, and
+  «Сезоны» keeping its rows until a season closes, and saying so without a clock
 
 ## Measuring Balance
 

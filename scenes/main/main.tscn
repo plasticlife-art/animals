@@ -27,6 +27,7 @@
 [ext_resource type="Script" path="res://scripts/ui/chronicle_window.gd" id="25"]
 [ext_resource type="Script" path="res://scripts/ui/settings_panel.gd" id="26"]
 [ext_resource type="Script" path="res://scripts/ui/photo_mode.gd" id="27"]
+[ext_resource type="Script" path="res://scripts/ui/season_card.gd" id="28"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -478,6 +479,18 @@ offset_right = -12.0
 offset_bottom = 340.0
 grow_horizontal = 0
 script = ExtResource("24")
+
+[node name="SeasonCard" type="PanelContainer" parent="CanvasLayer" unique_id=370118999]
+unique_name_in_owner = true
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -472.0
+offset_top = 232.0
+offset_right = -12.0
+offset_bottom = 340.0
+grow_horizontal = 0
+script = ExtResource("28")
 
 [node name="ChronicleWindow" type="PanelContainer" parent="CanvasLayer" unique_id=370118996]
 unique_name_in_owner = true

@@ -197,12 +197,29 @@ map is summed up once a minute; a click on a line takes the camera there.
 «Летопись» (L, or the button on the bar) shows an animal's family three generations deep -
 grandparents, parents, its young, alive or not - where a click on a relative takes the camera to
 it, and the records: the oldest alive, the longest lives, the largest living families and the
-best hunters. The card's «родословная» link opens it on that animal.
+best hunters, how each species' inherited traits have moved, and every season's summary. The
+card's «родословная» link opens it on that animal.
 
 When a pinned animal dies, or the selected one, or one that held a record, it gets an epitaph:
 how long it lived, its young and its living descendants, its kills, how and where it died. It
 stays on a card at the right for a few seconds - «Где это» takes the camera there - and in
 the feed in gold, and the dead pinned row keeps it as a tooltip.
+
+When a season ends, a card at the right sums it up for eight seconds: how many of each species
+there are and by how much that changed, the young born, the dead by cause, the season's best
+hunter by name, the ponds that dried, and whether it was a drought year:
+
+```
+Итоги лета · год 2 · засуха
+Олени 278 (+38) · лисы 41 (−6) · тетерева 118 (+12)
+Родились: 74 оленёнка, 12 лисят, 40 птенцов
+Погибли: хищники — 31, голод — 9, жажда — 4, старость — 38
+Лучший охотник: лис Рыжик — 5 добыч
+Пересохли Тихая заводь, Кривой брод и ещё 3 водоёма
+```
+
+Its «Летопись» button opens «Сезоны» in the chronicle, which keeps every season the world has
+had, newest first, under the one still going.
 
 Every watering hole has a name, and so has every district of the map, after what grows there:
 «Тихая заводь», «Ольховый бор», «Совиное болото». The feed says where things happen («у Тихой

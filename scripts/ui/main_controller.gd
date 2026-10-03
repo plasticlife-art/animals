@@ -22,6 +22,7 @@ extends Node2D
 @onready var ecology_strip = $CanvasLayer/EcologyStrip
 @onready var story_feed = $CanvasLayer/StoryFeed
 @onready var epitaph_card = $CanvasLayer/EpitaphCard
+@onready var season_card = $CanvasLayer/SeasonCard
 @onready var chronicle_window = $CanvasLayer/ChronicleWindow
 @onready var settings_panel = $CanvasLayer/SettingsPanel
 @onready var photo_mode = $PhotoMode
@@ -164,6 +165,7 @@ func _adopt_running_simulation() -> void:
 	story_book.begin(_pending_story)
 	_pending_story = {}
 	epitaph_card.clear()
+	season_card.clear()
 	chronicle_window.reset()
 	place_labels.configure(simulation_manager.config_bundle.get("visuals", {}))
 	_pending_focus_id = -1
@@ -196,6 +198,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	player_bar.visible = false
 	pinned_bar.set_allowed(false)
 	epitaph_card.set_allowed(false)
+	season_card.set_allowed(false)
 	chronicle_window.close_window()
 	photo_mode.leave()
 	climate_indicator.visible = false
@@ -226,6 +229,7 @@ func _hide_start_menu() -> void:
 	selection_card.refresh()
 	herd_card.set_allowed(true)
 	epitaph_card.set_allowed(true)
+	season_card.set_allowed(not hud_visible)
 	_sync_player_bar()
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
@@ -258,6 +262,9 @@ func _bind_view() -> void:
 	epitaph_card.place_requested.connect(_on_epitaph_place)
 	epitaph_card.family_available = true
 	epitaph_card.family_requested.connect(open_chronicle)
+	season_card.simulation_manager = simulation_manager
+	story_book.season_closed.connect(season_card.show_season)
+	season_card.chronicle_requested.connect(open_seasons)
 	chronicle_window.bind(story_book, simulation_manager)
 	chronicle_window.focus_requested.connect(_focus_animal)
 	player_bar.chronicle_requested.connect(toggle_chronicle)
@@ -490,6 +497,17 @@ func _layout_hud() -> void:
 		climate_indicator.offset_right = _climate_offsets.y + shift
 		ecology_strip.offset_left = _strip_offsets.x + shift
 		ecology_strip.offset_right = _strip_offsets.y + shift
+	# One card at a time in the right column: an epitaph waits, its countdown stopped, while the
+	# season card stands there. Stacked, the two reach down over the event feed.
+	var epitaph_allowed: bool = not start_menu.visible and not season_card.visible
+	if epitaph_card.is_allowed() != epitaph_allowed:
+		epitaph_card.set_allowed(epitaph_allowed)
+	# The feed keeps below the card standing in that column: fewer rows, the newest kept.
+	var card_bottom := 0.0
+	for card in [season_card, epitaph_card]:
+		if card.visible:
+			card_bottom = maxf(card_bottom, card.get_global_rect().end.y + 8.0)
+	story_feed.fit_below(card_bottom)
 	if herd_card.visible:
 		_herd_height = herd_card.size.y
 	if not selection_card.visible or _herd_height <= 0.0:
@@ -525,6 +543,11 @@ func toggle_chronicle() -> void:
 func open_chronicle(agent_id: int) -> void:
 	if agent_id >= 0:
 		chronicle_window.open(agent_id, "family")
+
+
+## The chronicle on every season's summary, from the season card.
+func open_seasons() -> void:
+	chronicle_window.open(-1, "seasons")
 
 
 func toggle_pause_menu() -> void:
@@ -656,6 +679,8 @@ func set_hud_visible(value: bool) -> void:
 	hud_visible = value
 	debug_panel.visible = value
 	charts_panel.visible = value
+	# The charts stand where the season card does.
+	season_card.set_allowed(not value and not start_menu.visible)
 	_sync_player_bar()
 	# The two cards stand in one stack, which steps aside as a whole.
 	card_stack.offset_left = _selection_card_left(value)
@@ -689,7 +714,7 @@ func _apply_ui_theme() -> void:
 	var compact := PixelUiTheme.build(true)
 	var roomy := PixelUiTheme.build(false)
 	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip",
-			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard", "CanvasLayer/ChronicleWindow"]:
+			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard", "CanvasLayer/SeasonCard", "CanvasLayer/ChronicleWindow"]:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact

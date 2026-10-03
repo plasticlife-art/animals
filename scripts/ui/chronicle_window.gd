@@ -2,9 +2,10 @@ class_name ChronicleWindow
 extends PanelContainer
 
 ## «Летопись»: the world's story in one window over the map - an animal's family three
-## generations deep (`FamilyTree`), the records (`StoryRecords`), and how each species' inherited
-## traits have moved since the world began (`TraitHistory`). The world keeps running
-## behind it and the camera can still move. A click on a relative centres the tree on it and
+## generations deep (`FamilyTree`), the records (`StoryRecords`), how each species' inherited
+## traits have moved since the world began (`TraitHistory`), and every season's summary
+## (`SeasonLedger`, in `SeasonReport`'s words), the one still going on top. The world keeps
+## running behind it and the camera can still move. A click on a relative centres the tree on it and
 ## sends the camera there (`focus_requested`); «Назад» walks back through the relatives
 ## visited; a click on a record opens that animal's family. Esc or «Закрыть» closes it.
 
@@ -13,9 +14,11 @@ signal closed
 
 const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
 const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
+const SeasonReportScript := preload("res://scripts/story/season_report.gd")
+const ClimateScript := preload("res://scripts/world/climate.gd")
 const REFRESH_SECONDS := 1.5
 const BODY_SIZE := Vector2(760.0, 440.0)
-const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты"}
+const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты", "seasons": "Сезоны"}
 ## Species lines are drawn in the species' interface colour, darkened to read on parchment.
 const SPECIES_DARKEN := 0.45
 
@@ -29,6 +32,13 @@ var _tree: TreeView
 var _records_scroll: ScrollContainer
 var _records_box: VBoxContainer
 var _traits_view: TraitsView
+var _seasons_scroll: ScrollContainer
+var _seasons_box: VBoxContainer
+## The season still going, at the top of «Сезоны»: refreshed in place.
+var _running_title: Label
+var _running_text: Label
+## What the closed seasons' rows were built from; they are built again only when it changes.
+var _seasons_key := ""
 var _back: Button
 var _empty: Label
 var _refresh_left := 0.0
@@ -88,6 +98,14 @@ func _init() -> void:
 	_traits_view = TraitsView.new()
 	_traits_view.custom_minimum_size = BODY_SIZE
 	root.add_child(_traits_view)
+	_seasons_scroll = ScrollContainer.new()
+	_seasons_scroll.custom_minimum_size = BODY_SIZE
+	_seasons_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(_seasons_scroll)
+	_seasons_box = VBoxContainer.new()
+	_seasons_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_seasons_box.add_theme_constant_override("separation", 4)
+	_seasons_scroll.add_child(_seasons_box)
 	_empty = Label.new()
 	_empty.text = "Выберите животное на карте или в списке закреплённых, чтобы увидеть его семью."
 	_empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -99,6 +117,7 @@ func bind(story_book, manager) -> void:
 	story = story_book
 	simulation_manager = manager
 	_tree.story = story_book
+	_seasons_key = ""
 
 
 ## Opens on an animal's family, or on `tab`; with no animal, the one already shown, if any.
@@ -110,10 +129,11 @@ func open(agent_id := -1, tab := "family") -> void:
 	show_tab(tab)
 
 
-## A new world: nobody's family shown yet.
+## A new world: nobody's family shown yet, and its own seasons.
 func reset() -> void:
 	_history.clear()
 	_focus_id = -1
+	_seasons_key = ""
 	close_window()
 
 
@@ -151,6 +171,7 @@ func refresh() -> void:
 	_empty.visible = family and _focus_id < 0
 	_records_scroll.visible = _tab == "records"
 	_traits_view.visible = _tab == "traits"
+	_seasons_scroll.visible = _tab == "seasons"
 	_back.visible = family and not _history.is_empty()
 	if story == null:
 		return
@@ -160,6 +181,8 @@ func refresh() -> void:
 		_fill_records()
 	elif _tab == "traits":
 		_traits_view.show_history(story.trait_history, _heredity_entries(), _now(), _calendar())
+	elif _tab == "seasons":
+		_fill_seasons()
 
 
 func _process(delta: float) -> void:
@@ -213,6 +236,68 @@ func _fill_records() -> void:
 		var quiet := Label.new()
 		quiet.text = "Рекордов пока нет: мир только начался."
 		_records_box.add_child(quiet)
+
+
+## «Сезоны»: the season going on top, refreshed in place, then every closed one, newest first -
+## those rows built again only when a season closes, not on every refresh.
+func _fill_seasons() -> void:
+	var climate_config: Dictionary = {} if simulation_manager == null else \
+		simulation_manager.config_bundle.get("world", {}).get("climate", {})
+	var clock := ClimateScript.season_ordinal(climate_config, _now()) >= 0
+	var closed: Array = story.seasons.closed
+	var key := "off"
+	if clock:
+		key = "%d:%d" % [closed.size(), -1 if closed.is_empty() else int(closed.back()["ordinal"])]
+	if key != _seasons_key:
+		_seasons_key = key
+		_build_seasons(clock, closed)
+	if not clock:
+		return
+	var running: Dictionary = story.seasons.preview(_now(), simulation_manager, story)
+	_running_title.text = "" if running.is_empty() else SeasonReportScript.title(running, "running")
+	var running_text := "" if running.is_empty() else SeasonReportScript.text(running)
+	_running_text.text = running_text if running_text != "" else "Пока ничего не случилось."
+
+
+func _build_seasons(clock: bool, closed: Array) -> void:
+	for child in _seasons_box.get_children():
+		_seasons_box.remove_child(child)
+		child.queue_free()
+	_running_title = null
+	_running_text = null
+	if not clock:
+		var none := Label.new()
+		none.text = "В этом мире нет смены сезонов."
+		_seasons_box.add_child(none)
+		return
+	_running_title = _season_title("")
+	_running_text = _season_text("")
+	if closed.is_empty():
+		var quiet := Label.new()
+		quiet.text = "Ни один сезон ещё не закончился."
+		quiet.modulate = Color(1.0, 1.0, 1.0, 0.55)
+		_seasons_box.add_child(quiet)
+	for index in range(closed.size() - 1, -1, -1):
+		var summary: Dictionary = closed[index]
+		_season_title(SeasonReportScript.title(summary, "row"))
+		_season_text(SeasonReportScript.text(summary))
+
+
+func _season_title(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 17)
+	_seasons_box.add_child(label)
+	return label
+
+
+func _season_text(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size.x = BODY_SIZE.x - 24.0
+	_seasons_box.add_child(label)
+	return label
 
 
 func _open_record(agent_id: int) -> void:

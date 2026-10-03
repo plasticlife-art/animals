@@ -24,16 +24,18 @@ const CAUSES := {"starvation": "голод", "thirst": "жажда", "predation"
 ## «умер от …»: the cause after «от».
 const CAUSES_FROM := {"starvation": "голода", "thirst": "жажды", "predation": "хищника", "old_age": "старости"}
 
-## The animal each species is drawn as, by sex and for a young one, and the forms a count
-## takes: one, two to four, five and more (`plural()`).
+## The animal each species is drawn as, by sex and for a young one, all of them («олени»), and
+## the forms a count takes: one, two to four, five and more (`plural()`).
 const ANIMALS := {
-	"herbivore": {"male": "олень", "female": "олениха", "young": "оленёнок",
+	"herbivore": {"male": "олень", "female": "олениха", "young": "оленёнок", "all": "олени",
 		"count": ["олень", "оленя", "оленей"], "young_count": ["оленёнок", "оленёнка", "оленят"]},
-	"predator": {"male": "лис", "female": "лиса", "young": "лисёнок",
+	"predator": {"male": "лис", "female": "лиса", "young": "лисёнок", "all": "лисы",
 		"count": ["лиса", "лисы", "лис"], "young_count": ["лисёнок", "лисёнка", "лисят"]},
-	"scavenger": {"male": "тетерев", "female": "тетёрка", "young": "птенец",
+	"scavenger": {"male": "тетерев", "female": "тетёрка", "young": "птенец", "all": "тетерева",
 		"count": ["тетерев", "тетерева", "тетеревов"], "young_count": ["птенец", "птенца", "птенцов"]},
 }
+## After «итоги»: «итоги лета». Keyed by the climate's season ids.
+const SEASONS_GENITIVE := {"spring": "весны", "summer": "лета", "autumn": "осени", "winter": "зимы"}
 const SEX_GLYPHS := {"female": "♀", "male": "♂"}
 const AGE_STAGES := {
 	"young": ["молодой", "молодая"], "adult": ["взрослый", "взрослая"], "old": ["старый", "старая"],
@@ -112,6 +114,26 @@ static func animal_noun(species_id: String, sex: String, young := false) -> Stri
 	if young:
 		return str(words["young"])
 	return str(words["female" if sex == "female" else "male"])
+
+
+## A whole species as its animals: «олени», «лисы», «тетерева».
+static func animals_label(species_id: String) -> String:
+	var words: Dictionary = ANIMALS.get(species_id, {})
+	return str(words.get("all", species_label(species_id).to_lower()))
+
+
+## A season after «итоги»: «лета»; a season the table does not know goes by its own `label`.
+static func season_genitive(season_id: String, label := "") -> String:
+	return str(SEASONS_GENITIVE.get(season_id, label.to_lower()))
+
+
+## A change with its sign, the minus a real one: «+38», «−6», «±0».
+static func signed(value: int) -> String:
+	if value > 0:
+		return "+%d" % value
+	if value < 0:
+		return "−%d" % -value
+	return "±0"
 
 
 ## «3 оленя», «5 оленят»: a count with its noun in the right form.
