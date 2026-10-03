@@ -492,6 +492,22 @@ Utility actions inside `alive`:
 - Renders static terrain overview plus dynamic agents and camera viewport
 - Supports click / drag camera repositioning
 
+### `EcologyStrip`
+
+- How the land is doing, always on screen under the season bar and hidden only by the start
+  menu, in Russian like the season bar: per species the count with an arrow while it rises
+  or falls by more than 3% (or two animals) over the last minute, how many are close to
+  starving and to dying of thirst (`starvation_risk_*`, `thirst_risk_*`), how many were
+  killed in that minute (cumulative `deaths_predation_*`, a dash for species nothing hunts),
+  and each biome's grass as a share of what its cells can hold
+- `EcologyReadout` works the figures out from the stats snapshots and the series, apart
+  from the drawing, and gives each a level the strip colours it by: risk past 10% / 25% of
+  the species, kills past 2% / 5% of it a minute, grass below 30% / 18% of its biome's
+  capacity. The grass levels come off four 96-minute runs, where the whole map's share kept
+  between 0.21 and 0.71, mostly 0.3 to 0.5, and dipped in winter; a world starts at 0.47
+- The capacity is summed once per world object, so the copy the worker hands the view gets
+  its own. `HudText` holds the Russian names the strip and the herd card share
+
 ### `OverlayRenderer`
 
 Overlay categories currently supported:

@@ -102,6 +102,7 @@ func _stage_scene() -> void:
 	main.charts_panel.visible = false
 	main.minimap.visible = false
 	main.climate_indicator.visible = false
+	main.ecology_strip.visible = false
 	main.selection_tag.visible = false
 	main.selection_card.visible = false
 	main.agent_renderer.rebuild_batches()

@@ -147,6 +147,12 @@ From the HUD you can:
 - toggle biome, obstacle, carcass, path, density, water, and debug overlays
 - export telemetry snapshots and event logs
 
+Always on screen during play, in Russian: the season and the clock at the top, and under
+them how the land is doing - per species how many there are and which way the number is
+going, how many are close to starving or to dying of thirst, how many were killed in the last
+minute, and how much grass each biome has left. A figure turns amber when it is worth a look
+and red when it is bad.
+
 The map itself shows what the ecology is doing, with no overlay switched on:
 
 - the ground is tinted by how much grass each cell holds, from bare earth through dry straw to

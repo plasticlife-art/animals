@@ -14,6 +14,7 @@ extends Node2D
 @onready var selection_card = $CanvasLayer/HUD/SelectionCard
 @onready var minimap = $CanvasLayer/MiniMap
 @onready var climate_indicator = $CanvasLayer/ClimateIndicator
+@onready var ecology_strip = $CanvasLayer/EcologyStrip
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -115,6 +116,8 @@ func _adopt_running_simulation() -> void:
 	else:
 		_bind_view()
 		_bound = true
+	# Every time, not only on the first bind: the species it lists come from the bundle.
+	ecology_strip.bind_manager(simulation_manager)
 	_apply_debug_configuration()
 	debug_panel.set_paused_state(false)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
@@ -141,6 +144,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	_help_return = ""
 	minimap.visible = false
 	climate_indicator.visible = false
+	ecology_strip.visible = false
 	selection_tag.visible = false
 	selection_card.visible = false
 	_set_pause_menu_visible(false)
@@ -158,6 +162,7 @@ func _hide_start_menu() -> void:
 	_sync_overlay_blur()
 	minimap.visible = true
 	climate_indicator.visible = true
+	ecology_strip.visible = true
 	selection_tag.visible = true
 	# The card is left alone: it shows itself on the next tick, and only if there is
 	# actually a live selection to show.
@@ -441,7 +446,7 @@ func _apply_ui_theme() -> void:
 	# toggles, and at menu type size the panel runs off the bottom of the screen.
 	var compact := PixelUiTheme.build(true)
 	var roomy := PixelUiTheme.build(false)
-	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator"]:
+	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip"]:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact
