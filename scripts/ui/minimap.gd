@@ -9,6 +9,8 @@ const WATER_FILL_COLOR := Color(0.24, 0.48, 0.78, 0.8)
 ## A shade darker than the fill: a bright rim made fifty small ponds the loudest thing
 ## on the map.
 const WATER_OUTLINE_COLOR := Color(0.16, 0.34, 0.6, 0.9)
+## The bed of a pond that has dried (`WaterSystem`): it stays on the map, faint.
+const DRY_BED_COLOR := Color(0.55, 0.45, 0.3, 0.45)
 ## Fallback only. Real per-species colours and dot sizes come from
 ## `visuals.json -> species.<id>.ui_color` / `.minimap_radius`; anything that is
 ## not "predator" used to be drawn as a herbivore, so a third species would have
@@ -190,6 +192,8 @@ func _draw() -> void:
 	if simulation_manager == null or simulation_manager.world_state == null:
 		_record_draw_time(started)
 		return
+	if _show_water and _water_levels_on(simulation_manager.world_state):
+		_draw_live_water(map_rect, simulation_manager.world_state)
 
 	if _dots_dirty:
 		_rebuild_dot_batch(map_rect)
@@ -450,7 +454,8 @@ func _rebuild_static_cache() -> void:
 	image.fill(MAP_BACKGROUND_COLOR)
 
 	_rasterize_terrain(image, world)
-	if _show_water:
+	# Ponds with levels change size, so they are drawn each frame instead (`_draw_live_water()`).
+	if _show_water and not _water_levels_on(world):
 		_rasterize_water(image, world)
 	_static_texture = ImageTexture.create_from_image(image)
 
@@ -471,6 +476,27 @@ func _rasterize_terrain(image: Image, world) -> void:
 			var cell_rect := terrain.get_cell_rect(index)
 			var texture_rect := _world_rect_to_texture_rect(cell_rect, image.get_size())
 			_fill_image_rect(image, texture_rect, color)
+
+
+static func _water_levels_on(world) -> bool:
+	return world.water != null and world.water.enabled
+
+
+## Each pond at its water's edge, a dry one as a faint bed the size of its bank.
+func _draw_live_water(map_rect: Rect2, world) -> void:
+	var world_bounds: Rect2 = world.bounds
+	if world_bounds.size.x <= 0.0:
+		return
+	var scale := map_rect.size.x / world_bounds.size.x
+	for index in range(world.water_sources.size()):
+		var source: Dictionary = world.water_sources[index]
+		var center := _world_to_map_point(source["position"], map_rect)
+		if world.water.is_dry(index):
+			draw_circle(center, maxf(1.0, float(source.get("bank_radius", 0.0)) * scale), DRY_BED_COLOR)
+			continue
+		var radius := maxf(1.0, float(source["radius"]) * scale)
+		draw_circle(center, radius, WATER_FILL_COLOR)
+		draw_arc(center, radius, 0.0, TAU, 24, WATER_OUTLINE_COLOR, 1.0)
 
 
 func _rasterize_water(image: Image, world) -> void:

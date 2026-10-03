@@ -28,12 +28,16 @@ const POND_ADJECTIVES := [
 	"Чёрный:h", "Белый:h", "Серебряный:h", "Золотой:o", "Росистый:h", "Лунный:h", "Звёздный:h",
 	"Совиный:h", "Тетеревиный:h", "Барсучий:p",
 ]
-## Pond nouns: `[word, gender, genitive]`.
+## Pond nouns: `[word, gender, genitive, locative, preposition]` - «у Тихого брода», «в Тихом
+## броду».
 const POND_NOUNS := [
-	["брод", "m", "брода"], ["плёс", "m", "плёса"], ["омут", "m", "омута"], ["затон", "m", "затона"],
-	["бочаг", "m", "бочага"], ["ключ", "m", "ключа"], ["родник", "m", "родника"], ["пруд", "m", "пруда"],
-	["водопой", "m", "водопоя"], ["заводь", "f", "заводи"], ["старица", "f", "старицы"],
-	["купель", "f", "купели"], ["озерцо", "n", "озерца"], ["озеро", "n", "озера"],
+	["брод", "m", "брода", "броду", "в"], ["плёс", "m", "плёса", "плёсе", "на"], ["омут", "m", "омута", "омуте", "в"],
+	["затон", "m", "затона", "затоне", "в"], ["бочаг", "m", "бочага", "бочаге", "в"],
+	["ключ", "m", "ключа", "ключе", "в"], ["родник", "m", "родника", "роднике", "в"],
+	["пруд", "m", "пруда", "пруду", "в"], ["водопой", "m", "водопоя", "водопое", "на"],
+	["заводь", "f", "заводи", "заводи", "в"], ["старица", "f", "старицы", "старице", "в"],
+	["купель", "f", "купели", "купели", "в"], ["озерцо", "n", "озерца", "озерце", "в"],
+	["озеро", "n", "озера", "озере", "в"],
 ]
 ## District nouns by biome: `[word, gender, locative, preposition]`.
 const DISTRICT_NOUNS := {
@@ -82,7 +86,8 @@ const MIN_BIOME_SHARE := 0.2
 const POND_REACH := 1.6
 const PROBES := 24
 
-## `{position, radius, level, name, at}`, by `water_sources` index.
+## `{position, radius, level, name, at, in, gender}`, by `water_sources` index; `radius` is the
+## bank, `in` «в Тихой заводи».
 var ponds: Array = []
 ## `{center, level, biome, name, at}`; `center` is where its label goes.
 var districts: Array = []
@@ -156,7 +161,7 @@ func district_at(position: Vector2) -> int:
 func export_state() -> Dictionary:
 	var pond_names: Array = []
 	for pond in ponds:
-		pond_names.append([pond["name"], pond["at"]])
+		pond_names.append([pond["name"], pond["at"], pond.get("in", ""), pond.get("gender", "m")])
 	var district_names: Array = []
 	for district in districts:
 		district_names.append([district["name"], district["at"]])
@@ -169,8 +174,13 @@ func import_state(data: Dictionary) -> void:
 	var pond_names: Array = data.get("ponds", [])
 	if pond_names.size() == ponds.size():
 		for index in range(ponds.size()):
-			ponds[index]["name"] = str(pond_names[index][0])
-			ponds[index]["at"] = str(pond_names[index][1])
+			var kept: Array = pond_names[index]
+			ponds[index]["name"] = str(kept[0])
+			ponds[index]["at"] = str(kept[1])
+			# Saves from before kept two: the name built now gives the rest when it is the same.
+			if kept.size() >= 4:
+				ponds[index]["in"] = str(kept[2])
+				ponds[index]["gender"] = str(kept[3])
 	var district_names: Array = data.get("districts", [])
 	if district_names.size() == districts.size():
 		for index in range(districts.size()):
@@ -178,7 +188,7 @@ func import_state(data: Dictionary) -> void:
 			districts[index]["at"] = str(district_names[index][1])
 
 
-## `{name, genitive, prepositional}` of an adjective-noun name; see `ENDINGS`.
+## `{name, at}` of an adjective-noun name, and for a pond `in` and `gender` too; see `ENDINGS`.
 static func compose(adjective: String, noun: Array, district := false) -> Dictionary:
 	var parts := adjective.split(":")
 	var word: String = parts[0]
@@ -191,7 +201,9 @@ static func compose(adjective: String, noun: Array, district := false) -> Dictio
 	var name := "%s %s" % [nominative, noun[0]]
 	if district:
 		return {"name": name, "at": "%s %s %s" % [noun[3], prepositional, noun[2]]}
-	return {"name": name, "at": "у %s %s" % [genitive, noun[2]]}
+	var named := {"name": name, "at": "у %s %s" % [genitive, noun[2]], "gender": gender}
+	named["in"] = "%s %s %s" % [noun[4], prepositional, noun[3]] if noun.size() >= 5 else str(named["at"])
+	return named
 
 
 func _name_ponds(sources: Array, terrain, seed_value: int) -> void:
@@ -202,8 +214,10 @@ func _name_ponds(sources: Array, terrain, seed_value: int) -> void:
 		var source: Dictionary = sources[index]
 		var named := _pick(POND_ADJECTIVES, POND_NOUNS, seed_value, 0x504F, index, taken, false, uses, share)
 		var position: Vector2 = source.get("position", Vector2.ZERO)
-		ponds.append({"position": position, "radius": float(source.get("radius", 0.0)),
-			"level": _level_at(terrain, position), "name": named["name"], "at": named["at"]})
+		# The bank: a pond named while low is still its whole basin.
+		ponds.append({"position": position, "radius": float(source.get("bank_radius", source.get("radius", 0.0))),
+			"level": _level_at(terrain, position), "name": named["name"], "at": named["at"],
+			"in": str(named.get("in", named["at"])), "gender": str(named.get("gender", "m"))})
 
 
 ## Districts: a jittered grid of centres over the map, each cell going to the nearest; each

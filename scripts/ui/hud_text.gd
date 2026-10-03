@@ -141,6 +141,17 @@ static func verb(sex: String, masculine: String, feminine: String) -> String:
 	return feminine if sex == "female" else masculine
 
 
+## A past-tense verb in a noun's grammatical gender (`m`, `f`, `n`): «пересох», «пересохла»,
+## «пересохло».
+static func verb3(gender: String, masculine: String, feminine: String, neuter: String) -> String:
+	return feminine if gender == "f" else (neuter if gender == "n" else masculine)
+
+
+## `text` with its first letter capital: «в Тихой заводи» - «В Тихой заводи».
+static func capitalized(text: String) -> String:
+	return text if text.is_empty() else text.substr(0, 1).to_upper() + text.substr(1)
+
+
 ## An age in years and seasons: «2 года», «1 год и 2 сезона», «3 сезона», «меньше сезона».
 ## `calendar` is `Climate.calendar()`: seconds a season, seasons a year.
 static func age_text(seconds: float, calendar: Array = [120.0, 4]) -> String:

@@ -219,7 +219,8 @@ The map itself shows what the ecology is doing, with no overlay switched on:
 
 - the ground is tinted by how much grass each cell holds, from bare earth through dry straw to
   lush green, and worn paths show where animals keep walking
-- watering holes are drawn on the ground, with depth, foam and a sandy shore, and on the minimap
+- watering holes are drawn on the ground, with depth, foam and a sandy shore, and on the minimap;
+  as one dries it shrinks towards its middle, leaving its muddy bed, and the feed says so
 - biomes fray into each other at their borders in pixel steps instead of meeting along the
   terrain grid's square cells
 - an animal that dies in view falls through its death frames, with a red flash when it was

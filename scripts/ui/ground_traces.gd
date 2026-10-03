@@ -12,7 +12,10 @@ extends Node2D
 ##
 ## The watering holes are drawn here too, with a sand shore, from a distance field baked
 ## once per world (`WaterMask`). They used to show only as a debug overlay drawn over the
-## animals. Water is on by default and independent of the grass and trails.
+## animals. Water is on by default and independent of the grass and trails. Ponds with levels
+## (`WaterSystem`) shrink towards their middle as they fall, the bed they leave drawn as mud:
+## the field stays as baked, and each pond's shrink reaches the shader as one float a pond,
+## refreshed every `WATER_REFRESH_TICKS`.
 ##
 ## The grids reach the GPU as float textures built straight from the packed arrays, so
 ## a refresh costs no loop in script. The mesh is one quad per walkable terrain cell,
@@ -62,8 +65,13 @@ const WATER_DEFAULTS := {
 	"ripple_px": 40.0,
 	"ripple_speed": 0.06,
 	"ripple_strength": 0.06,
+	"bed_color": [0.50, 0.40, 0.28, 0.70],
+	"bed_px": 10.0,
 }
-const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color"]
+const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color", "bed_color"]
+## How often a pond's shrink is handed to the shader while ponds have levels: a level moves a
+## few hundredths a second at most.
+const WATER_REFRESH_TICKS := 18
 ## `visuals.borders` defaults: how far into a cell a border may reach and the scale its noise
 ## varies over, both in cells.
 const BORDER_DEFAULTS := {"enabled": true, "reach": 0.45, "noise_cells": 0.7}
@@ -71,7 +79,7 @@ const BORDER_DEFAULTS := {"enabled": true, "reach": 0.45, "noise_cells": 0.7}
 const BORDER_BIOMES := ["meadow", "forest", "drought", "swamp"]
 ## Shader uniform each `_px` length becomes, in world units.
 const WATER_LENGTHS := {"depth_px": "water_depth", "shore_px": "shore_width", "foam_px": "foam_width",
-	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size"}
+	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size", "bed_px": "bed_fade"}
 
 ## Layer-local units a row mesh is sorted after the tiles of its own row. Rows are half
 ## a tile apart, so this lands between one row and the next.
@@ -88,6 +96,11 @@ var _trail_texture: ImageTexture
 var _interval_ticks: int = 0
 ## The baked water field (`WaterMask.bake()`), empty while water is off.
 var _water_mask: Dictionary = {}
+## Each pond's shrink (`bank_radius - radius`), as last handed to the shader; empty while ponds
+## have no levels.
+var water_shrinks := PackedFloat32Array()
+var _shrink_texture: ImageTexture
+var _dry_shrink: float = 0.0
 
 
 func bind_manager(manager: SimulationManager, tiles: TerrainTileRenderer = null) -> void:
@@ -113,6 +126,8 @@ func rebuild() -> void:
 	_grass_texture = null
 	_trail_texture = null
 	_water_mask = {}
+	water_shrinks = PackedFloat32Array()
+	_shrink_texture = null
 	if simulation_manager == null or simulation_manager.world_state == null:
 		return
 	var world = simulation_manager.world_state
@@ -170,6 +185,25 @@ func refresh() -> void:
 func _on_tick_completed(tick: int, _snapshot) -> void:
 	if _interval_ticks > 0 and tick % _interval_ticks == 0:
 		refresh()
+	if _shrink_texture != null and tick % WATER_REFRESH_TICKS == 0:
+		refresh_water()
+
+
+## Hands each pond's shrink to the shader: how far its water stands in from its bank, and for a
+## dry pond far enough that none is left even where the edge noise pushes outwards.
+func refresh_water() -> void:
+	if _shrink_texture == null or simulation_manager == null or simulation_manager.world_state == null:
+		return
+	var world = simulation_manager.world_state
+	var sources: Array = world.water_sources
+	if water_shrinks.size() != sources.size():
+		return
+	for index in range(sources.size()):
+		var source: Dictionary = sources[index]
+		var bank := float(source.get("bank_radius", source.get("radius", 0.0)))
+		water_shrinks[index] = bank + _dry_shrink if world.water.is_dry(index) \
+			else maxf(0.0, bank - float(source.get("radius", bank)))
+	_shrink_texture.update(_float_image(water_shrinks, sources.size(), 1))
 
 
 func _upload(texture: ImageTexture, parameter: String, cells: PackedFloat32Array, cols: int, rows: int) -> ImageTexture:
@@ -227,6 +261,18 @@ func _apply_water(world, water: Dictionary) -> void:
 		_float_image(_water_mask["cells"], cols, rows)))
 	_material.set_shader_parameter("water_extent", Vector2(cols, rows) * texel)
 	_material.set_shader_parameter("water_enabled", 1.0)
+	# Ponds with levels: which pond owns each texel, and how far each has shrunk.
+	var levels_on: bool = world.water.enabled
+	_material.set_shader_parameter("water_levels", 1.0 if levels_on else 0.0)
+	if levels_on:
+		_material.set_shader_parameter("water_id_tex", ImageTexture.create_from_image(
+			_float_image(_water_mask["ids"], cols, rows)))
+		_dry_shrink = float(water["edge_noise_px"]) * scale * 2.0 + texel
+		water_shrinks = PackedFloat32Array()
+		water_shrinks.resize(world.water_sources.size())
+		_shrink_texture = ImageTexture.create_from_image(_float_image(water_shrinks, water_shrinks.size(), 1))
+		_material.set_shader_parameter("water_shrink_tex", _shrink_texture)
+		refresh_water()
 	simulation_manager.record_render_phase("water_bake", float(Time.get_ticks_usec() - started) / 1000.0)
 
 

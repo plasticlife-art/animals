@@ -62,6 +62,9 @@ func hear(event: Dictionary) -> void:
 				_hear_birth(int(data.get("record_id", -1)), true, time, context, _position_of(event))
 		"HerdSplit":
 			_hear_split(event, data, time, context)
+		"PondDried", "PondRefilled":
+			_hear_pond(str(event.get("type", "")) == "PondDried", int(data.get("index", -1)), time, context,
+				_position_of(event))
 
 
 ## Closes the minute when it is over: one line for everything that had no line of its own.
@@ -178,6 +181,27 @@ func _hear_split(event: Dictionary, data: Dictionary, time: float, context: Dict
 		"key": "", "count": 1})
 
 
+## «Тихая заводь пересохла», «В Тихой заводи снова вода» for a pond in view (`WaterSystem`);
+## a few drying within seconds fold into «Пересохли Тихая заводь и ещё 3 водоёма». A summer dries
+## dozens, so the rest go into the minute's summary, like deaths out of view.
+func _hear_pond(dried: bool, index: int, time: float, context: Dictionary, position: Vector2) -> void:
+	if book == null or book.places == null or index < 0 or index >= book.places.ponds.size():
+		return
+	if not _in_view(context, position):
+		_count("ponds:dried" if dried else "ponds:refilled")
+		return
+	var pond: Dictionary = book.places.ponds[index]
+	var text := ""
+	if dried:
+		text = "%s %s" % [pond["name"], HudTextScript.verb3(str(pond.get("gender", "m")), "пересох", "пересохла",
+			"пересохло")]
+	else:
+		text = "%s снова вода" % HudTextScript.capitalized(str(pond.get("in", pond["at"])))
+	var kind := "pond_dried" if dried else "pond_refilled"
+	_add({"time": time, "text": text, "position": position, "focus_id": -1, "pinned": false, "kind": kind,
+		"key": kind, "count": 1, "first": pond["name"]})
+
+
 ## «За минуту: хищники — 4 оленя, 1 тетерев · голод — 2 лисы · родились — 6 оленят».
 static func summary_text(tally: Dictionary) -> String:
 	var parts: Array = []
@@ -197,6 +221,11 @@ static func summary_text(tally: Dictionary) -> String:
 			born.append(HudTextScript.animal_count(species, count, true))
 	if not born.is_empty():
 		parts.append("родились — %s" % ", ".join(born))
+	var ponds := [["ponds:dried", "пересохли"], ["ponds:refilled", "снова с водой"]]
+	for pair in ponds:
+		var count := int(tally.get(pair[0], 0))
+		if count > 0:
+			parts.append("%s — %d %s" % [pair[1], count, HudTextScript.plural(count, ["водоём", "водоёма", "водоёмов"])])
 	return "За минуту по всей карте: %s" % " · ".join(parts)
 
 
@@ -224,6 +253,10 @@ static func _folded_text(line: Dictionary) -> String:
 	var species := str(line.get("species", ""))
 	var group := int(line.get("group", -1))
 	var count := int(line["count"])
+	if str(line["kind"]) in ["pond_dried", "pond_refilled"]:
+		var more := "%s и ещё %d %s" % [line.get("first", ""), count - 1,
+			HudTextScript.plural(count - 1, ["водоём", "водоёма", "водоёмов"])]
+		return ("Пересохли " if str(line["kind"]) == "pond_dried" else "Снова вода: ") + more
 	var at := str(line.get("at", ""))
 	var place := " " + at if at != "" else ""
 	if str(line["kind"]) == "birth":

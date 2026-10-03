@@ -2,9 +2,14 @@ class_name WaterMask
 extends RefCounted
 
 ## The watering holes as a signed distance field: for each texel of a grid laid over the
-## world, how far its centre is from the nearest pond's edge, negative inside the water.
-## Baked once per world, since ponds never move, and read by the ground shader to draw
-## water, its depth and its shore. Overlapping ponds join into one.
+## world, how far its centre is from the nearest pond's bank, negative inside it, and which
+## pond that is. Baked once per world, since ponds never move, and read by the ground shader
+## to draw water, its depth and its shore. Overlapping ponds join into one.
+##
+## A pond whose level has fallen (`WaterSystem`) is the same field moved in: for a round pond
+## the distance to an edge `s` inside the bank is the distance to the bank plus `s`. So the
+## shader shrinks each pond by adding its own shrink (`bank_radius - radius`) to the texels it
+## owns, and the field is never baked again.
 
 
 ## Bakes the field over `[0, world_size]`. Only each pond's box grown by `reach` is
@@ -16,9 +21,13 @@ static func bake(sources: Array, world_size: Vector2, texel: float, reach: float
 	var cells := PackedFloat32Array()
 	cells.resize(cols * rows)
 	cells.fill(reach)
-	for source in sources:
+	var ids := PackedFloat32Array()
+	ids.resize(cols * rows)
+	ids.fill(-1.0)
+	for pond in range(sources.size()):
+		var source: Dictionary = sources[pond]
 		var center: Vector2 = source.get("position", Vector2.ZERO)
-		var radius := float(source.get("radius", 0.0))
+		var radius := float(source.get("bank_radius", source.get("radius", 0.0)))
 		var extent := radius + reach
 		var low_x := maxi(0, int(floor((center.x - extent) / texel)))
 		var high_x := mini(cols - 1, int(ceil((center.x + extent) / texel)))
@@ -31,7 +40,8 @@ static func bake(sources: Array, world_size: Vector2, texel: float, reach: float
 				var distance := Vector2((float(x) + 0.5) * texel, texel_y).distance_to(center) - radius
 				if distance < cells[index]:
 					cells[index] = distance
-	return {"cells": cells, "cols": cols, "rows": rows, "texel": texel}
+					ids[index] = float(pond)
+	return {"cells": cells, "ids": ids, "cols": cols, "rows": rows, "texel": texel}
 
 
 ## The field at `world_position`, read the way the shader reads it: blended between the
@@ -47,6 +57,29 @@ static func sample(mask: Dictionary, world_position: Vector2) -> float:
 	var top := lerpf(_at(cells, cols, rows, x, y), _at(cells, cols, rows, x + 1, y), f.x)
 	var bottom := lerpf(_at(cells, cols, rows, x, y + 1), _at(cells, cols, rows, x + 1, y + 1), f.x)
 	return lerpf(top, bottom, f.y)
+
+
+## The field with each pond shrunk by `shrinks[pond]`, read as the shader reads it: each of the
+## four nearest texels moved by its own pond's shrink, then blended.
+static func sample_shrunk(mask: Dictionary, shrinks: PackedFloat32Array, world_position: Vector2) -> float:
+	var cols: int = mask["cols"]
+	var rows: int = mask["rows"]
+	var p: Vector2 = world_position / float(mask["texel"]) - Vector2(0.5, 0.5)
+	var x := floori(p.x)
+	var y := floori(p.y)
+	var f := p - Vector2(x, y)
+	var top := lerpf(_shrunk_at(mask, shrinks, x, y), _shrunk_at(mask, shrinks, x + 1, y), f.x)
+	var bottom := lerpf(_shrunk_at(mask, shrinks, x, y + 1), _shrunk_at(mask, shrinks, x + 1, y + 1), f.x)
+	return lerpf(top, bottom, f.y)
+
+
+static func _shrunk_at(mask: Dictionary, shrinks: PackedFloat32Array, x: int, y: int) -> float:
+	var cols: int = mask["cols"]
+	var rows: int = mask["rows"]
+	var index := clampi(y, 0, rows - 1) * cols + clampi(x, 0, cols - 1)
+	var pond := int(mask["ids"][index])
+	var distance: float = mask["cells"][index]
+	return distance if pond < 0 or pond >= shrinks.size() else distance + shrinks[pond]
 
 
 static func _at(cells: PackedFloat32Array, cols: int, rows: int, x: int, y: int) -> float:

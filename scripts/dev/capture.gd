@@ -7,7 +7,9 @@ extends SceneTree
 # second), `herd` selects a grazer in a herd so its herd card shows, `story` also pins it
 # and two others, `chronicle` then opens the chronicle on it, `epitaph` tells the death of one
 # pinned animal far away, `traits` opens the chronicle's «Черты» on a made-up history of
-# three years, `scaled` is `story` under a 125 % interface (applied, not saved),
+# three years, `ponds` / `ponds_iso` shows watering holes at made-up levels (a quarter dry, the
+# rest a tenth, a third and three quarters full) top-down or isometric,
+# `scaled` is `story` under a 125 % interface (applied, not saved),
 # `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
 # the setup screen.
 # Loads the real main scene, parks the camera, waits for
@@ -59,8 +61,10 @@ func _process(_delta: float) -> bool:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
-					"epitaph", "scaled", "settings", "traits"]:
+					"epitaph", "scaled", "settings", "traits", "ponds", "ponds_iso"]:
 				selection["style"] = _preset
+			if _preset == "ponds_iso":
+				selection["style"] = "isometric_craftpix"
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
 		if _frames < 40:
@@ -96,6 +100,21 @@ func _process(_delta: float) -> bool:
 	return true
 
 
+## The harness only: levels by pond index, on the worker's world and the view's, so the frame
+## shows them at once.
+func _set_made_up_levels() -> void:
+	var worlds: Array = [_manager.world_state]
+	if _manager._worker != null:
+		worlds.append(_manager._worker.world)
+	for world in worlds:
+		if world.water == null or not world.water.enabled:
+			continue
+		for index in range(world.water_sources.size()):
+			world.water.levels[index] = [0.0, 0.12, 0.35, 0.75][index % 4]
+			world.water._settle(index)
+		world.water.take_transitions()
+
+
 func _aim(world_position: Vector2) -> void:
 	_camera.global_position = WorldProjection.to_screen(
 		world_position, _height_at(world_position))
@@ -110,6 +129,10 @@ func _height_at(world_position: Vector2) -> int:
 
 func _park_on_agent() -> void:
 	var world = _manager.world_state
+	if _preset.begins_with("ponds"):
+		_set_made_up_levels()
+		_aim(world.water_sources[2]["position"] if world.water_sources.size() > 2 else _focus)
+		return
 	var agents: Array = world.get_living_agents()
 	if agents.is_empty():
 		push_error("capture: no living agents even after settling")

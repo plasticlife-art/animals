@@ -27,7 +27,9 @@
     "edge_noise_px": 5.0,
     "ripple_px": 40.0,
     "ripple_speed": 0.06,
-    "ripple_strength": 0.06
+    "ripple_strength": 0.06,
+    "bed_color": [0.50, 0.40, 0.28, 0.70],
+    "bed_px": 10.0
   },
   "borders": {
     "enabled": true,

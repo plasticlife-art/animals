@@ -811,6 +811,8 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		# After the delta above on purpose: the whole grid is the newer of the two.
 		world_state.resource_system._cells = data.ground.grass
 		world_state.trail_field.import_cells(data.ground.trails)
+	if data.has("water"):
+		world_state.water.import_state(data.water)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes
 	if bool(data.get("full", false)):
 		world_state._sector_states.clear()

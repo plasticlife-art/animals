@@ -136,6 +136,10 @@ func _presentation_state(inspected_id: int, full: bool, include_grass: bool, ful
 		"lod_counts": world.lod_counts.duplicate(), "performance": world.performance_counters.duplicate(),
 		"metrics": stats.get_snapshot_view(), "counters": stats.counters.duplicate(),
 		"events": pending_events.duplicate(true)}
+	# The ponds' levels (`WaterSystem`), a float and a flag a pond, every frame: the view draws
+	# each pond at its water's edge, and the ground layer may be off.
+	if world.water.enabled:
+		result["water"] = world.water.export_state()
 	result["snapshot_counts"] = {"agents": records.size(),
 		"agent_removals": agent_removals.size(),
 		"carcasses": carcass_delta.upserts.size(),

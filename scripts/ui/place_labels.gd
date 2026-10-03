@@ -6,7 +6,8 @@ extends Node2D
 ## band of zoom rather than popping. The text keeps its size on screen whatever the zoom, has
 ## a dark outline so it reads on grass and on water, and is drawn unshaded so the night tint
 ## leaves it legible. Placed through `WorldProjection`, so in the isometric view a name stands
-## at its ground's height. Hidden in photo mode.
+## at its ground's height. Hidden in photo mode. A pond that has dried (`WaterSystem`) keeps its
+## name, dimmed (`DRY_DIM`).
 
 ## Zoom is the camera's magnification: larger is closer. Ponds fade in from `pond_zoom` and
 ## are full at 1.25 times it; districts are full between their two bounds and fade over a
@@ -24,8 +25,14 @@ const DEFAULTS := {
 	"outline_size": 4,
 }
 
+## How much of its strength a dry pond's name keeps.
+const DRY_DIM := 0.45
+## Seconds between redraws for the ponds' dry state when the view does not move.
+const WATER_REDRAW_SECONDS := 1.0
+
 var story = null
 var camera: Camera2D = null
+var _water_redraw_left := 0.0
 var _config: Dictionary = DEFAULTS.duplicate(true)
 var _last_view := Transform2D()
 var _font: Font
@@ -63,13 +70,24 @@ static func fade(config: Dictionary, zoom: float) -> Array:
 	return [ponds, districts]
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if camera == null:
 		return
 	var view := Transform2D(0.0, camera.zoom, 0.0, camera.global_position)
 	if view != _last_view:
 		_last_view = view
 		queue_redraw()
+	_water_redraw_left -= delta
+	if _water_redraw_left <= 0.0 and _water() != null and _water().enabled:
+		_water_redraw_left = WATER_REDRAW_SECONDS
+		queue_redraw()
+
+
+## The world's ponds' levels (`WaterSystem`), or null.
+func _water():
+	if story == null or story.manager == null or story.manager.world_state == null:
+		return null
+	return story.manager.world_state.water
 
 
 func _draw() -> void:
@@ -87,10 +105,16 @@ func _draw() -> void:
 	if float(strength[0]) > 0.01:
 		var colour := _colour("pond_color")
 		colour.a *= float(strength[0])
-		for pond in places.ponds:
+		var water = _water()
+		for index in range(places.ponds.size()):
+			var pond: Dictionary = places.ponds[index]
 			if view.has_point(pond["position"]):
-				_label(pond["position"], int(pond["level"]), str(pond["name"]), int(_config["pond_font_size"]), colour,
-					float(strength[0]), zoom)
+				var dry: bool = water != null and water.is_dry(index)
+				var shade := colour
+				if dry:
+					shade.a *= DRY_DIM
+				_label(pond["position"], int(pond["level"]), str(pond["name"]), int(_config["pond_font_size"]), shade,
+					float(strength[0]) * (DRY_DIM if dry else 1.0), zoom)
 	if float(strength[1]) > 0.01:
 		var colour := _colour("district_color")
 		colour.a *= float(strength[1])

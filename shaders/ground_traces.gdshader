@@ -43,6 +43,14 @@ uniform float edge_noise = 15.0;
 uniform float ripple_size = 120.0;
 uniform float ripple_speed = 0.06;
 uniform float ripple_strength = 0.06;
+// Ponds with levels (`WaterSystem`): the field above is to each pond's bank; `water_id_tex`
+// says which pond owns a texel and `water_shrink_tex` (N x 1) how far that pond's water stands
+// in from its bank. Between the bank and the water the bed shows, mud deepening inwards.
+uniform float water_levels = 0.0;
+uniform sampler2D water_id_tex : filter_nearest, repeat_disable;
+uniform sampler2D water_shrink_tex : filter_nearest, repeat_disable;
+uniform vec4 bed_color : source_color = vec4(0.50, 0.40, 0.28, 0.70);
+uniform float bed_fade = 30.0;
 
 // Biome borders: the terrain grid is square cells, so its biomes meet in a staircase. Near a
 // cell's edge a fragment looks a noise-warped way into the neighbouring cell, the warp stepped to
@@ -79,6 +87,30 @@ float bilinear(sampler2D tex, vec2 uv) {
 	float b = texelFetch(tex, clamp(i + ivec2(1, 0), ivec2(0), hi), 0).r;
 	float c = texelFetch(tex, clamp(i + ivec2(0, 1), ivec2(0), hi), 0).r;
 	float d = texelFetch(tex, clamp(i + ivec2(1, 1), ivec2(0), hi), 0).r;
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// The water field with each pond shrunk to its level: each of the four texels around the
+// fragment moved in by its own pond's shrink, then blended as `bilinear()` blends.
+float shrunk_at(ivec2 cell) {
+	float d = texelFetch(water_tex, cell, 0).r;
+	float pond = texelFetch(water_id_tex, cell, 0).r;
+	if (pond < 0.0) {
+		return d;
+	}
+	return d + texelFetch(water_shrink_tex, ivec2(int(pond + 0.5), 0), 0).r;
+}
+
+float shrunk_distance(vec2 uv) {
+	ivec2 size = textureSize(water_tex, 0);
+	vec2 p = uv * vec2(size) - 0.5;
+	ivec2 i = ivec2(floor(p));
+	vec2 f = p - vec2(i);
+	ivec2 hi = size - ivec2(1);
+	float a = shrunk_at(clamp(i, ivec2(0), hi));
+	float b = shrunk_at(clamp(i + ivec2(1, 0), ivec2(0), hi));
+	float c = shrunk_at(clamp(i + ivec2(0, 1), ivec2(0), hi));
+	float d = shrunk_at(clamp(i + ivec2(1, 1), ivec2(0), hi));
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -168,16 +200,26 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 	if (water_enabled < 0.5) {
 		return ground;
 	}
-	float d = bilinear(water_tex, world / water_extent) + (noise - 0.5) * 2.0 * edge_noise;
+	float edge = (noise - 0.5) * 2.0 * edge_noise;
+	// `d` to the bank, where the sand is; `w` to the water's edge, the bank itself while ponds
+	// have no levels.
+	float d = bilinear(water_tex, world / water_extent) + edge;
 	if (d > shore_width + pixel) {
 		return ground;
 	}
 	float sand = (1.0 - smoothstep(0.0, shore_width, d)) * shore_color.a;
 	vec4 result = over(vec4(shore_color.rgb, sand), ground);
-	float inside = 1.0 - smoothstep(-pixel, pixel, d);
+	float w = d;
+	if (water_levels > 0.5) {
+		w = shrunk_distance(world / water_extent) + edge;
+		float bed = (1.0 - smoothstep(-pixel, pixel, d)) * smoothstep(0.0, bed_fade, -d) * bed_color.a;
+		result = over(vec4(bed_color.rgb, bed), result);
+	}
+	float inside = 1.0 - smoothstep(-pixel, pixel, w);
 	if (inside <= 0.0) {
 		return result;
 	}
+	d = w;
 	vec4 water = mix(shallow_color, deep_color, smoothstep(0.0, 1.0, -d / water_depth));
 	vec2 flow = TIME * ripple_speed * vec2(1.0, 0.73);
 	float ripple = value_noise(world / ripple_size + flow) - value_noise(world / (ripple_size * 0.61) - flow);

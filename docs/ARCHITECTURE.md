@@ -540,6 +540,15 @@ Utility actions inside `alive`:
   `TrailField` wear passes `ground.trail_range`. The ramp used to tint only below 0.4 and
   above 0.62, so ground grazed to half looked untouched. Missing keys take the defaults in
   `GroundTraces.GROUND_DEFAULTS`
+- Ponds with levels (`WaterSystem`) shrink towards their middle. The water field is baked once
+  against each pond's bank, with the pond that owns each texel (`WaterMask.bake()`, `ids`); a
+  round pond whose water stands `s` in from its bank is that field moved by `s`, so the shader
+  adds each texel's own pond's shrink (`water_shrink_tex`, a float a pond, refreshed every
+  `WATER_REFRESH_TICKS`) before blending (`shrunk_distance()`; `WaterMask.sample_shrunk()` is
+  the same maths in script, for tests). The sand stays at the old shore and the bed the water
+  left is drawn in `water.bed_color`, deepening over `bed_px`; a dry pond is shrunk past its
+  bank. The levels reach the view's world in every worker frame (`"water"`), apart from the
+  ground payload, which is off when the ground layer is
 - A quad per walkable terrain cell placed through `WorldProjection` at the cell's elevation,
   UV carrying the world position. `shaders/ground_traces.gdshader` reads grass, grass caps
   (`ResourceSystem.export_caps()`) and trails from float textures built straight from the
@@ -709,7 +718,11 @@ Utility actions inside `alive`:
   once a simulated minute («За минуту по всей карте: хищники — 4 оленя · голод — 2 лисы ·
   родились — 6 оленят»). A run of the same thing in one herd within 12 s folds into one line
   with a number. 40 lines are kept; they are not saved. The log holds its book weakly, since
-  the book holds the log
+  the book holds the log. A pond in view that dries or fills again (`PondDried`,
+  `PondRefilled`) gets a line - «Тихая заводь пересохла», «Тихий брод пересох», «В Тихой
+  заводи снова вода» (`PlaceNames` keeps each pond's gender and its «в/на» locative); several
+  within 12 s fold into «Пересохли Тихая заводь и ещё 3 водоёма»; the rest go into the
+  minute's summary («пересохли — 5 водоёмов»), as a summer dries dozens
 - `StoryFeed` shows the newest seven above the minimap with the time of day, pinned animals in
   gold and the summaries dimmer; a click selects the animal the line names while it lives (the
   hunter, the newborn) or sends the camera to where it happened. Dark like the season bar and
@@ -778,6 +791,9 @@ Utility actions inside `alive`:
 - Supports click / drag camera repositioning
 - Its tooltip names the place under the cursor (`PlaceNames.place_at()`); `PixelUiTheme` styles
   tooltips on parchment
+- With pond levels on (`WaterSystem`) the ponds are drawn in `_draw()` each refresh at their
+  water's edge, a dry one as a faint bed the size of its bank, instead of baked into the static
+  terrain image
 
 ### `SettingsStore`, `SettingsPanel`
 
@@ -855,7 +871,8 @@ Utility actions inside `alive`:
 - Draws `PlaceNames` on the map: pond names once zoomed in past `visuals.places.pond_zoom`, district
   names between `district_zoom_min` and `district_zoom_max`, each faded over a band rather than
   popped. Constant size on screen, outlined, unshaded so night leaves them legible, placed through
-  `WorldProjection` at the ground's height. Redraws only when the camera moves
+  `WorldProjection` at the ground's height. Redraws when the camera moves, and once a second
+  while ponds have levels: a dry pond's name is dimmed (`DRY_DIM`)
 
 ### `EcologyStrip`
 
@@ -1282,7 +1299,10 @@ Current suites cover:
   brink it does not flicker across, dry ponds skipped awake and asleep, a thirsty deer going
   to the far wet pond, no water anywhere vetoing the drink, a sleeping group drinking its pond
   down and choosing again at a dry one, memories forgetting dry ponds, levels through a save,
-  each change told once, and a world without levels playing exactly as before
+  each change told once, and a world without levels playing exactly as before; the water mask
+  knowing each texel's pond and shrinking each by its own amount, the ground layer's shrinks,
+  levels reaching the view's world through the worker, every pond noun's «в/на» case, and the
+  feed's pond lines, their folding and the minute's summary
 - the breeding season (`BreedingTests`): the curve over the year, females opening over its
   ramps, litters, autumn barren and spring twins, a predator out of season keeping its carcass
   and its mate, a fox litter's kin, litters against the cap awake and asleep, a sleeping litter

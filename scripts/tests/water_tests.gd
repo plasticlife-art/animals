@@ -10,6 +10,11 @@ const WaterSystemScript := preload("res://scripts/world/water_system.gd")
 const ClimateScript := preload("res://scripts/world/climate.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
 const DrinkUtilityEvaluatorScript := preload("res://scripts/agents/ai/evaluators/drink_utility_evaluator.gd")
+const WaterMaskScript := preload("res://scripts/ui/water_mask.gd")
+const GroundTracesScript := preload("res://scripts/ui/ground_traces.gd")
+const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
+const StoryBookScript := preload("res://scripts/story/story_book.gd")
+const StoryLogScript := preload("res://scripts/story/story_log.gd")
 
 const TICK := 1.0 / 18.0
 
@@ -27,6 +32,11 @@ func run(a) -> void:
 	_test_memory_forgets_dry_ponds(a)
 	_test_levels_survive_a_save(a)
 	_test_each_change_told_once(a)
+	_test_mask_knows_each_pond_and_shrinks_it(a)
+	_test_ground_layer_shrinks_ponds(a)
+	_test_levels_reach_the_view(a)
+	_test_pond_names_take_their_case(a)
+	_test_feed_tells_ponds(a)
 
 
 func _shipped_climate() -> Dictionary:
@@ -316,4 +326,106 @@ func _test_each_change_told_once(a) -> void:
 	a.equal(heard.size(), 1, "a pond drying is told once")
 	a.equal(str(heard[0].get("type", "")) if not heard.is_empty() else "", "PondDried", "as dried")
 	a.equal(int(heard[0].get("data", {}).get("index", -1)) if not heard.is_empty() else -1, 0, "naming the pond")
+	Helpers.destroy_manager(manager)
+
+
+func _test_mask_knows_each_pond_and_shrinks_it(a) -> void:
+	var ponds := [{"position": Vector2(300, 400), "radius": 40.0, "bank_radius": 100.0},
+		{"position": Vector2(700, 400), "radius": 60.0, "bank_radius": 60.0}]
+	var mask: Dictionary = WaterMaskScript.bake(ponds, Vector2(1000, 800), 10.0, 40.0)
+	a.equal(int(mask["ids"][40 * 100 + 30]), 0, "a texel in the first pond knows it")
+	a.equal(int(mask["ids"][40 * 100 + 70]), 1, "and one in the second")
+	a.equal(int(mask["ids"][5 * 100 + 5]), -1, "dry land belongs to no pond")
+	a.is_true(WaterMaskScript.sample(mask, Vector2(300, 400)) < -90.0, "baked to the bank, not the water's edge")
+	var shrinks := PackedFloat32Array([60.0, 0.0])
+	a.near(WaterMaskScript.sample_shrunk(mask, shrinks, Vector2(300, 400)),
+		WaterMaskScript.sample(mask, Vector2(300, 400)) + 60.0, 0.001, "shrunk by exactly its own amount")
+	a.near(WaterMaskScript.sample_shrunk(mask, shrinks, Vector2(340, 400)), 0.0, 1.5, "and the edge is at 40")
+	a.near(WaterMaskScript.sample_shrunk(mask, shrinks, Vector2(700, 400)), WaterMaskScript.sample(mask, Vector2(700, 400)),
+		0.0001, "the other pond stays as it was")
+	a.is_true(WaterMaskScript.sample_shrunk(mask, PackedFloat32Array([130.0, 0.0]), Vector2(300, 400)) > 0.0,
+		"shrunk past its bank, no water is left")
+
+
+func _test_ground_layer_shrinks_ponds(a) -> void:
+	var manager = _wet_world(9309)
+	var world = manager.world_state
+	var layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	a.equal(layer.water_shrinks.size(), 2, "a shrink for each pond")
+	a.near(layer.water_shrinks[0], 0.0, 0.0001, "none while full")
+	world.water.levels[0] = 0.25
+	world.water._settle(0)
+	_dry_up(world, 1)
+	layer.refresh_water()
+	a.near(layer.water_shrinks[0], 18.0 - 18.0 * 0.5, 0.01, "a pond at a quarter stands in half its radius")
+	a.is_true(layer.water_shrinks[1] > 18.0, "a dry one is shrunk past its bank")
+	layer.free()
+	Helpers.destroy_manager(manager)
+
+
+func _test_levels_reach_the_view(a) -> void:
+	var manager = _wet_world(9310)
+	manager.enable_interactive_worker()
+	var worker = manager._worker
+	worker.world.water.levels[0] = 0.4
+	worker.world.water._settle(0)
+	var frame: Dictionary = worker.step(manager.tick_duration, 0, 0.0, manager._build_lod_context(), -1, false)
+	a.is_true(frame.has("water"), "a frame carries the ponds' levels")
+	manager._apply_worker_frame(frame)
+	a.near(manager.world_state.water.levels[0], worker.world.water.levels[0], 0.0001, "and the view's world takes them")
+	a.near(float(manager.world_state.water_sources[0]["radius"]), float(worker.world.water_sources[0]["radius"]), 0.001,
+		"with the water's edge")
+	Helpers.destroy_manager(manager)
+
+
+func _test_pond_names_take_their_case(a) -> void:
+	for noun in PlaceNamesScript.POND_NOUNS:
+		a.equal(noun.size(), 5, "%s has its locative and preposition" % noun[0])
+	var still: Dictionary = PlaceNamesScript.compose("Тихий:v", ["заводь", "f", "заводи", "заводи", "в"])
+	a.equal(str(still.get("in", "")), "в Тихой заводи", "в Тихой заводи")
+	a.equal(str(still.get("gender", "")), "f", "a feminine pond")
+	var ford: Dictionary = PlaceNamesScript.compose("Тихий:v", ["брод", "m", "брода", "броду", "в"])
+	a.equal(str(ford.get("in", "")), "в Тихом броду", "в Тихом броду")
+	var drink: Dictionary = PlaceNamesScript.compose("Лисий:p", ["водопой", "m", "водопоя", "водопое", "на"])
+	a.equal(str(drink.get("in", "")), "на Лисьем водопое", "на Лисьем водопое")
+	var lake: Dictionary = PlaceNamesScript.compose("Синий:s", ["озеро", "n", "озера", "озере", "в"])
+	a.equal(str(lake.get("in", "")), "в Синем озере", "в Синем озере")
+	var short: Dictionary = PlaceNamesScript.compose("Тихий:v", ["брод", "m", "брода"])
+	a.equal(str(short.get("in", "")), str(short.get("at", "")), "a noun without its locative still names a place")
+
+
+func _test_feed_tells_ponds(a) -> void:
+	var manager = _wet_world(9311)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var pond: Dictionary = book.places.ponds[0]
+	var at: Vector2 = pond["position"]
+	book.feed.context_provider = func(): return {"view": Rect2(at - Vector2(50, 50), Vector2(100, 100))}
+	book.hear({"type": "PondDried", "time_seconds": 200.0, "species": "", "agent_id": -1,
+		"position": {"x": at.x, "y": at.y}, "data": {"index": 0}})
+	var verbs := {"m": "пересох", "f": "пересохла", "n": "пересохло"}
+	var dried: String = str(pond["name"]) + " " + str(verbs[str(pond["gender"])])
+	a.equal(str(book.feed.lines[0]["text"]) if not book.feed.lines.is_empty() else "", dried, "a pond in view: %s" % dried)
+	book.hear({"type": "PondRefilled", "time_seconds": 450.0, "species": "", "agent_id": -1,
+		"position": {"x": at.x, "y": at.y}, "data": {"index": 0}})
+	a.equal(str(book.feed.lines[0]["text"]), HudText.capitalized(str(pond["in"])) + " снова вода", "and its water back")
+	var far: Dictionary = book.places.ponds[1]
+	book.feed.context_provider = func(): return {"view": Rect2(-10, -10, 1, 1)}
+	book.hear({"type": "PondDried", "time_seconds": 460.0, "species": "", "agent_id": -1,
+		"position": {"x": far["position"].x, "y": far["position"].y}, "data": {"index": 1}})
+	a.equal(book.feed.lines.size(), 2, "a pond out of view gets no line of its own")
+	book.feed.tick(470.0)
+	book.feed.tick(600.0)
+	a.is_true(str(book.feed.lines[0]["text"]).contains("пересохли — 1 водоём"), "it is in the minute's summary")
+	var log = StoryLogScript.new()
+	log.book = book
+	log.context_provider = func(): return {"view": Rect2(-1000, -1000, 100000, 100000)}
+	for index in range(2):
+		log.hear({"type": "PondDried", "time_seconds": 300.0 + float(index), "species": "", "agent_id": -1,
+			"position": {"x": book.places.ponds[index]["position"].x, "y": book.places.ponds[index]["position"].y},
+			"data": {"index": index}})
+	a.equal(log.lines.size(), 1, "two drying within seconds fold into one line")
+	a.equal(str(log.lines[0]["text"]), "Пересохли %s и ещё 1 водоём" % book.places.ponds[0]["name"], "naming the first")
 	Helpers.destroy_manager(manager)
