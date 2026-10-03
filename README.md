@@ -158,6 +158,7 @@ Exports are written to `user://exports` by default:
 - `summary_<timestamp>_seed_<seed>.json`
 
 The summary includes population metrics, death causes, hunt success, carcass metrics, blocked terrain ratio, and LOD counters.
+The metrics carry, per species, how many animals are at risk of starvation (`starvation_risk_<species>_count`) and of thirst (`thirst_risk_<species>_count`); death events carry the herd the animal belonged to (`data.group_id`, -1 for none).
 
 ## Configuration
 

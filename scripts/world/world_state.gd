@@ -365,12 +365,14 @@ func kill_agent(agent, cause: String, other_agent_id: int = -1) -> void:
 	if cause == "predation":
 		fear_field.deposit(agent.position, fear_field.kill_risk)
 
+	# The herd it belonged to, so the view can tell a herd what it lost.
+	var death := {"cause": cause, "group_id": int(agent.group_id)}
 	if cause == "starvation":
-		emit_event("AgentStarved", agent, other_agent_id, {"cause": cause})
+		emit_event("AgentStarved", agent, other_agent_id, death)
 	elif cause == "old_age":
-		emit_event("AgentDiedOfAge", agent, other_agent_id, {"cause": cause})
+		emit_event("AgentDiedOfAge", agent, other_agent_id, death)
 
-	emit_event("AgentDied", agent, other_agent_id, {"cause": cause})
+	emit_event("AgentDied", agent, other_agent_id, death)
 
 
 func get_agent(agent_id: int):
@@ -392,7 +394,9 @@ func get_population_metrics() -> Dictionary:
 	var hunger_sum := 0.0
 	var energy_sum := 0.0
 	var living_count := 0
-	var critical_hunger := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("critical_hunger", 60.0))
+	var thresholds: Dictionary = config_bundle.get("balance", {}).get("state_thresholds", {})
+	var critical_hunger := float(thresholds.get("critical_hunger", 60.0))
+	var critical_thirst := float(thresholds.get("critical_thirst", 50.0))
 
 	var per_species: Dictionary = {}
 	for species_id in species_registry.ids():
@@ -400,7 +404,7 @@ func get_population_metrics() -> Dictionary:
 			"active": 0, "dormant": 0,
 			"active_hunger": 0.0, "dormant_hunger": 0.0,
 			"dormant_thirst": 0.0, "dormant_energy": 0.0,
-			"starvation_risk": 0,
+			"starvation_risk": 0, "thirst_risk": 0,
 		}
 
 	for agent in living_agents:
@@ -416,6 +420,8 @@ func get_population_metrics() -> Dictionary:
 		totals["active_hunger"] += agent.hunger
 		if agent.hunger >= critical_hunger:
 			totals["starvation_risk"] += 1
+		if agent.thirst >= critical_thirst:
+			totals["thirst_risk"] += 1
 
 	for sector_state in _sector_states.values():
 		if not bool(sector_state.get("dormant", false)):
@@ -437,8 +443,12 @@ func get_population_metrics() -> Dictionary:
 			totals["dormant_hunger"] += avg_hunger * count
 			totals["dormant_thirst"] += float(species_state.get("avg_thirst", 0.0)) * count
 			totals["dormant_energy"] += float(species_state.get("avg_energy", 0.0)) * count
+			# A sleeping sector is judged by its species' averages, so its animals count as
+			# at risk all together or not at all.
 			if avg_hunger >= critical_hunger:
 				totals["starvation_risk"] += count
+			if float(species_state.get("avg_thirst", 0.0)) >= critical_thirst:
+				totals["thirst_risk"] += count
 
 	var metrics: Dictionary = {
 		"hunger_sum": hunger_sum,
@@ -455,6 +465,7 @@ func get_population_metrics() -> Dictionary:
 		metrics["dormant_%s_thirst_sum" % species_id] = totals["dormant_thirst"]
 		metrics["dormant_%s_energy_sum" % species_id] = totals["dormant_energy"]
 		metrics["starvation_risk_%s_count" % species_id] = totals["starvation_risk"]
+		metrics["thirst_risk_%s_count" % species_id] = totals["thirst_risk"]
 	return metrics
 
 
@@ -1775,12 +1786,13 @@ func emit_population_event(event_type: String, species_type: String, position: V
 	})
 
 
-func _emit_dormant_death(species_type: String, position: Vector2, cause: String) -> void:
+func _emit_dormant_death(species_type: String, position: Vector2, cause: String, group_id: int = -1) -> void:
+	var death := {"cause": cause, "dormant": true, "group_id": group_id}
 	if cause == "starvation":
-		emit_population_event("AgentStarved", species_type, position, {"cause": cause, "dormant": true})
+		emit_population_event("AgentStarved", species_type, position, death)
 	elif cause == "old_age":
-		emit_population_event("AgentDiedOfAge", species_type, position, {"cause": cause, "dormant": true})
-	emit_population_event("AgentDied", species_type, position, {"cause": cause, "dormant": true})
+		emit_population_event("AgentDiedOfAge", species_type, position, death)
+	emit_population_event("AgentDied", species_type, position, death)
 
 
 func _maybe_spawn_carcass(agent, cause: String) -> void:
@@ -4634,7 +4646,7 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 			var victim: Dictionary = survivors[victim_index]
 			var position: Vector2 = victim.get("position", aggregate.get("center", bounds.get_center()))
 			survivors.remove_at(victim_index)
-			_emit_dormant_death(species_key, position, cause)
+			_emit_dormant_death(species_key, position, cause, int(victim.get("group_id", aggregate.get("group_id", -1))))
 			if cause == "predation":
 				fear_field.deposit(position, fear_field.kill_risk)
 			# A sleeping death leaves the same body a live one does, where the animal

@@ -243,7 +243,7 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 			snapshot["%s_dormant" % detail_key] = counters.get("%s_dormant" % detail_key, 0)
 		for field in ["active_%s_count", "dormant_%s_count", "active_%s_hunger_sum",
 				"dormant_%s_hunger_sum", "dormant_%s_thirst_sum", "dormant_%s_energy_sum",
-				"starvation_risk_%s_count"]:
+				"starvation_risk_%s_count", "thirst_risk_%s_count"]:
 			var key: String = field % species_id
 			snapshot[key] = population_metrics.get(key, 0)
 		var active: int = int(population_metrics.get("active_%s_count" % species_id, 0))

@@ -5,6 +5,15 @@ signal tick_completed(tick: int, snapshot: Dictionary)
 signal selection_changed(agent_id: int)
 signal focus_mode_changed(mode: String)
 signal export_completed(paths: Dictionary)
+## A simulation event the view acts on - a death, a birth, a herd splitting - always on
+## the main thread, whichever path it came by. The view listens here rather than on
+## `event_bus`, which is replaced on every start and load, and whose first instance
+## moves to the worker thread (see `_watch_event_bus()`).
+signal world_event(event: Dictionary)
+
+## The event types `world_event` carries. Everything else stays on the bus: grazing and
+## drinking alone fire many times a tick.
+const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "HerdSplit": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")
@@ -103,6 +112,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	seed = seed_override if seed_override >= 0 else int(config_bundle.get("world", {}).get("seed", 1337))
 	rng.seed = seed
 
+	_unwatch_event_bus(event_bus)
 	event_bus = EventBusScript.new()
 	event_bus.initialize(config_bundle.get("debug", {}))
 	stats_system = StatsSystemScript.new()
@@ -113,6 +123,8 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 
 	world_state = WorldStateScript.new()
 	world_state.initialize(config_bundle, event_bus, rng)
+	# After the world is built, so the founders' births are not news.
+	_watch_event_bus(event_bus)
 
 	tick_rate = float(config_bundle.get("world", {}).get("tick_rate", 20.0))
 	tick_duration = 1.0 / maxf(1.0, tick_rate)
@@ -270,6 +282,31 @@ func set_speed_multiplier(value: float) -> void:
 
 func set_debug_flag(flag_name: String, enabled: bool) -> void:
 	debug_flags[flag_name] = enabled
+
+
+## Simulated time as the view draws it: the last completed tick plus how far the clock
+## has run towards the next. Effects run on this clock, so they stop when the game is
+## paused and keep pace with it at 4x and 10x.
+func get_display_time() -> float:
+	return simulation_time + get_tick_alpha() * tick_duration
+
+
+## Forwards the events in `VIEW_EVENT_TYPES` from `bus` as `world_event`. Only ever a bus
+## the main thread emits on: the one `enable_interactive_worker()` hands to the worker
+## is unwatched first, or UI code would run on the worker thread.
+func _watch_event_bus(bus) -> void:
+	if bus != null and not bus.event_emitted.is_connected(_forward_view_event):
+		bus.event_emitted.connect(_forward_view_event)
+
+
+func _unwatch_event_bus(bus) -> void:
+	if bus != null and bus.event_emitted.is_connected(_forward_view_event):
+		bus.event_emitted.disconnect(_forward_view_event)
+
+
+func _forward_view_event(event: Dictionary) -> void:
+	if VIEW_EVENT_TYPES.has(event.get("type", "")):
+		world_event.emit(event)
 
 
 ## How far the clock has run past the last completed tick, as 0..1. Renderers
@@ -436,6 +473,7 @@ func shutdown() -> void:
 		telemetry_logger.shutdown()
 	if world_state != null and world_state.has_method("shutdown"):
 		world_state.shutdown()
+	_unwatch_event_bus(event_bus)
 	if event_bus != null and event_bus.has_method("shutdown"):
 		event_bus.shutdown()
 	world_state = null
@@ -534,6 +572,9 @@ func enable_interactive_worker() -> void:
 	if _worker != null or world_state == null:
 		return
 	_worker = preload("res://scripts/core/simulation_worker.gd").new()
+	# This bus goes to the worker thread with the world; its events come back in frames
+	# and are emitted again on the new one below.
+	_unwatch_event_bus(event_bus)
 	_worker.configure(world_state, stats_system, event_bus, rng)
 	var initial: Dictionary = world_state.export_state()
 	event_bus = EventBusScript.new()
@@ -549,6 +590,7 @@ func enable_interactive_worker() -> void:
 	world_state.import_state(initial)
 	# Initialisation events belong to construction, not to the running ecology.
 	event_bus.clear()
+	_watch_event_bus(event_bus)
 	stats_system.counters = _worker.stats.counters.duplicate()
 	_presentation_alpha = 0.0
 	_worker_stepping = false

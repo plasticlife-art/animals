@@ -16,7 +16,8 @@ This document describes the current structure of `Engine of Ecosystem`, the main
    - Pending removals, pending spawns, and carcass lifecycle updates are flushed.
    - The spatial grid and LOD counters are rebuilt.
    - `StatsSystem` samples the world and emits snapshots to the UI.
-5. The UI listens to `tick_completed`, `selection_changed`, `focus_mode_changed`, and `export_completed`.
+5. The UI listens to `tick_completed`, `selection_changed`, `focus_mode_changed`, `world_event`, and
+   `export_completed`.
 
 Interactive runs transfer ownership of the mutable simulation to `SimulationWorker`.
 The initial state and explicit save/load boundaries use a full presentation snapshot;
@@ -53,6 +54,16 @@ Key behavior:
 - The stats snapshot is frozen with `make_read_only()` when it is written. `tick_completed` and the
   worker hand-off pass that dictionary by reference; `StatsSystem.get_snapshot()` still returns an
   editable copy.
+- `world_event` re-emits the events the view acts on (`VIEW_EVENT_TYPES`: `AgentDied`,
+  `AgentBorn`, `HerdSplit`), always on the main thread: from the frame `_apply_worker_frame()`
+  applies, or as they happen in `step_once()`. The view listens there, not on `event_bus`, which
+  is replaced on every start and load. The bus `initialize()` creates moves to the worker thread
+  in `enable_interactive_worker()`, so the manager stops watching it first; watching starts after
+  the world is built, so the founders' births are not forwarded. Death events carry
+  `data.group_id`, the herd the animal belonged to, awake (`kill_agent()`) or asleep
+  (`_emit_dormant_death()`, where `agent_id` stays -1)
+- `get_display_time()` is the view's clock: the last tick plus how far the next has come. Effects
+  run on it, so they stop while paused and keep pace at 4x and 10x
 
 ### `WorldState`
 
@@ -194,6 +205,9 @@ Responsibilities:
 Current snapshot categories:
 
 - populations
+- animals at risk: `starvation_risk_<species>_count` (hunger at or past `critical_hunger`) and
+  `thirst_risk_<species>_count` (thirst at or past `critical_thirst`); a sleeping sector is
+  judged by its species' averages, so its animals count all together or not at all
 - death causes
 - hunger / energy averages
 - hunt success rate

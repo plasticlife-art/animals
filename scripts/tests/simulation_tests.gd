@@ -49,6 +49,8 @@ func run(asserts) -> void:
 	_test_dormant_stale_sector_forced_wake(asserts)
 	_test_dormant_population_changes_are_counted(asserts)
 	_test_snapshot_tracks_dormant_herbivore_metrics(asserts)
+	_test_thirst_risk_counts_live_and_dormant(asserts)
+	_test_death_events_name_the_herd(asserts)
 	_test_local_grass_fallback_without_path_budget(asserts)
 	_test_grass_target_prefers_grass_underfoot(asserts)
 	_test_grass_budget_miss_counted_when_local_grass_is_gone(asserts)
@@ -612,6 +614,49 @@ func _test_snapshot_tracks_dormant_herbivore_metrics(asserts) -> void:
 	asserts.is_true(int(snapshot.get("dormant_steps_total", 0)) > 0, "snapshot should accumulate dormant steps across sample window")
 	asserts.is_true(int(snapshot.get("dormant_herbivore_count", 0)) > 0, "snapshot should expose dormant herbivore split")
 	asserts.is_true(snapshot.has("starvation_risk_herbivore_count"), "snapshot should expose herbivore starvation risk count")
+	for species_id in manager.world_state.species_registry.ids():
+		asserts.is_true(snapshot.has("thirst_risk_%s_count" % species_id), "and %s thirst risk" % species_id)
+	TestHelpers.destroy_manager(manager)
+
+
+## Animals at or past `critical_thirst` count as at risk of thirst: awake one by one, and
+## asleep by their sector's average, the way starvation risk is counted.
+func _test_thirst_risk_counts_live_and_dormant(asserts) -> void:
+	var manager = TestHelpers.create_manager(47)
+	var world = manager.world_state
+	var critical := float(world.config_bundle["balance"]["state_thresholds"]["critical_thirst"])
+	var thirsts := [critical - 1.0, critical, critical + 30.0]
+	for index in range(thirsts.size()):
+		var animal = TestHelpers.spawn_herbivore(world, Vector2(20.0 + float(index) * 6.0, 20.0), 0)
+		animal.thirst = thirsts[index]
+	asserts.equal(int(world.get_population_metrics().get("thirst_risk_herbivore_count", -1)), 2,
+		"awake, each animal at or past the threshold counts")
+	var far := Vector2(220.0, 220.0)
+	for index in range(3):
+		var animal = TestHelpers.spawn_herbivore(world, far + Vector2(float(index) * 6.0, 0.0), 1)
+		animal.thirst = critical + 10.0 - float(index) * 10.0
+	world._sleep_sector(world._get_sector_key(far))
+	asserts.equal(int(world.get_population_metrics().get("thirst_risk_herbivore_count", -1)), 5,
+		"asleep, a sector whose average is at the threshold counts whole")
+	TestHelpers.destroy_manager(manager)
+
+
+## A death names the herd the animal belonged to, so the view can tell a herd what it
+## lost; an animal with no herd names none.
+func _test_death_events_name_the_herd(asserts) -> void:
+	var manager = TestHelpers.create_manager(48)
+	var world = manager.world_state
+	var deer = TestHelpers.spawn_herbivore(world, Vector2(40.0, 40.0), 4)
+	var fox = TestHelpers.spawn_predator(world, Vector2(120.0, 120.0))
+	world.event_bus.clear()
+	world.kill_agent(deer, "starvation")
+	world.kill_agent(fox, "old_age")
+	var herds := {}
+	for event in world.event_bus.get_events():
+		if str(event.get("type", "")) == "AgentDied":
+			herds[int(event.get("agent_id", -1))] = int(event.get("data", {}).get("group_id", -2))
+	asserts.equal(int(herds.get(deer.id, -2)), 4, "a herbivore's death names its herd")
+	asserts.equal(int(herds.get(fox.id, -2)), -1, "a predator, with no herd, names none")
 	TestHelpers.destroy_manager(manager)
 
 
