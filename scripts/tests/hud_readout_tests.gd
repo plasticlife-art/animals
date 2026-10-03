@@ -10,6 +10,7 @@ const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
 const HerdLossLogScript := preload("res://scripts/ui/herd_loss_log.gd")
 const HerdCardScript := preload("res://scripts/ui/herd_card.gd")
+const PlayerBarScript := preload("res://scripts/ui/player_bar.gd")
 
 
 func run(a) -> void:
@@ -25,6 +26,11 @@ func run(a) -> void:
 	_test_herd_texts(a)
 	_test_loss_log_keeps_each_herds_last(a)
 	_test_herd_card_follows_the_selection(a)
+	_test_numbers_take_the_right_noun(a)
+	_test_every_action_and_state_has_words(a)
+	_test_main_scene_speaks_russian(a)
+	_test_developer_mode_is_the_installations(a)
+	_test_player_bar_reports_and_shows(a)
 
 
 static func _sample(tick: int, seconds: float, extra: Dictionary = {}) -> Dictionary:
@@ -298,3 +304,102 @@ func _test_herd_card_follows_the_selection(a) -> void:
 	a.equal(card.losses.size(), 0, "a new world starts with no losses")
 	card.free()
 	Helpers.destroy_manager(manager)
+
+
+## A noun after a number takes the form Russian gives it: one, two to four, five and more,
+## with eleven to fourteen as many.
+func _test_numbers_take_the_right_noun(a) -> void:
+	var forms := ["голова", "головы", "голов"]
+	var said: Array = []
+	for count in [1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 101, 112]:
+		said.append(HudTextScript.plural(count, forms))
+	a.equal(said, ["голова", "головы", "головы", "голов", "голов", "голов", "голов", "голова", "головы", "голов",
+		"голова", "голов"], "one, few and many")
+	a.equal(HudTextScript.animal_count("herbivore", 3), "3 оленя", "three deer")
+	a.equal(HudTextScript.animal_count("herbivore", 5, true), "5 оленят", "five fawns")
+	a.equal(HudTextScript.animal_noun("predator", "female"), "лиса", "a vixen")
+	a.equal(HudTextScript.verb("female", "умер", "умерла"), "умерла", "a verb in her gender")
+	a.equal(HudTextScript.herd_name("herbivore", 2, "genitive"), "Стада №3", "from herd three")
+	a.equal(HudTextScript.herd_name("scavenger", 0, "instrumental"), "Стаей №1", "became flock one")
+
+
+## Whatever an animal does or is in the middle of has Russian words; nothing falls through
+## to its code name.
+func _test_every_action_and_state_has_words(a) -> void:
+	var actions: Script = load("res://scripts/agents/ai/agent_action.gd")
+	for constant in actions.get_script_constant_map().values():
+		a.is_true(HudTextScript.ACTIONS.has(String(constant)), "a word for the action %s" % constant)
+	for state in ["idle", "wander", "seek_food", "eat", "drink", "seek_water", "rest", "flee", "regroup",
+			"migrate", "reproduce", "seek_prey", "chase", "search_last_seen", "attack", "seek_carcass",
+			"feed_carcass", "investigate_water", "pair_cohesion", "patrol", "dead"]:
+		a.is_true(HudTextScript.STATES.has(state), "a word for the state %s" % state)
+	var labels: Array = []
+	for entry in _vitals_of_a_deer():
+		labels.append(entry.label)
+	a.equal(labels, ["Силы", "Сытость", "Вода"], "the card's bars")
+
+
+## Every label in the main scene is Russian: a Latin word left in it is an English label
+## nobody translated. «LOD» is the one term kept, and key names are what is on the keys.
+func _test_main_scene_speaks_russian(a) -> void:
+	var scene := FileAccess.get_file_as_string("res://scenes/main/main.tscn")
+	var labels := RegEx.create_from_string('(?m)^text = "(.*)"$')
+	var latin := RegEx.create_from_string("[A-Za-z]{2,}")
+	var english: Array = []
+	for found in labels.search_all(scene):
+		var text := found.get_string(1)
+		for kept in ["LOD", "Esc", "Tab"]:
+			text = text.replace(kept, "")
+		if latin.search(text) != null:
+			english.append(found.get_string(1))
+	a.equal(english, [], "no English label in the main scene")
+
+
+## Whether the developer panel is offered comes from the installation's debug.json, not from
+## the bundle a save was made with.
+func _test_developer_mode_is_the_installations(a) -> void:
+	var saved := {"debug": {"developer_mode": true, "lod": {"enabled": true}}, "visuals": {}}
+	var restored: Dictionary = Helpers.ConfigLoaderScript.with_shipped_presentation(saved,
+		{"debug": {"developer_mode": false}, "visuals": {"props": {}}})
+	a.equal(restored.debug.get("developer_mode"), false, "the installation says off")
+	a.equal(restored.debug.lod, saved.debug.lod, "the rest of the debug block is the save's")
+	var unsaid: Dictionary = Helpers.ConfigLoaderScript.with_shipped_presentation(saved, {"debug": {}, "visuals": {}})
+	a.is_true(not unsaid.debug.has("developer_mode"), "an installation without the flag leaves it off")
+	a.equal(Helpers.ConfigLoaderScript.load_config_bundle({}).debug.get("developer_mode"), false, "shipped off")
+
+
+## The player's bar offers the configured speeds and three layers, reports what is pressed
+## and shows what was set elsewhere without reporting it back.
+func _test_player_bar_reports_and_shows(a) -> void:
+	var bar = PlayerBarScript.new()
+	var heard: Array = []
+	bar.speed_selected.connect(func(multiplier: float) -> void: heard.append(["speed", multiplier]))
+	bar.overlay_toggled.connect(func(flag: String, on: bool) -> void: heard.append([flag, on]))
+	bar.pause_toggled.connect(func(paused: bool) -> void: heard.append(["pause", paused]))
+	bar.configure([1.0, 2.0, 4.0, 10.0], 2.0, {"show_fear": true})
+	a.equal(bar._speeds.size(), 4, "a button per speed")
+	a.is_true(bar._speeds[1].button.button_pressed, "the current speed is pressed")
+	a.is_true(bar._overlays["show_fear"].button_pressed and not bar._overlays["show_grass_density"].button_pressed,
+		"the layers as they are")
+	bar._speeds[2].button.pressed.emit()
+	bar._overlays["show_chase_lines"].button_pressed = true
+	bar._pause.button_pressed = true
+	a.equal(heard, [["speed", 4.0], ["show_chase_lines", true], ["pause", true]], "what was pressed is reported")
+	heard.clear()
+	bar.set_paused_state(false)
+	bar.set_overlay_state("show_fear", false)
+	bar.set_speed(10.0)
+	a.equal(heard, [], "what is set from elsewhere is not reported back")
+	a.is_true(bar._speeds[3].button.button_pressed and not bar._speeds[1].button.button_pressed, "the speed shown")
+	a.equal(bar._pause.text, "Пауза", "running: the button offers the pause")
+	bar.set_paused_state(true)
+	a.equal(bar._pause.text, "Пуск", "paused: it offers to go on")
+	bar.free()
+
+
+static func _vitals_of_a_deer() -> Array:
+	var manager = Helpers.create_manager(661)
+	var deer = Helpers.spawn_herbivore(manager.world_state, Vector2(60.0, 60.0), 0)
+	var vitals: Array = AgentReadout.vitals(deer)
+	Helpers.destroy_manager(manager)
+	return vitals

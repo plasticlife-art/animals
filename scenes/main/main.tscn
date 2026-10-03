@@ -19,6 +19,7 @@
 [ext_resource type="Script" path="res://scripts/ui/ground_traces.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/ui/ecology_strip.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/ui/herd_card.gd" id="19"]
+[ext_resource type="Script" path="res://scripts/ui/player_bar.gd" id="20"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -113,12 +114,12 @@ theme_override_constants/separation = 6
 [node name="PauseButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=420614205]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Pause"
+text = "Пауза"
 
 [node name="StepButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=1106000441]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Step"
+text = "Шаг"
 
 [node name="SpeedOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=2143489183]
 unique_name_in_owner = true
@@ -128,7 +129,7 @@ size_flags_horizontal = 3
 [node name="ExportButton" type="Button" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/ControlsRow" unique_id=1239879424]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Export"
+text = "Экспорт"
 
 [node name="FocusRow" type="HBoxContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=113504811]
 layout_mode = 2
@@ -136,7 +137,7 @@ theme_override_constants/separation = 6
 
 [node name="FocusLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/FocusRow" unique_id=166006314]
 layout_mode = 2
-text = "Follow"
+text = "Слежение"
 
 [node name="FocusModeOption" type="OptionButton" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/FocusRow" unique_id=210001313]
 unique_name_in_owner = true
@@ -153,11 +154,11 @@ scroll_active = false
 [node name="LodEnabledCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1800317812]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Enable LOD"
+text = "Дальние участки упрощены (LOD)"
 
 [node name="OverlayLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=901544959]
 layout_mode = 2
-text = "Overlays"
+text = "Слои"
 
 [node name="OverlayGrid" type="GridContainer" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=106828282]
 layout_mode = 2
@@ -166,81 +167,81 @@ columns = 2
 [node name="BiomesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1953019121]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Biomes"
+text = "Биомы"
 
 [node name="ObstaclesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=847103551]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Obstacles"
+text = "Препятствия"
 
 [node name="StateLabelsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=441133833]
 unique_name_in_owner = true
 layout_mode = 2
-text = "State labels"
+text = "Состояния"
 
 [node name="TargetLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=894795768]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Target lines"
+text = "Цели"
 
 [node name="VisionRadiusCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1679789139]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Vision radius"
+text = "Зрение"
 
 [node name="HerdRelationsCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=432432603]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Herd relation"
+text = "Связи в стаде"
 
 [node name="ChaseLinesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=859592048]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Chase lines"
+text = "Погони"
 
 [node name="GrassDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=2030533667]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Grass density"
+text = "Трава"
 
 [node name="FearCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1180226411]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Fear"
+text = "Угроза"
 
 [node name="PopulationDensityCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=579245789]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Population density"
+text = "Плотность"
 
 [node name="WaterOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1487088393]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Water overlay"
+text = "Вода (диски)"
 
 [node name="CarcassesCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=115483721]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Carcasses"
+text = "Туши (метки)"
 
 [node name="SelectedPathCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=1063190875]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Selected path"
+text = "Путь выбранного"
 
 [node name="LodOverlayCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=399522519]
 unique_name_in_owner = true
 layout_mode = 2
-text = "LOD tiers"
+text = "Уровни LOD"
 
 [node name="MinimapWaterCheck" type="CheckBox" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox/OverlayGrid" unique_id=399522520]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Water on minimap"
+text = "Вода на мини-карте"
 
 [node name="InspectorLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=156126296]
 layout_mode = 2
-text = "Selected Agent"
+text = "Выбранное животное"
 
 [node name="InspectorText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1410902342]
 unique_name_in_owner = true
@@ -251,7 +252,7 @@ scroll_active = false
 
 [node name="EventLogLabel" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=923282622]
 layout_mode = 2
-text = "Event Log"
+text = "Журнал событий"
 
 [node name="EventLogText" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1067215429]
 unique_name_in_owner = true
@@ -261,7 +262,7 @@ scroll_active = false
 
 [node name="StatusLabelTitle" type="Label" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1614298046]
 layout_mode = 2
-text = "Status"
+text = "Статус"
 
 [node name="StatusLabel" type="RichTextLabel" parent="CanvasLayer/HUD/DebugPanel/MarginContainer/ScrollContainer/VBox" unique_id=1419031012]
 unique_name_in_owner = true
@@ -280,6 +281,16 @@ offset_right = -12.0
 offset_bottom = 290.0
 grow_horizontal = 0
 script = ExtResource("6")
+
+[node name="PlayerBar" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=900000030]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 12.0
+offset_bottom = 12.0
+script = ExtResource("20")
 
 [node name="CardStack" type="VBoxContainer" parent="CanvasLayer/HUD" unique_id=900000020]
 unique_name_in_owner = true
@@ -319,7 +330,7 @@ theme_override_constants/separation = 6
 [node name="TitleLabel" type="Label" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000005]
 unique_name_in_owner = true
 layout_mode = 2
-text = "No selection"
+text = "Никто не выбран"
 
 [node name="BarsView" type="Control" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000006]
 unique_name_in_owner = true
@@ -336,7 +347,7 @@ text = "-"
 unique_name_in_owner = true
 layout_mode = 2
 toggle_mode = true
-text = "Follow"
+text = "Следить"
 
 [node name="MiniMap" type="Control" parent="CanvasLayer" unique_id=370118991]
 unique_name_in_owner = true
@@ -427,18 +438,18 @@ theme_override_constants/separation = 12
 
 [node name="PauseTitle" type="Label" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=187343211]
 layout_mode = 2
-text = "Paused"
+text = "Пауза"
 horizontal_alignment = 1
 
 [node name="PauseHint" type="Label" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=803512267]
 layout_mode = 2
-text = "Esc or Resume to continue"
+text = "Esc или «Продолжить» — вернуться к миру"
 horizontal_alignment = 1
 
 [node name="ResumeButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=146870122]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Resume"
+text = "Продолжить"
 
 [node name="HelpButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=640338194]
 unique_name_in_owner = true
@@ -453,7 +464,7 @@ text = "Новая симуляция"
 [node name="ExitButton" type="Button" parent="CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox" unique_id=147199452]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Exit"
+text = "Выход"
 
 [node name="HelpScreen" type="CenterContainer" parent="CanvasLayer" unique_id=317745002]
 visible = false

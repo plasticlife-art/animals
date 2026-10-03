@@ -63,7 +63,7 @@ func set_follow_state(mode: String) -> void:
 	if follow_button == null:
 		return
 	var following := mode == "agent"
-	follow_button.text = "Following" if following else "Follow"
+	follow_button.text = "Слежу" if following else "Следить"
 	follow_button.button_pressed = following
 
 
@@ -96,7 +96,7 @@ func refresh() -> void:
 	if title_label != null:
 		title_label.text = AgentReadout.title(agent)
 	if action_label != null:
-		action_label.text = "%s  ·  %s" % [AgentReadout.action_label(agent), agent.state]
+		action_label.text = "%s  ·  %s" % [AgentReadout.action_label(agent), HudText.state_label(agent.state)]
 	_vitals = AgentReadout.vitals(agent)
 	if bars_view != null:
 		bars_view.queue_redraw()

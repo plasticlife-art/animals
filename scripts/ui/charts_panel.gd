@@ -43,13 +43,13 @@ func _draw() -> void:
 	var line_height: float = font.get_height(font_size)
 
 	if simulation_manager == null or simulation_manager.stats_system == null:
-		draw_string(font, Vector2(PADDING, PADDING + line_height), "Waiting for simulation",
+		draw_string(font, Vector2(PADDING, PADDING + line_height), "Ждём симуляцию",
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color.WHITE)
 		return
 
 	var series := simulation_manager.stats_system.get_series()
 	if series.size() < 2:
-		draw_string(font, Vector2(PADDING, PADDING + line_height), "Collecting telemetry",
+		draw_string(font, Vector2(PADDING, PADDING + line_height), "Собираем данные",
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color.WHITE)
 		return
 
@@ -64,8 +64,8 @@ func _draw() -> void:
 	var trends_rect := Rect2(
 		PADDING, population_rect.end.y + CHART_GAP,
 		chart_width, charts_height - population_height - CHART_GAP)
-	_draw_chart_background(population_rect, "Population", font, font_size)
-	_draw_chart_background(trends_rect, "Birth / Death Trends", font, font_size)
+	_draw_chart_background(population_rect, "Численность", font, font_size)
+	_draw_chart_background(trends_rect, "Рождения и смерти", font, font_size)
 	_draw_season_bands(series, population_rect)
 	_draw_season_bands(series, trends_rect)
 
@@ -98,12 +98,12 @@ func _draw() -> void:
 	var legend: Array = []
 	for entry in _species_entries():
 		legend.append([String(entry["label"]), entry["color"]])
-	legend.append(["Births", BIRTHS_COLOR])
-	legend.append(["Deaths", DEATHS_COLOR])
+	legend.append(["Рождения", BIRTHS_COLOR])
+	legend.append(["Смерти", DEATHS_COLOR])
 	# The tick counter shares this baseline from the right, so the legend stops
 	# rather than running underneath it - with a fourth species and a five-digit
 	# tick the two would otherwise meet in the middle.
-	var tick_text := "Tick %d" % int(latest.get("tick", 0))
+	var tick_text := "Тик %d" % int(latest.get("tick", 0))
 	var tick_width: float = font.get_string_size(
 		tick_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
 	var legend_limit: float = size.x - PADDING - tick_width - LEGEND_GAP
@@ -118,7 +118,7 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, item[1])
 		legend_x += text_width + LEGEND_GAP
 	draw_string(font, Vector2(PADDING, stats_baseline),
-		"Avg energy %.1f  Avg hunger %.1f  Hunt %.2f" % [
+		"Силы %.1f  Голод %.1f  Охота %.2f" % [
 			float(latest.get("average_energy", 0.0)),
 			float(latest.get("average_hunger", 0.0)),
 			float(latest.get("hunt_success_rate", 0.0)),
@@ -198,7 +198,7 @@ func _species_entries() -> Array:
 		entries.append({
 			"id": str(species_id),
 			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2])),
-			"label": str(species_config[species_id].get("role", {}).get("label", species_id)),
+			"label": HudText.species_label(str(species_id)),
 		})
 	return entries
 

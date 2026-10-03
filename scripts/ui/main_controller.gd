@@ -12,6 +12,7 @@ extends Node2D
 @onready var charts_panel = $CanvasLayer/HUD/ChartsPanel
 @onready var selection_tag = $CanvasLayer/HUD/SelectionTag
 @onready var card_stack = $CanvasLayer/HUD/CardStack
+@onready var player_bar = $CanvasLayer/HUD/PlayerBar
 @onready var herd_card = $CanvasLayer/HUD/CardStack/HerdCard
 @onready var selection_card = $CanvasLayer/HUD/CardStack/SelectionCard
 @onready var minimap = $CanvasLayer/MiniMap
@@ -43,6 +44,10 @@ var _bound: bool = false
 var _selection: Dictionary = {}
 ## 0 disables autosaving. Read from debug.json at each start.
 var _autosave_interval: int = 0
+## Developer mode puts the developer panel and the charts behind Tab
+## (`debug.developer_mode`; F12 switches it while playing). Off, a player gets the small
+## Russian bar at the top left instead and Tab does nothing.
+var developer_mode: bool = false
 ## Where `_close_help()` goes back to: "start", "pause", "game", or "" when the
 ## help screen is down.
 var _help_return: String = ""
@@ -147,6 +152,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	help_screen.visible = false
 	_help_return = ""
 	minimap.visible = false
+	player_bar.visible = false
 	climate_indicator.visible = false
 	ecology_strip.visible = false
 	selection_tag.visible = false
@@ -173,6 +179,7 @@ func _hide_start_menu() -> void:
 	# actually a live selection to show.
 	selection_card.refresh()
 	herd_card.set_allowed(true)
+	_sync_player_bar()
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
 	minimap.set_input_enabled(true)
@@ -199,7 +206,11 @@ func _bind_view() -> void:
 	simulation_manager.tick_completed.connect(_on_tick_for_autosave)
 	debug_panel.pause_toggled.connect(_on_pause_toggled)
 	debug_panel.single_step_requested.connect(simulation_manager.request_single_step)
-	debug_panel.speed_selected.connect(simulation_manager.set_speed_multiplier)
+	debug_panel.speed_selected.connect(_on_speed_selected)
+	player_bar.pause_toggled.connect(_on_pause_toggled)
+	player_bar.speed_selected.connect(_on_speed_selected)
+	player_bar.overlay_toggled.connect(_on_overlay_flag_changed)
+	player_bar.help_requested.connect(_on_help_button)
 	debug_panel.export_requested.connect(_on_export_requested)
 	debug_panel.focus_mode_selected.connect(_on_focus_mode_selected)
 	selection_card.follow_toggled.connect(_on_follow_toggled)
@@ -246,6 +257,19 @@ func _sync_day_night_tint() -> void:
 func _on_pause_toggled(is_paused: bool) -> void:
 	simulation_manager.set_paused(is_paused)
 	debug_panel.set_paused_state(is_paused)
+	player_bar.set_paused_state(is_paused)
+
+
+## The bar and the developer panel each offer the speeds; whichever was used, both show it.
+func _on_speed_selected(multiplier: float) -> void:
+	simulation_manager.set_speed_multiplier(multiplier)
+	debug_panel.set_speed_state(multiplier)
+	player_bar.set_speed(multiplier)
+
+
+func _on_help_button() -> void:
+	if _bound and not _pause_menu_open:
+		_open_help("game")
 
 
 func _on_export_requested() -> void:
@@ -279,6 +303,8 @@ func _apply_focus_mode(mode: String) -> void:
 
 
 func _on_overlay_flag_changed(flag_name: String, enabled: bool) -> void:
+	debug_panel.set_overlay_state(flag_name, enabled)
+	player_bar.set_overlay_state(flag_name, enabled)
 	minimap.set_debug_flag(flag_name, enabled)
 	simulation_manager.set_debug_flag(flag_name, enabled)
 	world_view.set_debug_flag(flag_name, enabled)
@@ -320,8 +346,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_open_help("game")
 		get_viewport().set_input_as_handled()
 	elif toggle_hud_pressed:
-		if not _pause_menu_open:
+		if not _pause_menu_open and developer_mode:
 			set_hud_visible(not hud_visible)
+		get_viewport().set_input_as_handled()
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F12:
+		if _bound and not _pause_menu_open:
+			set_developer_mode(not developer_mode)
 		get_viewport().set_input_as_handled()
 	elif toggle_follow_pressed:
 		if not _pause_menu_open:
@@ -358,6 +388,7 @@ func _enter_menu_overlay() -> void:
 	simulation_manager.set_paused(true)
 	debug_panel.set_paused_state(true)
 	set_hud_visible(false)
+	_sync_player_bar()
 	world_view.set_input_enabled(false)
 	world_camera.set_input_enabled(false)
 	minimap.set_input_enabled(false)
@@ -367,6 +398,7 @@ func _exit_menu_overlay() -> void:
 	_pause_menu_open = false
 	simulation_manager.set_paused(_paused_before_pause_menu)
 	debug_panel.set_paused_state(_paused_before_pause_menu)
+	player_bar.set_paused_state(_paused_before_pause_menu)
 	set_hud_visible(_hud_visible_before_pause)
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
@@ -428,6 +460,7 @@ func set_hud_visible(value: bool) -> void:
 	hud_visible = value
 	debug_panel.visible = value
 	charts_panel.visible = value
+	_sync_player_bar()
 	# The two cards stand in one stack, which steps aside as a whole.
 	card_stack.offset_left = _selection_card_left(value)
 	card_stack.offset_right = card_stack.offset_left + SELECTION_CARD_WIDTH
@@ -480,8 +513,28 @@ func _configure_projection() -> void:
 	WorldProjection.configure(visuals, max_level, art_scale)
 
 
+## Switches developer mode; leaving it puts the developer panel away.
+func set_developer_mode(value: bool) -> void:
+	developer_mode = value
+	if not value and hud_visible:
+		set_hud_visible(false)
+
+
+## The player's bar is up while a world runs with nothing over it: not under the setup
+## screen, a menu or help, and not beside the developer panel, which has the same controls.
+func _sync_player_bar() -> void:
+	if player_bar == null:
+		return
+	player_bar.visible = _bound and not hud_visible and not _pause_menu_open \
+		and not start_menu.visible and not help_screen.visible
+
+
 func _apply_debug_configuration() -> void:
 	var debug_config: Dictionary = simulation_manager.config_bundle.get("debug", {})
+	set_developer_mode(bool(debug_config.get("developer_mode", false)))
+	player_bar.configure(debug_config.get("speed_steps", [1.0]), simulation_manager.speed_multiplier,
+		simulation_manager.debug_flags)
+	player_bar.set_paused_state(simulation_manager.paused)
 	var lod_config: Dictionary = debug_config.get("lod", {})
 	var lod_enabled := bool(lod_config.get("enabled", false))
 	simulation_manager.set_lod_enabled(lod_enabled)

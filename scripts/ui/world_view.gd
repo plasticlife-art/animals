@@ -90,7 +90,7 @@ func _draw_state_labels(world) -> void:
 		draw_string(
 			font,
 			_screen_of(world, agent.position) + Vector2(10.0, -10.0),
-			"%s #%d" % [agent.state, agent.id],
+			"%s №%d" % [HudText.state_label(agent.state), agent.id],
 			HORIZONTAL_ALIGNMENT_LEFT,
 			-1.0,
 			font_size,

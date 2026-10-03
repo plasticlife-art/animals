@@ -26,14 +26,14 @@ static func load_config_bundle(selection: Dictionary = {}) -> Dictionary:
 	return bundle
 
 
-## `saved`, a bundle a save was made with, drawn as the game draws today: `visuals` and
-## the debug overlay switches are taken from `shipped`, the bundle the save's selection
-## loads now. A save keeps its whole bundle so the world it holds plays on the same, but
-## the look is the game's, not the world's: an old save came back with the grass tint,
-## the water and the effects of the version that wrote it, or none, and animation rows
-## that no longer have to match the atlases. Only `visuals.props` stays as saved: the
-## scenery is placed from it. Neither the overlays nor the rest of `visuals` reach the
-## simulation; the overlays only choose what the worker ships for them.
+## `saved`, a bundle a save was made with, drawn as the game draws today: `visuals`, the
+## debug overlay switches and developer mode are taken from `shipped`, the bundle the
+## save's selection loads now. A save keeps its whole bundle so the world it holds plays
+## on the same, but the look is the game's, not the world's: an old save came back with
+## the grass tint, the water and the effects of the version that wrote it, or none, and
+## animation rows that no longer have to match the atlases. Only `visuals.props` stays as
+## saved: the scenery is placed from it. Neither the overlays nor the rest of `visuals`
+## reach the simulation; the overlays only choose what the worker ships for them.
 static func with_shipped_presentation(saved: Dictionary, shipped: Dictionary) -> Dictionary:
 	var bundle: Dictionary = saved.duplicate(true)
 	var visuals = shipped.get("visuals")
@@ -43,9 +43,15 @@ static func with_shipped_presentation(saved: Dictionary, shipped: Dictionary) ->
 		if saved_visuals is Dictionary and saved_visuals.has("props"):
 			drawn["props"] = saved_visuals["props"].duplicate(true)
 		bundle["visuals"] = drawn
-	var overlays = shipped.get("debug", {}).get("overlays")
-	if overlays is Dictionary and bundle.get("debug") is Dictionary:
-		bundle["debug"]["overlays"] = overlays.duplicate(true)
+	var shipped_debug = shipped.get("debug")
+	if shipped_debug is Dictionary and bundle.get("debug") is Dictionary:
+		if shipped_debug.get("overlays") is Dictionary:
+			bundle["debug"]["overlays"] = shipped_debug["overlays"].duplicate(true)
+		# Whether the developer panel is on offer is the installation's choice, not the save's.
+		if shipped_debug.has("developer_mode"):
+			bundle["debug"]["developer_mode"] = shipped_debug["developer_mode"]
+		else:
+			bundle["debug"].erase("developer_mode")
 	return bundle
 
 

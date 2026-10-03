@@ -20,6 +20,19 @@ signal lod_enabled_toggled(enabled: bool)
 @onready var event_log_text: RichTextLabel = get_node_or_null("%EventLogText")
 @onready var status_label: RichTextLabel = get_node_or_null("%StatusLabel")
 
+## The developer's view of the world, in Russian like the rest of the interface. Shown only
+## in developer mode (`debug.developer_mode`, F12 at runtime) and then on Tab.
+
+## The event log's names for the bus's event types; a type missing here shows as it is.
+const EVENT_NAMES := {
+	"AgentDied": "смерть", "AgentStarved": "голод", "AgentDiedOfAge": "старость", "AgentBorn": "рождение",
+	"AgentReproduced": "потомство", "HerdSplit": "деление стада", "HerdMigrates": "кочёвка стада",
+	"GrassConsumed": "трава", "WaterConsumed": "водопой", "HuntStarted": "охота",
+	"AttackAttempt": "бросок", "PredationSuccess": "добыча", "PredationFailed": "промах",
+	"PreySearchStarted": "поиск следа", "PreySearchExpired": "след потерян", "PreyReacquired": "след найден",
+	"CarcassSpawned": "туша", "CarcassConsumed": "кормёжка у туши", "CarcassExpired": "туша истлела",
+}
+
 var simulation_manager: SimulationManager
 var is_paused: bool = false
 var overlay_checkboxes: Dictionary = {}
@@ -39,9 +52,9 @@ func _ready() -> void:
 	if focus_mode_option != null:
 		focus_mode_option.item_selected.connect(_on_focus_mode_selected)
 		focus_mode_option.clear()
-		focus_mode_option.add_item("Off", 0)
-		focus_mode_option.add_item("Agent", 1)
-		focus_mode_option.add_item("Flock", 2)
+		focus_mode_option.add_item("Выкл", 0)
+		focus_mode_option.add_item("Животное", 1)
+		focus_mode_option.add_item("Стадо", 2)
 	if lod_enabled_check != null:
 		lod_enabled_check.toggled.connect(_on_lod_enabled_check_toggled)
 
@@ -114,7 +127,7 @@ func refresh_from_manager() -> void:
 func set_paused_state(value: bool) -> void:
 	is_paused = value
 	if pause_button != null:
-		pause_button.text = "Resume" if is_paused else "Pause"
+		pause_button.text = "Дальше" if is_paused else "Пауза"
 
 
 func set_focus_mode_state(mode: String) -> void:
@@ -127,6 +140,21 @@ func set_focus_mode_state(mode: String) -> void:
 		"flock":
 			option_index = 2
 	focus_mode_option.select(option_index)
+
+
+## Shows a layer switched from elsewhere - the player's bar - without emitting it back.
+func set_overlay_state(flag_name: String, enabled: bool) -> void:
+	if overlay_checkboxes.has(flag_name):
+		overlay_checkboxes[flag_name].set_pressed_no_signal(enabled)
+
+
+func set_speed_state(multiplier: float) -> void:
+	if speed_option == null:
+		return
+	for index in range(speed_steps.size()):
+		if is_equal_approx(float(speed_steps[index]), multiplier):
+			speed_option.select(index)
+			return
 
 
 func set_lod_enabled_state(value: bool) -> void:
@@ -187,7 +215,7 @@ func _on_focus_mode_changed(mode: String) -> void:
 
 
 func _on_export_completed(paths: Dictionary) -> void:
-	set_status_text("Last export:\n%s\n%s\n%s" % [
+	set_status_text("Последний экспорт:\n%s\n%s\n%s" % [
 		paths.get("metrics_csv", ""),
 		paths.get("events_json", ""),
 		paths.get("summary_json", ""),
@@ -211,7 +239,7 @@ func _species_vital_line(snapshot: Dictionary) -> String:
 		var initial: String = String(entry["label"]).substr(0, 1)
 		births.append("%s:%d" % [initial, int(snapshot.get("births_%s" % entry["id"], 0))])
 		deaths.append("%s:%d" % [initial, int(snapshot.get("deaths_%s" % entry["id"], 0))])
-	return "[b]Births[/b] %s    [b]Deaths[/b] %s" % [" ".join(births), " ".join(deaths)]
+	return "[b]Рождения[/b] %s    [b]Смерти[/b] %s" % [" ".join(births), " ".join(deaths)]
 
 
 func _species_entries() -> Array:
@@ -225,7 +253,7 @@ func _species_entries() -> Array:
 	for species_id in ids:
 		entries.append({
 			"id": str(species_id),
-			"label": str(species_config[species_id].get("role", {}).get("label", species_id)),
+			"label": HudText.species_label(str(species_id)),
 		})
 	return entries
 
@@ -234,21 +262,21 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 	if summary_label == null:
 		return
 	if snapshot.is_empty():
-		summary_label.text = "No simulation data yet."
+		summary_label.text = "Данных пока нет."
 		return
 	var perf: Dictionary = simulation_manager.get_performance_summary()
 	summary_label.text = "\n".join([
-		"[b]Frame p95/p99[/b] %.1f / %.1f ms    [b]Render CPU p95[/b] %.1f ms" % [perf.frame_ms.p95, perf.frame_ms.p99, perf.render_cpu_ms.p95],
-		"[b]Actual speed[/b] %.2fx / %.1fx    [b]Tick p95[/b] %.1f ms" % [perf.actual_speed, perf.requested_speed, perf.tick_ms.p95],
-		"[b]Tick[/b] %d    [b]Time[/b] %.1fs    [b]Seed[/b] %d" % [
+		"[b]Кадр p95/p99[/b] %.1f / %.1f мс    [b]Отрисовка p95[/b] %.1f мс" % [perf.frame_ms.p95, perf.frame_ms.p99, perf.render_cpu_ms.p95],
+		"[b]Скорость[/b] %.2fx из %.1fx    [b]Тик p95[/b] %.1f мс" % [perf.actual_speed, perf.requested_speed, perf.tick_ms.p95],
+		"[b]Тик[/b] %d    [b]Время[/b] %.1f с    [b]Зерно[/b] %d" % [
 			int(snapshot.get("tick", 0)),
 			float(snapshot.get("time_seconds", 0.0)),
 			simulation_manager.seed,
 		],
 		# Climate goes in the summary as well as the always-on indicator, because
 		# this line is what reaches telemetry exports and screenshots.
-		"[b]Season[/b] %s    [b]Clock[/b] %s    [b]Regrowth[/b] x%.2f" % [
-			str(snapshot.get("season", "-")),
+		"[b]Сезон[/b] %s    [b]Часы[/b] %s    [b]Рост травы[/b] x%.2f" % [
+			_season_label(str(snapshot.get("season", "-"))),
 			"%02d:%02d" % [
 				int(float(snapshot.get("day_phase", 0.0)) * 24.0) % 24,
 				int(float(snapshot.get("day_phase", 0.0)) * 1440.0) % 60,
@@ -257,24 +285,24 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 		],
 		_species_population_line(snapshot),
 		_species_vital_line(snapshot),
-		"[b]Starvation[/b] %d    [b]Thirst[/b] %d    [b]Predation[/b] %d    [b]Old age[/b] %d" % [
+		"[b]Голод[/b] %d    [b]Жажда[/b] %d    [b]Хищники[/b] %d    [b]Старость[/b] %d" % [
 			int(snapshot.get("deaths_starvation", 0)),
 			int(snapshot.get("deaths_thirst", 0)),
 			int(snapshot.get("deaths_predation", 0)),
 			int(snapshot.get("deaths_old_age", 0)),
 		],
-		"[b]Avg hunger[/b] %.1f    [b]Avg energy[/b] %.1f    [b]Hunt success[/b] %.2f" % [
+		"[b]Средний голод[/b] %.1f    [b]Средние силы[/b] %.1f    [b]Удачных охот[/b] %.2f" % [
 			float(snapshot.get("average_hunger", 0.0)),
 			float(snapshot.get("average_energy", 0.0)),
 			float(snapshot.get("hunt_success_rate", 0.0)),
 		],
 		"[b]LOD[/b] %s    [b]LOD0[/b] %d    [b]LOD1[/b] %d    [b]LOD2[/b] %d" % [
-			"On" if simulation_manager.lod_enabled else "Off",
+			"вкл" if simulation_manager.lod_enabled else "выкл",
 			int(snapshot.get("lod0_agents", 0)),
 			int(snapshot.get("lod1_agents", 0)),
 			int(snapshot.get("lod2_agents", 0)),
 		],
-		"[b]Blocked[/b] %.1f%%    [b]Step avg[/b] %.2f ms    [b]Step max[/b] %.2f ms" % [
+		"[b]Непроходимо[/b] %.1f%%    [b]Шаг в среднем[/b] %.2f мс    [b]Шаг максимум[/b] %.2f мс" % [
 			float(snapshot.get("blocked_cell_ratio", 0.0)) * 100.0,
 			float(snapshot.get("sim_step_ms_avg", 0.0)),
 			float(snapshot.get("sim_step_ms_max", 0.0)),
@@ -282,45 +310,56 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 	])
 
 
+## A season's name as the climate config gives it («Весна»), from the id the snapshot keeps.
+func _season_label(season_id: String) -> String:
+	for season in simulation_manager.config_bundle.get("world", {}).get("climate", {}).get("seasons", []):
+		if str(season.get("id", "")) == season_id:
+			return str(season.get("label", season_id))
+	return season_id
+
+
 func _refresh_inspector(agent_summary: Dictionary) -> void:
 	if inspector_text == null:
 		return
 	if agent_summary.is_empty():
-		inspector_text.text = "No agent selected."
+		inspector_text.text = "Никто не выбран."
 		return
 	inspector_text.text = "\n".join([
-		"[b]ID[/b] %s" % str(agent_summary.get("id", "-")),
-		"[b]Species[/b] %s    [b]Sex[/b] %s" % [agent_summary.get("species", "-"), agent_summary.get("sex", "-")],
-		"[b]State[/b] %s    [b]Alive[/b] %s" % [agent_summary.get("state", "-"), str(agent_summary.get("alive", false))],
-		"[b]AI State[/b] %s    [b]Action[/b] %s" % [agent_summary.get("ai_state", "-"), agent_summary.get("current_action", "-")],
-		"[b]Energy[/b] %.1f    [b]Hunger[/b] %.1f    [b]Thirst[/b] %.1f" % [
+		"[b]Номер[/b] %s" % str(agent_summary.get("id", "-")),
+		"[b]Вид[/b] %s    [b]Пол[/b] %s" % [HudText.species_label(str(agent_summary.get("species", "-"))),
+			HudText.sex_glyph(str(agent_summary.get("sex", "")))],
+		"[b]Состояние[/b] %s    [b]Жив[/b] %s" % [HudText.state_label(str(agent_summary.get("state", "-"))),
+			"да" if bool(agent_summary.get("alive", false)) else "нет"],
+		"[b]Режим ИИ[/b] %s    [b]Действие[/b] %s" % [agent_summary.get("ai_state", "-"),
+			HudText.action_label(str(agent_summary.get("current_action", "-")))],
+		"[b]Силы[/b] %.1f    [b]Голод[/b] %.1f    [b]Жажда[/b] %.1f" % [
 			float(agent_summary.get("energy", 0.0)),
 			float(agent_summary.get("hunger", 0.0)),
 			float(agent_summary.get("thirst", 0.0)),
 		],
-		"[b]Age[/b] %.1f    [b]Speed[/b] %.1f" % [
+		"[b]Возраст[/b] %.1f с    [b]Скорость[/b] %.1f" % [
 			float(agent_summary.get("age", 0.0)),
 			float(agent_summary.get("speed", 0.0)),
 		],
-		"[b]Biome[/b] %s    [b]Path nodes[/b] %d" % [
-			str(agent_summary.get("biome", "-")),
+		"[b]Биом[/b] %s    [b]Узлов пути[/b] %d" % [
+			HudText.biome_label(str(agent_summary.get("biome", "-"))),
 			int(agent_summary.get("path_nodes", 0)),
 		],
-		"[b]Target[/b] %s" % str(agent_summary.get("target", "-")),
-		"[b]Action ticks[/b] %d" % int(agent_summary.get("ticks_in_current_action", 0)),
-		"[b]Decision[/b] %s" % str(agent_summary.get("last_action_reason", "-")),
+		"[b]Цель[/b] %s" % str(agent_summary.get("target", "-")),
+		"[b]Тиков в действии[/b] %d" % int(agent_summary.get("ticks_in_current_action", 0)),
+		"[b]Решение[/b] %s" % str(agent_summary.get("last_action_reason", "-")),
 		_format_utility_scores(agent_summary.get("utility_scores", {})),
 	])
 
 
 func _format_utility_scores(scores: Dictionary) -> String:
 	if scores.is_empty():
-		return "[b]Scores[/b] -"
-	var lines := ["[b]Scores[/b]"]
+		return "[b]Оценки[/b] -"
+	var lines := ["[b]Оценки[/b]"]
 	var keys: Array = scores.keys()
 	keys.sort()
 	for key in keys:
-		lines.append("- %s: %.3f" % [str(key), float(scores.get(key, 0.0))])
+		lines.append("- %s: %.3f" % [HudText.action_label(str(key)), float(scores.get(key, 0.0))])
 	return "\n".join(lines)
 
 
@@ -328,18 +367,18 @@ func _refresh_event_log() -> void:
 	if event_log_text == null:
 		return
 	if simulation_manager == null or simulation_manager.event_bus == null:
-		event_log_text.text = "No events yet."
+		event_log_text.text = "Событий пока нет."
 		return
 	var events: Array = simulation_manager.event_bus.get_recent_events(event_log_visible_limit)
 	if events.is_empty():
-		event_log_text.text = "No events yet."
+		event_log_text.text = "Событий пока нет."
 		return
 	var lines := PackedStringArray()
 	for event in events:
 		lines.append(
 			"%04d  %s  #%d -> %s" % [
 				int(event.get("tick", 0)),
-				str(event.get("type", "")),
+				str(EVENT_NAMES.get(str(event.get("type", "")), event.get("type", ""))),
 				int(event.get("agent_id", -1)),
 				JSON.stringify(event.get("data", {})),
 			]

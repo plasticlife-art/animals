@@ -13,52 +13,29 @@ extends RefCounted
 ## into food and water. Three bars that all drain as the animal needs something can
 ## be read at a glance; a mix of directions cannot.
 
-const ACTION_LABELS := {
-	"none": "Idle",
-	"graze": "Grazing",
-	"drink": "Drinking",
-	"rest": "Resting",
-	"explore": "Exploring",
-	"join_herd": "Joining the herd",
-	"flee_to_safe_area": "Fleeing",
-	"hunt_prey": "Hunting",
-	"scavenge_carcass": "Scavenging",
-	"investigate_water": "Looking for water",
-	"pair_cohesion": "Following its mate",
-	"patrol": "Patrolling",
-	"reproduce": "Mating",
-}
-
-## Fallback only. The real label is `species.json -> role.label`, which the
-## selection card passes in; this covers a species that omits one.
-const SPECIES_LABELS := {}
-
-const SEX_GLYPHS := {
-	"female": "♀",
-	"male": "♂",
-}
+const HudTextScript := preload("res://scripts/ui/hud_text.gd")
+## The three needs, in the order the bars stand.
+const NEED_LABELS := ["Силы", "Сытость", "Вода"]
 
 
-static func title(agent) -> String:
+## «Ветка ♀ · олениха» with a name, «Олениха ♀ №284» without one.
+static func title(agent, name := "") -> String:
 	if agent == null:
 		return ""
-	var parts: Array[String] = [
-		String(SPECIES_LABELS.get(agent.species_type, String(agent.species_type).capitalize()))
-	]
-	var glyph := String(SEX_GLYPHS.get(agent.sex, ""))
-	if glyph != "":
-		parts.append(glyph)
-	parts.append("#%d" % agent.id)
-	return " ".join(parts)
+	var noun := HudTextScript.animal_noun(agent.species_type, agent.sex,
+		agent.has_method("get_age_stage") and agent.get_age_stage() == "young")
+	var glyph := HudTextScript.sex_glyph(agent.sex)
+	if name != "":
+		return "%s %s · %s" % [name, glyph, noun]
+	return "%s %s №%d" % [noun.capitalize(), glyph, agent.id]
 
 
 ## What the animal is doing, in words. Falls back to the raw action name so a new
-## `AgentAction` constant shows up as readable text instead of disappearing.
+## `AgentAction` constant shows up as text instead of disappearing.
 static func action_label(agent) -> String:
 	if agent == null:
 		return ""
-	var key := String(agent.current_action)
-	return String(ACTION_LABELS.get(key, key.capitalize()))
+	return HudTextScript.action_label(String(agent.current_action))
 
 
 ## The three needs, each as `{label, value, maximum, fill, color}`.
@@ -76,7 +53,7 @@ static func vitals(agent) -> Array:
 ## The same three bars from raw values, for whatever has them: one animal above, a herd's
 ## means on the herd card. `labels` names energy, food and water, in that order.
 static func need_bars(energy: float, hunger: float, thirst: float, need_max: float, max_energy: float,
-		thresholds: Dictionary, labels: Array = ["Energy", "Food", "Water"]) -> Array:
+		thresholds: Dictionary, labels: Array = NEED_LABELS) -> Array:
 	return [
 		bar_entry(str(labels[0]), energy, max_energy, energy <= float(thresholds.get("rest_energy", 26.0))),
 		bar_entry(str(labels[1]), need_max - hunger, need_max, hunger >= float(thresholds.get("critical_hunger", 60.0))),

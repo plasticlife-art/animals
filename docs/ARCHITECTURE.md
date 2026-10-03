@@ -513,12 +513,30 @@ Utility actions inside `alive`:
 
 ### `DebugPanel`
 
+- The developer's panel, in Russian like the rest: offered only in developer mode
+  (`debug.developer_mode`, F12 while playing), then shown and hidden by Tab with the charts
 - Pause, step, speed control
 - Follow mode selector
 - LOD toggle
 - Overlay toggles
 - Summary, selected agent inspector, event log, export status
 - Selected-agent AI visibility: AI state, current action, action age, decision reason, utility scores
+
+### `PlayerBar`
+
+- What a player needs, at the top left: pause, the speeds from `debug.speed_steps`, three
+  layers (grass, danger from `show_fear`, chases) and help. Built in code; it reports what was
+  pressed and `MainController` applies it, keeping the bar and the developer panel in step
+- Up while a world runs with nothing over it; it steps aside for the developer panel, which
+  has the same controls, and for the menus
+
+### `HudText`
+
+- Every word the interface shows about the world, in Russian: species and the animals in them
+  by sex and age, herds and their cases («из Стада №3»), biomes, causes of death, actions and
+  states, and the grammar they need - a verb in the animal's gender, the form a noun takes
+  after a number. A test checks every `AgentAction` and state has words, and that no English
+  label is left in the main scene
 
 ### `ChartsPanel`
 
@@ -865,6 +883,9 @@ millisecond setting squeezed to zero.
 ### `debug.json`
 
 - controls HUD defaults, overlay defaults, UI refresh frequency, and LOD settings
+- `developer_mode` offers the developer panel behind Tab; off, as shipped, a player gets the
+  bar at the top left. F12 switches it while playing. Like the overlays it is read from the
+  installed file even when a save is loaded
 - `overlays.show_minimap_water` is on: the minimap marks the watering holes, as the map
   itself now does. `show_water_overlay` is still the debug disc drawn over the animals
 

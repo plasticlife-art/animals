@@ -4,8 +4,7 @@ extends PanelContainer
 ## The herd of the selected animal, above its own card: how many there are, near and
 ## far, how many are young, how fed, watered and rested they are on average, whether
 ## anything is hunting them and what they lost last, with a toggle that puts the camera
-## on the herd (`focus_mode` "flock"). In Russian, like the strip at the top; the card
-## below stays the English one it was.
+## on the herd (`focus_mode` "flock").
 ##
 ## Shown only while a herding animal is selected (`HerdReadout.has_herd()`): predators
 ## keep to pairs and get none, and the card goes when the selection dies or the start

@@ -128,14 +128,14 @@ pipeline instead, which reports success even when tests fail:
 
 ## Controls
 
-- `Tab`: toggle HUD visibility
 - `Esc`: open or close the pause menu
 - `F1`: open or close the help screen
+- `F12`: switch developer mode; in it `Tab` shows or hides the developer panel and charts
 - `F`: toggle follow on the selected agent
 - `Следить за стадом` on the herd card: follow the selected animal's herd
 - `W`, `A`, `S`, `D`: pan camera
 - Mouse wheel / trackpad pinch: zoom
-- Mouse wheel over the debug panel: scroll the panel
+- Mouse wheel over the developer panel: scroll the panel
 - Middle mouse drag / trackpad pan: pan camera
 - Left click on world: select nearest agent and switch follow mode to `Agent`
 - Drag or click on minimap: move camera
@@ -143,19 +143,27 @@ pipeline instead, which reports success even when tests fail:
 
 ## HUD Features
 
-From the HUD you can:
+The interface is in Russian throughout. From the bar at the top left you can:
 
 - pause or resume the simulation
+- switch speed between the configured speeds
+- switch on three layers of the map: grass, danger (where predators have struck) and chases
+- open the help screen
+
+The selected animal has a card at the bottom left and a tag over it; a grazer or a scavenger
+also gets its herd's card above its own: how many there are, near and far, how many are young,
+how fed, watered and rested they are, whether anything is hunting them, what they lost last,
+and a button to follow the herd.
+
+Developer mode (`debug.developer_mode`, or `F12` while playing) puts the developer panel and the
+charts behind `Tab`, in place of the bar. From there you can also:
+
 - single-step one tick
-- switch speed between configured speed presets
-- switch follow mode between `Off`, `Agent`, and `Flock`
-- inspect the selected agent, including AI state, current action, decision reason, and utility scores
-- see the selected animal's herd on a card above its own, in Russian: how many there are, near
-  and far, how many are young, how fed, watered and rested they are, whether anything is
-  hunting them, what they lost last, and a button to follow the herd
+- switch follow mode between off, the animal and its herd
+- inspect the selected animal's AI: state, current action, decision reason and utility scores
 - review recent events
 - toggle LOD on or off
-- toggle biome, obstacle, carcass, path, density, water, and debug overlays
+- toggle every layer: biomes, obstacles, carcasses, paths, densities, water and the AI's own
 - export telemetry snapshots and event logs
 
 Always on screen during play, in Russian: the season and the clock at the top, and under
@@ -198,7 +206,8 @@ The metrics carry, per species, how many animals are at risk of starvation (`sta
 - `data/config/balance.json`
   Shared thresholds, herd weights, hunt rules, carcass behavior, lifecycle rules, AI selector tuning, evaluator weights, stats sampling
 - `data/config/debug.json`
-  HUD defaults, UI refresh cadence, overlays, export directory, interactive LOD tuning
+  Developer mode, HUD defaults, UI refresh cadence, overlays, export directory, interactive LOD
+  tuning
 - `data/config/visuals.json`
   Sprite atlases and animation rows, the projection, the grass ramp and trails on the ground
   (`ground`), the watering holes (`water`) and the event effects (`effects`). The simulation
