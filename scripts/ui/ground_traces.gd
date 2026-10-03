@@ -3,11 +3,12 @@ extends Node2D
 
 ## Shows the marks the ecology leaves on the ground, in the normal view.
 ##
-## Three things, all read from the simulation and none fed back into it: earth showing
-## through where grass is grazed down, a richer green where it stands tall - the
-## refuges that fear of predators leaves ungrazed - and paths worn where animals keep
-## walking. The grass overlay in the debug panel shows the same numbers as a chart;
-## this is the same data as scenery.
+## Two things, both read from the simulation and neither fed back into it: how much
+## grass each cell holds, as a ramp from bare earth through dry straw to a richer green
+## - the refuges that fear of predators leaves ungrazed - and paths worn where animals
+## keep walking. The grass overlay in the debug panel shows the same numbers as a
+## chart; this is the same data as scenery. The ramp used to tint only the two ends,
+## below 0.4 of a cell's cap and above 0.62, so ground grazed to half looked untouched.
 ##
 ## The grids reach the GPU as float textures built straight from the packed arrays, so
 ## a refresh costs no loop in script. The mesh is one quad per walkable terrain cell,
@@ -21,6 +22,22 @@ extends Node2D
 ## the next row's, so the tiles in front cover it as they cover the ground.
 
 const GROUND_SHADER := preload("res://shaders/ground_traces.gdshader")
+
+## What `visuals.ground` holds when a key is missing, as in a save made before the key
+## existed: the bundle a save carries is the one it was made with. Equal to the
+## shader's own defaults.
+const GROUND_DEFAULTS := {
+	"bare_color": [0.50, 0.38, 0.22, 0.70],
+	"dry_color": [0.78, 0.68, 0.34, 0.42],
+	"mid_color": [0.48, 0.58, 0.26, 0.10],
+	"lush_color": [0.12, 0.40, 0.12, 0.42],
+	"grass_stops": [0.08, 0.30, 0.55, 0.92],
+	"trail_color": [0.86, 0.79, 0.6, 0.6],
+	"trail_range": [80.0, 800.0],
+	"noise_size": 40.0,
+	"noise_strength": 0.16,
+}
+const GROUND_COLORS := ["bare_color", "dry_color", "mid_color", "lush_color", "trail_color"]
 
 ## Layer-local units a row mesh is sorted after the tiles of its own row. Rows are half
 ## a tile apart, so this lands between one row and the next.
@@ -127,17 +144,58 @@ static func _float_image(cells: PackedFloat32Array, cols: int, rows: int) -> Ima
 
 
 func _apply_config(config: Dictionary) -> void:
-	for key in ["bare_color", "lush_color", "trail_color"]:
-		var value = config.get(key)
-		if value is Array and value.size() >= 4:
-			_material.set_shader_parameter(key, Color(value[0], value[1], value[2], value[3]))
-	for key in ["bare_range", "lush_range", "trail_range"]:
-		var value = config.get(key)
-		if value is Array and value.size() >= 2:
-			_material.set_shader_parameter(key, Vector2(value[0], value[1]))
+	var ground := resolve_ground_config(config)
+	for key in GROUND_COLORS:
+		_material.set_shader_parameter(key, ground[key])
+	var stops: Array = ground["grass_stops"]
+	_material.set_shader_parameter("grass_stops", Vector4(stops[0], stops[1], stops[2], stops[3]))
+	var trail_range: Array = ground["trail_range"]
+	_material.set_shader_parameter("trail_range", Vector2(trail_range[0], trail_range[1]))
 	for key in ["noise_size", "noise_strength"]:
-		if config.has(key):
-			_material.set_shader_parameter(key, float(config[key]))
+		_material.set_shader_parameter(key, float(ground[key]))
+
+
+## `visuals.ground` with every key the layer reads, colours as `Color`. A key missing or
+## malformed takes its default, so a save made before it existed still draws the ramp.
+static func resolve_ground_config(config: Dictionary) -> Dictionary:
+	var resolved := {}
+	for key in GROUND_DEFAULTS.keys():
+		var fallback = GROUND_DEFAULTS[key]
+		var value = config.get(key, fallback)
+		if fallback is Array and not (value is Array and value.size() >= fallback.size()):
+			value = fallback
+		if GROUND_COLORS.has(key):
+			resolved[key] = Color(value[0], value[1], value[2], value[3])
+		elif value is Array:
+			resolved[key] = value.duplicate()
+		else:
+			resolved[key] = float(value)
+	return resolved
+
+
+## The shader's `grass_tint()`: the colour, alpha included, a grass share is drawn with
+## before trails go over it. For tests and anything else that has to know; keep the
+## two in step.
+static func grass_tint(share: float, ground: Dictionary) -> Color:
+	var stops: Array = ground["grass_stops"]
+	var low: Color = ground["mid_color"]
+	var high: Color = ground["lush_color"]
+	var t := smoothstep(float(stops[2]), float(stops[3]), share)
+	if share <= float(stops[1]):
+		low = ground["bare_color"]
+		high = ground["dry_color"]
+		t = smoothstep(float(stops[0]), float(stops[1]), share)
+	elif share <= float(stops[2]):
+		low = ground["dry_color"]
+		high = ground["mid_color"]
+		t = smoothstep(float(stops[1]), float(stops[2]), share)
+	var mixed := _premultiplied(low).lerp(_premultiplied(high), t)
+	var alpha := maxf(mixed.a, 0.0001)
+	return Color(mixed.r / alpha, mixed.g / alpha, mixed.b / alpha, mixed.a)
+
+
+static func _premultiplied(color: Color) -> Color:
+	return Color(color.r * color.a, color.g * color.a, color.b * color.a, color.a)
 
 
 ## One mesh per diagonal row of cells (x + y), each a child of the terrain layer so it

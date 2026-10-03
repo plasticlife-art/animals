@@ -380,10 +380,13 @@ Utility actions inside `alive`:
 
 ### `GroundTraces`
 
-- Shows what the ecology has done to the ground, in the normal view: earth where grass is
-  grazed below `ground.bare_range`, a richer green where it stands above `ground.lush_range`
-  (the refuges fear leaves ungrazed), and paths where `TrailField` wear passes
-  `ground.trail_range`
+- Shows what the ecology has done to the ground, in the normal view: how much grass each
+  cell holds as a share of its cap, on a ramp through `ground.bare_color`, `dry_color`,
+  `mid_color` and `lush_color`, each reached in full at its `grass_stops` share (bare earth,
+  dry straw, the tile as drawn, the refuges fear leaves ungrazed), and paths where
+  `TrailField` wear passes `ground.trail_range`. The ramp used to tint only below 0.4 and
+  above 0.62, so ground grazed to half looked untouched. Missing keys take the defaults in
+  `GroundTraces.GROUND_DEFAULTS`, since a save carries the config it was made with
 - A quad per walkable terrain cell placed through `WorldProjection` at the cell's elevation,
   UV carrying the world position. `shaders/ground_traces.gdshader` reads grass, grass caps
   (`ResourceSystem.export_caps()`) and trails from float textures built straight from the

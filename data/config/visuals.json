@@ -4,14 +4,15 @@
   "ground": {
     "enabled": true,
     "update_interval_ticks": 18,
-    "bare_color": [0.54, 0.43, 0.27, 0.6],
-    "bare_range": [0.4, 0.08],
-    "lush_color": [0.16, 0.42, 0.14, 0.3],
-    "lush_range": [0.62, 0.95],
+    "bare_color": [0.50, 0.38, 0.22, 0.70],
+    "dry_color": [0.78, 0.68, 0.34, 0.42],
+    "mid_color": [0.48, 0.58, 0.26, 0.10],
+    "lush_color": [0.12, 0.40, 0.12, 0.42],
+    "grass_stops": [0.08, 0.30, 0.55, 0.92],
     "trail_color": [0.86, 0.79, 0.6, 0.6],
     "trail_range": [80.0, 800.0],
     "noise_size": 40.0,
-    "noise_strength": 0.18
+    "noise_strength": 0.16
   },
   "tile_px": 32,
   "terrain": {

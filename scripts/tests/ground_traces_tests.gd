@@ -24,6 +24,7 @@ func run(a) -> void:
 	_test_worker_ships_the_ground_on_its_interval(a)
 	_test_layer_covers_walkable_ground_only(a)
 	_test_layer_is_off_when_switched_off(a)
+	_test_grass_ramp_has_no_dead_band(a)
 	_test_isometric_ground_and_sprites_rise_together(a)
 	_test_isometric_rows_sort_with_the_tiles(a)
 
@@ -280,6 +281,57 @@ func _test_layer_is_off_when_switched_off(a) -> void:
 	var layer = GroundTracesScript.new()
 	layer.bind_manager(manager)
 	a.is_true(not layer.visible and layer._mesh_instance == null, "and draws nothing")
+	layer.free()
+	Helpers.destroy_manager(manager)
+
+
+## The ground follows the grass all the way down: between bare earth and lush grass no
+## share is drawn like its neighbour, the tint never jumps, and the ends keep their
+## hues. The old ramp tinted only below 0.4 of a cell's cap and above 0.62, so ground
+## grazed to half looked untouched.
+func _test_grass_ramp_has_no_dead_band(a) -> void:
+	var ground: Dictionary = GroundTracesScript.resolve_ground_config({})
+	var stops: Array = ground["grass_stops"]
+	var flat := 0
+	var jumps := 0
+	var previous: Color = GroundTracesScript.grass_tint(0.0, ground)
+	for step in range(1, 101):
+		var share := float(step) / 100.0
+		var tint: Color = GroundTracesScript.grass_tint(share, ground)
+		var change := maxf(maxf(absf(tint.r - previous.r), absf(tint.g - previous.g)),
+			maxf(absf(tint.b - previous.b), absf(tint.a - previous.a)))
+		if share > float(stops[0]) + 0.005 and share < float(stops[3]) - 0.005 and change < 0.0002:
+			flat += 1
+		if change > 0.08:
+			jumps += 1
+		previous = tint
+	a.equal(flat, 0, "every grass share between bare and lush is drawn unlike the next")
+	a.equal(jumps, 0, "and the tint never jumps")
+	var bare: Color = GroundTracesScript.grass_tint(0.0, ground)
+	var dry: Color = GroundTracesScript.grass_tint(float(stops[1]), ground)
+	var mid: Color = GroundTracesScript.grass_tint(float(stops[2]), ground)
+	var lush: Color = GroundTracesScript.grass_tint(1.0, ground)
+	a.is_true(bare.r > bare.g and bare.g > bare.b, "bare ground is earth-coloured")
+	a.is_true(dry.r >= dry.g and dry.g > dry.b, "grass eaten to a third is straw")
+	a.is_true(lush.g > lush.r and lush.g > lush.b, "lush grass is green")
+	# Laid over a meadow tile, as the layer is drawn, the stages must read apart.
+	var meadow := Color(0.45, 0.62, 0.30)
+	var over := func(tint: Color) -> Vector3:
+		var shown := meadow.lerp(Color(tint.r, tint.g, tint.b), tint.a)
+		return Vector3(shown.r, shown.g, shown.b)
+	a.greater(over.call(bare).distance_to(over.call(lush)), 0.15, "bare and lush ground look different")
+	a.greater(over.call(dry).distance_to(over.call(mid)), 0.1, "and so do half-eaten and untouched grass")
+	var manager = Helpers.create_manager(509)
+	WorldProjection.configure({"projection": "orthogonal"})
+	var layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	var shipped: Dictionary = GroundTracesScript.resolve_ground_config(manager.config_bundle["visuals"]["ground"])
+	var shipped_stops: Array = shipped["grass_stops"]
+	a.equal(layer._material.get_shader_parameter("grass_stops"),
+		Vector4(shipped_stops[0], shipped_stops[1], shipped_stops[2], shipped_stops[3]), "the shader gets the stops")
+	a.equal(layer._material.get_shader_parameter("dry_color"), shipped["dry_color"], "and the colours")
+	a.equal(GroundTracesScript.resolve_ground_config({"dry_color": [1, 2]})["dry_color"], ground["dry_color"],
+		"a malformed key falls back to its default")
 	layer.free()
 	Helpers.destroy_manager(manager)
 
