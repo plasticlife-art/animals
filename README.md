@@ -171,9 +171,14 @@ charts behind `Tab`, in place of the bar. From there you can also:
 - export telemetry snapshots and event logs
 
 Above the minimap an event feed tells what happens to the animals you are looking at, in short
-lines with the time of day: a kill in view with both names, a calf born in the selected herd,
-the death of a pinned animal far away, a herd splitting. Everything else on the map is summed
-up once a minute; a click on a line takes the camera there.
+lines with the time of day and the place: a kill in view with both names, a calf born in the
+selected herd, the death of a pinned animal far away, a herd splitting. Everything else on the
+map is summed up once a minute; a click on a line takes the camera there.
+
+Every watering hole has a name, and so has every district of the map, after what grows there:
+«Тихая заводь», «Ольховый бор», «Совиное болото». The feed says where things happen («у Тихой
+заводи», «на Медовом лугу»), the names stand on the map - the ponds' once you zoom in, the
+districts' from further out - and the minimap names the place under the cursor.
 
 Always on screen during play, in Russian: the season and the clock at the top, and under
 them how the land is doing - per species how many there are and which way the number is
@@ -267,6 +272,7 @@ scripts/story/
   lineage.gd
   story_book.gd
   story_log.gd
+  place_names.gd
 scripts/ui/
   charts_panel.gd
   debug_panel.gd
@@ -282,6 +288,7 @@ scripts/ui/
   player_bar.gd
   selection_card.gd
   story_feed.gd
+  place_labels.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

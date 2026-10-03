@@ -103,6 +103,17 @@ static func build(compact: bool = false) -> Theme:
 		theme.set_stylebox("panel", "PopupMenu", popup)
 	theme.set_color("font_color", "PopupMenu", INK)
 	theme.set_color("font_hover_color", "PopupMenu", BUTTON_INK)
+	# Tooltips - the minimap's place names, the epitaph on a dead pinned animal - on the same
+	# parchment; Godot's default is a dark grey box that belongs to no part of this HUD.
+	var tip := _stretched(PANEL_TEXTURE, 4, 4, 4, 4)
+	if tip != null:
+		tip.content_margin_left = 10.0
+		tip.content_margin_right = 10.0
+		tip.content_margin_top = 6.0
+		tip.content_margin_bottom = 6.0
+		theme.set_stylebox("panel", "TooltipPanel", tip)
+	theme.set_color("font_color", "TooltipLabel", INK)
+	theme.set_font_size("font_size", "TooltipLabel", HUD_FONT_SIZE)
 
 	# Focus is left flat: the pack has no focus art, and Godot's default focus
 	# box is a bright rectangle that clashes with everything here.

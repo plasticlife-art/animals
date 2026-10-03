@@ -291,6 +291,12 @@ func _test_card_and_list_words(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
+## « у Тихой заводи» where the place has a name, "" where it has none: the feed's lines say where.
+static func _place(book, position: Vector2) -> String:
+	var at: String = book.places.at(position)
+	return " " + at if at != "" else ""
+
+
 ## A book on a world whose view covers the ground around (100, 100) and whose selected
 ## herd is herbivore herd 0.
 static func _watched_world(seed_value: int) -> Array:
@@ -323,15 +329,15 @@ func _test_feed_tells_what_is_looked_at(a) -> void:
 	book.meet_living()
 	world.kill_agent(doe, "predation", fox.id)
 	var kill: Dictionary = book.feed.lines[0]
-	a.equal(str(kill.text), "%s, олениха из Стада №1, погибла: задрал лис %s" % [book.name_of_id(doe.id), book.name_of_id(fox.id)],
-		"a kill in view, told with both names")
+	a.equal(str(kill.text), "%s, олениха из Стада №1, погибла%s: задрал лис %s" % [book.name_of_id(doe.id),
+		_place(book, doe.position), book.name_of_id(fox.id)], "a kill in view, told with both names and the place")
 	a.equal(int(kill.focus_id), fox.id, "a click goes to the hunter")
 	var mother = Helpers.spawn_herbivore(world, Vector2(400.0, 400.0), 0)
 	var father = Helpers.spawn_species(world, "herbivore", Vector2(410.0, 400.0), 0, Helpers.AgentBaseScript.SEX_MALE)
 	world.queue_spawn_agent("herbivore", Vector2(405.0, 405.0), 0, father, mother)
 	world._flush_spawns()
 	var calf = world.get_agent(world.next_agent_id - 1)
-	a.equal(str(book.feed.lines[0].text), "Пополнение в Стаде №1: %s %s, мать — %s" % [
+	a.equal(str(book.feed.lines[0].text), "Пополнение в Стаде №1%s: %s %s, мать — %s" % [_place(book, calf.position),
 		HudText.animal_noun("herbivore", calf.sex, true), book.name_of_id(calf.id), book.name_of_id(mother.id)],
 		"a birth in the selected herd, out of view")
 	var stranger = Helpers.spawn_herbivore(world, Vector2(400.0, 60.0), 3)
@@ -343,7 +349,8 @@ func _test_feed_tells_what_is_looked_at(a) -> void:
 	book.hear({"type": "AgentDied", "agent_id": -1, "species": "predator", "time_seconds": 5.0,
 		"position": {"x": 600.0, "y": 600.0}, "data": {"cause": "starvation", "dormant": true, "record_id": far_fox.id}})
 	var pinned: Dictionary = book.feed.lines[0]
-	a.is_true(bool(pinned.pinned) and str(pinned.text).ends_with("умер вдали от голода"), "a pinned fox far away: %s" % pinned.text)
+	a.is_true(bool(pinned.pinned) and str(pinned.text).ends_with("умер от голода вдали"),
+		"a pinned fox far away, off every named place: %s" % pinned.text)
 	world.emit_population_event("HerdSplit", "herbivore", Vector2(900.0, 900.0), {"size": 10, "new_group_id": 4, "group_id": 0, "moved": 5})
 	a.equal(str(book.feed.lines[0].text), "Стадо №1 разделилось: 5 голов ушли в новое Стадо №5", "the selected herd splits")
 	Helpers.destroy_manager(manager)
@@ -361,7 +368,9 @@ func _test_feed_folds_and_sums_up(a) -> void:
 	for index in range(3):
 		world.queue_spawn_agent("herbivore", Vector2(105.0, 105.0), 0, father, mother)
 	world._flush_spawns()
-	a.equal(_texts(book).slice(0, 1), ["Пополнение в Стаде №1: 3 оленёнка"], "three births in one line")
+	var youngest = world.get_agent(world.next_agent_id - 1)
+	a.equal(_texts(book).slice(0, 1), ["Пополнение в Стаде №1%s: 3 оленёнка" % _place(book, youngest.position)],
+		"three births in one line")
 	for index in range(4):
 		var far = Helpers.spawn_herbivore(world, Vector2(500.0, 500.0), 7)
 		world.kill_agent(far, "starvation")

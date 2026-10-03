@@ -31,6 +31,8 @@ var _species_dots: Dictionary = {}
 var simulation_manager: SimulationManager
 var world_camera: GameCamera
 var input_enabled: bool = true
+## The world's place names (`PlaceNames`), for the tooltip; none, no tooltip.
+var places = null
 
 var _static_texture: Texture2D
 var _cached_world_bounds: Rect2 = Rect2()
@@ -351,6 +353,16 @@ func _get_map_rect() -> Rect2:
 
 	var fitted_position := inner_rect.position + (inner_rect.size - fitted_size) * 0.5
 	return Rect2(fitted_position.floor(), fitted_size.floor())
+
+
+## The name of the place under the cursor: a pond, or the district it lies in.
+func _get_tooltip(at_position: Vector2) -> String:
+	if places == null:
+		return ""
+	var map_rect := _get_map_rect()
+	if not map_rect.has_point(at_position):
+		return ""
+	return str(places.place_at(_map_to_world_position(at_position, map_rect)).get("name", ""))
 
 
 func _get_world_bounds() -> Rect2:

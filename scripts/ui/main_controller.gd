@@ -7,6 +7,7 @@ extends Node2D
 @onready var agent_renderer = $AgentRenderer
 @onready var world_view = $WorldView
 @onready var overlay_renderer = $OverlayRenderer
+@onready var place_labels = $PlaceLabels
 @onready var world_camera = $GameCamera
 @onready var debug_panel = $CanvasLayer/HUD/DebugPanel
 @onready var charts_panel = $CanvasLayer/HUD/ChartsPanel
@@ -140,6 +141,7 @@ func _adopt_running_simulation() -> void:
 	story_book.bind(simulation_manager)
 	story_book.begin(_pending_story)
 	_pending_story = {}
+	place_labels.configure(simulation_manager.config_bundle.get("visuals", {}))
 	_pending_focus_id = -1
 	_apply_debug_configuration()
 	debug_panel.set_paused_state(false)
@@ -221,6 +223,8 @@ func _bind_view() -> void:
 	selection_tag.story = story_book
 	pinned_bar.bind(story_book, simulation_manager)
 	story_feed.bind(story_book.feed, simulation_manager)
+	place_labels.bind(story_book, world_camera)
+	minimap.places = story_book.places
 	story_book.feed.context_provider = _story_context
 	selection_card.family_clicked.connect(_focus_animal)
 	pinned_bar.focus_requested.connect(_focus_animal)

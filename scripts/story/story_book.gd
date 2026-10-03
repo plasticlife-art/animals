@@ -13,6 +13,7 @@ signal pins_changed
 const AnimalNamesScript := preload("res://scripts/story/animal_names.gd")
 const LineageScript := preload("res://scripts/story/lineage.gd")
 const StoryLogScript := preload("res://scripts/story/story_log.gd")
+const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
 const MAX_PINS := 8
 const STATE_VERSION := 1
 
@@ -20,6 +21,8 @@ var names = AnimalNamesScript.new()
 var lineage = LineageScript.new()
 ## The event feed's lines (`StoryLog`). Not saved: a loaded world starts a fresh feed.
 var feed = StoryLogScript.new()
+## The names of the world's ponds and districts (`PlaceNames`).
+var places = PlaceNamesScript.new()
 var pins: Array = []
 var manager = null
 
@@ -36,13 +39,15 @@ func bind(simulation_manager) -> void:
 
 
 ## A new world, or one loaded: the old one's names, family tree and pins go; `saved` - what
-## a save kept - comes back instead. Then the awake animals are met in id order, so the
-## founders are named the same way each time.
+## a save kept - comes back instead. The world's places are named before anything is heard,
+## and then the awake animals are met in id order, so the founders are named the same way
+## each time.
 func begin(saved: Dictionary = {}) -> void:
 	names.clear()
 	lineage.clear()
 	pins.clear()
 	feed.clear()
+	places.build(null if manager == null else manager.world_state, 0 if manager == null else int(manager.seed))
 	if int(saved.get("version", 0)) == STATE_VERSION:
 		import_state(saved)
 	meet_living()
@@ -192,10 +197,11 @@ func pin_status(agent_id: int) -> Dictionary:
 
 func export_state() -> Dictionary:
 	return {"version": STATE_VERSION, "names": names.export_state(), "lineage": lineage.export_state(),
-		"pins": pins.duplicate()}
+		"pins": pins.duplicate(), "places": places.export_state()}
 
 
 func import_state(data: Dictionary) -> void:
 	names.import_state(data.get("names", {}))
 	lineage.import_state(data.get("lineage", {}))
 	pins = data.get("pins", []).duplicate()
+	places.import_state(data.get("places", {}))

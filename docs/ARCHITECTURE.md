@@ -496,6 +496,15 @@ Utility actions inside `alive`:
   tag, the pinned list and the event feed read. It hears `world_event` on the main thread and
   is saved with the world (`SaveSystem.save()`'s `story`; a save without one starts a new
   story). Nothing in it reaches the simulation
+- `PlaceNames`: a Russian name for every watering hole («Тихая заводь») and for districts of
+  roughly equal size (about one per 2200x2200 units, so two dozen on the large map), each named
+  after the biome it has most of against the whole map («Ольховый бор», «Совиное болото», «Медовый
+  луг»). Biomes alone do not make places: the meadow is one patch over half the map, and the woods
+  and dry ground are hundreds of small ones. Picked by hashing the world seed and the index, an
+  adjective's use kept to its fair share; declined with its noun (gender; genitive for «у Тихой
+  заводи», the locative with «на»/«в» for «на Медовом лугу»). `place_at()` gives the pond within
+  1.6 radii, else the district. Kept with the story, so a later word list leaves an old world's
+  names alone
 - `AnimalNames`: a Russian name for every animal from a list for its species and sex (157 a
   sex for deer, 84 for grouse, 50 for foxes: each list holds more than half the largest
   starting population any preset gives, so a numbered name stays rare until a population
@@ -592,6 +601,15 @@ Utility actions inside `alive`:
 
 - Renders static terrain overview plus dynamic agents and camera viewport
 - Supports click / drag camera repositioning
+- Its tooltip names the place under the cursor (`PlaceNames.place_at()`); `PixelUiTheme` styles
+  tooltips on parchment
+
+### `PlaceLabels`
+
+- Draws `PlaceNames` on the map: pond names once zoomed in past `visuals.places.pond_zoom`, district
+  names between `district_zoom_min` and `district_zoom_max`, each faded over a band rather than
+  popped. Constant size on screen, outlined, unshaded so night leaves them legible, placed through
+  `WorldProjection` at the ground's height. Redraws only when the camera moves
 
 ### `EcologyStrip`
 

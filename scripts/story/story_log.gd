@@ -1,9 +1,10 @@
 class_name StoryLog
 extends RefCounted
 
-## What happened to whom, as short lines in Russian for the event feed: «Ветка, олениха из
-## Стада №3, погибла: задрал лис Рыжик», «Пополнение в Стаде №3: оленёнок Звёздочка,
-## мать — Ветка», «Стадо №3 разделилось: 12 голов ушли в новое Стадо №8».
+## What happened to whom and where, as short lines in Russian for the event feed: «Ветка,
+## олениха из Стада №3, погибла у Тихой заводи: задрал лис Рыжик», «Пополнение в Стаде №3 на
+## Медовом лугу: оленёнок Звёздочка, мать — Ветка», «Стадо №3 разделилось у Лисьего брода: 12
+## голов ушли в новое Стадо №8». Places come from the book's `PlaceNames`.
 ##
 ## A map holds hundreds of animals, and a line for every birth and death would be a wall of
 ## text, so only what the player is looking at gets a line of its own: an event in view, in
@@ -101,24 +102,27 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 	var entry: Dictionary = book.lineage.entry(victim) if book != null else {}
 	var sex := str(entry.get("sex", ""))
 	var who := "%s, %s%s" % [_name(victim), HudTextScript.animal_noun(species, sex), _from_herd(species, group)]
+	var place := _place_of(position)
+	# Where it happened; out of view with no name for the place, just «вдали».
+	var where := " " + place if place != "" else (" вдали" if asleep else "")
 	var text := ""
 	if cause == "predation" and killer >= 0:
 		var killer_entry: Dictionary = book.lineage.entry(killer) if book != null else {}
 		var killer_sex := str(killer_entry.get("sex", ""))
 		var killer_species := str(killer_entry.get("species", "predator"))
-		text = "%s, %s: %s %s %s" % [who, HudTextScript.verb(sex, "погиб", "погибла"),
+		text = "%s, %s%s: %s %s %s" % [who, HudTextScript.verb(sex, "погиб", "погибла"), where,
 			HudTextScript.verb(killer_sex, "задрал", "задрала"), HudTextScript.animal_noun(killer_species, killer_sex),
 			_name(killer)]
 	elif cause == "predation":
-		text = "%s, %s %sот хищника" % [who, HudTextScript.verb(sex, "погиб", "погибла"), "вдали " if asleep else ""]
+		text = "%s, %s от хищника%s" % [who, HudTextScript.verb(sex, "погиб", "погибла"), where]
 	else:
-		text = "%s, %s %sот %s" % [who, HudTextScript.verb(sex, "умер", "умерла"), "вдали " if asleep else "",
-			str(HudTextScript.CAUSES_FROM.get(cause, cause))]
+		text = "%s, %s от %s%s" % [who, HudTextScript.verb(sex, "умер", "умерла"),
+			str(HudTextScript.CAUSES_FROM.get(cause, cause)), where]
 	# A living killer is the one to look at; otherwise where the body lies.
 	var focus := killer if killer >= 0 and book != null and not book.lineage.is_dead(killer) else -1
 	_add({"time": time, "text": text, "position": position, "focus_id": focus, "pinned": pinned,
 		"kind": "death", "key": "death:%s:%s:%d" % [cause, species, group], "count": 1, "species": species,
-		"group": group, "cause": cause})
+		"group": group, "cause": cause, "at": place})
 
 
 func _hear_birth(child: int, asleep: bool, time: float, context: Dictionary, position: Vector2) -> void:
@@ -142,9 +146,11 @@ func _hear_birth(child: int, asleep: bool, time: float, context: Dictionary, pos
 	elif mother >= 0:
 		parents = ", мать — %s" % _name(mother)
 	var where := " в %s" % HudTextScript.herd_name(species, group, "prepositional") if group >= 0 else ""
-	var text := "%s%s: %s%s" % ["Вдали пополнение" if asleep else "Пополнение", where, young, parents]
+	var place := _place_of(position)
+	var text := "%s%s%s: %s%s" % ["Вдали пополнение" if asleep and place == "" else "Пополнение", where,
+		" " + place if place != "" else "", young, parents]
 	_add({"time": time, "text": text, "position": position, "focus_id": child, "pinned": pinned, "kind": "birth",
-		"key": "birth:%s:%d" % [species, group], "count": 1, "species": species, "group": group})
+		"key": "birth:%s:%d" % [species, group], "count": 1, "species": species, "group": group, "at": place})
 
 
 func _hear_split(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
@@ -154,9 +160,10 @@ func _hear_split(event: Dictionary, data: Dictionary, time: float, context: Dict
 	if group < 0 or not (_in_herd(context, species, group) or _in_view(context, position)):
 		return
 	var moved := int(data.get("moved", 0))
-	var text := "%s разделилось: %d %s ушли в %s №%d" % [HudTextScript.herd_name(species, group), moved,
-		HudTextScript.plural(moved, ["голова", "головы", "голов"]), str(NEW_GROUP.get(species, "новую группу")),
-		HudTextScript.herd_number(int(data.get("new_group_id", -1)))]
+	var place := _place_of(position)
+	var text := "%s разделилось%s: %d %s ушли в %s №%d" % [HudTextScript.herd_name(species, group),
+		" " + place if place != "" else "", moved, HudTextScript.plural(moved, ["голова", "головы", "голов"]),
+		str(NEW_GROUP.get(species, "новую группу")), HudTextScript.herd_number(int(data.get("new_group_id", -1)))]
 	if species == "scavenger":
 		text = text.replace("разделилось", "разделилась")
 	_add({"time": time, "text": text, "position": position, "focus_id": -1, "pinned": false, "kind": "split",
@@ -195,6 +202,7 @@ func _add(line: Dictionary) -> void:
 			last["count"] = int(last["count"]) + 1
 			last["time"] = line["time"]
 			last["position"] = line["position"]
+			last["at"] = line.get("at", "")
 			last["text"] = _folded_text(last)
 			changed.emit()
 			return
@@ -208,18 +216,27 @@ static func _folded_text(line: Dictionary) -> String:
 	var species := str(line.get("species", ""))
 	var group := int(line.get("group", -1))
 	var count := int(line["count"])
+	var at := str(line.get("at", ""))
+	var place := " " + at if at != "" else ""
 	if str(line["kind"]) == "birth":
 		var where := " в %s" % HudTextScript.herd_name(species, group, "prepositional") if group >= 0 else ""
-		return "Пополнение%s: %s" % [where, HudTextScript.animal_count(species, count, true)]
+		return "Пополнение%s%s: %s" % [where, place, HudTextScript.animal_count(species, count, true)]
 	var herd := HudTextScript.herd_name(species, group) if group >= 0 else HudTextScript.species_label(species)
 	var cause := str(line.get("cause", ""))
 	var how := "от хищников погибли" if cause == "predation" else "от %s %s" % [
 		str(HudTextScript.CAUSES_FROM.get(cause, cause)), "умерли"]
-	return "%s: %s %s" % [herd, how, HudTextScript.animal_count(species, count)]
+	return "%s%s: %s %s" % [herd, place, how, HudTextScript.animal_count(species, count)]
 
 
 func _count(key: String) -> void:
 	_tally[key] = int(_tally.get(key, 0)) + 1
+
+
+## «у Тихой заводи», «на Медовом лугу», or "" where the place has no name.
+func _place_of(position: Vector2) -> String:
+	if book == null or book.places == null:
+		return ""
+	return book.places.at(position)
 
 
 func _name(agent_id: int) -> String:

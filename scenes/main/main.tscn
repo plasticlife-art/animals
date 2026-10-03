@@ -22,6 +22,7 @@
 [ext_resource type="Script" path="res://scripts/ui/player_bar.gd" id="20"]
 [ext_resource type="Script" path="res://scripts/ui/pinned_bar.gd" id="21"]
 [ext_resource type="Script" path="res://scripts/ui/story_feed.gd" id="22"]
+[ext_resource type="Script" path="res://scripts/ui/place_labels.gd" id="23"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -50,6 +51,10 @@ script = ExtResource("11")
 [node name="WorldView" type="Node2D" parent="." unique_id=77276432]
 z_index = 6
 script = ExtResource("3")
+
+[node name="PlaceLabels" type="Node2D" parent="." unique_id=612001020]
+z_index = 7
+script = ExtResource("23")
 
 [node name="OverlayRenderer" type="Node2D" parent="." unique_id=479781249]
 z_index = 8
