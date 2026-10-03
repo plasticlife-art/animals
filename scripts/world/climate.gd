@@ -99,6 +99,15 @@ func clock_text() -> String:
 	return "%02d:%02d" % [total_minutes / 60, total_minutes % 60]
 
 
+## Seconds in a season and seasons in a year, as `evaluate()` counts them: `[120.0, 4]` with
+## the shipped clock. Ages are told in these.
+static func calendar(climate_config: Dictionary) -> Array:
+	var day_length: float = maxf(0.001, float(climate_config.get("day_length_seconds", 120.0)))
+	var seasons: Array = climate_config.get("seasons", [])
+	return [day_length * maxf(0.001, float(climate_config.get("season_length_days", 1.0))),
+		seasons.size() if not seasons.is_empty() else 4]
+
+
 ## The pure core. Everything above is a cache over this.
 static func evaluate(climate_config: Dictionary, time_seconds: float) -> Dictionary:
 	var seasons: Array = climate_config.get("seasons", [])

@@ -60,9 +60,12 @@ Key behavior:
   is replaced on every start and load. The bus `initialize()` creates moves to the worker thread
   in `enable_interactive_worker()`, so the manager stops watching it first; watching starts after
   the world is built, so the founders' births are not forwarded. Death events carry
-  `data.group_id`, the herd the animal belonged to, awake (`kill_agent()`) or asleep
-  (`_emit_dormant_death()`, where `agent_id` stays -1 and `data.record_id` is the id the
-  animal had). Births carry the newborn's `data.sex`, and asleep its `data.record_id` and its
+  `data.group_id`, the herd the animal belonged to, and `data.age`, the age it died at, awake
+  (`kill_agent()`) or asleep (`_emit_dormant_death()`, where `agent_id` stays -1 and
+  `data.record_id` is the id the animal had). A kill in a sleeping sector names no hunter in the
+  world's ledger, so the report credits one of that sector's hungry hunters, picked by hashing
+  the victim's id (`data.killer_record_id`, `killer_sex`, `killer_species`; never the shared rng).
+  Births carry the newborn's `data.sex`, and asleep its `data.record_id` and its
   mother's `data.mother_id`; a herd split carries the herd it came out of (`data.group_id`)
   and how many left (`data.moved`). All of it is reporting for the view's story; none of it
   is read back by the world
@@ -515,8 +518,14 @@ Utility actions inside `alive`:
   heard, animals waking far off when the interface next refreshes
 - `Lineage`: parents (an awake birth's `AgentReproduced` names both, told apart by sex; a birth
   asleep its mother), birth and death times, the cause and the killer, where it died, the
-  generation (founders are the first), children and living descendants. The longest dead are
-  forgotten past 30000 animals
+  generation (founders are the first), children and living descendants. An animal not seen born
+  is dated by the age it had when met, or when it died (`met`, `met_age`; founders were born
+  before the clock started). Running counts, kept with the save and rebuilt from the tree for a
+  save without them: kills per hunter, and living and all descendants per animal - a birth adds
+  one to every distinct ancestor, a death takes one off. The longest dead are forgotten past
+  30000 animals
+- `StoryRecords`: the chronicle's records from one pass over the tree - the oldest alive, the
+  longest lives, the largest living families, the best hunters - three each, ties to the lower id
 - Pins: up to eight animals the player keeps an eye on, from the card's «Закрепить». A pin
   does not keep an animal's sector awake, so a world plays the same with pins or without; a
   pinned animal asleep is followed through its sector's aggregate, and its death and its young

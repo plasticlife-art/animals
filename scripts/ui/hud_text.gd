@@ -141,6 +141,23 @@ static func verb(sex: String, masculine: String, feminine: String) -> String:
 	return feminine if sex == "female" else masculine
 
 
+## An age in years and seasons: «2 года», «1 год и 2 сезона», «3 сезона», «меньше сезона».
+## `calendar` is `Climate.calendar()`: seconds a season, seasons a year.
+static func age_text(seconds: float, calendar: Array = [120.0, 4]) -> String:
+	var season_seconds := maxf(0.001, float(calendar[0]))
+	var per_year := maxi(1, int(calendar[1]))
+	var seasons := int(floor(maxf(0.0, seconds) / season_seconds))
+	var years := floori(float(seasons) / float(per_year))
+	var rest := seasons - years * per_year
+	var season_forms := ["сезон", "сезона", "сезонов"]
+	if years <= 0:
+		return "меньше сезона" if seasons <= 0 else "%d %s" % [seasons, plural(seasons, season_forms)]
+	var text := "%d %s" % [years, plural(years, ["год", "года", "лет"])]
+	if rest > 0:
+		text += " и %d %s" % [rest, plural(rest, season_forms)]
+	return text
+
+
 ## «погибла» to a hunter, «умерла» of hunger, thirst or age.
 static func died(sex: String, cause: String) -> String:
 	return verb(sex, "погиб", "погибла") if cause == "predation" else verb(sex, "умер", "умерла")

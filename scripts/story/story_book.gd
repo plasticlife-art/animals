@@ -107,9 +107,17 @@ func hear(event: Dictionary) -> void:
 				return
 			if not lineage.knows(died):
 				lineage.note_animal(died, species, "", int(data.get("group_id", -1)))
+			var killer := killer_of(event)
+			if killer >= 0 and not lineage.knows(killer):
+				# Awake, the hunter can be asked; asleep, the event says who it was.
+				var hunter = null if manager == null or manager.world_state == null else manager.world_state.get_agent(killer)
+				if hunter != null:
+					name_of(hunter)
+				else:
+					lineage.note_animal(killer, str(data.get("killer_species", "")), str(data.get("killer_sex", "")))
 			var at: Dictionary = event.get("position", {})
-			lineage.note_death(died, time, str(data.get("cause", "")), int(event.get("other_agent_id", -1)),
-				Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0))))
+			lineage.note_death(died, time, str(data.get("cause", "")), killer,
+				Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0))), float(data.get("age", -1.0)))
 			names.release(died)
 			if pins.has(died):
 				pins_changed.emit()
@@ -117,12 +125,24 @@ func hear(event: Dictionary) -> void:
 	feed.hear(event)
 
 
-## The animal's name, given now if it had none, and the animal noted in the family tree.
+## The animal's name, given now if it had none, and the animal noted in the family tree -
+## with its age, for one met grown.
 func name_of(agent) -> String:
 	if agent == null:
 		return ""
-	lineage.note_animal(agent.id, agent.species_type, agent.sex, agent.group_id)
+	var now: float = 0.0 if manager == null else float(manager.simulation_time)
+	lineage.note_animal(agent.id, agent.species_type, agent.sex, agent.group_id, float(agent.age), now)
 	return names.name_of(agent.id, agent.species_type, agent.sex)
+
+
+## Who killed the animal an AgentDied names: the hunter awake, the one a sleeping sector
+## credits with it asleep, or -1.
+static func killer_of(event: Dictionary) -> int:
+	var data: Dictionary = event.get("data", {})
+	if str(data.get("cause", "")) != "predation":
+		return -1
+	var killer := int(event.get("other_agent_id", -1))
+	return killer if killer >= 0 else int(data.get("killer_record_id", -1))
 
 
 ## The name of an animal known only by its id - a parent, a killer, a pinned one asleep.

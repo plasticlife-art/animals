@@ -367,8 +367,9 @@ func kill_agent(agent, cause: String, other_agent_id: int = -1) -> void:
 	if cause == "predation":
 		fear_field.deposit(agent.position, fear_field.kill_risk)
 
-	# The herd it belonged to, so the view can tell a herd what it lost.
-	var death := {"cause": cause, "group_id": int(agent.group_id)}
+	# The herd it belonged to, so the view can tell a herd what it lost, and the age it died
+	# at, for the family tree's ages: the agent is gone by the time the view hears of it.
+	var death := {"cause": cause, "group_id": int(agent.group_id), "age": float(agent.age)}
 	if cause == "starvation":
 		emit_event("AgentStarved", agent, other_agent_id, death)
 	elif cause == "old_age":
@@ -1789,10 +1790,12 @@ func emit_population_event(event_type: String, species_type: String, position: V
 
 
 ## `record_id` is the id the animal had: `agent_id` stays -1, since no agent died, but the
-## view keeps a family tree and a name for every animal, asleep or awake.
+## view keeps a family tree and a name for every animal, asleep or awake. `extra` carries the
+## rest the view wants: the age it died at and, for a kill, the hunter credited with it.
 func _emit_dormant_death(species_type: String, position: Vector2, cause: String, group_id: int = -1,
-		record_id: int = -1) -> void:
+		record_id: int = -1, extra: Dictionary = {}) -> void:
 	var death := {"cause": cause, "dormant": true, "group_id": group_id, "record_id": record_id}
+	death.merge(extra)
 	if cause == "starvation":
 		emit_population_event("AgentStarved", species_type, position, death)
 	elif cause == "old_age":
@@ -3982,6 +3985,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var hunter_species: String = ""
 	var hunter_center := Vector2.ZERO
 	var hunted_species: Dictionary = {}
+	# `[id, sex]` of each hungry hunter, so a kill can be credited to one of them in the feed.
+	var hunters: Array = []
 	for aggregate in aggregates:
 		if int(aggregate.get("count", 0)) <= 0:
 			continue
@@ -3993,10 +3998,12 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		# Only a hungry hunter makes a kill. A live predator stops hunting once fed, and
 		# its hunger takes minutes to climb back to `feed_hunger_floor`; without this a
 		# sated group went on killing every few seconds for as long as it sat among prey.
-		var hungry := _dormant_hungry_count(aggregate, buckets.get(_get_dormant_aggregate_key(species_key, int(aggregate.get("group_id", -1))), []))
+		var members: Array = buckets.get(_get_dormant_aggregate_key(species_key, int(aggregate.get("group_id", -1))), [])
+		var hungry := _dormant_hungry_count(aggregate, members)
 		if hungry <= 0:
 			continue
 		hunting_predators += hungry
+		hunters.append_array(_dormant_hungry_records(members))
 		if hunter_species == "":
 			hunter_species = species_key
 			hunter_center = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
@@ -4053,7 +4060,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 			remaining -= taken
 			# Which animals died is settled in `_reconcile_dormant_records()`: the ones
 			# nearest the hunters, reported where they stood.
-			_queue_dormant_deaths(aggregate, "predation", taken, {"near": hunter_center, "hunter": hunter_species})
+			_queue_dormant_deaths(aggregate, "predation", taken, {"near": hunter_center, "hunter": hunter_species,
+				"hunters": hunters})
 		kills -= remaining
 		performance_counters["dormant_predation_kills"] += kills
 
@@ -4090,6 +4098,18 @@ func _nearest_dormant_meal(sector_state: Dictionary, position: Vector2, species_
 
 ## Members of a group hungry enough to feed. Counted per record when the records are at
 ## hand, otherwise judged from the group's mean.
+## `[id, sex]` of the members hungry enough to hunt, by id. Reporting only: which of them a
+## kill is credited to never changes what happens.
+func _dormant_hungry_records(members: Array) -> Array:
+	var floor_value := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("feed_hunger_floor", 28.0))
+	var found: Array = []
+	for record in members:
+		if float(record.get("hunger", 0.0)) >= floor_value:
+			found.append([int(record.get("id", -1)), str(record.get("sex", ""))])
+	found.sort_custom(func(a, b): return int(a[0]) < int(b[0]))
+	return found
+
+
 func _dormant_hungry_count(aggregate: Dictionary, members: Array) -> int:
 	var floor_value := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("feed_hunger_floor", 28.0))
 	if members.is_empty():
@@ -4657,8 +4677,17 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 			var victim: Dictionary = survivors[victim_index]
 			var position: Vector2 = victim.get("position", aggregate.get("center", bounds.get_center()))
 			survivors.remove_at(victim_index)
+			var extra := {"age": float(victim.get("age", 0.0))}
+			var hunters: Array = entry.get("hunters", [])
+			if cause == "predation" and not hunters.is_empty():
+				# Credited by a hash of the victim, never the shared rng.
+				var credited: Array = hunters[mini(hunters.size() - 1,
+					int(_dormant_hash_unit(int(victim.get("id", 0)), 0x4B11) * float(hunters.size())))]
+				extra["killer_record_id"] = int(credited[0])
+				extra["killer_sex"] = str(credited[1])
+				extra["killer_species"] = str(entry.get("hunter", ""))
 			_emit_dormant_death(species_key, position, cause, int(victim.get("group_id", aggregate.get("group_id", -1))),
-				int(victim.get("id", -1)))
+				int(victim.get("id", -1)), extra)
 			if cause == "predation":
 				fear_field.deposit(position, fear_field.kill_risk)
 			# A sleeping death leaves the same body a live one does, where the animal

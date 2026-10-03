@@ -92,7 +92,7 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 	var victim := int(event.get("agent_id", -1)) if not asleep else int(data.get("record_id", -1))
 	var species := str(event.get("species", ""))
 	var cause := str(data.get("cause", ""))
-	var killer := int(event.get("other_agent_id", -1)) if cause == "predation" else -1
+	var killer: int = book.killer_of(event) if book != null else -1
 	var group := int(data.get("group_id", -1))
 	var position := _position_of(event)
 	var pinned: bool = book != null and (book.is_pinned(victim) or book.is_pinned(killer))

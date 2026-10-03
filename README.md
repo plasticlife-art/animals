@@ -209,7 +209,7 @@ Exports are written to `user://exports` by default:
 - `summary_<timestamp>_seed_<seed>.json`
 
 The summary includes population metrics, death causes, hunt success, carcass metrics, blocked terrain ratio, and LOD counters.
-The metrics carry, per species, how many animals are at risk of starvation (`starvation_risk_<species>_count`) and of thirst (`thirst_risk_<species>_count`); death events carry the herd the animal belonged to (`data.group_id`, -1 for none). Births carry the newborn's sex (`data.sex`); a birth or a death in a sleeping sector, which has no `agent_id`, carries the animal's id as `data.record_id` and a birth its mother's as `data.mother_id`; a herd split names the herd it came out of and how many left (`data.group_id`, `data.moved`).
+The metrics carry, per species, how many animals are at risk of starvation (`starvation_risk_<species>_count`) and of thirst (`thirst_risk_<species>_count`); death events carry the herd the animal belonged to (`data.group_id`, -1 for none) and the age it died at (`data.age`); a kill in a sleeping sector credits one of the hungry hunters there (`data.killer_record_id`, `killer_sex`, `killer_species`). Births carry the newborn's sex (`data.sex`); a birth or a death in a sleeping sector, which has no `agent_id`, carries the animal's id as `data.record_id` and a birth its mother's as `data.mother_id`; a herd split names the herd it came out of and how many left (`data.group_id`, `data.moved`).
 
 ## Configuration
 

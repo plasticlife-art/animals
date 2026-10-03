@@ -8,6 +8,9 @@ const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
 const PlaceLabelsScript := preload("res://scripts/ui/place_labels.gd")
 const StoryBookScript := preload("res://scripts/story/story_book.gd")
 const MiniMapScript := preload("res://scripts/ui/minimap.gd")
+const LineageScript := preload("res://scripts/story/lineage.gd")
+const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
+const AnimalNamesScript := preload("res://scripts/story/animal_names.gd")
 
 
 func run(a) -> void:
@@ -18,6 +21,11 @@ func run(a) -> void:
 	_test_places_survive_a_save(a)
 	_test_labels_fade_with_zoom(a)
 	_test_minimap_names_the_place_under_the_cursor(a)
+	_test_kills_and_ages_from_events(a)
+	_test_sleeping_kill_credits_a_hunter(a)
+	_test_descendants_kept_running(a)
+	_test_age_text(a)
+	_test_records_rank(a)
 
 
 ## Names agree with their nouns in gender, and the phrases take the right case and preposition.
@@ -195,6 +203,153 @@ func _test_minimap_names_the_place_under_the_cursor(a) -> void:
 	a.equal(minimap._get_tooltip(Vector2(1.0, 1.0)), "", "outside the map, none")
 	minimap.free()
 	Helpers.destroy_manager(manager)
+
+
+## A kill counts for its hunter, awake or asleep; a death's age gives back the birth of an
+## animal met grown.
+func _test_kills_and_ages_from_events(a) -> void:
+	var manager = Helpers.create_manager(861)
+	var world = manager.world_state
+	# Spawned before the book listens, so it is met grown rather than heard born.
+	var grown = Helpers.spawn_herbivore(world, Vector2(140.0, 100.0), 0)
+	grown.age = 80.0
+	manager.simulation_time = 200.0
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	a.equal(book.lineage.age_at(grown.id, 260.0), 140.0, "one met grown is aged from its age")
+	var fox = Helpers.spawn_species(world, "predator", Vector2(110.0, 100.0), -1, Helpers.AgentBaseScript.SEX_MALE)
+	book.meet_living()
+	book.hear({"type": "AgentDied", "agent_id": 990777, "other_agent_id": fox.id, "species": "herbivore",
+		"time_seconds": 210.0, "position": {"x": 100.0, "y": 100.0},
+		"data": {"cause": "predation", "group_id": 0, "age": 300.0}})
+	a.equal(book.lineage.kills(fox.id), 1, "the hunter's kill counted")
+	a.equal(book.lineage.age_at(990777, 999.0), 300.0, "the age it died at, from the event")
+	world.kill_agent(grown, "predation", fox.id)
+	a.equal(book.lineage.kills(fox.id), 2, "a kill in the world counts the same")
+	a.equal(book.lineage.age_at(grown.id, 999.0), 80.0, "dated at its death by the age it died at")
+	book.hear({"type": "AgentDied", "agent_id": -1, "species": "herbivore", "time_seconds": 60.0,
+		"position": {"x": 120.0, "y": 120.0}, "data": {"cause": "predation", "dormant": true, "record_id": 880001,
+			"group_id": 0, "age": 120.0, "killer_record_id": 880900, "killer_sex": "female", "killer_species": "predator"}})
+	a.equal(book.lineage.kills(880900), 1, "a sleeping kill counts for the hunter credited")
+	var hunter: Dictionary = book.lineage.entry(880900)
+	a.is_true(str(hunter.get("species", "")) == "predator" and str(hunter.get("sex", "")) == "female",
+		"and the hunter is known by what the event says")
+	a.equal(book.lineage.age_at(880001, 999.0), 120.0, "a sleeping death's age too")
+	Helpers.destroy_manager(manager)
+
+
+## A kill in a sleeping sector is credited to one of the hungry hunters there, by a hash of the
+## victim - the same one every time - and the death reports its age.
+func _test_sleeping_kill_credits_a_hunter(a) -> void:
+	var manager = Helpers.create_manager(862)
+	var world = manager.world_state
+	var heard: Array = []
+	manager.world_event.connect(func(event: Dictionary) -> void:
+		if str(event.get("type", "")) == "AgentDied":
+			heard.append(event))
+	var hunters := [[501, "male"], [502, "female"], [503, "female"]]
+	var bucket := [{"id": 701, "position": Vector2(60.0, 60.0), "age": 222.0, "group_id": 0},
+		{"id": 702, "position": Vector2(200.0, 200.0), "age": 90.0, "group_id": 0}]
+	for attempt in range(2):
+		var aggregate := {"species_type": "herbivore", "group_id": 0, "center": Vector2(80.0, 80.0),
+			"deaths_this_step": [{"cause": "predation", "count": 1, "near": Vector2(50.0, 50.0), "hunter": "predator",
+				"hunters": hunters}]}
+		world._take_dormant_victims(aggregate, bucket.duplicate(true))
+	a.equal(heard.size(), 2, "two sleeping deaths heard")
+	var data: Dictionary = heard[0].get("data", {}) if not heard.is_empty() else {}
+	a.equal(int(data.get("record_id", -1)), 701, "the victim nearest the hunters")
+	a.is_true([501, 502, 503].has(int(data.get("killer_record_id", -1))), "credited to one of the hungry hunters")
+	a.equal(float(data.get("age", -1.0)), 222.0, "with its age")
+	a.equal(str(data.get("killer_species", "")), "predator", "and the hunter's species")
+	var second: Dictionary = heard[1].get("data", {}) if heard.size() > 1 else {}
+	a.equal(int(second.get("killer_record_id", -2)), int(data.get("killer_record_id", -1)), "the same hunter each time")
+	Helpers.destroy_manager(manager)
+
+
+## The running counts of living descendants agree with walking the tree, through births, deaths
+## and a save that kept no counts.
+func _test_descendants_kept_running(a) -> void:
+	var lineage = LineageScript.new()
+	var living: Array = []
+	for founder in range(1, 9):
+		lineage.note_animal(founder, "herbivore", "female" if founder % 2 == 0 else "male")
+		living.append(founder)
+	var next_id := 100
+	for step in range(240):
+		var h: int = AnimalNamesScript.mix(step * 7919 + 13)
+		if h % 5 == 0 and living.size() > 4:
+			var victim: int = living[h % living.size()]
+			living.erase(victim)
+			lineage.note_death(victim, float(step), "old_age", -1, Vector2.ZERO)
+			continue
+		var mother: int = living[h % living.size()]
+		var father: int = living[AnimalNamesScript.mix(h) % living.size()]
+		var sex := "female" if h % 3 == 0 else "male"
+		lineage.note_birth(next_id, "herbivore", sex, float(step), 0, [])
+		lineage.note_birth(next_id, "herbivore", sex, float(step), 0, [mother, father])
+		living.append(next_id)
+		next_id += 1
+	var wrong: Array = []
+	for agent_id in lineage.animals().keys():
+		if lineage.descendants_alive(agent_id) != lineage.count_descendants_alive(agent_id):
+			wrong.append(agent_id)
+	a.is_true(wrong.is_empty(), "running counts match the tree: %s" % str(wrong.slice(0, 5)))
+	var saved: Dictionary = lineage.export_state()
+	saved.erase("alive_descendants")
+	saved.erase("all_descendants")
+	var loaded = LineageScript.new()
+	loaded.import_state(saved)
+	var drift := 0
+	for agent_id in lineage.animals().keys():
+		if loaded.descendants_alive(agent_id) != lineage.descendants_alive(agent_id) \
+				or loaded.descendants_ever(agent_id) != lineage.descendants_ever(agent_id):
+			drift += 1
+	a.equal(drift, 0, "a save without counts rebuilds them")
+
+
+func _test_age_text(a) -> void:
+	a.equal(HudText.age_text(30.0), "меньше сезона", "under a season")
+	a.equal(HudText.age_text(130.0), "1 сезон", "a season")
+	a.equal(HudText.age_text(360.0), "3 сезона", "three seasons")
+	a.equal(HudText.age_text(480.0), "1 год", "a year")
+	a.equal(HudText.age_text(720.0), "1 год и 2 сезона", "a year and two seasons")
+	a.equal(HudText.age_text(1200.0), "2 года и 2 сезона", "two years and a half")
+	a.equal(HudText.age_text(2400.0), "5 лет", "five years")
+	a.equal(HudText.age_text(250.0, [100.0, 2]), "1 год", "another calendar")
+
+
+func _test_records_rank(a) -> void:
+	var manager = Helpers.create_manager(863)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var lineage = book.lineage
+	lineage.note_birth(1, "herbivore", "female", 0.0, 0, [])
+	lineage.note_birth(2, "herbivore", "male", 100.0, 0, [])
+	lineage.note_animal(3, "predator", "male", -1, 50.0, 100.0)
+	lineage.note_birth(4, "predator", "female", 10.0, -1, [])
+	lineage.note_birth(10, "herbivore", "female", 200.0, 0, [1, 2])
+	lineage.note_birth(11, "herbivore", "male", 210.0, 0, [1, 2])
+	lineage.note_birth(12, "herbivore", "male", 300.0, 0, [10, 2])
+	lineage.note_death(4, 400.0, "starvation", -1, Vector2.ZERO)
+	lineage.note_death(11, 410.0, "predation", 3, Vector2.ZERO)
+	lineage.note_death(12, 420.0, "predation", 3, Vector2.ZERO)
+	var rows: Dictionary = StoryRecordsScript.all(book, 500.0)
+	a.equal(_ids(rows["oldest"]), [1, 3, 2], "the oldest alive, oldest first")
+	a.equal(_ids(rows["longest"]), [4, 11, 12], "the longest lives among the dead")
+	a.equal(_ids(rows["family"]), [1, 2], "the largest living families, ties to the lower id")
+	a.equal(_ids(rows["hunters"]), [3], "the hunters")
+	a.equal(int(rows["hunters"][0]["value"]), 2, "with their kills")
+	a.equal(StoryRecordsScript.held_by(book, 1, 500.0), ["oldest", "family"], "the records an animal holds")
+	Helpers.destroy_manager(manager)
+
+
+static func _ids(rows: Array) -> Array:
+	var ids: Array = []
+	for row in rows:
+		ids.append(int(row["id"]))
+	return ids
 
 
 ## A point on the map as far as can be found from every pond's reach.
