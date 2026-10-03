@@ -495,6 +495,13 @@ func clear_water_memory() -> void:
 	recent_water_sources.clear()
 
 
+## Forgets the pond at `position`: it has dried (`WaterSystem`).
+func forget_water(position_value) -> void:
+	for index in range(recent_water_sources.size() - 1, -1, -1):
+		if recent_water_sources[index].get("position", null) == position_value:
+			recent_water_sources.remove_at(index)
+
+
 func get_remembered_water(time_seconds: float, max_age_seconds: float) -> Dictionary:
 	var remembered_sources := get_recent_water_sources(time_seconds, max_age_seconds)
 	if remembered_sources.is_empty():

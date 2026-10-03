@@ -592,7 +592,10 @@ func _maybe_drink(world) -> void:
 		return
 	if not is_drinking_allowed():
 		return
-	var drink_restore: float = float(feeding.get("drink_restore", 14.0))
+	# What the pond gives: all a drink is while ponds never change, else no more than it holds.
+	var drink_restore: float = world.drink_water(nearby_water, float(feeding.get("drink_restore", 14.0)), thirst)
+	if drink_restore <= 0.0:
+		return
 	reduce_thirst(drink_restore)
 	clear_navigation()
 	world.emit_event("WaterConsumed", self, -1, {
@@ -766,6 +769,13 @@ func _set_mutual_preferred_mate(mate: AgentBase) -> void:
 func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 	if water.is_empty():
 		water = _resolve_water_target(world)
+	# The pond as it is now: the decision may be a few ticks old, and the pond dried meanwhile.
+	var live: Dictionary = world.live_water(water)
+	if live.is_empty() and not water.is_empty():
+		forget_water(water.get("position", null))
+		water = _resolve_water_target(world)
+		live = world.live_water(water)
+	water = live
 	if water.is_empty():
 		return false
 
@@ -777,8 +787,12 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 	if position.distance_squared_to(water["position"]) <= drink_distance * drink_distance:
 		clear_navigation()
 		if thirst > 4.0:
+			var drink_restore: float = world.drink_water(water, float(feeding.get("drink_restore", 14.0)), thirst)
+			if drink_restore <= 0.0:
+				forget_water(water.get("position", null))
+				target_position = null
+				return false
 			set_state("drink", world.current_tick)
-			var drink_restore: float = float(feeding.get("drink_restore", 14.0))
 			reduce_thirst(drink_restore)
 			world.emit_event("WaterConsumed", self, -1, {
 				"source_position": water["position"],
@@ -810,9 +824,13 @@ func _resolve_water_target(world, thresholds: Dictionary = {}) -> Dictionary:
 		return visible_water
 
 	var remembered_sources := get_recent_water_sources(world.current_time, float(perception.get("water_memory_duration_seconds", 0.0)))
-	if remembered_sources.is_empty():
-		return {}
-	return remembered_sources.front()
+	# The first remembered pond still holding water (`WaterSystem`); all of them while none dry.
+	for remembered in remembered_sources:
+		var live: Dictionary = world.live_water(remembered)
+		if not live.is_empty():
+			return live
+		forget_water(remembered.get("position", null))
+	return {}
 
 
 ## Throttled: this runs on every patrol tick and each call ends in a vision-radius
@@ -886,6 +904,10 @@ func _get_recent_investigation_water_source(world) -> Dictionary:
 	)
 	for source in remembered_sources:
 		if float(source.get("last_herbivore_seen_time", -1.0)) < 0.0:
+			continue
+		# Prey does not come to a dry pond.
+		if world.live_water(source).is_empty():
+			forget_water(source.get("position", null))
 			continue
 		var last_investigated_time := float(source.get("last_investigated_time", -1.0))
 		if last_investigated_time >= 0.0 and world.current_time - last_investigated_time < WATER_INVESTIGATION_COOLDOWN_SECONDS:

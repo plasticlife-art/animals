@@ -178,6 +178,46 @@ grass regrows where predators hunt until hunger pushes a herd back in - a trophi
 that nothing scripts. `ecology_audit.gd` reports it as meadow grass density on feared
 ground against the rest.
 
+### `WaterSystem`
+
+Watering holes that fill and dry (`scripts/world/water_system.gd`, owned by `WorldState`).
+Each pond holds a level, 0 to 1 of its basin. It moves by the season's balance
+(`water_levels.balance` per season id, eased between seasons by `Climate.blend_by_season()`:
+spring +2.0, summer -0.75, autumn -0.15, winter +0.05, in basins per season), faster the
+smaller the pond (`(R̄ / R) ^ size_exponent`), and by what is drunk against the pond's capacity
+in thirst points: `capacity_seasons` (5) times the thirst of one starting herd in a season, or
+the map's thirst per pond if that is more (`WorldState._water_demand_unit()`, so a pond lasts
+as long on every map size and difficulty), scaled by `(R / R̄) ^ capacity_exponent`. A drought
+year - a hash of the year and the world's seed under `drought_chance` (0.25), never the first
+- multiplies the dry seasons by `drought_strength` (1.6).
+
+On the large map (radii 180-280, mean 230) a radius-180 pond dries about three quarters into
+summer and is back near the end of winter; a 230 one falls to about 0.18 in autumn, a 280 one
+to about 0.45; a drought dries the 230 ones as well and leaves the 280 ones about a tenth.
+Every pond is full again early in spring.
+
+- A pond keeps `bank_radius` and `index`; its `radius`, which every drinker, query and drawing
+  reads, is the water's edge, `bank_radius * sqrt(level)`. What needs the basin (the water
+  mask, `_sector_has_water()`, place names) reads `bank_radius`
+- Dry at `dry_level` (0.02), wet again only at `wet_level` (0.10); each change becomes a
+  `PondDried` / `PondRefilled` event once (`_emit_pond_transitions()`, a view event) and a
+  counter (`ponds_dried`, `ponds_refilled`)
+- Drinking goes through `WorldState.drink_water()`: the species' `drink_restore` while ponds
+  never change, else no more than the animal's thirst and what the pond holds, none from a
+  dry pond. Awake drinkers check the pond is still wet (`live_water()`) - a target can be a
+  few ticks old - and forget dry ones (`AgentBase.forget_water()`), memories and the
+  predator's ambush included. Queries (`query_water_sources()`, `_resolve_water_source()`)
+  skip dry ponds; a thirsty animal with none in reach heads for the nearest wet pond anywhere
+  (`_water_target_for()`), and with every pond dry the drink utility vetoes («воды нигде нет»)
+- A sleeping group passes dry ponds by (`_find_nearest_water_goal()`), drinks its goal down
+  for every head (`_dormant_drink()`, the pond found by its centre), gets nothing and no rest
+  at a dry one and chooses again at once; a herd also leaves ground where no water is wet
+  within its `water_search_radius`, however green
+- Saved with the world (`"water"`, levels and dry flags); a save from before keeps its ponds
+  full, and its own bundle has no `water_levels`, so they never change. Off
+  (`water_levels.enabled`, or the climate off) the ponds never change and every query keeps
+  its old path
+
 ### `TrailField`
 
 Where animals have been walking (`scripts/world/trail_field.gd`): a grid
@@ -1019,6 +1059,10 @@ millisecond setting squeezed to zero.
 - controls world size, tick rate, water, terrain generation, navigation limits, and spawn counts
 - `water_sources` is read only when `water_generation` is absent. The shipped config generates
   sources from map area, so it carries no hand-placed list
+- `water_levels` lets the ponds fill and dry (see `WaterSystem`): `balance` per season,
+  `capacity_seasons`, `size_exponent`, `capacity_exponent`, `dry_level`, `wet_level`,
+  `drought_chance`, `drought_strength`. Only with the climate on; the test fixtures switch it
+  off
 
 - `climate` drives seasons and the day/night cycle. It is read by `Climate`
   (`scripts/world/climate.gd`), which is a **pure function of `simulation_time`** rather than
@@ -1233,6 +1277,12 @@ Current suites cover:
   the feed's lines for what is looked at, folding, the minute's summary and the newest shown
 - heredity (`TraitsTests`): founders and inheritance, clamps, costs, sleeping births with both
   parents, selection asleep, means, saves
+- the watering holes (`WaterTests`): a normal year and a drought year for ponds of 180, 230 and
+  280, droughts about one year in four and different per world, drinking a pond down and the
+  brink it does not flicker across, dry ponds skipped awake and asleep, a thirsty deer going
+  to the far wet pond, no water anywhere vetoing the drink, a sleeping group drinking its pond
+  down and choosing again at a dry one, memories forgetting dry ponds, levels through a save,
+  each change told once, and a world without levels playing exactly as before
 - the breeding season (`BreedingTests`): the curve over the year, females opening over its
   ramps, litters, autumn barren and spring twins, a predator out of season keeping its carcass
   and its mate, a fox litter's kin, litters against the cap awake and asleep, a sleeping litter

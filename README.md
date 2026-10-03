@@ -13,7 +13,7 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - Tick rate: `18` ticks per second
 - World size: `14400 x 8100`
 - Initial population: `240` herbivores in `12` herds, `24` predators
-- Water sources: generated from `world.water_generation` and scaled with map area, about 52 on the default large map
+- Water sources: generated from `world.water_generation` and scaled with map area, about 52 on the default large map; they fill in spring and dry in summer (`world.water_levels`)
 - Terrain: meadow, forest, drought, swamp biomes plus obstacles and chokepoints
 
 ## Core Systems
@@ -370,6 +370,12 @@ Eyesight means eyesight: a herbivore's predator detection and a predator's prey 
 shrink after dark, but the radii an animal searches for water and grass with do not. Those are
 memory, not sight, and shrinking them would strand herds from water. Animals go blind at
 night, not amnesiac.
+
+Water runs out. Every watering hole fills in spring and goes down through the summer, drunk
+down by the herds that use it: the small ponds dry by late summer, the big ones keep about a
+third, and about one year in four is a drought year when the middling ones dry as well.
+Animals walk past a dry pond to the nearest one that holds water, sleeping herds too, and a
+herd leaves green ground whose water has gone.
 
 Young are born from late winter to midsummer, most of them in spring, and none in autumn or
 winter: deer have twins, foxes litters of three or four, grouse broods of four to six. Every

@@ -187,6 +187,7 @@ func build_context(agent, world, snapshot = null):
 		"water_proximity": water_proximity,
 		"graze_allowed": UtilityContextFactory.bool_ratio(_feeding_allowed(agent)),
 		"drinking_allowed": UtilityContextFactory.bool_ratio(agent.is_drinking_allowed()),
+		"water_reachable": UtilityContextFactory.bool_ratio(world.any_wet_water()),
 		"resting_allowed": UtilityContextFactory.bool_ratio(agent.is_energy_below_rest_floor()),
 		"feeding_allowed": UtilityContextFactory.bool_ratio(_feeding_allowed(agent)),
 		"herd_proximity": herd_proximity,

@@ -40,6 +40,7 @@ const VETOES := {
 	"graze|below hunger floor": ["наелся", "наелась"], "hunt_prey|below hunger floor": ["сыт", "сыта"],
 	"scavenge_carcass|below hunger floor": ["сыт", "сыта"], "below hunger floor": ["сыт", "сыта"],
 	"below thirst floor": ["напился", "напилась"], "below chase energy reserve": ["нет сил на погоню", "нет сил на погоню"],
+	"no water anywhere": ["воды нигде нет", "воды нигде нет"],
 	"not tired": ["отдохнул", "отдохнула"], "prey in reach": ["рядом добыча", "рядом добыча"],
 	"vetoed": ["больше не нужно", "больше не нужно"],
 }

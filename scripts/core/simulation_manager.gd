@@ -13,8 +13,10 @@ signal world_event(event: Dictionary)
 
 ## The event types `world_event` carries. Everything else stays on the bus: grazing and
 ## drinking alone fire many times a tick.
-## `AgentReproduced` names both parents of an awake birth, for the family tree.
-const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true}
+## `AgentReproduced` names both parents of an awake birth, for the family tree; a pond that
+## dries or fills again (`WaterSystem`) is told in the feed and the season's summary.
+const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true,
+	"PondDried": true, "PondRefilled": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")

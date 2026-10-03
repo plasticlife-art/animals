@@ -17,6 +17,9 @@ func evaluate(_agent, context) -> Dictionary:
 	var threat := float(context.get_value("threat", 0.0))
 	if float(context.get_value("drinking_allowed", 1.0)) < 0.5:
 		return veto((["below thirst floor"] if context.diagnostics else []))
+	# Every pond on the map has dried (`WaterSystem`): wanting a drink leads nowhere.
+	if float(context.get_value("water_reachable", 1.0)) < 0.5:
+		return veto((["no water anywhere"] if context.diagnostics else []))
 	# Proximity multiplies the need instead of adding to it. As a free addend it
 	# rewarded standing near water rather than being thirsty, which is what kept
 	# half a herd parked at the lake: `water_proximity` is near 1.0 for anything

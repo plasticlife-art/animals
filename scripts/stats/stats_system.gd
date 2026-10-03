@@ -37,6 +37,9 @@ var counters := {
 	"carcasses_spawned": 0,
 	"carcasses_expired": 0,
 	"carcass_consumption_events": 0,
+	# Ponds that dried and filled again (`WaterSystem`).
+	"ponds_dried": 0,
+	"ponds_refilled": 0,
 }
 var time_series: Array = []
 var latest_snapshot: Dictionary = {}
@@ -392,3 +395,7 @@ func _on_event_emitted(event: Dictionary) -> void:
 			counters["carcasses_expired"] += 1
 		"CarcassConsumed":
 			counters["carcass_consumption_events"] += 1
+		"PondDried":
+			counters["ponds_dried"] += 1
+		"PondRefilled":
+			counters["ponds_refilled"] += 1

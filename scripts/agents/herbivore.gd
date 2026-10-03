@@ -120,6 +120,13 @@ func _build_snapshot(world, known_predators = null):
 func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {}) -> bool:
 	if water.is_empty():
 		water = _resolve_water_target(world)
+	# The pond as it is now: the decision may be a few ticks old, and the pond dried meanwhile.
+	var live: Dictionary = world.live_water(water)
+	if live.is_empty() and not water.is_empty():
+		forget_water(water.get("position", null))
+		water = _resolve_water_target(world)
+		live = world.live_water(water)
+	water = live
 	if water.is_empty():
 		return false
 
@@ -131,13 +138,18 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 		# the water never had a reason to leave it.
 		if not is_drinking_allowed():
 			return false
+		# What the pond gives: all a drink is while ponds never change, else no more than it holds.
+		var restored: float = world.drink_water(water, float(feeding.get("drink_restore", 35.0)), thirst)
+		if restored <= 0.0:
+			forget_water(water.get("position", null))
+			return false
 		set_state("drink", world.current_tick)
 		clear_navigation()
 		interaction_timer = float(feeding.get("drink_duration", 0.6))
-		reduce_thirst(float(feeding.get("drink_restore", 35.0)))
+		reduce_thirst(restored)
 		world.emit_event("WaterConsumed", self, -1, {
 			"source_position": water["position"],
-			"restored": float(feeding.get("drink_restore", 35.0)),
+			"restored": restored,
 		})
 		return true
 
@@ -157,6 +169,10 @@ func _resolve_water_target(world) -> Dictionary:
 			world.current_time,
 			float(perception.get("water_memory_duration_seconds", 0.0))
 		)
+		# A remembered pond may have dried since (`WaterSystem`).
+		if not water.is_empty() and world.live_water(water).is_empty():
+			forget_water(water.get("position", null))
+			water = {}
 	if not water.is_empty():
 		remember_water(water, world.current_time)
 	return water

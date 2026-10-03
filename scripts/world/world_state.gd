@@ -29,6 +29,7 @@ const TrailFieldScript = preload("res://scripts/world/trail_field.gd")
 ## crumbs, and a grazer that took crumbs for a meal stood on it until it starved.
 const GRASS_SCRAP_BIOMASS := 2.0
 const ClimateScript = preload("res://scripts/world/climate.gd")
+const WaterSystemScript = preload("res://scripts/world/water_system.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
 const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
@@ -75,6 +76,8 @@ var trail_field: TrailField
 ## awake and sleeping members, and saved.
 var herd_migrations: Dictionary = {}
 var climate: Climate
+## The ponds' levels (`WaterSystem`): they fill and dry with the seasons and as they are drunk.
+var water: WaterSystem
 var spatial_grid: SpatialGrid
 ## Which species exist and what each one eats, is eaten by, and leaves behind.
 ## Immutable once built, so the worker thread's world and the presentation copy
@@ -200,6 +203,11 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	climate = ClimateScript.new()
 	climate.configure(world_config)
 	_configure_breeding()
+	var climate_config: Dictionary = world_config.get("climate", {})
+	water = WaterSystemScript.new()
+	water.initialize(world_config.get("water_levels", {}), water_sources, _water_demand_unit(),
+		float(ClimateScript.calendar(climate_config)[0]),
+		bool(climate_config.get("enabled", false)) and not climate_config.get("seasons", []).is_empty(), trait_world)
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -256,6 +264,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	resource_system.step(delta, climate.regrowth_multiplier, current_tick)
 	fear_field.step(delta, current_tick)
 	trail_field.step(delta, current_tick)
+	water.step(delta, climate)
 	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
 	var lod_context_key := _lod_assignment_context_key(active_lod_context)
@@ -315,6 +324,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 		_update_herd_migrations()
 	performance_counters["phase_dormant_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	_flush_carcass_removals()
+	_emit_pond_transitions()
 	var path_stats: Dictionary = {} if terrain_system == null else terrain_system.consume_path_query_stats()
 	performance_counters["pathfind_calls"] += int(path_stats.get("queries", 0))
 	performance_counters["path_cache_hits"] += int(path_stats.get("cache_hits", 0))
@@ -735,7 +745,11 @@ func query_grass_cells(position: Vector2, radius: float, min_biomass: float = 0.
 func query_water_sources(position: Vector2, radius: float) -> Array:
 	performance_counters["water_query_calls"] += 1
 	var matches: Array = []
+	var levels_on: bool = water.enabled
 	for source in water_sources:
+		# A dry pond is no water at all (`WaterSystem`).
+		if levels_on and water.is_dry(int(source["index"])):
+			continue
 		var combined_radius: float = radius + float(source.get("radius", 0.0))
 		if position.distance_squared_to(source["position"]) <= combined_radius * combined_radius:
 			matches.append(source)
@@ -848,7 +862,7 @@ func build_herbivore_snapshot(agent, known_predators = null) -> Variant:
 	performance_counters["snapshot_group_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.water_target = _resolve_water_source(agent.position, water_search_radius(agent))
+	snapshot.water_target = _water_target_for(agent, water_search_radius(agent))
 	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	snapshot.grass_target = _find_grass_target_for_agent(agent)
@@ -885,7 +899,7 @@ func build_scavenger_snapshot(agent, known_predators = null) -> Variant:
 	performance_counters["snapshot_group_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.water_target = _resolve_water_source(agent.position, water_search_radius(agent))
+	snapshot.water_target = _water_target_for(agent, water_search_radius(agent))
 	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
@@ -911,7 +925,7 @@ func build_predator_snapshot(agent) -> Variant:
 	performance_counters["snapshot_carcass_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 	started_usec = Time.get_ticks_usec()
-	snapshot.water_target = _resolve_water_source(agent.position, _resolve_predator_water_search_radius(agent))
+	snapshot.water_target = _water_target_for(agent, _resolve_predator_water_search_radius(agent))
 	snapshot.investigation_source = agent._get_recent_investigation_water_source(self)
 	performance_counters["snapshot_water_ms"] += float(Time.get_ticks_usec() - started_usec) / 1000.0
 
@@ -1117,7 +1131,10 @@ func _resolve_water_source(position: Vector2, radius: float) -> Dictionary:
 	performance_counters["water_query_calls"] += 1
 	var best := {}
 	var best_distance_sq := INF
+	var levels_on: bool = water.enabled
 	for source in water_sources:
+		if levels_on and water.is_dry(int(source["index"])):
+			continue
 		var combined_radius: float = radius + float(source.get("radius", 0.0))
 		var distance_sq: float = position.distance_squared_to(source["position"])
 		if distance_sq > combined_radius * combined_radius:
@@ -1130,6 +1147,75 @@ func _resolve_water_source(position: Vector2, radius: float) -> Dictionary:
 
 func _resolve_predator_water_search_radius(agent) -> float:
 	return water_search_radius(agent)
+
+
+## The pond an animal heads for: the nearest within `radius`, or, when every pond in reach has
+## dried and it wants a drink, the nearest wet one anywhere - else a thirsty animal with only
+## dry beds about it chose to drink, found nothing, explored, and chose to drink again.
+func _water_target_for(agent, radius: float) -> Dictionary:
+	var target := _resolve_water_source(agent.position, radius)
+	if target.is_empty() and water.enabled and agent.is_drinking_allowed():
+		target = water.nearest_wet(agent.position)
+	return target
+
+
+## What a drink takes from `source`: the species' `restore` while ponds never change; with
+## levels on, no more than the animal's thirst and what the pond holds, and none from a dry one.
+func drink_water(source: Dictionary, restore: float, thirst: float) -> float:
+	if not water.enabled:
+		return restore
+	return water.drink(_pond_index(source), minf(restore, maxf(0.0, thirst)))
+
+
+## The pond a target or a memory (`entry`) stands for, as it is now: the live pond, or {} once it
+## has dried. With levels off, the entry itself.
+func live_water(entry: Dictionary) -> Dictionary:
+	if not water.enabled or entry.is_empty():
+		return entry
+	var index := _pond_index(entry)
+	if index < 0 or water.is_dry(index):
+		return {}
+	return water_sources[index]
+
+
+## Whether any pond holds water: never false while ponds never change.
+func any_wet_water() -> bool:
+	return not water.enabled or water.wet_count() > 0
+
+
+func _pond_index(source: Dictionary) -> int:
+	if source.has("index"):
+		return int(source["index"])
+	return water.index_at(source.get("position", Vector2.INF))
+
+
+## The thirst, in points, a pond of mean size is measured against (`WaterSystem`): the larger
+## of one starting herd's thirst in a season and the map's thirst per pond in a season, so a
+## pond lasts as long on a small map with few ponds or a hard one with thirsty animals.
+func _water_demand_unit() -> float:
+	var season_seconds := float(ClimateScript.calendar(config_bundle.get("world", {}).get("climate", {}))[0])
+	var spawns: Dictionary = config_bundle.get("world", {}).get("spawns", {})
+	var herd := 0.0
+	var total := 0.0
+	var species_configs: Dictionary = config_bundle.get("species", {})
+	for species_id in species_configs.keys():
+		var count := float(spawns.get("%s_count" % species_id, 0))
+		var rate := float(species_configs[species_id].get("metabolism", {}).get("thirst_rate", 0.0))
+		total += count * rate * season_seconds
+		if species_registry.social(str(species_id)) == "herd":
+			var groups := float(maxi(1, int(spawns.get("%s_group_count" % species_id, 1))))
+			herd = maxf(herd, count / groups * rate * season_seconds)
+	return maxf(herd, total / float(maxi(1, water_sources.size())))
+
+
+## Tells each pond that dried or filled again since the last tick, once.
+func _emit_pond_transitions() -> void:
+	if not water.enabled:
+		return
+	for change in water.take_transitions():
+		var index := int(change[0])
+		emit_population_event("PondDried" if str(change[1]) == "dried" else "PondRefilled", "",
+			water_sources[index]["position"], {"index": index, "drought": water.is_drought_year(climate.year)})
 
 
 func _find_grass_target_for_agent(agent) -> Dictionary:
@@ -1391,6 +1477,7 @@ func export_state() -> Dictionary:
 		"grass": resource_system.export_cells(),
 		"fear": fear_field.export_cells(),
 		"trails": trail_field.export_cells(),
+		"water": water.export_state(),
 		"herd_migrations": herd_migrations.duplicate(true),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
@@ -1440,6 +1527,8 @@ func import_state(data: Dictionary) -> void:
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
 	fear_field.import_cells(data.get("fear", PackedFloat32Array()))
 	trail_field.import_cells(data.get("trails", PackedFloat32Array()))
+	# A save from before ponds had levels keeps them full.
+	water.import_state(data.get("water", {}))
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
@@ -2758,7 +2847,7 @@ func _update_agent_sector(agent) -> void:
 func _sector_has_water(sector_key: Vector2i) -> bool:
 	var sector_rect := _sector_key_to_rect(sector_key)
 	for source in water_sources:
-		if sector_rect.grow(float(source.get("radius", 0.0))).has_point(source["position"]):
+		if sector_rect.grow(float(source.get("bank_radius", source.get("radius", 0.0)))).has_point(source["position"]):
 			return true
 	return false
 
@@ -3253,8 +3342,11 @@ func _update_herd_migrations() -> void:
 				continue
 			herd_migrations.erase(key)
 		# Leave at `leave_fraction` of the need, arrive only where the whole need is: the
-		# gap is what lets a herd eat a pasture down before it moves on.
-		if _forage_within(center, pasture_radius) >= need * float(config.get("leave_fraction", 0.5)):
+		# gap is what lets a herd eat a pasture down before it moves on. And leave ground whose
+		# water has all dried, however green (`WaterSystem`).
+		var dry_here: bool = water.enabled and _resolve_water_source(center, float(config_bundle.get("species", {})
+			.get(species_key, {}).get("perception", {}).get("water_search_radius", 1920.0))).is_empty()
+		if not dry_here and _forage_within(center, pasture_radius) >= need * float(config.get("leave_fraction", 0.5)):
 			continue
 		var destination: Variant = _find_migration_pasture(key, species_key, center, need,
 			float(herd["hunger"]) / float(herd["count"]))
@@ -3676,9 +3768,10 @@ func _refresh_dormant_sector_state(sector_key: Vector2i, preserve_existing: bool
 func _find_nearest_water_goal(position: Vector2, unreachable: Array = []) -> Dictionary:
 	var best: Dictionary = {}
 	var best_distance_sq: float = INF
+	var levels_on: bool = water.enabled
 	for source in water_sources:
 		var source_position: Vector2 = source.get("position", bounds.get_center())
-		if unreachable.has(source_position):
+		if unreachable.has(source_position) or (levels_on and water.is_dry(int(source["index"]))):
 			continue
 		var distance_sq: float = position.distance_squared_to(source_position)
 		if distance_sq < best_distance_sq:
@@ -4068,6 +4161,9 @@ func _dormant_energy_recovery_ceiling(
 	# At a food or water goal the aggregate is eating or drinking, and those live states
 	# recover energy too - this is the only path to the breeding reserve.
 	if goal_kind in ["grass", "water", "seek_carcass"]:
+		# A dry pond is no rest stop: nothing to drink, nothing restored (`WaterSystem`).
+		if goal_kind == "water" and not _dormant_water_goal_wet(aggregate):
+			return -1.0
 		return max_energy if _dormant_aggregate_reached_goal(sector_key, aggregate) else -1.0
 	# A predator stalking a herd it has not caught yet is resting between attempts, so it
 	# recovers only to the point a live agent stops resting. Withholding this entirely
@@ -5207,6 +5303,34 @@ func _dormant_step_towards_grass(position: Vector2, cell_index: int, hunger: flo
 	return _dormant_step_target(position, (target - position).limit_length(walk))
 
 
+## A sleeping group drinks `restore` off its mean thirst at its water goal. With levels on, the
+## pond pays for every head (`WaterSystem.drink()`), a dry one gives nothing and sends the
+## group to choose again at once, and a pond running out gives what it has.
+func _dormant_drink(aggregate: Dictionary, restore: float) -> void:
+	var thirst := float(aggregate.get("avg_thirst", 0.0))
+	if not water.enabled:
+		aggregate["avg_thirst"] = maxf(0.0, thirst - restore)
+		return
+	var index := water.index_at(aggregate.get("goal_position", Vector2.INF))
+	if index < 0 or water.is_dry(index):
+		aggregate["last_goal_refresh_time"] = -INF
+		return
+	var heads := float(maxi(1, int(aggregate.get("count", 0))))
+	var wanted := minf(restore, thirst) * heads
+	if wanted <= 0.0:
+		return
+	var granted := water.drink(index, wanted)
+	aggregate["avg_thirst"] = maxf(0.0, thirst - granted / heads)
+
+
+## Whether a sleeping group's water goal still holds water.
+func _dormant_water_goal_wet(aggregate: Dictionary) -> bool:
+	if not water.enabled:
+		return true
+	var index := water.index_at(aggregate.get("goal_position", Vector2.INF))
+	return index >= 0 and not water.is_dry(index)
+
+
 ## Meat to hunger and energy, per head, using exactly the knobs the live
 ## `Predator._scavenge_or_feed()` path uses so the two paths cannot drift apart.
 func _apply_dormant_meat_to_predator(aggregate: Dictionary, feeding: Dictionary, meat_per_head: float, max_energy: float) -> void:
@@ -5235,7 +5359,7 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 			if str(aggregate.get("goal_kind", "")) == "water" and _dormant_aggregate_reached_goal(sector_key, aggregate):
 				var drink_duration := maxf(0.1, float(feeding.get("drink_duration", 0.6)))
 				var thirst_restore := float(feeding.get("drink_restore", 35.0)) * minf(1.0, elapsed / drink_duration)
-				aggregate["avg_thirst"] = maxf(0.0, float(aggregate.get("avg_thirst", 0.0)) - thirst_restore)
+				_dormant_drink(aggregate, thirst_restore)
 			# A sleeping herd represents animals spread through this whole sector,
 			# rather than one body pinned to the aggregate centre. Let it graze local
 			# biomass whenever hungry, including during a water trip. Requiring the
@@ -5280,7 +5404,7 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 		match str(aggregate.get("goal_kind", "")):
 			"water":
 				if _dormant_aggregate_reached_goal(sector_key, aggregate):
-					aggregate["avg_thirst"] = maxf(0.0, float(aggregate.get("avg_thirst", 0.0)) - float(feeding.get("drink_restore", 35.0)))
+					_dormant_drink(aggregate, float(feeding.get("drink_restore", 35.0)))
 			"seek_carcass":
 				if not _dormant_aggregate_reached_goal(sector_key, aggregate):
 					continue

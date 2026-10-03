@@ -210,6 +210,12 @@ func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictio
 			for trait_name in TraitsScript.NAMES:
 				row["%s_trait_%s" % [species_id, trait_name]] = snappedf(float(population.get(
 					"%s_trait_%s_sum" % [species_id, trait_name], count)) / float(count), 0.0001)
+	# The ponds (`WaterSystem`): how many are dry, how full they are on average, a drought year.
+	var water = manager.world_state.water
+	if water.enabled:
+		row["ponds_dry"] = water.dry_count()
+		row["water_mean"] = snappedf(water.mean_level(), 0.001)
+		row["drought"] = water.is_drought_year(manager.world_state.climate.year)
 	row["grass_biomass"] = manager.world_state.resource_system.get_total_biomass()
 	row["grass_density"] = snappedf(manager.world_state.resource_system.get_mean_density(), 0.001)
 	row["carcass_meat"] = manager.world_state.get_total_carcass_meat_remaining()

@@ -55,6 +55,9 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# Off for the same reason: a scare early in a fixture must not steer where its
 	# animals graze later. The fear tests switch it on themselves.
 	bundle["world"]["fear"] = {"enabled": false}
+	# Ponds that never change: the fixtures' two ponds are 18 units across and a climate
+	# switched on to watch the grass would dry them in a season. `WaterTests` switches it on.
+	bundle["world"]["water_levels"] = {"enabled": false}
 	bundle["world"]["terrain"]["cell_size"] = 32.0
 	# Pinned flat on purpose: the fixtures assert on routes and reachability, so
 	# turning relief on in world.json must not reach them.

@@ -146,6 +146,7 @@ func build_context(agent, world, snapshot = null):
 		"water_proximity": water_proximity,
 		"feeding_allowed": UtilityContextFactory.bool_ratio(agent.is_feeding_allowed() if agent.has_method("is_feeding_allowed") else agent.hunger >= feeding_hunger_floor),
 		"drinking_allowed": UtilityContextFactory.bool_ratio(agent.is_drinking_allowed()),
+		"water_reachable": UtilityContextFactory.bool_ratio(world.any_wet_water()),
 		"resting_allowed": UtilityContextFactory.bool_ratio(agent.is_energy_below_rest_floor()),
 		"investigation_signal": investigation_signal,
 		"kin_separation": kin_separation,
