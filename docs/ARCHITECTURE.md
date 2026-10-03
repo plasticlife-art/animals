@@ -445,6 +445,14 @@ Utility actions inside `alive`:
 - Animals, props and carcasses darken at night with the ground (`DayNightTint`). Their atlas
   shaders used to be unshaded, which in Godot skips the canvas modulate along with lights,
   so at midnight every animal and tree stood in daylight on dark-blue ground
+- Wind: plants sway in `scene_atlas.gdshader`. The batch is shared with animals and bodies for
+  painter order and every instance channel is taken, so a prop is told by where its frame sits
+  in the packed atlas: `SceneSpriteBatch.configure_wind()` passes the props band and one weight
+  per prop slot (`sway_weights()`, from `visuals.wind.weights` by prop group). The quad's top is
+  sheared and its ground edge stays; VERTEX is still the quad's own and MODEL_MATRIX holds the
+  instance transform, so the shift is divided by the quad's width and the phase comes from where
+  the prop stands - a gust runs across the field. Wall time, so trees move in a paused photo;
+  stilled in the overview (`set_wind_paused()`). No CPU cost: static entries stay cached
 - Interpolated positions are accepted only through a body-clear corridor; the
   sprite, shadow, selection marker and follow camera read the same render position
 - An animal that dies in view plays its species' `dead` row (`DyingSprites`, from
@@ -1063,6 +1071,10 @@ millisecond setting squeezed to zero.
 - `species.<id>.carcass_atlas` is the species' carcass sheet: three stages across, the four
   directions down, a death without a blow first and a kill after. `carcass` is the shared
   sheet for a species without one, and its `stages` is how many columns both have
+- `wind` switches the sway of plants and sets it: `amplitude_px` (canvas pixels at the top of a
+  weight-1 prop), `speed`, `gust`, `wavelength_px` of the wave across the field, and `weights` by
+  prop group (the Kenney style patch keeps its mossy-rock swamp props still and its cacti nearly
+  so). A shipped block, so old saves sway too; `props` stays the save's own
 - `effects.dust`, `effects.kill` and `effects.birth` switch and size the dust of a chase
   (which species raise it, ground between puffs, its colour and the spray colour in a
   pond), the burst and flash of a kill, and a birth's ring, sparkles and grow-in

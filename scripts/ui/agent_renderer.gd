@@ -136,6 +136,8 @@ func set_overview_mode(value: bool) -> void:
 		_effects.clear()
 	if _shadow_node != null:
 		_shadow_node.visible = not (value and bool(_overview_config.get("disable_shadows", true)))
+	if scene_batch != null:
+		scene_batch.set_wind_paused(value)
 
 
 ## Throw away the sprite batches and build them again from the current visuals.
@@ -670,6 +672,7 @@ func _build_batches() -> void:
 
 	scene_batch = preload("res://scripts/ui/scene_sprite_batch.gd").new()
 	scene_batch.configure(self, visuals)
+	scene_batch.set_wind_paused(overview_mode)
 	add_child(scene_batch)
 
 

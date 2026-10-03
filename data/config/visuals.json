@@ -29,6 +29,22 @@
     "ripple_speed": 0.06,
     "ripple_strength": 0.06
   },
+  "wind": {
+    "enabled": true,
+    "amplitude_px": 3.0,
+    "speed": 1.4,
+    "gust": 0.35,
+    "wavelength_px": 900.0,
+    "weights": {
+      "tree_large": 0.6,
+      "tree_small": 0.8,
+      "bush": 0.5,
+      "meadow": 1.0,
+      "drought": 0.5,
+      "swamp": 0.7,
+      "stone": 0.0
+    }
+  },
   "places": {
     "enabled": true,
     "pond_zoom": 0.42,

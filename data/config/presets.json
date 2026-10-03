@@ -88,6 +88,12 @@
                   "swamp": 0.45,
                   "stone": 0.55
                 }
+              },
+              "wind": {
+                "weights": {
+                  "drought": 0.15,
+                  "swamp": 0.0
+                }
               }
             },
             "world": {

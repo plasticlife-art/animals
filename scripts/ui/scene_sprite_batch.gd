@@ -20,6 +20,8 @@ var _dynamic_slots: Array = []
 var _transient_slots: Array = []
 var _last_dynamic_signature := PackedInt64Array()
 var _last_depth_tick: int = -9999
+var _wind_on: bool = false
+var _wind_paused: bool = false
 
 func configure(renderer, visuals: Dictionary) -> void:
 	owner_renderer = renderer
@@ -63,6 +65,55 @@ func configure(renderer, visuals: Dictionary) -> void:
 	material = mat
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	z_index = 0
+	configure_wind(visuals)
+
+
+## The wind's uniforms: where the props sit in the packed atlas, one weight per prop slot from
+## `visuals.wind.weights` by group, and the wind's strength. Off without props or when
+## `visuals.wind.enabled` is false.
+func configure_wind(visuals: Dictionary) -> void:
+	var mat := material as ShaderMaterial
+	if mat == null:
+		return
+	var wind: Dictionary = visuals.get("wind", {})
+	var props: Dictionary = visuals.get("props", {})
+	_wind_on = bool(wind.get("enabled", true)) and regions.has("props")
+	mat.set_shader_parameter("wind_enabled", _wind_on and not _wind_paused)
+	if not regions.has("props"):
+		return
+	var cell: Array = props.get("cell_px", [52, 66])
+	var region: Rect2 = regions["props"]
+	mat.set_shader_parameter("props_uv", Color(region.position.x / atlas_size.x, region.position.y / atlas_size.y,
+		region.size.x / atlas_size.x, region.size.y / atlas_size.y))
+	mat.set_shader_parameter("props_cell_uv", Vector2(float(cell[0]) / atlas_size.x, float(cell[1]) / atlas_size.y))
+	mat.set_shader_parameter("props_columns", maxi(1, int(props.get("columns", 8))))
+	mat.set_shader_parameter("sway_weights", sway_weights(props, wind.get("weights", {})))
+	mat.set_shader_parameter("wind_amplitude_px", float(wind.get("amplitude_px", 3.0)))
+	mat.set_shader_parameter("wind_speed", float(wind.get("speed", 1.4)))
+	mat.set_shader_parameter("wind_gust", float(wind.get("gust", 0.35)))
+	mat.set_shader_parameter("wind_wavelength_px", float(wind.get("wavelength_px", 900.0)))
+
+
+## Stills the wind while the overview draws the map frozen and tiny.
+func set_wind_paused(value: bool) -> void:
+	_wind_paused = value
+	var mat := material as ShaderMaterial
+	if mat != null:
+		mat.set_shader_parameter("wind_enabled", _wind_on and not _wind_paused)
+
+
+## 64 weights, one per prop slot: each slot gets its group's weight, slots in no group 0.
+static func sway_weights(props: Dictionary, weights: Dictionary) -> PackedFloat32Array:
+	var by_slot := PackedFloat32Array()
+	by_slot.resize(64)
+	by_slot.fill(0.0)
+	var groups: Dictionary = props.get("groups", {})
+	for group in groups.keys():
+		var weight := clampf(float(weights.get(group, 0.0)), 0.0, 2.0)
+		for slot in groups[group]:
+			if int(slot) >= 0 and int(slot) < 64:
+				by_slot[int(slot)] = weight
+	return by_slot
 
 func uv_rect(key: String, frame: Vector2, frame_size: Vector2) -> Color:
 	var region: Rect2 = regions[key]

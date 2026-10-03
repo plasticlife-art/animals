@@ -213,6 +213,7 @@ The map itself shows what the ecology is doing, with no overlay switched on:
   killed, and leaves its own body where it fell, which is opened and picked to the bones as it
   is eaten; a kill throws up a burst of dust
 - at night the animals, trees and bodies darken with the ground
+- trees, bushes and flowers sway in the wind, a gust running across the field; stones keep still
 - animals running in a chase, hunter and prey, kick up dust behind them, spray in a pond
 - a young animal born in view grows in over a ring of light and a few sparkles
 

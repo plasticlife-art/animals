@@ -7,12 +7,14 @@ const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const SettingsStoreScript := preload("res://scripts/ui/settings_store.gd")
 const SettingsPanelScript := preload("res://scripts/ui/settings_panel.gd")
 const GameCameraScript := preload("res://scripts/ui/game_camera.gd")
+const SceneSpriteBatchScript := preload("res://scripts/ui/scene_sprite_batch.gd")
 
 
 func run(a) -> void:
 	_test_settings_round_trip(a)
 	_test_settings_panel(a)
 	_test_ui_scale_keeps_the_map(a)
+	_test_wind_sways_plants_only(a)
 
 
 ## Settings are written and read back; a scale not on offer snaps to the nearest, and with no
@@ -60,3 +62,33 @@ func _test_ui_scale_keeps_the_map(a) -> void:
 	a.is_true(is_equal_approx(camera.zoom.x, chosen), "and comes back")
 	root.remove_child(camera)
 	camera.free()
+
+
+## Each prop slot sways by its group's weight - trees, bushes, flowers - and stones, animals and
+## bodies not at all; the Kenney style keeps its mossy rocks still; the overview stills it all.
+func _test_wind_sways_plants_only(a) -> void:
+	var props := {"groups": {"tree_large": [0, 1], "bush": [5], "stone": [22, 23]}}
+	var weights: PackedFloat32Array = SceneSpriteBatchScript.sway_weights(props, {"tree_large": 0.6, "bush": 0.5,
+		"stone": 0.0})
+	a.equal(weights.size(), 64, "a weight for every slot")
+	a.is_true(is_equal_approx(weights[0], 0.6) and is_equal_approx(weights[5], 0.5), "trees and bushes sway")
+	a.is_true(weights[22] == 0.0 and weights[30] == 0.0, "stones and slots in no group keep still")
+	var shader_code: String = load("res://shaders/scene_atlas.gdshader").code
+	a.is_true(shader_code.contains("sway_weights") and shader_code.contains("MODEL_MATRIX")
+		and shader_code.contains("UV.y"), "the shader shears by slot weight, pinned at the ground")
+	var kenney: Dictionary = Helpers.ConfigLoaderScript.load_config_bundle({"style": "topdown_kenney"}).visuals.wind.weights
+	a.is_true(float(kenney["swamp"]) == 0.0 and float(kenney["drought"]) < 0.3 and float(kenney["tree_large"]) > 0.0,
+		"Kenney's mossy rocks keep still, its cacti barely move, its trees sway: %s" % str(kenney))
+	var visuals: Dictionary = Helpers.ConfigLoaderScript.load_config_bundle().visuals
+	var batch = SceneSpriteBatchScript.new()
+	batch.configure(null, visuals)
+	var mat := batch.material as ShaderMaterial
+	a.is_true(bool(mat.get_shader_parameter("wind_enabled")), "on in the normal view")
+	batch.set_wind_paused(true)
+	a.is_true(not bool(mat.get_shader_parameter("wind_enabled")), "still in the overview")
+	var off := visuals.duplicate(true)
+	off["wind"]["enabled"] = false
+	batch.configure(null, off)
+	a.is_true(not bool(mat.get_shader_parameter("wind_enabled")) or not bool((batch.material as ShaderMaterial)
+		.get_shader_parameter("wind_enabled")), "and off when the config says so")
+	batch.free()
