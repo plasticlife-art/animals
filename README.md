@@ -371,6 +371,12 @@ shrink after dark, but the radii an animal searches for water and grass with do 
 memory, not sight, and shrinking them would strand herds from water. Animals go blind at
 night, not amnesiac.
 
+Young are born from late winter to midsummer, most of them in spring, and none in autumn or
+winter: deer have twins, foxes litters of three or four, grouse broods of four to six. Every
+young of the year has to get through its first winter. Each female's season opens on her own
+day of the spring and closes on her own day of the summer, so births come over weeks, not in
+one wave (`world.climate.breeding_curve`, `species.<id>.breeding`).
+
 Herbivores also bed down. `rest` gains a weight proportional to how deep the night is and
 `explore` takes the matching penalty, so idle herds settle at dusk and move again at dawn -
 while hunger still outscores both, so a hungry animal grazes in the dark. Predators get no

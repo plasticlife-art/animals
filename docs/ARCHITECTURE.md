@@ -303,6 +303,38 @@ Shared capabilities include:
   under two pins; the herd's means on the herd card's head-count tooltip; in the family tree's
   tooltips; and in the chronicle's «Черты»
 
+### Breeding season and litters (`Breeding`)
+
+- Young come from late winter to midsummer, most in spring, none in autumn or winter. The
+  season is a curve along `Climate.season_position` (seasons since the start of spring, 0..4,
+  a straight line through the year, unlike the eased multipliers): `world.climate.
+  breeding_curve` `[[0,1],[0.6,1],[1.5,0],[3.75,0]]` - open through the first 60 % of spring,
+  closing over the next 108 s to midsummer, opening again over the last 30 s of winter; a 210 s
+  window, 44 % of the year, exactly 1.0 at t=0. A species may carry its own
+  `species.<id>.breeding.curve`
+- A male breeds whenever the curve is above 0; a female where it is 1, and on its ramps when
+  her own draw for the year (`Traits.unit(id, FERTILITY_SALT + year, world)`) lies below it.
+  The season so opens and closes over its ramps rather than in one step, a sleeping pair and
+  an awake one get the same answer, and nothing is stored or drawn from `rng`
+- One question everywhere: `WorldState.can_breed(agent)` (`can_reproduce()` and
+  `is_fertile()`) for an awake animal and its mate - deer and grouse in their tick and mate
+  search, a predator in its override, first thing in `_attempt_reproduce()` (before it re-bonds
+  or leaves a carcass; the engaged flow comes in without asking) and in
+  `_is_valid_mate_candidate()`; `_dormant_record_can_breed()` for a sleeping group's tally and
+  its births. `get_reproductive_capacity()` is never gated
+- A spring is shorter than a deer's 200 s wait, so a mating brings a litter: `litter_mean`
+  young (its fraction a hashed chance of one more), at most `litter_max` - deer 2, foxes 3
+  (at most 4), grouse 4 (at most 6), in `species.<id>.breeding`. Capacity is reserved for
+  the whole litter; near the cap a pair has as many as there is room for. Asleep, the litters
+  are reserved together and handed out by the females' ids; a pair left nothing does not
+  breed. `births_this_step` names a mother (and `fathers_this_step` a father) once a young,
+  so the reconcile makes each newborn as before. Cost and wait are once a mating. A parent
+  keeps only the first of a litter as kin (`_flush_spawns()`), or a fox pair's kin centre
+  would drag it towards the den
+- Off - the block switched off, missing from an old save's own bundle, or the climate off -
+  a species breeds all year one young at a time, bit for bit as before (`BreedingTests`, and
+  the identity audits with `species.<id>.breeding.enabled=false`)
+
 ### Hybrid AI Layer
 
 The runtime AI is split into additive layers:
@@ -1075,6 +1107,9 @@ millisecond setting squeezed to zero.
 - `traits` switches heredity on for the species and tunes it (see Heritable traits):
   `founder_spread`, `mutation`, `clamp`, `longevity_clamp`, and the costs `run_cost_exponent`,
   `speed_hunger`, `vision_hunger`. The test fixtures switch it off (`build_test_bundle()`)
+- `breeding` switches the breeding season on for the species and sets its litter
+  (`litter_mean`, `litter_max`, optionally its own `curve`; see Breeding season). Only with the
+  climate on; the test fixtures switch it off
 - `movement.patrol_wander_jitter` is the heading jitter used when patrolling with no prey
   known anywhere in range. It is an order of magnitude smaller than the herding
   `wander_jitter`, because that one decorrelates heading in under a second and diffuses in
@@ -1196,6 +1231,13 @@ Current suites cover:
 - the story: names that stay and number while alive, the family tree from the world's own
   events awake and asleep, pins anywhere, the story's save round trip, the card's family line;
   the feed's lines for what is looked at, folding, the minute's summary and the newest shown
+- heredity (`TraitsTests`): founders and inheritance, clamps, costs, sleeping births with both
+  parents, selection asleep, means, saves
+- the breeding season (`BreedingTests`): the curve over the year, females opening over its
+  ramps, litters, autumn barren and spring twins, a predator out of season keeping its carcass
+  and its mate, a fox litter's kin, litters against the cap awake and asleep, a sleeping litter
+  with both parents and the shared stream untouched, awake and asleep agreeing, and a world
+  without a season playing exactly as before
 
 ## Measuring Balance
 

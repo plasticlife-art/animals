@@ -18,6 +18,7 @@ const PredatorScript = preload("res://scripts/agents/predator.gd")
 const ScavengerScript = preload("res://scripts/agents/scavenger.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
 const TraitsScript = preload("res://scripts/agents/traits.gd")
+const BreedingScript = preload("res://scripts/agents/breeding.gd")
 const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_perception_snapshot.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const FearFieldScript = preload("res://scripts/world/fear_field.gd")
@@ -61,6 +62,10 @@ var event_bus
 var rng: RandomNumberGenerator
 ## The world's seed, mixed into every inherited trait's hash (`Traits.unit()`).
 var trait_world: int = 0
+## The breeding season (`Breeding`): the settings of each species that has one - only with the
+## climate on and a curve to read - and this tick's value of its curve.
+var _breeding_settings: Dictionary = {}
+var _breeding_values: Dictionary = {}
 var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
 var fear_field: FearField
@@ -194,6 +199,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	# snapshot on tick 0, before the first step ever runs.
 	climate = ClimateScript.new()
 	climate.configure(world_config)
+	_configure_breeding()
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -241,6 +247,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	_reproduction_population_counts.clear()
 	_reproduction_birth_reservations.clear()
 	climate.sample(current_time)
+	_refresh_breeding_values()
 	_reset_performance_counters()
 	scenery.visibility_checks = 0
 	scenery.local_searches = 0
@@ -362,11 +369,14 @@ func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, se
 	return agent
 
 
-func queue_spawn_agent(species_type: String, position: Vector2, group_id: int, parent_a = null, parent_b = null) -> void:
+## `litter_index` counts the young of one mating from 0 (`Breeding`).
+func queue_spawn_agent(species_type: String, position: Vector2, group_id: int, parent_a = null, parent_b = null,
+		litter_index: int = 0) -> void:
 	pending_spawns.append({
 		"species": species_type,
 		"position": position,
 		"group_id": group_id,
+		"litter_index": litter_index,
 		"parent_a_id": -1 if parent_a == null else parent_a.id,
 		"parent_b_id": -1 if parent_b == null else parent_b.id,
 		# Copied now: a parent may be gone by the time the spawn is flushed.
@@ -528,6 +538,65 @@ func _reproduction_population_count(species_type: String) -> int:
 	var count := int(get_population_metrics().get("%s_count" % species_type, 0))
 	_reproduction_population_counts[species_type] = count
 	return count
+
+
+## Which species breed by season (`Breeding`), read once: none while the climate is off.
+func _configure_breeding() -> void:
+	_breeding_settings.clear()
+	_breeding_values.clear()
+	var climate_config: Dictionary = config_bundle.get("world", {}).get("climate", {})
+	if not bool(climate_config.get("enabled", false)) or climate_config.get("seasons", []).is_empty():
+		return
+	var species_configs: Dictionary = config_bundle.get("species", {})
+	for species_id in species_configs.keys():
+		var settings: Dictionary = BreedingScript.settings(species_configs[species_id])
+		if not bool(settings["enabled"]):
+			continue
+		var curve: Array = settings.get("curve", climate_config.get("breeding_curve", []))
+		if curve.is_empty():
+			continue
+		settings["curve"] = curve
+		_breeding_settings[str(species_id)] = settings
+	_refresh_breeding_values()
+
+
+func _refresh_breeding_values() -> void:
+	for species_id in _breeding_settings:
+		_breeding_values[species_id] = BreedingScript.curve_value(_breeding_settings[species_id]["curve"],
+			climate.season_position)
+
+
+## Whether the species breeds by season at all.
+func breeds_by_season(species_type: String) -> bool:
+	return _breeding_settings.has(species_type)
+
+
+## The breeding season's value for the species now, 1.0 for one without a season.
+func breeding_value(species_type: String) -> float:
+	return float(_breeding_values.get(species_type, 1.0))
+
+
+## Whether the season lets this animal breed now (`Breeding.fertile()`); always for a species
+## without a season. Awake and asleep ask the same question.
+func is_fertile(agent_id: int, sex: String, species_type: String) -> bool:
+	if not _breeding_settings.has(species_type):
+		return true
+	return BreedingScript.fertile(agent_id, sex, float(_breeding_values.get(species_type, 1.0)), climate.year,
+		trait_world)
+
+
+## Ready to breed and in season: what an awake animal and its mate are both asked.
+func can_breed(agent) -> bool:
+	return agent.can_reproduce() and is_fertile(agent.id, agent.sex, agent.species_type)
+
+
+## How many young the pair has (`Breeding.litter()`); one for a species without a season.
+func litter_size(species_type: String, parent_a: int, parent_b: int) -> int:
+	var settings: Dictionary = _breeding_settings.get(species_type, {})
+	if settings.is_empty():
+		return 1
+	return BreedingScript.litter(parent_a, parent_b, climate.year, float(settings["litter_mean"]),
+		int(settings["litter_max"]), trait_world)
 
 
 func has_reproductive_capacity(species_type: String) -> bool:
@@ -1354,6 +1423,7 @@ func import_state(data: Dictionary) -> void:
 	# A restored save calls `refresh_snapshot()` immediately; without this the
 	# loaded game would report spring noon for one tick.
 	climate.sample(current_time)
+	_refresh_breeding_values()
 
 	for record in data.get("agents", []):
 		var agent = _restore_agent_record(record)
@@ -3549,11 +3619,7 @@ func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
 	var record_age := float(record.get("age", 0.0))
 	var longevity := float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY])
 	var is_mature := record_age >= float(reproduction_config.get("maturity_age", 0.0)) * longevity
-	var is_ready := is_mature \
-		and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
-		and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
-		and float(record.get("hunger", 0.0)) <= float(reproduction_config.get("max_hunger", 100.0)) \
-		and float(record.get("thirst", 0.0)) <= float(reproduction_config.get("max_thirst", 100.0))
+	var is_ready := _dormant_record_can_breed(record, reproduction_config, str(record.get("species_type", "")))
 	var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
 	if is_mature:
 		var mature_key := "mature_males" if sex == AgentBaseScript.SEX_MALE else "mature_females"
@@ -4309,7 +4375,7 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, _elapsed: floa
 	var males: Array = []
 	var females: Array = []
 	for record in members:
-		if not _dormant_record_can_reproduce(record, reproduction_config):
+		if not _dormant_record_can_breed(record, reproduction_config, species_key):
 			continue
 		if str(record.get("sex", "")) == AgentBaseScript.SEX_MALE:
 			males.append(record)
@@ -4342,27 +4408,50 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, _elapsed: floa
 		males.remove_at(chosen)
 		if males.is_empty():
 			break
-	var births := reserve_reproductive_capacity(species_key, pairs.size())
-	if births <= 0:
+	# A litter each (`Breeding`, one without a season), reserved together and handed out
+	# by the females' ids; a pair the cap leaves nothing for does not breed at all.
+	var litters: Array = []
+	var wanted := 0
+	for pair in pairs:
+		var size := litter_size(species_key, int(pair[1].get("id", 0)), int(pair[0].get("id", 0)))
+		litters.append(size)
+		wanted += size
+	var granted := reserve_reproductive_capacity(species_key, wanted)
+	if granted <= 0:
 		return 0
 	var cost := float(reproduction_config.get("birth_energy_cost", 0.0))
 	var cooldown := float(reproduction_config.get("cooldown", 46.0))
 	var mothers: Array = []
 	var fathers: Array = []
-	for index in range(births):
+	var matings := 0
+	for index in range(pairs.size()):
+		var young := mini(int(litters[index]), granted)
+		if young <= 0:
+			break
+		granted -= young
+		matings += 1
 		for parent in pairs[index]:
 			parent["energy"] = maxf(0.0, float(parent.get("energy", 0.0)) - cost)
 			# A long life is a slow one: it waits longer between young (`Traits`).
 			parent["reproduction_cooldown"] = cooldown * float(TraitsScript.of_record(parent)[TraitsScript.LONGEVITY])
-		mothers.append(pairs[index][1])
-		fathers.append(pairs[index][0])
+		# One entry a young: the reconcile makes a newborn for each, to its mother and father.
+		for _young in range(young):
+			mothers.append(pairs[index][1])
+			fathers.append(pairs[index][0])
 	# Paid on the parents' records above and on the group's mean here, so the reconcile's
 	# need shift, which is the mean minus the records, does not charge it again.
-	aggregate["avg_energy"] = maxf(0.0, float(aggregate.get("avg_energy", 0.0)) - float(births) * 2.0 * cost / float(count))
+	aggregate["avg_energy"] = maxf(0.0, float(aggregate.get("avg_energy", 0.0)) - float(matings) * 2.0 * cost / float(count))
 	aggregate["births_this_step"] = mothers
 	# Each mother's mate, for the young's inherited traits and its father in the family tree.
 	aggregate["fathers_this_step"] = fathers
-	return births
+	return mothers.size()
+
+
+## `_dormant_record_can_reproduce()` and in season (`is_fertile()`): the sleeping side of
+## `can_breed()`, used by both the group's tally and its births.
+func _dormant_record_can_breed(record: Dictionary, reproduction_config: Dictionary, species_key: String) -> bool:
+	return _dormant_record_can_reproduce(record, reproduction_config) \
+		and is_fertile(int(record.get("id", -1)), str(record.get("sex", AgentBaseScript.SEX_FEMALE)), species_key)
 
 
 static func _dormant_record_can_reproduce(record: Dictionary, reproduction_config: Dictionary) -> bool:
@@ -5381,7 +5470,9 @@ func _flush_spawns() -> void:
 					continue
 				if child.has_method("add_kin_id"):
 					child.call("add_kin_id", parent_id)
-				if parent.has_method("add_kin_id"):
+				# A parent keeps the first of a litter as kin, not every cub: its kin centre
+				# would otherwise drag the pair towards the den (`Breeding`).
+				if parent.has_method("add_kin_id") and int(request.get("litter_index", 0)) == 0:
 					parent.call("add_kin_id", child.id)
 		emit_event("AgentReproduced", child, int(request["parent_a_id"]), {
 			"parent_a_id": int(request["parent_a_id"]),

@@ -90,7 +90,7 @@ func tick(world, delta: float) -> void:
 		set_ai_state(next_ai_state)
 		cache_decision_state(snapshot, scoped_context, world.current_tick)
 		predators = snapshot.predators
-		if can_reproduce() and next_ai_state == AgentAIState.ALIVE and _attempt_reproduce(world, delta, snapshot.group_neighbors, predators):
+		if world.can_breed(self) and next_ai_state == AgentAIState.ALIVE and _attempt_reproduce(world, delta, snapshot.group_neighbors, predators):
 			force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 			return
 		var selection_started_at_usec := Time.get_ticks_usec()
@@ -103,7 +103,7 @@ func tick(world, delta: float) -> void:
 		if not predators.is_empty():
 			set_ai_state(AgentAIState.PANIC)
 
-	if can_reproduce() and ai_state == AgentAIState.ALIVE and current_action == AgentAction.REPRODUCE and _attempt_reproduce(world, delta, snapshot.group_neighbors, predators):
+	if world.can_breed(self) and ai_state == AgentAIState.ALIVE and current_action == AgentAction.REPRODUCE and _attempt_reproduce(world, delta, snapshot.group_neighbors, predators):
 		force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 		return
 
@@ -355,7 +355,7 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 	)
 	var chosen_mate = null
 	for mate in mates:
-		if mate.sex == sex or not mate.can_reproduce():
+		if mate.sex == sex or not world.can_breed(mate):
 			continue
 		if mate.group_id != -1 and group_id != -1 and mate.group_id != group_id:
 			continue
@@ -380,13 +380,16 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 	if id > chosen_mate.id:
 		stop_motion(delta)
 		return true
-	if world.reserve_reproductive_capacity(species_type, 1) <= 0:
+	# Twins in season (`Breeding`), as many as the cap leaves room for; one young without one.
+	var granted: int = world.reserve_reproductive_capacity(species_type, world.litter_size(species_type, id, chosen_mate.id))
+	if granted <= 0:
 		return false
 
 	var spawn_center: Vector2 = position.lerp(chosen_mate.position, 0.5)
-	var spawn_offset: Vector2 = world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 18.0))
-	var child_position: Vector2 = world.clamp_position(spawn_center + spawn_offset)
-	world.queue_spawn_agent(species_type, child_position, group_id, self, chosen_mate)
+	for young in range(granted):
+		var spawn_offset: Vector2 = world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 18.0))
+		var child_position: Vector2 = world.clamp_position(spawn_center + spawn_offset)
+		world.queue_spawn_agent(species_type, child_position, group_id, self, chosen_mate, young)
 
 	set_state("reproduce", world.current_tick)
 	chosen_mate.set_state("reproduce", world.current_tick)

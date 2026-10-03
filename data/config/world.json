@@ -39,6 +39,7 @@
     "start_day_phase": 0.5,
     "start_season_index": 0,
     "season_transition_fraction": 0.35,
+    "breeding_curve": [[0.0, 1.0], [0.6, 1.0], [1.5, 0.0], [3.75, 0.0]],
     "seasons": [
       {
         "id": "spring",

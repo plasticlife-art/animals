@@ -88,7 +88,7 @@ func tick(world, delta: float) -> void:
 	var scoped_context = context.with_state(ai_state)
 	_ai_controller.update_action_target_tracking(self, scoped_context)
 	cache_decision_state(snapshot, scoped_context, world.current_tick)
-	if can_reproduce() and _attempt_reproduce(world, delta):
+	if world.can_breed(self) and _attempt_reproduce(world, delta):
 		set_ai_state(AgentAIState.ENGAGED)
 		force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 		return
@@ -420,6 +420,10 @@ func clear_preferred_mate() -> void:
 
 
 func _attempt_reproduce(world, delta: float) -> bool:
+	# Out of season, before anything else: finding a mate re-bonds the pair, and going to it
+	# gives up a carcass. The engaged flow comes here without asking `can_breed()` first.
+	if not world.is_fertile(id, sex, species_type):
+		return false
 	if not world.has_reproductive_capacity(species_type):
 		return false
 	var chosen_mate: AgentBase = _find_viable_mate(world, true)
@@ -440,12 +444,15 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	if id > chosen_mate.id:
 		stop_motion(delta)
 		return true
-	if world.reserve_reproductive_capacity(species_type, 1) <= 0:
+	# A litter in season (`Breeding`), as many as the cap leaves room for; one cub without one.
+	var granted: int = world.reserve_reproductive_capacity(species_type, world.litter_size(species_type, id, chosen_mate.id))
+	if granted <= 0:
 		return false
 
 	var center: Vector2 = position.lerp(chosen_mate.position, 0.5)
-	var child_position: Vector2 = world.clamp_position(center + world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 20.0)))
-	world.queue_spawn_agent(species_type, child_position, -1, self, chosen_mate)
+	for young in range(granted):
+		var child_position: Vector2 = world.clamp_position(center + world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 20.0)))
+		world.queue_spawn_agent(species_type, child_position, -1, self, chosen_mate, young)
 
 	set_state("reproduce", world.current_tick)
 	chosen_mate.set_state("reproduce", world.current_tick)
@@ -698,7 +705,7 @@ func _regroup_with_kin(world, delta: float) -> bool:
 
 func _find_viable_mate(world, require_reproduction_ready: bool, mates: Array = []) -> AgentBase:
 	var preferred_mate: AgentBase = _get_preferred_mate(world)
-	if _is_valid_mate_candidate(preferred_mate, require_reproduction_ready):
+	if _is_valid_mate_candidate(world, preferred_mate, require_reproduction_ready):
 		return preferred_mate
 
 	if mates.is_empty():
@@ -712,7 +719,7 @@ func _find_viable_mate(world, require_reproduction_ready: bool, mates: Array = [
 	var chosen_mate: AgentBase = null
 	var best_distance_sq: float = INF
 	for mate in mates:
-		if not _is_valid_mate_candidate(mate, require_reproduction_ready):
+		if not _is_valid_mate_candidate(world, mate, require_reproduction_ready):
 			continue
 		var distance_sq: float = position.distance_squared_to(mate.position)
 		if distance_sq < best_distance_sq:
@@ -738,12 +745,12 @@ func _get_preferred_mate(world) -> AgentBase:
 	return mate
 
 
-func _is_valid_mate_candidate(candidate, require_reproduction_ready: bool) -> bool:
+func _is_valid_mate_candidate(world, candidate, require_reproduction_ready: bool) -> bool:
 	if candidate == null or not candidate.is_alive:
 		return false
 	if candidate.id == id or candidate.species_type != species_type or candidate.sex == sex:
 		return false
-	if require_reproduction_ready and not candidate.can_reproduce():
+	if require_reproduction_ready and not world.can_breed(candidate):
 		return false
 	return true
 

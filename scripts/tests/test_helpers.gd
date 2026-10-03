@@ -133,6 +133,9 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# `TraitsTests` switches it on itself.
 	for species_id in bundle.get("species", {}).keys():
 		bundle["species"][species_id]["traits"] = {"enabled": false}
+		# And the breeding season: a fixture that switches the climate on to watch the grass
+		# must not find its pairs barren in autumn. `BreedingTests` switches it on.
+		bundle["species"][species_id]["breeding"] = {"enabled": false}
 	return bundle
 
 

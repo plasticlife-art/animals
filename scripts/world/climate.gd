@@ -24,6 +24,9 @@ const NEUTRAL := {
 	"season_id": "spring",
 	"season_label": "Весна",
 	"season_progress": 0.0,
+	"season_position": 0.0,
+	"season_blend": 0.0,
+	"next_season_id": "spring",
 	"day_phase": 0.5,
 	"night_ratio": 0.0,
 	"is_night": false,
@@ -39,6 +42,13 @@ var season_index: int = 0
 var season_id: String = "spring"
 var season_label: String = "Spring"
 var season_progress: float = 0.0
+## Seasons since the start of spring, 0 to 4: the season's index plus how far into it, a line
+## through the year with no hold or easing (`Breeding` reads its curve along it).
+var season_position: float = 0.0
+## How far the season's values have eased towards the next one's (`season_transition_fraction`),
+## and which season that is, for anything blended per season the way the multipliers are.
+var season_blend: float = 0.0
+var next_season_id: String = "spring"
 var day_phase: float = 0.5
 var night_ratio: float = 0.0
 var is_night: bool = false
@@ -68,6 +78,9 @@ func sample(time_seconds: float) -> void:
 	season_id = str(values["season_id"])
 	season_label = str(values["season_label"])
 	season_progress = float(values["season_progress"])
+	season_position = float(values["season_position"])
+	season_blend = float(values["season_blend"])
+	next_season_id = str(values["next_season_id"])
 	day_phase = float(values["day_phase"])
 	night_ratio = float(values["night_ratio"])
 	is_night = bool(values["is_night"])
@@ -106,6 +119,14 @@ static func calendar(climate_config: Dictionary) -> Array:
 	var seasons: Array = climate_config.get("seasons", [])
 	return [day_length * maxf(0.001, float(climate_config.get("season_length_days", 1.0))),
 		seasons.size() if not seasons.is_empty() else 4]
+
+
+## `values_by_season` (season id -> number) at this moment, eased between seasons as the
+## multipliers are: the season's own value for the first part of it, then towards the next one's.
+## `fallback` stands for a season the table leaves out.
+func blend_by_season(values_by_season: Dictionary, fallback: float = 0.0) -> float:
+	return lerpf(float(values_by_season.get(season_id, fallback)),
+		float(values_by_season.get(next_season_id, fallback)), season_blend)
 
 
 ## The pure core. Everything above is a cache over this.
@@ -174,6 +195,9 @@ static func evaluate(climate_config: Dictionary, time_seconds: float) -> Diction
 		"season_id": str(current.get("id", "spring")),
 		"season_label": str(current.get("label", current.get("id", "spring"))),
 		"season_progress": progress,
+		"season_position": float(index) + progress,
+		"season_blend": blend,
+		"next_season_id": str(upcoming.get("id", "spring")),
 		"day_phase": phase,
 		"night_ratio": night,
 		"is_night": night >= 0.5,

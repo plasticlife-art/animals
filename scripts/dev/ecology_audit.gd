@@ -197,6 +197,9 @@ func _population_counts(population: Dictionary, species_ids: Array) -> Dictionar
 
 func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictionary:
 	var row := {"time": snappedf(manager.simulation_time, 0.1)}
+	# The season the row falls in, for anything that breeds or dries by season.
+	if manager.world_state.climate.enabled:
+		row["season"] = "%s %d" % [manager.world_state.climate.season_id, manager.world_state.climate.year]
 	for species_id in species_ids:
 		row[species_id] = int(population.get("%s_count" % species_id, 0))
 		row["%s_starvation_risk" % species_id] = int(population.get(
