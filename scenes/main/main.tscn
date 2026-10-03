@@ -379,6 +379,14 @@ bbcode_enabled = true
 fit_content = true
 scroll_active = false
 
+[node name="TraitsLabel" type="Label" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000044]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+mouse_filter = 1
+theme_override_colors/font_color = Color(0.2, 0.13, 0.08, 0.72)
+text_overrun_behavior = 3
+
 [node name="ButtonsRow" type="HBoxContainer" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000041]
 layout_mode = 2
 theme_override_constants/separation = 6

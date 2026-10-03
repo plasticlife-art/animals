@@ -84,6 +84,16 @@
       "max_age": 1200.0,
       "old_age_start": 1000.0,
       "old_age_death_chance_per_second": 0.003
+    },
+    "traits": {
+      "enabled": true,
+      "founder_spread": 0.08,
+      "mutation": 0.04,
+      "clamp": 0.25,
+      "longevity_clamp": 0.10,
+      "run_cost_exponent": 2.0,
+      "speed_hunger": 0.5,
+      "vision_hunger": 0.3
     }
   },
   "predator": {
@@ -171,6 +181,16 @@
       "max_age": 1440.0,
       "old_age_start": 1200.0,
 	  "old_age_death_chance_per_second": 0.003
+    },
+    "traits": {
+      "enabled": true,
+      "founder_spread": 0.08,
+      "mutation": 0.04,
+      "clamp": 0.25,
+      "longevity_clamp": 0.10,
+      "run_cost_exponent": 2.0,
+      "speed_hunger": 0.5,
+      "vision_hunger": 0.3
     }
   },
   "scavenger": {
@@ -244,6 +264,16 @@
       "max_age": 1200.0,
 	  "old_age_start": 1000.0,
 	  "old_age_death_chance_per_second": 0.004
+    },
+    "traits": {
+      "enabled": true,
+      "founder_spread": 0.08,
+      "mutation": 0.04,
+      "clamp": 0.25,
+      "longevity_clamp": 0.10,
+      "run_cost_exponent": 2.0,
+      "speed_hunger": 0.5,
+      "vision_hunger": 0.3
     }
   }
 }

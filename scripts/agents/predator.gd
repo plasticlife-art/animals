@@ -233,7 +233,7 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		return false
 
 	chase_timer += delta
-	spend_energy(float(metabolism.get("chase_energy_cost", 5.0)) * delta)
+	spend_energy(float(metabolism.get("chase_energy_cost", 5.0)) * trait_run_cost * delta)
 	target_position = last_seen_prey_position if visible else _last_seen_search_target(world)
 	if visible and distance <= minf(attack_radius, get_body_radius() + prey.get_body_radius() + float(hunt.get("contact_slack", 5.0))) and world.scenery.segment_clear(position, prey.position, 0.0):
 		return _attack(world, prey, delta)
@@ -344,7 +344,8 @@ func _attack(world, prey, delta: float) -> bool:
 	var attack_config: Dictionary = balance.get("attack", {})
 	var energy_ratio: float = energy / maxf(1.0, float(metabolism.get("max_energy", 100.0)))
 	var isolation: float = _prey_isolation(world, prey)
-	var prey_speed_ratio: float = prey.velocity.length() / maxf(1.0, float(prey.movement.get("sprint_speed", prey.movement.get("max_speed", 100.0))))
+	# Against the prey's own top speed, its inherited speed included, so the ratio stays a share.
+	var prey_speed_ratio: float = prey.velocity.length() / maxf(1.0, float(prey.movement.get("sprint_speed", prey.movement.get("max_speed", 100.0))) * prey.trait_speed)
 
 	var chance := float(attack_config.get("base_success_chance", 0.38))
 	chance += energy_ratio * float(attack_config.get("predator_energy_bonus", 0.18))
@@ -394,7 +395,7 @@ func _consume_kill_bite(world) -> void:
 	var consumed: float = world.consume_carcass(target_carcass_id, bite, id)
 	if consumed <= 0.0:
 		return
-	reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)))
+	reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)) * trait_appetite)
 	restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
 
 
@@ -450,8 +451,9 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	chosen_mate.set_state("reproduce", world.current_tick)
 	interaction_timer = 1.0
 	chosen_mate.interaction_timer = 1.0
-	reproduction_cooldown = float(reproduction.get("cooldown", 52.0))
-	chosen_mate.reproduction_cooldown = float(chosen_mate.reproduction.get("cooldown", 52.0))
+	# A long life is a slow one: it waits longer between young (`Traits`).
+	reproduction_cooldown = float(reproduction.get("cooldown", 52.0)) * trait_longevity
+	chosen_mate.reproduction_cooldown = float(chosen_mate.reproduction.get("cooldown", 52.0)) * chosen_mate.trait_longevity
 	spend_energy(float(reproduction.get("birth_energy_cost", 22.0)))
 	chosen_mate.spend_energy(float(chosen_mate.reproduction.get("birth_energy_cost", 22.0)))
 	clear_targets(world)
@@ -547,8 +549,9 @@ func _resolve_patrol_goal(world) -> Variant:
 	_patrol_goal_tick = world.current_tick
 	_patrol_goal = null
 	var starvation_threshold := float(balance.get("lifecycle", {}).get("starvation_death_threshold", need_max))
-	var hunger_headroom := maxf(1.0, starvation_threshold - hunger) / maxf(0.01, float(metabolism.get("hunger_rate", 1.6)))
-	var reach := maxf(hunger_headroom * float(movement.get("max_speed", 84.0)) * 0.6, float(perception.get("vision_radius", 240.0)) * 2.0)
+	var hunger_headroom := maxf(1.0, starvation_threshold - hunger) / maxf(0.01, float(metabolism.get("hunger_rate", 1.6)) * trait_hunger)
+	var reach := maxf(hunger_headroom * float(movement.get("max_speed", 84.0)) * trait_speed * 0.6,
+		float(perception.get("vision_radius", 240.0)) * trait_vision * 2.0)
 	var goal: Dictionary = world.find_prey_pressure_goal(position, reach)
 	if goal.is_empty():
 		# Nothing inside the hunger budget, so aim at the best prey concentration
@@ -566,7 +569,7 @@ func _resolve_patrol_goal(world) -> Variant:
 	# centre while seeing nothing means the herd is elsewhere in the sector, so sweep it
 	# instead of milling on the spot - `_patrol`'s low-jitter wander covers ground.
 	var goal_position: Vector2 = goal["goal_position"]
-	if position.distance_to(goal_position) <= float(perception.get("vision_radius", 240.0)):
+	if position.distance_to(goal_position) <= float(perception.get("vision_radius", 240.0)) * trait_vision:
 		return null
 	_patrol_goal = goal_position
 	return _patrol_goal

@@ -17,6 +17,7 @@ const HerbivoreScript = preload("res://scripts/agents/herbivore.gd")
 const PredatorScript = preload("res://scripts/agents/predator.gd")
 const ScavengerScript = preload("res://scripts/agents/scavenger.gd")
 const AgentBaseScript = preload("res://scripts/agents/agent_base.gd")
+const TraitsScript = preload("res://scripts/agents/traits.gd")
 const AgentPerceptionSnapshotScript = preload("res://scripts/agents/agent_perception_snapshot.gd")
 const ResourceSystemScript = preload("res://scripts/world/resource_system.gd")
 const FearFieldScript = preload("res://scripts/world/fear_field.gd")
@@ -58,6 +59,8 @@ var inspected_agent_id: int = -1
 var config_bundle: Dictionary = {}
 var event_bus
 var rng: RandomNumberGenerator
+## The world's seed, mixed into every inherited trait's hash (`Traits.unit()`).
+var trait_world: int = 0
 var terrain_system: TerrainSystem
 var resource_system: ResourceSystem
 var fear_field: FearField
@@ -177,6 +180,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	terrain_system = TerrainSystemScript.new()
 	terrain_system.initialize(world_config, rng, water_sources)
 	scenery.initialize(world_config, config_bundle.get("visuals", {}), terrain_system, int(rng.seed))
+	# Mixed into every inherited trait's hash, so two worlds' founders are not the same animals.
+	trait_world = int(rng.seed) & 0xFFFFFFFF
 
 	resource_system = ResourceSystemScript.new()
 	resource_system.initialize(world_config, rng, terrain_system)
@@ -332,17 +337,28 @@ func spawn_agent(species_type: String, position: Vector2, group_id: int = -1, se
 	)
 	agent.position = scenery.nearest_free(agent.position, agent.get_body_radius())
 	agent.lod_tier = LOD_TIER_0
+	# Inherited traits: a birth brings its own (`_flush_spawns()`), a founder is spread around
+	# the species. Hashed from the id, never drawn from `rng`.
+	var reason: String = str(metadata.get("reason", "runtime"))
+	if TraitsScript.enabled(species_config):
+		if metadata.has("traits"):
+			agent.set_traits(metadata["traits"])
+		elif reason == "initial":
+			agent.set_traits(TraitsScript.founder(next_agent_id, species_config, trait_world))
 	agents[next_agent_id] = agent
 	_register_living_agent(agent)
 	next_agent_id += 1
 
-	var reason: String = str(metadata.get("reason", "runtime"))
-	emit_event("AgentBorn", agent, -1, {
+	var born_data := {
 		"reason": reason,
 		"group_id": group_id,
 		# For the view's names, which come in a list per sex.
 		"sex": agent.sex,
-	})
+	}
+	# And for its family tree, what it inherited.
+	if TraitsScript.enabled(species_config):
+		born_data["traits"] = agent.traits()
+	emit_event("AgentBorn", agent, -1, born_data)
 	return agent
 
 
@@ -353,6 +369,9 @@ func queue_spawn_agent(species_type: String, position: Vector2, group_id: int, p
 		"group_id": group_id,
 		"parent_a_id": -1 if parent_a == null else parent_a.id,
 		"parent_b_id": -1 if parent_b == null else parent_b.id,
+		# Copied now: a parent may be gone by the time the spawn is flushed.
+		"traits_a": [] if parent_a == null else parent_a.traits(),
+		"traits_b": [] if parent_b == null else parent_b.traits(),
 	})
 
 
@@ -408,6 +427,7 @@ func get_population_metrics() -> Dictionary:
 			"active_hunger": 0.0, "dormant_hunger": 0.0,
 			"dormant_thirst": 0.0, "dormant_energy": 0.0,
 			"starvation_risk": 0, "thirst_risk": 0,
+			"traits": [0.0, 0.0, 0.0, 0.0],
 		}
 
 	for agent in living_agents:
@@ -421,6 +441,11 @@ func get_population_metrics() -> Dictionary:
 			continue
 		totals["active"] += 1
 		totals["active_hunger"] += agent.hunger
+		var trait_sums: Array = totals["traits"]
+		trait_sums[0] += agent.trait_speed
+		trait_sums[1] += agent.trait_vision
+		trait_sums[2] += agent.trait_appetite
+		trait_sums[3] += agent.trait_longevity
 		if agent.hunger >= critical_hunger:
 			totals["starvation_risk"] += 1
 		if agent.thirst >= critical_thirst:
@@ -446,6 +471,10 @@ func get_population_metrics() -> Dictionary:
 			totals["dormant_hunger"] += avg_hunger * count
 			totals["dormant_thirst"] += float(species_state.get("avg_thirst", 0.0)) * count
 			totals["dormant_energy"] += float(species_state.get("avg_energy", 0.0)) * count
+			var means: Array = species_state.get("avg_traits", TraitsScript.NEUTRAL)
+			var sleeping_sums: Array = totals["traits"]
+			for index in range(TraitsScript.NAMES.size()):
+				sleeping_sums[index] += float(means[index]) * count
 			# A sleeping sector is judged by its species' averages, so its animals count as
 			# at risk all together or not at all.
 			if avg_hunger >= critical_hunger:
@@ -469,6 +498,9 @@ func get_population_metrics() -> Dictionary:
 		metrics["dormant_%s_energy_sum" % species_id] = totals["dormant_energy"]
 		metrics["starvation_risk_%s_count" % species_id] = totals["starvation_risk"]
 		metrics["thirst_risk_%s_count" % species_id] = totals["thirst_risk"]
+		# Inherited traits, summed over awake and sleeping animals: the snapshot makes the means.
+		for index in range(TraitsScript.NAMES.size()):
+			metrics["%s_trait_%s_sum" % [species_id, TraitsScript.NAMES[index]]] = totals["traits"][index]
 	return metrics
 
 
@@ -682,8 +714,10 @@ func query_carcasses(position: Vector2, radius: float) -> Array:
 ## rather than a guess. The pairing that matters: a search radius and the
 ## normalizer that divides by it must scale together, or every candidate found
 ## reads as maximally close and it looks like an AI bug instead of a sight one.
+## An animal's inherited sight (`trait_vision`) scales it here too.
 func perception_radius(agent, key: String, default_value: float) -> float:
-	return float(agent.perception.get(key, default_value)) * climate.perception_multiplier_for(agent.species_type)
+	return float(agent.perception.get(key, default_value)) * climate.perception_multiplier_for(agent.species_type) \
+		* agent.trait_vision
 
 
 ## Carrion smell expands as hunger becomes critical. Water and grass already
@@ -1137,10 +1171,11 @@ func grazing_ground_is_acceptable(position: Vector2, hunger: float, perception: 
 
 
 ## What one bite takes and gives: no more grass than the animal's hunger can use, so a
-## nearly full animal does not strip a cell for nothing.
-static func grazing_bite(feeding: Dictionary, hunger: float, bite_scale: float = 1.0) -> float:
+## nearly full animal does not strip a cell for nothing. `appetite` (`Traits`) is how much more
+## each bite feeds this animal than its species.
+static func grazing_bite(feeding: Dictionary, hunger: float, bite_scale: float = 1.0, appetite: float = 1.0) -> float:
 	var gain := maxf(0.001, float(feeding.get("nutrition_gain", 0.8)))
-	return minf(float(feeding.get("bite_amount", 18.0)) * bite_scale, maxf(0.0, hunger) / gain)
+	return minf(float(feeding.get("bite_amount", 18.0)) * bite_scale, maxf(0.0, hunger) / (gain * appetite))
 
 
 ## Places water on a jittered grid sized from the world's area.
@@ -1252,7 +1287,7 @@ func _resolve_agent_overlap(delta: float) -> void:
 		if agent == null or not agent.is_alive or not corrections.has(agent.id):
 			continue
 		var correction: Vector2 = corrections[agent.id]
-		var limit: float = float(agent.movement.get("max_speed", 70.0)) * delta * _OVERLAP_RELAXATION
+		var limit: float = float(agent.movement.get("max_speed", 70.0)) * agent.trait_speed * delta * _OVERLAP_RELAXATION
 		if correction.length() > limit:
 			correction = correction.normalized() * limit
 		var previous: Vector2 = agent.position
@@ -2072,8 +2107,8 @@ func _stagger_initial_agent(agent) -> void:
 		return
 	var old_age_start := float(agent.aging.get("old_age_start", agent.aging.get("max_age", 0.0)))
 	agent.age = rng.randf_range(0.0, old_age_start * age_share)
-	if agent.age >= float(agent.reproduction.get("maturity_age", 0.0)):
-		agent.reproduction_cooldown = rng.randf_range(0.0, float(agent.reproduction.get("cooldown", 0.0)))
+	if agent.age >= float(agent.reproduction.get("maturity_age", 0.0)) * agent.trait_longevity:
+		agent.reproduction_cooldown = rng.randf_range(0.0, float(agent.reproduction.get("cooldown", 0.0))) * agent.trait_longevity
 
 
 ## Share of one tick's stride that the overlap pass may move an animal. Small
@@ -3368,8 +3403,13 @@ func _build_dormant_species_state(records: Array) -> Dictionary:
 			"avg_thirst": 0.0,
 			"avg_energy": 0.0,
 			"avg_age": 0.0,
+			"avg_traits": [0.0, 0.0, 0.0, 0.0],
 		})
 		entry["count"] = int(entry.get("count", 0)) + 1
+		var record_traits: Array = TraitsScript.of_record(record)
+		var trait_sums: Array = entry["avg_traits"]
+		for index in range(TraitsScript.NAMES.size()):
+			trait_sums[index] += float(record_traits[index])
 		entry["avg_hunger"] = float(entry.get("avg_hunger", 0.0)) + float(record.get("hunger", 0.0))
 		entry["avg_thirst"] = float(entry.get("avg_thirst", 0.0)) + float(record.get("thirst", 0.0))
 		entry["avg_energy"] = float(entry.get("avg_energy", 0.0)) + float(record.get("energy", 0.0))
@@ -3383,6 +3423,10 @@ func _build_dormant_species_state(records: Array) -> Dictionary:
 			entry["avg_thirst"] = float(entry.get("avg_thirst", 0.0)) / count
 			entry["avg_energy"] = float(entry.get("avg_energy", 0.0)) / count
 			entry["avg_age"] = float(entry.get("avg_age", 0.0)) / count
+			var means: Array = []
+			for value in entry["avg_traits"]:
+				means.append(float(value) / count)
+			entry["avg_traits"] = means
 		species_state[species_key] = entry
 	return species_state
 
@@ -3464,6 +3508,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		aggregate["avg_thirst"] = float(aggregate.get("avg_thirst_sum", 0.0)) / float(count)
 		aggregate["avg_energy"] = float(aggregate.get("avg_energy_sum", 0.0)) / float(count)
 		aggregate["avg_age"] = float(aggregate.get("avg_age_sum", 0.0)) / float(count)
+		_finish_trait_means(aggregate, int(aggregate.get("count", 0)))
 		aggregate.erase("avg_hunger_sum")
 		aggregate.erase("avg_thirst_sum")
 		aggregate.erase("avg_energy_sum")
@@ -3491,12 +3536,19 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 ## Shared by the aggregate build and the per-step reconcile so the two cannot drift.
 func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
 	aggregate["peak_hunger"] = maxf(float(aggregate.get("peak_hunger", 0.0)), float(record.get("hunger", 0.0)))
+	# Inherited traits, summed for the group's means (`avg_traits`), which the herd card shows.
+	var trait_sums: Array = aggregate.get("trait_sums", [0.0, 0.0, 0.0, 0.0])
+	var record_traits: Array = TraitsScript.of_record(record)
+	for index in range(TraitsScript.NAMES.size()):
+		trait_sums[index] += float(record_traits[index])
+	aggregate["trait_sums"] = trait_sums
 	aggregate["peak_thirst"] = maxf(float(aggregate.get("peak_thirst", 0.0)), float(record.get("thirst", 0.0)))
 	var species_config: Dictionary = config_bundle.get("species", {}).get(str(record.get("species_type", "")), {})
 	var reproduction_config: Dictionary = species_config.get("reproduction", {})
 	var aging_config: Dictionary = species_config.get("aging", {})
 	var record_age := float(record.get("age", 0.0))
-	var is_mature := record_age >= float(reproduction_config.get("maturity_age", 0.0))
+	var longevity := float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY])
+	var is_mature := record_age >= float(reproduction_config.get("maturity_age", 0.0)) * longevity
 	var is_ready := is_mature \
 		and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
 		and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
@@ -3509,9 +3561,9 @@ func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
 	if is_ready:
 		var ready_key := "ready_males" if sex == AgentBaseScript.SEX_MALE else "ready_females"
 		aggregate[ready_key] = int(aggregate.get(ready_key, 0)) + 1
-	if record_age >= float(aging_config.get("old_age_start", aging_config.get("max_age", INF))):
+	if record_age >= float(aging_config.get("old_age_start", aging_config.get("max_age", INF))) * longevity:
 		aggregate["old_age_count"] = int(aggregate.get("old_age_count", 0)) + 1
-	if record_age >= float(aging_config.get("max_age", INF)):
+	if record_age >= float(aging_config.get("max_age", INF)) * longevity:
 		aggregate["max_age_count"] = int(aggregate.get("max_age_count", 0)) + 1
 
 
@@ -3760,14 +3812,42 @@ func _resolve_dormant_wander_goal(sector_key: Vector2i, aggregate: Dictionary) -
 ## of hunger it did on the small one, which is what turned cross-sector travel from slow
 ## into lethal. Scaling with sector size keeps the abstraction's reachability
 ## size-invariant; the `sprint_speed` clamp keeps it from outrunning a real animal.
-func _get_dormant_travel_speed(species_config: Dictionary, is_directed: bool = true) -> float:
+func _get_dormant_travel_speed(species_config: Dictionary, is_directed: bool = true, speed_trait: float = 1.0) -> float:
 	var movement: Dictionary = species_config.get("movement", {})
 	var reference := maxf(1.0, float(simulation_lod_config.get("dormant_travel_reference_sector_size", 512.0)))
 	var travel_scale := maxf(1.0, _sector_size / reference)
-	var speed := float(movement.get("max_speed", 70.0)) * _dormant_speed_scale * travel_scale
+	var speed := float(movement.get("max_speed", 70.0)) * speed_trait * _dormant_speed_scale * travel_scale
 	if is_directed:
 		speed *= float(simulation_lod_config.get("dormant_directed_speed_boost", 1.2))
-	return minf(speed, float(movement.get("sprint_speed", movement.get("max_speed", 70.0))))
+	return minf(speed, float(movement.get("sprint_speed", movement.get("max_speed", 70.0))) * speed_trait)
+
+
+## How a sleeping group shares a change in one need by what its members inherited (`Traits`), or
+## an invalid Callable for even shares, which is also what a species without heredity gets.
+## Awake, each animal pays for its traits as it goes; asleep, the group's step is one number, so
+## its members take it unevenly instead: hunger rises by each one's cost (`hunger_factor()`:
+## appetite, speed and sight), and a hunter's or a scavenger's meal goes to the quick and
+## sharp-eyed first, who would have reached it first, and feeds a quick metabolism more.
+## Strength is shared evenly: traits never touch it.
+func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Callable:
+	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
+	if shift == 0.0 or not TraitsScript.enabled(species_config):
+		return Callable()
+	var settings := TraitsScript.settings(species_config)
+	if need == "hunger" and shift > 0.0:
+		return func(record: Dictionary) -> float:
+			return TraitsScript.hunger_factor(TraitsScript.of_record(record), settings)
+	if need == "hunger" and species_registry.diet(species_key) != "grass":
+		return func(record: Dictionary) -> float:
+			var traits: Array = TraitsScript.of_record(record)
+			return float(traits[TraitsScript.SPEED]) * float(traits[TraitsScript.VISION]) * float(traits[TraitsScript.APPETITE])
+	return Callable()
+
+
+## A sleeping group's mean of one inherited trait (`avg_traits`, `Traits` index), 1.0 without.
+static func _aggregate_trait(aggregate: Dictionary, index: int) -> float:
+	var means: Array = aggregate.get("avg_traits", TraitsScript.NEUTRAL)
+	return float(means[index]) if means.size() == TraitsScript.NAMES.size() else 1.0
 
 
 func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictionary:
@@ -3827,7 +3907,7 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 		var predator_water_goal: Dictionary = _find_nearest_water_goal(center, aggregate.get("unreachable_water", []))
 		if not predator_water_goal.is_empty():
 			return predator_water_goal
-	var travel_speed := _get_dormant_travel_speed(species_config)
+	var travel_speed := _get_dormant_travel_speed(species_config, true, _aggregate_trait(aggregate, TraitsScript.SPEED))
 	# Its hungriest member decides, less a margin, as the thirstiest decides a herd's trip
 	# to water. Every predator in a sector sleeps in one pack, and by the mean alone a pack
 	# of twenty sat just under the feeding floor and wandered while half of it was hungry
@@ -4268,20 +4348,26 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, _elapsed: floa
 	var cost := float(reproduction_config.get("birth_energy_cost", 0.0))
 	var cooldown := float(reproduction_config.get("cooldown", 46.0))
 	var mothers: Array = []
+	var fathers: Array = []
 	for index in range(births):
 		for parent in pairs[index]:
 			parent["energy"] = maxf(0.0, float(parent.get("energy", 0.0)) - cost)
-			parent["reproduction_cooldown"] = cooldown
+			# A long life is a slow one: it waits longer between young (`Traits`).
+			parent["reproduction_cooldown"] = cooldown * float(TraitsScript.of_record(parent)[TraitsScript.LONGEVITY])
 		mothers.append(pairs[index][1])
+		fathers.append(pairs[index][0])
 	# Paid on the parents' records above and on the group's mean here, so the reconcile's
 	# need shift, which is the mean minus the records, does not charge it again.
 	aggregate["avg_energy"] = maxf(0.0, float(aggregate.get("avg_energy", 0.0)) - float(births) * 2.0 * cost / float(count))
 	aggregate["births_this_step"] = mothers
+	# Each mother's mate, for the young's inherited traits and its father in the family tree.
+	aggregate["fathers_this_step"] = fathers
 	return births
 
 
 static func _dormant_record_can_reproduce(record: Dictionary, reproduction_config: Dictionary) -> bool:
 	return float(record.get("age", 0.0)) >= float(reproduction_config.get("maturity_age", 0.0)) \
+			* float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY]) \
 		and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
 		and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
 		and float(record.get("hunger", 0.0)) <= float(reproduction_config.get("max_hunger", 100.0)) \
@@ -4308,7 +4394,9 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 	var movement: Dictionary = species_config.get("movement", {})
 	var body_radius := float(movement.get("body_radius", 0.0))
 	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass", "migrate"]
-	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed)
+	# The group walks at its members' mean speed (`avg_traits`).
+	var speed_trait := _aggregate_trait(aggregate, TraitsScript.SPEED)
+	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed, speed_trait)
 	var desired_velocity: Vector2 = Vector2.ZERO
 	var waypoint := _dormant_herd_waypoint(aggregate, current_center, goal_position)
 	aggregate["waypoint"] = waypoint
@@ -4337,7 +4425,7 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 	var next_center := current_center + herd_step
 	if count > 0:
 		next_center = _drift_dormant_members(aggregate, members, current_center, herd_step, goal_position,
-			float(movement.get("max_speed", 70.0)) * _dormant_speed_scale, body_radius, elapsed)
+			float(movement.get("max_speed", 70.0)) * speed_trait * _dormant_speed_scale, body_radius, elapsed)
 	var moved_distance: float = next_center.distance_to(current_center)
 	aggregate["center"] = next_center
 	if moved_distance <= 2.0:
@@ -4564,26 +4652,33 @@ func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, 
 		# leaves the parents to be found here.
 		var births_value: Variant = aggregate.get("births_this_step", 0)
 		aggregate.erase("births_this_step")
+		var fathers: Array = aggregate.get("fathers_this_step", [])
+		aggregate.erase("fathers_this_step")
 		var parents_paired := births_value is Array
 		var mothers: Array = births_value if parents_paired else []
 		var births := mothers.size() if parents_paired else int(births_value)
 		var parent_cooldown := float(reproduction_config.get("cooldown", 46.0))
 		var maturity_age := float(reproduction_config.get("maturity_age", 0.0))
 		var male_parents_left := 0 if parents_paired else births
-		_share_dormant_need_shift(survivors, "hunger", shift.x, 0.0, need_max)
+		_share_dormant_need_shift(survivors, "hunger", shift.x, 0.0, need_max,
+			_dormant_trait_weigh(species_key, "hunger", shift.x))
 		_share_dormant_need_shift(survivors, "thirst", shift.y, 0.0, need_max)
 		_share_dormant_need_shift(survivors, "energy", shift.z, 0.0, max_energy)
 		for record in survivors:
 			record["age"] = float(record.get("age", 0.0)) + elapsed
 			record["reproduction_cooldown"] = maxf(0.0, float(record.get("reproduction_cooldown", 0.0)) - elapsed)
 			var parent_ready := float(record.get("age", 0.0)) >= maturity_age \
+					* float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY]) \
 				and float(record.get("reproduction_cooldown", 0.0)) <= 0.0
 			var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
+			var pace := float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY])
 			if parent_ready and sex == AgentBaseScript.SEX_MALE and male_parents_left > 0:
-				record["reproduction_cooldown"] = parent_cooldown
+				record["reproduction_cooldown"] = parent_cooldown * pace
 				male_parents_left -= 1
+				# Unpaired, the fathers are the males found here, in order with the mothers.
+				fathers.append(record)
 			elif parent_ready and sex == AgentBaseScript.SEX_FEMALE and not parents_paired and mothers.size() < births:
-				record["reproduction_cooldown"] = parent_cooldown
+				record["reproduction_cooldown"] = parent_cooldown * pace
 				mothers.append(record)
 		var members: Array = survivors.duplicate()
 		var body_radius := float(species_config.get("movement", {}).get("body_radius", 0.0))
@@ -4594,18 +4689,24 @@ func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, 
 			elif not survivors.is_empty():
 				mother = survivors[birth_index % survivors.size()]
 			var anchor: Vector2 = mother.get("position", aggregate.get("center", _sector_key_to_rect(sector_key).get_center()))
-			var newborn := _make_dormant_newborn(species_key, group_id, anchor, body_radius)
+			var father: Dictionary = fathers[birth_index] if birth_index < fathers.size() else {}
+			var newborn := _make_dormant_newborn(species_key, group_id, anchor, body_radius, mother, father)
 			if newborn.is_empty():
 				continue
 			members.append(newborn)
-			emit_population_event("AgentBorn", species_key, Vector2(newborn["position"]), {
+			var born_data := {
 				"reason": "dormant",
 				"group_id": group_id,
 				# Who was born, to whom, for the view's names and family tree.
 				"record_id": int(newborn.get("id", -1)),
 				"mother_id": int(mother.get("id", -1)),
+				"father_id": int(father.get("id", -1)),
 				"sex": str(newborn.get("sex", "")),
-			})
+			}
+			# What it inherited, for the family tree: it has no agent the view could ask.
+			if newborn.has("traits") and TraitsScript.enabled(config_bundle.get("species", {}).get(species_key, {})):
+				born_data["traits"] = newborn["traits"]
+			emit_population_event("AgentBorn", species_key, Vector2(newborn["position"]), born_data)
 		_read_dormant_group_back(aggregate, members)
 		if members.is_empty():
 			continue
@@ -4644,15 +4745,29 @@ func _dormant_need_shift(aggregate: Dictionary, bucket: Array) -> Vector3:
 ## already at a bound cannot take its share, so the rest take it instead: an animal
 ## that is already sated eats nothing and leaves the grass to the hungry ones. The
 ## group's mean then moves by exactly what the step's ledger says it did.
-static func _share_dormant_need_shift(records: Array, field: String, shift: float, low: float, high: float) -> void:
+## `weigh`, when given, makes the shares uneven: each record takes in proportion to what it
+## returns for that record (`_dormant_trait_weigh()`).
+static func _share_dormant_need_shift(records: Array, field: String, shift: float, low: float, high: float,
+		weigh: Callable = Callable()) -> void:
 	var remaining := shift * float(records.size())
 	var open: Array = records
 	while not open.is_empty() and absf(remaining) > 0.0001:
 		var share := remaining / float(open.size())
+		# This pass's whole, as `share` is: `remaining` moves as the records take theirs.
+		var to_share := remaining
+		var weights: Array = []
+		var total := 0.0
+		if weigh.is_valid():
+			for record in open:
+				var weight := maxf(0.0, float(weigh.call(record)))
+				weights.append(weight)
+				total += weight
 		var still_open: Array = []
-		for record in open:
+		for index in range(open.size()):
+			var record: Dictionary = open[index]
+			var own := share if total <= 0.0 else to_share * float(weights[index]) / total
 			var before := float(record.get(field, 0.0))
-			var after := clampf(before + share, low, high)
+			var after := clampf(before + own, low, high)
 			record[field] = after
 			remaining -= after - before
 			if (share > 0.0 and after < high) or (share < 0.0 and after > low):
@@ -4711,16 +4826,21 @@ func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -
 	var near: Vector2 = entry.get("near", Vector2.ZERO)
 	for index in range(candidates.size()):
 		var record: Dictionary = candidates[index]
+		# Inherited traits weigh the choice, not the count: a slow, short-sighted animal is
+		# caught as if nearer and a short life ages first. Starvation needs nothing here: what
+		# traits cost is already in each record's hunger (`_dormant_trait_weigh()`).
+		var traits: Array = TraitsScript.of_record(record)
 		var score: float
 		match cause:
 			"predation":
-				score = -Vector2(record.get("position", near)).distance_squared_to(near)
+				score = -Vector2(record.get("position", near)).distance_squared_to(near) \
+					* pow(float(traits[TraitsScript.SPEED]) * float(traits[TraitsScript.VISION]), 4.0)
 			"starvation":
 				score = float(record.get("hunger", 0.0))
 			"thirst":
 				score = float(record.get("thirst", 0.0))
 			_:
-				score = float(record.get("age", 0.0))
+				score = float(record.get("age", 0.0)) / float(traits[TraitsScript.LONGEVITY])
 		var record_id := int(record.get("id", 0))
 		if best_index < 0 or score > best_score or (score == best_score and record_id < best_id):
 			best_index = index
@@ -4739,6 +4859,7 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	var age_sum := 0.0
 	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count", "peak_hunger", "peak_thirst"]:
 		aggregate[key] = 0
+	aggregate["trait_sums"] = [0.0, 0.0, 0.0, 0.0]
 	for record in members:
 		var position: Vector2 = record.get("position", bounds.get_center())
 		record_ids.append(int(record.get("id", -1)))
@@ -4750,6 +4871,7 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	aggregate["count"] = count
 	aggregate["record_ids"] = record_ids
 	aggregate["record_positions"] = record_positions
+	_finish_trait_means(aggregate, count)
 	if count <= 0:
 		return
 	aggregate["center"] = position_sum / float(count)
@@ -4759,11 +4881,25 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	aggregate["avg_age"] = age_sum / float(count)
 
 
+## `avg_traits` from the sums `_tally_dormant_member()` kept.
+static func _finish_trait_means(aggregate: Dictionary, count: int) -> void:
+	var sums: Array = aggregate.get("trait_sums", [])
+	aggregate.erase("trait_sums")
+	if sums.size() != TraitsScript.NAMES.size() or count <= 0:
+		aggregate["avg_traits"] = TraitsScript.NEUTRAL.duplicate()
+		return
+	var means: Array = []
+	for value in sums:
+		means.append(float(value) / float(count))
+	aggregate["avg_traits"] = means
+
+
 ## A dormant birth, built the way a woken animal is so it carries every field a live
 ## newborn has and inherits nothing from its herd's travel or hunting state. The
 ## throwaway generator, seeded with the newborn's id, takes the wander roll
 ## `configure()` makes, so the shared `rng` is never drawn.
-func _make_dormant_newborn(species_type: String, group_id: int, mother_position: Vector2, body_radius: float) -> Dictionary:
+func _make_dormant_newborn(species_type: String, group_id: int, mother_position: Vector2, body_radius: float,
+		mother: Dictionary = {}, father: Dictionary = {}) -> Dictionary:
 	var agent = _create_agent(species_type)
 	if agent == null:
 		return {}
@@ -4785,6 +4921,10 @@ func _make_dormant_newborn(species_type: String, group_id: int, mother_position:
 		group_id
 	)
 	agent.lod_tier = LOD_TIER_2
+	var species_config: Dictionary = config_bundle.get("species", {}).get(species_type, {})
+	if TraitsScript.enabled(species_config):
+		agent.set_traits(TraitsScript.inherit(newborn_id, TraitsScript.of_record(mother) if not mother.is_empty() else [],
+			TraitsScript.of_record(father) if not father.is_empty() else [], species_config, trait_world))
 	return agent.export_runtime_state()
 
 
@@ -4893,7 +5033,8 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		var hunger := float(record.get("hunger", 0.0))
 		if hunger <= stop_floor:
 			continue
-		var bite := grazing_bite(feeding, hunger, bite_scale)
+		var appetite := float(TraitsScript.of_record(record)[TraitsScript.APPETITE])
+		var bite := grazing_bite(feeding, hunger, bite_scale, appetite)
 		wanted += bite
 		var position: Vector2 = record.get("position", Vector2.ZERO)
 		var cell_index := resource_system.get_index_at_position(position)
@@ -4902,8 +5043,10 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		# where the herd's step happened to put it starved herds on a map full of grass.
 		var full_bite := minf(bite, float(feeding.get("bite_amount", 18.0)))
 		if resource_system.get_available_biomass(cell_index) < full_bite:
+			# At its own pace (`Traits`): a quick animal reaches the grass first.
+			var pace := float(TraitsScript.of_record(record)[TraitsScript.SPEED])
 			var next_position := _dormant_step_towards_grass(position, cell_index, hunger, perception,
-				hurry if grazer_is_hungry(hunger) else walk, fallback, full_bite, int(record.get("id", 0)))
+				(hurry if grazer_is_hungry(hunger) else walk) * pace, fallback, full_bite, int(record.get("id", 0)))
 			# Not onto another animal: the spacing pass only runs with the herd's step.
 			var crowded := false
 			for other in members:
@@ -4919,7 +5062,8 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		if consumed <= 0.0:
 			continue
 		eaten += consumed
-		var next_hunger := maxf(0.0, hunger - consumed * nutrition)
+		# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
+		var next_hunger := maxf(0.0, hunger - consumed * nutrition * appetite)
 		hunger_removed += hunger - next_hunger
 		record["hunger"] = next_hunger
 		var energy := float(record.get("energy", 0.0))
@@ -5213,12 +5357,17 @@ func _flush_spawns() -> void:
 	if pending_spawns.is_empty():
 		return
 	for request in pending_spawns:
+		var metadata := {"reason": "reproduction"}
+		var species_config: Dictionary = config_bundle.get("species", {}).get(str(request["species"]), {})
+		if TraitsScript.enabled(species_config):
+			metadata["traits"] = TraitsScript.inherit(next_agent_id, request.get("traits_a", []),
+				request.get("traits_b", []), species_config, trait_world)
 		var child = spawn_agent(
 			request["species"],
 			request["position"],
 			int(request["group_id"]),
 			"",
-			{"reason": "reproduction"}
+			metadata
 		)
 		if child == null:
 			continue

@@ -52,6 +52,24 @@ def late_mean(report: dict, key: str) -> float:
     return sum(float(row.get(key, 0.0)) for row in late) / max(1, len(late))
 
 
+def last_value(report: dict, key: str, default: float = 1.0) -> float:
+    """A history column's last value, `default` where no row has it (a trait without heredity)."""
+    for row in reversed(report.get("history", [])):
+        if key in row:
+            return float(row[key])
+    return default
+
+
+def trait_metrics() -> list:
+    """Each species' mean inherited traits at the end of the run (1.0 without heredity)."""
+    metrics = []
+    for species in ("herbivore", "predator", "scavenger"):
+        for name in ("speed", "vision", "appetite", "longevity"):
+            key = f"{species}_trait_{name}"
+            metrics.append((key, f"{species} {name}, end", lambda r, key=key: last_value(r, key)))
+    return metrics
+
+
 # (key, label, how to read it from a report). Late-half figures come from the audit's
 # `regulation` block, which averages the second half of the run.
 METRICS = [
@@ -77,7 +95,11 @@ METRICS = [
     ("meat_lying", "meat lying on the map, late", lambda r: late_mean(r, "carcass_meat")),
     ("herd_migrations", "herd migrations", lambda r: r["counters"].get("herd_migrations", 0)),
     ("chain_broken", "food chain broke", lambda r: 0 if r.get("stop_reason") == "duration" else 1),
-]
+    ("species_lost", "species lost", lambda r: sum(1 for count in r["population"].values() if int(count) == 0)),
+    ("herbivore_min", "herbivores, lowest", lambda r: r["population_min"]["herbivore"]),
+    ("predator_min", "predators, lowest", lambda r: r["population_min"]["predator"]),
+    ("scavenger_min", "scavengers, lowest", lambda r: r["population_min"]["scavenger"]),
+] + trait_metrics()
 
 
 def parse_seeds(value: str) -> list[int]:
@@ -240,6 +262,8 @@ def self_test() -> None:
     assert result["higher"] == 3 and result["lower"] == 0
     assert parse_seeds("1-3,7") == [1, 2, 3, 7]
     assert expected_overrides(["a.b=0.5", "a.c=false", "a.d=text"]) == {"a.b": 0.5, "a.c": False, "a.d": "text"}
+    report = {"history": [{"herbivore_trait_speed": 1.02}, {"herbivore": 0}]}
+    assert last_value(report, "herbivore_trait_speed") == 1.02 and last_value(report, "predator_trait_speed") == 1.0
     print("self test passed")
 
 

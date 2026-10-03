@@ -210,7 +210,7 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 		# A mouthful or nothing. Crumbs of regrowth on a cell grazed to its stubble used
 		# to count as a meal: the grazer stood `eat_duration`, came back to the same
 		# stale target and nibbled again until it starved, with grass all around it.
-		var bite: float = world.grazing_bite(feeding, hunger)
+		var bite: float = world.grazing_bite(feeding, hunger, 1.0, trait_appetite)
 		var consumed := 0.0
 		if world.resource_system.get_available_biomass(eat_index) >= minf(bite, WorldState.GRASS_SCRAP_BIOMASS):
 			consumed = world.consume_grass_cell(eat_index, bite)
@@ -218,11 +218,13 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 			set_state("eat", world.current_tick)
 			clear_navigation()
 			interaction_timer = float(feeding.get("eat_duration", 0.55))
-			var hunger_reduction := consumed * float(feeding.get("nutrition_gain", 0.8))
+			# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
+			var nourishment := consumed * float(feeding.get("nutrition_gain", 0.8))
+			var hunger_reduction := nourishment * trait_appetite
 			reduce_hunger(hunger_reduction)
 			if world.has_method("record_herbivore_hunger_reduction"):
 				world.record_herbivore_hunger_reduction(hunger_reduction)
-			restore_energy(hunger_reduction * 0.18)
+			restore_energy(nourishment * 0.18)
 			world.emit_event("GrassConsumed", self, -1, {
 				"consumed": consumed,
 				"cell_index": eat_index,
@@ -291,7 +293,7 @@ func _flee(world, delta: float, predators: Array, _neighbors: Array) -> void:
 	var waypoint: Vector2 = world.get_next_waypoint(position, escape_target, id)
 	move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("sprint_speed", 115.0)), delta)
 	if velocity.length_squared() > 1.0:
-		spend_energy(float(metabolism.get("sprint_energy_cost", 2.0)) * delta)
+		spend_energy(float(metabolism.get("sprint_energy_cost", 2.0)) * trait_run_cost * delta)
 
 
 func _nearest_threat_position(predators: Array) -> Vector2:
@@ -390,8 +392,9 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 	chosen_mate.set_state("reproduce", world.current_tick)
 	interaction_timer = 0.8
 	chosen_mate.interaction_timer = 0.8
-	reproduction_cooldown = float(reproduction.get("cooldown", 30.0))
-	chosen_mate.reproduction_cooldown = float(chosen_mate.reproduction.get("cooldown", 30.0))
+	# A long life is a slow one: it waits longer between young (`Traits`).
+	reproduction_cooldown = float(reproduction.get("cooldown", 30.0)) * trait_longevity
+	chosen_mate.reproduction_cooldown = float(chosen_mate.reproduction.get("cooldown", 30.0)) * chosen_mate.trait_longevity
 	spend_energy(float(reproduction.get("birth_energy_cost", 18.0)))
 	chosen_mate.spend_energy(float(chosen_mate.reproduction.get("birth_energy_cost", 18.0)))
 	return true

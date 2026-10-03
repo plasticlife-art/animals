@@ -224,6 +224,8 @@ Current snapshot categories:
 - LOD counts
 - search starts, prey reacquisitions, search expirations, and average completed
   chase duration
+- inherited traits: `trait_<name>_<species>`, each trait's mean over the species' awake and
+  sleeping animals (1.0 with none left, or without heredity)
 
 ## Agent Model
 
@@ -246,6 +248,60 @@ Shared capabilities include:
 - water memory management
 - path state reset and movement to target
 - reproduction eligibility checks
+
+### Heritable traits (`Traits`)
+
+- Each animal carries four multipliers on its species' values, 1.0 being the species as
+  `species.json` writes it: `trait_speed`, `trait_vision`, `trait_appetite`, `trait_longevity`.
+  They are agent fields; the shared species dictionaries never change. They ride in every
+  runtime record (`traits`), so they travel through sleep, waking and saves
+- Speed scales `move_with_vector()` and the readers that bypass it: the overlap push, the
+  predator's patrol reach, the attack's prey-speed ratio (against the prey's own top speed), a
+  sleeping group's travel (its members' mean, `avg_traits`) and a sleeping grazer's walk to
+  grass. Vision scales `WorldState.perception_radius()`, so every search radius and the
+  normaliser dividing by it move together, and the patrol's raw sight reads. Appetite scales
+  the hunger rate and what each bite of grass or meat takes off it, so a quick metabolism eats
+  as much, in shorter, more frequent meals; strength never moves with it. It used to repay in
+  rest recovered: breeding needs a fed animal and a rested one, and spread across both
+  thresholds it cost the grazers a sixth of their births and a third of their numbers on seed 1
+  (`am-traits-diag`). Longevity is the pace of life: it scales maturity,
+  the wait between young, old age and max age, awake and asleep (`_tally_dormant_member()`,
+  `_dormant_record_can_reproduce()`)
+- Every advantage costs (`species.<id>.traits`): a run burns the species' sprint or chase
+  energy times `speed ^ run_cost_exponent`; hunger rises by `speed_hunger` per unit of extra
+  speed and `vision_hunger` per unit of extra sight, on top of appetite (`trait_hunger`); a
+  quick metabolism starves sooner and fills up sooner; a long life matures late and breeds
+  less often, which is what it costs a species that matures in seconds
+- Founders spread up to `founder_spread` around 1.0; a young one takes its parents' mean and up
+  to `mutation` either way, inside `clamp` (`longevity_clamp` for longevity). An awake birth
+  copies both parents' traits when it is queued, since a parent may be gone by the flush; a
+  sleeping one pairs each mother with her mate (`fathers_this_step`, or the males the reconcile
+  picks for an unpaired count), and its `AgentBorn` names the father. Birth events carry what
+  the young inherited, for the family tree
+- Every draw hashes the animal's id, a salt and the world's seed (`Traits.unit()`, overflow-safe
+  like `_mul32()`), so two worlds' founders differ; the shared `rng` is never drawn. Off, or
+  with every animal at 1.0, a world plays bit-for-bit as one without traits: each hook
+  multiplies by exactly 1.0. `TraitsTests` checks it on a small world and the
+  identity audits (`ecology_audit.gd` with `species.<id>.traits.enabled=false`) against main
+- Asleep, a group's step is one number a need, so its members share it by what they inherited
+  (`_dormant_trait_weigh()`, `_share_dormant_need_shift()`): rising hunger by each one's
+  `trait_hunger`, a hunter's or a scavenger's meal by speed times sight times appetite;
+  strength evenly. A sleeping grazer walks to grass at its own speed and is fed by each bite
+  by its appetite. Without these, speed and sight were free asleep, where most of a large map is
+- Selection asleep is simplified: traits weigh who dies, never how many. A sleeping kill takes
+  the record whose distance to the hunters, times `(speed x vision)^4`, is least; starvation
+  the hungriest, whose traits already made it so; old age the highest age over longevity
+- Measured on 8 seeds, 2880 s in LOD, heredity off against on (`audit_matrix.py`): no species
+  lost; the populations' late means within their paired intervals - herbivores -4 [-41..33],
+  predators -0.3 [-3.8..3.1], scavengers +4 [-1.8..10], scavengers on their cap more of the
+  time (+0.23 [0.04..0.42]). Trait means moved at most 8 % (scavenger sight) of their 25 %, and
+  longevity at most 6.5 % of its 10 %, both ways across seeds. The first two tries lost the
+  grazers a third of their numbers on some seeds: founders hashed from the id alone were the
+  same animals on every map, and appetite repaid in strength (see above)
+- Shown on the animal's card, the two it differs in most («Черты: скорость −7 %, аппетит +4 %»)
+  with all four in the tooltip - a line, not two, since a second pushed the herd card out from
+  under two pins; the herd's means on the herd card's head-count tooltip; in the family tree's
+  tooltips; and in the chronicle's «Черты»
 
 ### Hybrid AI Layer
 
@@ -547,7 +603,12 @@ Utility actions inside `alive`:
   30000 animals
 - `FamilyTree`: three generations around one animal for the chronicle - four grandparents, two
   parents, the first `MAX_CHILDREN` children (the living first) and how many more - and what each
-  relative's box says (name and sex, kind, age, or «†» and the cause)
+  relative's box says (name and sex, kind, age, or «†» and the cause), with its inherited traits
+  for a tooltip. `Lineage` keeps those (`note_traits()`) from the birth event, or from the animal
+  when it is met awake
+- `TraitHistory`: each species' trait means over the world's whole life for «Черты», a point
+  every 30 simulated seconds from the stats snapshot; past 480 points it drops every other one
+  and samples half as often, so any age fits. Kept with the story
 - `StoryRecords`: the chronicle's records from one pass over the tree - the oldest alive, the
   longest lives, the largest living families, the best hunters - three each, ties to the lower id
 - `Epitaph`: what is said of an animal when it dies - «Ветка, олениха — старейшая на карте.
@@ -588,8 +649,9 @@ Utility actions inside `alive`:
   («Травоядные · Стадо №5»), how many there are with how many sleep far off and how many
   are young, the means of their energy, food and water as the selection card's bars
   (`AgentReadout.need_bars()`, against the selected animal's own thresholds), how many
-  hunters are after them now, the last loss with its cause and how long ago, and a toggle
-  that follows the herd (`focus_mode` "flock")
+  hunters are after them now, the last loss with its cause and how long ago, and a toggle that
+  follows the herd (`focus_mode` "flock"). The head count's tooltip gives the members' mean
+  inherited traits
 - Shown while a herding animal is selected: a species whose `role.social` is `herd` (grazers
   and scavengers), never a predator, which keeps to a pair. It goes when the selection dies
   and while the start menu is up
@@ -701,7 +763,10 @@ Utility actions inside `alive`:
   living first) and how many more - as boxes and lines; relatives nobody knows are left out, and
   a founder's says «основатель: родители неизвестны». A click on a relative re-centres the tree
   and asks `MainController._focus_animal()` for the camera; «Назад» walks back. «Рекорды» lists
-  `StoryRecords`; a click opens that animal's family. Refreshed every 1.5 s while open
+  `StoryRecords`; a click opens that animal's family. «Черты» draws `TraitHistory`: a chart a
+  trait, a line a species in its interface colour darkened for the parchment, the species
+  dashed across the middle, the scale reaching the furthest point and the latest value at each
+  line's end. Refreshed every 1.5 s while open
 - Opened by L (`toggle_chronicle`, by physical key so a Russian layout presses it too), the
   player bar's «Летопись», the card's «родословная» link and the epitaph card; Esc closes it
   before the pause menu would open
@@ -926,8 +991,10 @@ millisecond setting squeezed to zero.
 - `climate` drives seasons and the day/night cycle. It is read by `Climate`
   (`scripts/world/climate.gd`), which is a **pure function of `simulation_time`** rather than
   accumulated state - `SaveSystem` already round-trips `simulation_time`, so the clock costs
-  no save-format change by itself. Save version 2 stores agent perception memory and the
-  resolved configuration bundle; version 1 is migrated on read. Anything that starts accumulating here
+  no save-format change by itself. Save version 3 adds inherited traits (records' `traits`,
+  sleeping groups' `avg_traits`); a version 2 save reads neutral traits and keeps its own
+  bundle, which has no `traits` block, so it plays on without heredity. Version 2 stores agent
+  perception memory and the resolved configuration bundle; version 1 is migrated on read. Anything that starts accumulating here
   has to move the version with it. A save plays on with its own bundle but is drawn with
   today's: `ConfigLoader.with_shipped_presentation()` takes `visuals` (apart from `props`,
   which places the scenery) and the debug overlay switches from the shipped files, so an
@@ -1005,6 +1072,9 @@ millisecond setting squeezed to zero.
   its hunger is satisfied, until it has covered `reproduction.energy_threshold`. Without it
   meat intake is capped by the hunger the predator arrived with, which capped energy income
   below the cost of the hunger cycle that earned the kill and made breeding unreachable.
+- `traits` switches heredity on for the species and tunes it (see Heritable traits):
+  `founder_spread`, `mutation`, `clamp`, `longevity_clamp`, and the costs `run_cost_exponent`,
+  `speed_hunger`, `vision_hunger`. The test fixtures switch it off (`build_test_bundle()`)
 - `movement.patrol_wander_jitter` is the heading jitter used when patrolling with no prey
   known anywhere in range. It is an order of magnitude smaller than the herding
   `wander_jitter`, because that one decorrelates heading in under a second and diffuses in
@@ -1188,10 +1258,15 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   birth cost at 0 for predators (`father_cost_share`, not kept) removed the two deep falls
   but made moderate ones on four other seeds, with predators starving 25 times a run
   against 15. A soft birth cap and a wider old age were tried earlier and rejected as well.
-  A fix probably has to spread deaths across ages rather than move births
+  A fix probably has to spread deaths across ages rather than move births. Heritable longevity
+  (±10 %, `Traits`) does not: in the 8-seed 48-minute matrix with heredity on, the predators'
+  late low stayed where it was (39 ± 9 against 41 ± 10); the deep fall left seed 1 (19 to 41)
+  and appeared on seeds 4 and 7 (48 to 23, 46 to 29). A tenth of a 1440 s life spreads a cohort's
+  deaths by a couple of minutes, inside the four the old-age window already spans
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
-- No genetics
-- Three species, with no variation between animals of the same species
+- Heredity is four multipliers with fixed costs, not a genome: no trade-offs beyond the ones
+  written in `species.<id>.traits`, no traits of the body or of behaviour, and asleep only who
+  dies is selected, not how many
 - Terrain and shadow art are placeholders. The opened and picked carcass stages are drawn
   by a script over each species' last death frame, not by an artist

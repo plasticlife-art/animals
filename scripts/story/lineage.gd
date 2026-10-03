@@ -12,7 +12,8 @@ extends RefCounted
 ## (simulated seconds, -1 unknown or alive), `met` and `met_age` (when an animal not seen born
 ## was first met, or died, and how old it was then - founders were born before the clock
 ## started), `cause`, `killer` (id or -1), `generation`, `group` (the herd it was born into),
-## `position` (where it died).
+## `position` (where it died), and `traits` once known (`Traits`, four multipliers; absent for a
+## species without heredity).
 ##
 ## The records keep running counts rather than walking the tree each time they are read: how
 ## many kills each hunter made, and how many descendants each animal has - alive and ever.
@@ -92,6 +93,15 @@ func note_birth(agent_id: int, species: String, sex: String, time: float, group:
 		if alive:
 			_alive_descendants[ancestor] = int(_alive_descendants.get(ancestor, 0)) + 1
 	_trim()
+
+
+## What an animal inherited (`Traits`), for its box in the family tree. Kept the first time it is
+## told: traits never change.
+func note_traits(agent_id: int, values) -> void:
+	var known: Dictionary = _animals.get(agent_id, {})
+	if known.is_empty() or known.has("traits") or values == null or values.size() != 4:
+		return
+	known["traits"] = PackedFloat32Array(values)
 
 
 ## A death, with the age it died at when the event told it (`-1` when not), which dates an

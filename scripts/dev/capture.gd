@@ -6,7 +6,8 @@ extends SceneTree
 # Presets: `selected` / `selected_hud` select an animal (with the Tab panels for the
 # second), `herd` selects a grazer in a herd so its herd card shows, `story` also pins it
 # and two others, `chronicle` then opens the chronicle on it, `epitaph` tells the death of one
-# pinned animal far away, `scaled` is `story` under a 125 % interface (applied, not saved),
+# pinned animal far away, `traits` opens the chronicle's «Черты» on a made-up history of
+# three years, `scaled` is `story` under a 125 % interface (applied, not saved),
 # `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
 # the setup screen.
 # Loads the real main scene, parks the camera, waits for
@@ -58,7 +59,7 @@ func _process(_delta: float) -> bool:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
-					"epitaph", "scaled", "settings"]:
+					"epitaph", "scaled", "settings", "traits"]:
 				selection["style"] = _preset
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
@@ -114,7 +115,7 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled"]
+	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits"]
 	if _preset == "scaled":
 		SettingsStore.apply({"fullscreen": false, "ui_scale": 1.25}, root, _camera)
 	if _preset == "settings":
@@ -166,6 +167,25 @@ func _park_on_agent() -> void:
 			lineage.note_birth(900100 + child, "herbivore", "male" if child % 2 == 0 else "female", t, 0, [target.id, 900011])
 		lineage.note_death(900103, t, "starvation", -1, target.position)
 		_main.open_chronicle(target.id)
+	if _preset == "traits":
+		# Three years of drift made up, since a fresh world has one point. The harness only.
+		var history = _main.story_book.trait_history
+		history.clear()
+		var drift := {"herbivore": [0.07, 0.02, -0.03, 0.012], "predator": [0.045, 0.055, 0.02, -0.018],
+			"scavenger": [0.01, -0.025, -0.04, 0.006]}
+		for step in range(97):
+			var time := float(step) * 15.0
+			var values := {}
+			for species_id in drift.keys():
+				var means: Array = []
+				for index in range(4):
+					var wobble := 0.006 * sin(time * 0.013 + float(index) * 1.7 + float(species_id.length()))
+					means.append(1.0 + float(drift[species_id][index]) * time / 1440.0 + wobble)
+				values[species_id] = means
+			history.points.append({"time": time, "values": values})
+		# No real point after the made-up ones.
+		history._next_at = INF
+		_main.chronicle_window.open(target.id, "traits")
 	var rect: Rect2 = _camera.get_visible_screen_rect()
 	var in_frame := 0
 	for agent in agents:

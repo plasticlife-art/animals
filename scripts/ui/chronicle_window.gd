@@ -2,7 +2,8 @@ class_name ChronicleWindow
 extends PanelContainer
 
 ## «Летопись»: the world's story in one window over the map - an animal's family three
-## generations deep (`FamilyTree`), and the records (`StoryRecords`). The world keeps running
+## generations deep (`FamilyTree`), the records (`StoryRecords`), and how each species' inherited
+## traits have moved since the world began (`TraitHistory`). The world keeps running
 ## behind it and the camera can still move. A click on a relative centres the tree on it and
 ## sends the camera there (`focus_requested`); «Назад» walks back through the relatives
 ## visited; a click on a record opens that animal's family. Esc or «Закрыть» closes it.
@@ -14,7 +15,9 @@ const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
 const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
 const REFRESH_SECONDS := 1.5
 const BODY_SIZE := Vector2(760.0, 440.0)
-const TABS := {"family": "Родословная", "records": "Рекорды"}
+const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты"}
+## Species lines are drawn in the species' interface colour, darkened to read on parchment.
+const SPECIES_DARKEN := 0.45
 
 var story = null
 var simulation_manager = null
@@ -25,6 +28,7 @@ var _tabs: Dictionary = {}
 var _tree: TreeView
 var _records_scroll: ScrollContainer
 var _records_box: VBoxContainer
+var _traits_view: TraitsView
 var _back: Button
 var _empty: Label
 var _refresh_left := 0.0
@@ -81,6 +85,9 @@ func _init() -> void:
 	_records_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_records_box.add_theme_constant_override("separation", 4)
 	_records_scroll.add_child(_records_box)
+	_traits_view = TraitsView.new()
+	_traits_view.custom_minimum_size = BODY_SIZE
+	root.add_child(_traits_view)
 	_empty = Label.new()
 	_empty.text = "Выберите животное на карте или в списке закреплённых, чтобы увидеть его семью."
 	_empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -142,14 +149,17 @@ func refresh() -> void:
 	var family := _tab == "family"
 	_tree.visible = family and _focus_id >= 0
 	_empty.visible = family and _focus_id < 0
-	_records_scroll.visible = not family
+	_records_scroll.visible = _tab == "records"
+	_traits_view.visible = _tab == "traits"
 	_back.visible = family and not _history.is_empty()
 	if story == null:
 		return
 	if family and _focus_id >= 0:
 		_tree.show_family(FamilyTreeScript.around(story, _focus_id), _now(), _calendar())
-	elif not family:
+	elif _tab == "records":
 		_fill_records()
+	elif _tab == "traits":
+		_traits_view.show_history(story.trait_history, _heredity_entries(), _now(), _calendar())
 
 
 func _process(delta: float) -> void:
@@ -233,6 +243,18 @@ func _now() -> float:
 	return 0.0 if simulation_manager == null else float(simulation_manager.simulation_time)
 
 
+## `[{id, label, color}]` for the species that inherit traits.
+func _heredity_entries() -> Array:
+	var entries: Array = []
+	var visuals: Dictionary = {} if simulation_manager == null else \
+		simulation_manager.config_bundle.get("visuals", {}).get("species", {})
+	for species_id in story.heredity_species:
+		var rgb: Array = visuals.get(species_id, {}).get("ui_color", [0.5, 0.5, 0.5])
+		entries.append({"id": str(species_id), "label": HudText.species_label(str(species_id)),
+			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2])).darkened(SPECIES_DARKEN)})
+	return entries
+
+
 func _calendar() -> Array:
 	if simulation_manager == null:
 		return [120.0, 4]
@@ -283,6 +305,11 @@ class TreeView:
 			if hit >= 0:
 				picked.emit(hit)
 				accept_event()
+
+	## What the relative under the cursor inherited.
+	func _get_tooltip(at_position: Vector2) -> String:
+		var hit := _box_at(at_position)
+		return "" if hit < 0 else str(_cards.get(hit, {}).get("traits", ""))
 
 	func _box_at(point: Vector2) -> int:
 		for box in _boxes:
@@ -371,3 +398,104 @@ class TreeView:
 				box_size.x - 16.0, 12, INK_DIM)
 			draw_string(font, rect.position + Vector2(8.0, 47.0), str(card.get("status", "")), HORIZONTAL_ALIGNMENT_LEFT,
 				box_size.x - 16.0, 12, INK_DIM)
+
+
+## Each species' inherited traits over the world's life (`TraitHistory`): four small charts, one
+## a trait, a line a species, the species as written (1.0) dashed across the middle. The scale
+## reaches as far as the furthest point, at least `TraitHistory.MIN_SPAN`; the latest value is
+## written at the end of each line.
+class TraitsView:
+	extends Control
+
+	const INK := Color(0.20, 0.13, 0.08)
+	const INK_DIM := Color(0.20, 0.13, 0.08, 0.5)
+	const FRAME := Color(0.20, 0.13, 0.08, 0.2)
+	const GAP := 22.0
+	const LEFT := 46.0
+	const RIGHT := 50.0
+
+	var history = null
+	var species: Array = []
+	var now := 0.0
+	var calendar: Array = [120.0, 4]
+
+	func show_history(trait_history, entries: Array, time: float, world_calendar: Array) -> void:
+		history = trait_history
+		species = entries
+		now = time
+		calendar = world_calendar
+		queue_redraw()
+
+	func _draw() -> void:
+		var font := get_theme_default_font()
+		if history == null or font == null:
+			return
+		if species.is_empty():
+			draw_string(font, Vector2(8.0, 30.0), "В этом мире черты не наследуются.", HORIZONTAL_ALIGNMENT_LEFT,
+				-1, 15, INK_DIM)
+			return
+		var x := 0.0
+		for entry in species:
+			draw_string(font, Vector2(x, 15.0), str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, entry["color"])
+			x += font.get_string_size(str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 18.0
+		draw_string(font, Vector2(x + 6.0, 15.0), "— средние по виду, от начала мира", HORIZONTAL_ALIGNMENT_LEFT,
+			-1, 13, INK_DIM)
+		if history.points.size() < 2:
+			draw_string(font, Vector2(0.0, 48.0), "Собираем данные: точка раз в %d с." % int(history.interval),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK_DIM)
+			return
+		var top := 30.0
+		var cell := Vector2((size.x - GAP) * 0.5, (size.y - top - GAP) * 0.5)
+		for index in range(HudText.TRAIT_LABELS.size()):
+			var origin := Vector2(float(index % 2) * (cell.x + GAP), top + float(floori(index / 2.0)) * (cell.y + GAP))
+			_chart(Rect2(origin, cell), index, font)
+
+	func _chart(rect: Rect2, index: int, font: Font) -> void:
+		draw_string(font, rect.position + Vector2(0.0, 14.0), str(HudText.TRAIT_LABELS[index]),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK)
+		var plot := Rect2(rect.position + Vector2(LEFT, 22.0), rect.size - Vector2(LEFT + RIGHT, 22.0 + 16.0))
+		draw_rect(plot, FRAME, false, 1.0)
+		var reach: float = history.span(index)
+		var middle := plot.get_center().y
+		draw_dashed_line(Vector2(plot.position.x, middle), Vector2(plot.end.x, middle), INK_DIM, 1.0, 4.0)
+		draw_string(font, Vector2(rect.position.x, plot.position.y + 10.0), HudText.percent_change(1.0 + reach),
+			HORIZONTAL_ALIGNMENT_LEFT, LEFT - 4.0, 11, INK_DIM)
+		draw_string(font, Vector2(rect.position.x, middle + 4.0), "вид", HORIZONTAL_ALIGNMENT_LEFT, LEFT - 4.0, 11, INK_DIM)
+		draw_string(font, Vector2(rect.position.x, plot.end.y), HudText.percent_change(1.0 - reach),
+			HORIZONTAL_ALIGNMENT_LEFT, LEFT - 4.0, 11, INK_DIM)
+		var first := float(history.points[0]["time"])
+		var last := maxf(now, float(history.points[-1]["time"]))
+		var duration := maxf(1.0, last - first)
+		var ends: Array = []
+		for entry in species:
+			var line := PackedVector2Array()
+			for point in history.points:
+				var means = point["values"].get(entry["id"])
+				if means == null:
+					# Gone for a while: the line breaks rather than bridging the gap.
+					if line.size() >= 2:
+						draw_polyline(line, entry["color"], 2.0, true)
+					line = PackedVector2Array()
+					continue
+				var at_x := plot.position.x + (float(point["time"]) - first) / duration * plot.size.x
+				line.append(Vector2(at_x, _y(plot, middle, reach, float(means[index]))))
+			if line.size() >= 2:
+				draw_polyline(line, entry["color"], 2.0, true)
+			var latest: Array = history.latest(str(entry["id"]))
+			if not latest.is_empty():
+				ends.append([_y(plot, middle, reach, float(latest[index])), HudText.percent_change(float(latest[index])),
+					entry["color"]])
+		# The latest values beside the lines' ends, nudged apart where they would overlap.
+		ends.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+		var floor_y := -INF
+		for end in ends:
+			var y := maxf(float(end[0]) + 4.0, floor_y + 12.0)
+			draw_string(font, Vector2(plot.end.x + 4.0, y), str(end[1]), HORIZONTAL_ALIGNMENT_LEFT, RIGHT - 4.0, 11, end[2])
+			floor_y = y
+		draw_string(font, Vector2(plot.position.x, plot.end.y + 13.0), "начало", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK_DIM)
+		var age := HudText.age_text(last, calendar)
+		var width := font.get_string_size(age, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		draw_string(font, Vector2(plot.end.x - width, plot.end.y + 13.0), age, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK_DIM)
+
+	static func _y(plot: Rect2, middle: float, reach: float, value: float) -> float:
+		return clampf(middle - (value - 1.0) / reach * plot.size.y * 0.5, plot.position.y, plot.end.y)

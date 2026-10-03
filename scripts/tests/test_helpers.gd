@@ -128,6 +128,11 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 		spawns["%s_count" % species_id] = 0
 		spawns["%s_group_count" % species_id] = 1
 	bundle["world"]["spawns"] = spawns
+	# Heredity off, like the climate: with it each founder walks, sees and gets hungry a
+	# little differently, and the fixtures assert on routes, timings and need ratios.
+	# `TraitsTests` switches it on itself.
+	for species_id in bundle.get("species", {}).keys():
+		bundle["species"][species_id]["traits"] = {"enabled": false}
 	return bundle
 
 

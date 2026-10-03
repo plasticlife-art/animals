@@ -21,7 +21,7 @@ extends RefCounted
 ## two runs drift apart over hundreds of ticks. Populations and behaviour match;
 ## individual trajectories eventually do not.
 
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 const MIN_READABLE_VERSION := 1
 const SAVE_DIR := "user://saves"
 const SLOTS := ["autosave_a.dat", "autosave_b.dat"]
@@ -117,6 +117,8 @@ static func read(path: String) -> Dictionary:
 		return {}
 	if version == 1:
 		data = _migrate_v1_to_v2(data)
+	if int(data.get("version", 0)) == 2:
+		data = _migrate_v2_to_v3(data)
 	return data
 
 
@@ -161,7 +163,16 @@ static func _migrate_v1_to_v2(source: Dictionary) -> Dictionary:
 			sectors[index] = sector
 	world["sectors"] = sectors
 	data["world"] = world
-	data["version"] = SAVE_VERSION
+	data["version"] = 2
+	return data
+
+
+## V3 animals carry inherited traits (`Traits`) and sleeping groups their means. A v2 save has
+## neither: its records read neutral traits, and its own config bundle has no `traits` block, so
+## the world plays on without heredity, as it did when it was saved.
+static func _migrate_v2_to_v3(source: Dictionary) -> Dictionary:
+	var data: Dictionary = source
+	data["version"] = 3
 	return data
 
 

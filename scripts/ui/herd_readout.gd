@@ -21,16 +21,18 @@ static func has_herd(world, agent) -> bool:
 	return world.species_registry.social(agent.species_type) == "herd"
 
 
-## `{awake, sleeping, total, young, hunger, thirst, energy, hunters}` for `group_id` of
-## `species`: the needs are means over every member, awake or asleep.
+## `{awake, sleeping, total, young, hunger, thirst, energy, hunters, traits}` for `group_id` of
+## `species`: the needs and the inherited traits (`Traits`, four multipliers) are means over every
+## member, awake or asleep.
 static func summarize(world, species: String, group_id: int) -> Dictionary:
 	var summary := {"awake": 0, "sleeping": 0, "total": 0, "young": 0,
-		"hunger": 0.0, "thirst": 0.0, "energy": 0.0, "hunters": 0}
+		"hunger": 0.0, "thirst": 0.0, "energy": 0.0, "hunters": 0, "traits": [1.0, 1.0, 1.0, 1.0]}
 	if world == null or group_id < 0:
 		return summary
 	var hunger := 0.0
 	var thirst := 0.0
 	var energy := 0.0
+	var traits := [0.0, 0.0, 0.0, 0.0]
 	var members := {}
 	for agent in world.get_living_agents():
 		if agent == null or not agent.is_alive or agent.species_type != species or int(agent.group_id) != group_id:
@@ -42,6 +44,9 @@ static func summarize(world, species: String, group_id: int) -> Dictionary:
 		hunger += agent.hunger
 		thirst += agent.thirst
 		energy += agent.energy
+		var own: Array = agent.traits()
+		for index in range(traits.size()):
+			traits[index] += float(own[index])
 	for sector in world._sector_states.values():
 		if not bool(sector.get("dormant", false)):
 			continue
@@ -54,11 +59,18 @@ static func summarize(world, species: String, group_id: int) -> Dictionary:
 			hunger += float(aggregate.get("avg_hunger", 0.0)) * count
 			thirst += float(aggregate.get("avg_thirst", 0.0)) * count
 			energy += float(aggregate.get("avg_energy", 0.0)) * count
+			var means: Array = aggregate.get("avg_traits", [])
+			for index in range(traits.size()):
+				traits[index] += (float(means[index]) if means.size() == traits.size() else 1.0) * count
 	summary["total"] = int(summary["awake"]) + int(summary["sleeping"])
 	var whole := float(maxi(1, int(summary["total"])))
 	summary["hunger"] = hunger / whole
 	summary["thirst"] = thirst / whole
 	summary["energy"] = energy / whole
+	if int(summary["total"]) > 0:
+		for index in range(traits.size()):
+			traits[index] /= whole
+		summary["traits"] = traits
 	summary["hunters"] = count_hunters(world, species, members)
 	return summary
 
@@ -88,6 +100,12 @@ static func counts_text(summary: Dictionary) -> String:
 	if int(summary.get("sleeping", 0)) > 0:
 		heads += " (вдали: %d)" % int(summary["sleeping"])
 	return "%s · Молодых: %d" % [heads, int(summary.get("young", 0))]
+
+
+## The herd's inherited traits on average, for the head count's tooltip: «Черты в среднем» and the
+## four on two lines.
+static func traits_tooltip(summary: Dictionary) -> String:
+	return "Черты в среднем\n%s" % HudTextScript.traits_text(summary.get("traits", [1.0, 1.0, 1.0, 1.0]))
 
 
 static func hunters_text(hunters: int) -> String:

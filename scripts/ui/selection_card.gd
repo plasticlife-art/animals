@@ -25,6 +25,7 @@ signal tree_requested(agent_id: int)
 @onready var why_label: Label = get_node_or_null("%WhyLabel")
 @onready var follow_button: Button = get_node_or_null("%FollowButton")
 @onready var family_text: RichTextLabel = get_node_or_null("%FamilyText")
+@onready var traits_label: Label = get_node_or_null("%TraitsLabel")
 @onready var pin_button: Button = get_node_or_null("%PinButton")
 
 const BAR_HEIGHT := 10.0
@@ -133,6 +134,20 @@ static func family_line(story_book, agent) -> String:
 	return "\n".join(lines)
 
 
+## What the animal inherited, the two traits it differs in most (`HudText.traits_brief()`): one
+## line, since a line more pushes the herd card out with two pins up. Empty for a species without
+## heredity.
+static func traits_line(agent) -> String:
+	if not bool(agent.trait_settings.get("enabled", false)):
+		return ""
+	return HudText.traits_brief(agent.traits())
+
+
+## All four, and what they cost, for the line's tooltip.
+static func traits_tooltip(agent) -> String:
+	return "%s\n\n%s" % [HudText.traits_text(agent.traits()), HudText.TRAITS_HINT]
+
+
 ## «Почему: перестала пастись — наелась; жажда, вода рядом», «Почему: корм рядом, голод», from
 ## the animal's last decision.
 func why_line(agent, now_msec := -1) -> String:
@@ -199,6 +214,10 @@ func refresh() -> void:
 		title_label.text = AgentReadout.title(agent, "" if story == null else story.name_of(agent))
 	if family_text != null:
 		family_text.text = "" if story == null else family_line(story, agent)
+	if traits_label != null:
+		traits_label.text = traits_line(agent)
+		traits_label.visible = traits_label.text != ""
+		traits_label.tooltip_text = traits_tooltip(agent) if traits_label.visible else ""
 	if pin_button != null:
 		_show_pin(agent)
 	if action_label != null:

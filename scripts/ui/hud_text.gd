@@ -158,6 +158,52 @@ static func age_text(seconds: float, calendar: Array = [120.0, 4]) -> String:
 	return text
 
 
+## The inherited traits (`Traits.NAMES`), as the cards and the chronicle name them.
+const TRAIT_LABELS := ["Скорость", "Зрение", "Аппетит", "Долголетие"]
+## What each costs and gives, for the tooltips, broken by hand: a tooltip does not wrap.
+const TRAITS_HINT := "Наследуемые черты против вида: детёныш берёт\nсреднее родителей и чуть меняется." \
+	+ "\nБыстрые тратят больше сил на бег и сильнее голодают,\nзоркие голодают чуть сильнее," \
+	+ "\nс большим аппетитом голодают быстрее, но и наедаются быстрее,\nдолгожители позже взрослеют и реже приносят детёнышей."
+
+
+## A multiplier against the species as a change in whole percent: «+6 %», «−3 %», «0 %».
+static func percent_change(value: float) -> String:
+	var percent := int(round((value - 1.0) * 100.0))
+	if percent > 0:
+		return "+%d %%" % percent
+	if percent < 0:
+		return "−%d %%" % -percent
+	return "0 %"
+
+
+## An animal's traits on two lines: «Скорость +6 % · Зрение −3 %», «Аппетит +2 % · Долголетие +4 %».
+static func traits_text(values: Array) -> String:
+	if values.size() != TRAIT_LABELS.size():
+		return ""
+	var parts: Array = []
+	for index in range(TRAIT_LABELS.size()):
+		parts.append("%s %s" % [TRAIT_LABELS[index], percent_change(float(values[index]))])
+	return "%s · %s\n%s · %s" % parts
+
+
+## A group's traits in one line, the two that stand out most: «Черты: скорость +3 %, долголетие
+## −2 %», or «Черты: как у вида» when none differs by a whole percent.
+static func traits_brief(values: Array) -> String:
+	if values.size() != TRAIT_LABELS.size():
+		return ""
+	var order: Array = []
+	for index in range(TRAIT_LABELS.size()):
+		if int(round((float(values[index]) - 1.0) * 100.0)) != 0:
+			order.append(index)
+	if order.is_empty():
+		return "Черты: как у вида"
+	order.sort_custom(func(a, b): return absf(float(values[a]) - 1.0) > absf(float(values[b]) - 1.0))
+	var parts: Array = []
+	for index in order.slice(0, 2):
+		parts.append("%s %s" % [str(TRAIT_LABELS[index]).to_lower(), percent_change(float(values[index]))])
+	return "Черты: " + ", ".join(parts)
+
+
 ## «погибла» to a hunter, «умерла» of hunger, thirst or age.
 static func died(sex: String, cause: String) -> String:
 	return verb(sex, "погиб", "погибла") if cause == "predation" else verb(sex, "умер", "умерла")

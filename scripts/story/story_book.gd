@@ -19,6 +19,8 @@ const StoryLogScript := preload("res://scripts/story/story_log.gd")
 const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
 const EpitaphScript := preload("res://scripts/story/epitaph.gd")
 const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
+const TraitHistoryScript := preload("res://scripts/story/trait_history.gd")
+const TraitsScript := preload("res://scripts/agents/traits.gd")
 ## How long the records an epitaph checks against are trusted, in simulated seconds.
 const RECORDS_TTL := 5.0
 ## How long after the selection let go of an animal its death still counts as watched.
@@ -34,6 +36,10 @@ var lineage = LineageScript.new()
 var feed = StoryLogScript.new()
 ## The names of the world's ponds and districts (`PlaceNames`).
 var places = PlaceNamesScript.new()
+## Each species' inherited traits over the world's life (`TraitHistory`), for «Черты».
+var trait_history = TraitHistoryScript.new()
+## The species that inherit traits in this world, in the registry's order.
+var heredity_species: Array = []
 var pins: Array = []
 var manager = null
 ## What was said of the animals that died lately, by id.
@@ -74,6 +80,13 @@ func begin(saved: Dictionary = {}) -> void:
 	_records_time = -INF
 	_released_id = -1
 	_selected_id = -1
+	trait_history.clear()
+	heredity_species.clear()
+	if manager != null and manager.world_state != null:
+		var species_config: Dictionary = manager.config_bundle.get("species", {})
+		for species_id in manager.world_state.species_registry.ids():
+			if TraitsScript.enabled(species_config.get(species_id, {})):
+				heredity_species.append(str(species_id))
 	places.build(null if manager == null else manager.world_state, 0 if manager == null else int(manager.seed))
 	if int(saved.get("version", 0)) == STATE_VERSION:
 		import_state(saved)
@@ -86,6 +99,8 @@ func begin(saved: Dictionary = {}) -> void:
 func tick(now: float) -> void:
 	meet_living()
 	feed.tick(now)
+	if manager != null and manager.stats_system != null:
+		trait_history.sample(now, manager.stats_system.latest_snapshot, heredity_species)
 
 
 ## Names every awake animal not yet named, lowest id first.
@@ -114,7 +129,12 @@ func hear(event: Dictionary) -> void:
 				return
 			var sex := str(data.get("sex", ""))
 			var parents: Array = [int(data["mother_id"])] if data.has("mother_id") else []
+			# Asleep, the father comes with it too now (`data.father_id`, -1 when not known).
+			if int(data.get("father_id", -1)) >= 0:
+				parents.append(int(data["father_id"]))
 			lineage.note_birth(born, species, sex, time, int(data.get("group_id", -1)), parents)
+			if data.has("traits"):
+				lineage.note_traits(born, data["traits"])
 			names.name_of(born, species, sex)
 		"AgentReproduced":
 			var child: Dictionary = lineage.entry(agent_id)
@@ -165,6 +185,8 @@ func name_of(agent) -> String:
 		return ""
 	var now: float = 0.0 if manager == null else float(manager.simulation_time)
 	lineage.note_animal(agent.id, agent.species_type, agent.sex, agent.group_id, float(agent.age), now)
+	if "trait_settings" in agent and bool(agent.trait_settings.get("enabled", false)):
+		lineage.note_traits(agent.id, agent.traits())
 	return names.name_of(agent.id, agent.species_type, agent.sex)
 
 
@@ -318,7 +340,7 @@ func pin_status(agent_id: int) -> Dictionary:
 
 func export_state() -> Dictionary:
 	return {"version": STATE_VERSION, "names": names.export_state(), "lineage": lineage.export_state(),
-		"pins": pins.duplicate(), "places": places.export_state()}
+		"pins": pins.duplicate(), "places": places.export_state(), "traits": trait_history.export_state()}
 
 
 func import_state(data: Dictionary) -> void:
@@ -326,3 +348,4 @@ func import_state(data: Dictionary) -> void:
 	lineage.import_state(data.get("lineage", {}))
 	pins = data.get("pins", []).duplicate()
 	places.import_state(data.get("places", {}))
+	trait_history.import_state(data.get("traits", {}))

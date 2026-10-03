@@ -1,6 +1,7 @@
 class_name AgentBase
 extends RefCounted
 
+const TraitsScript := preload("res://scripts/agents/traits.gd")
 const SPECIES_HERBIVORE := "herbivore"
 const SPECIES_PREDATOR := "predator"
 const SEX_FEMALE := "female"
@@ -38,6 +39,16 @@ var recent_water_sources: Array = []
 var kin_ids: Array = []
 var last_known_kin_center = null
 var last_action_reason: String = ""
+## What this animal inherited (`Traits`): multipliers on its species' speed, sight, metabolic
+## rate and lifespan, 1.0 being the species as written. Never written into the shared species
+## dictionaries. `trait_hunger` and `trait_run_cost` are what they cost, cached.
+var trait_speed: float = 1.0
+var trait_vision: float = 1.0
+var trait_appetite: float = 1.0
+var trait_longevity: float = 1.0
+var trait_hunger: float = 1.0
+var trait_run_cost: float = 1.0
+var trait_settings: Dictionary = {}
 var last_action_scores: Dictionary = {}
 var last_action_raw_scores: Dictionary = {}
 var decision_target_data: Dictionary = {}
@@ -100,6 +111,8 @@ func configure(
 	reproduction = species_config.get("reproduction", {})
 	aging = species_config.get("aging", {})
 	balance = balance_config
+	trait_settings = TraitsScript.settings(species_config)
+	set_traits(TraitsScript.NEUTRAL)
 	need_max = float(balance_config.get("need_max", 100.0))
 	energy = float(metabolism.get("max_energy", 100.0))
 	wander_angle = rng.randf_range(0.0, TAU)
@@ -266,7 +279,7 @@ func is_drinking_allowed() -> bool:
 ## cheaper night metabolism.
 func update_needs(delta: float, metabolism_scale: float = 1.0) -> void:
 	age += delta
-	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * metabolism_scale * delta)
+	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * trait_hunger * metabolism_scale * delta)
 	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * delta)
 	reproduction_cooldown = maxf(0.0, reproduction_cooldown - delta)
 	interaction_timer = maxf(0.0, interaction_timer - delta)
@@ -294,8 +307,8 @@ func apply_survival_checks(world, delta: float) -> bool:
 		world.kill_agent(self, "thirst")
 		return true
 
-	var old_age_start := float(aging.get("old_age_start", aging.get("max_age", 9999.0)))
-	var max_age := float(aging.get("max_age", 9999.0))
+	var old_age_start := float(aging.get("old_age_start", aging.get("max_age", 9999.0))) * trait_longevity
+	var max_age := float(aging.get("max_age", 9999.0)) * trait_longevity
 	if age >= max_age:
 		world.kill_agent(self, "old_age")
 		return true
@@ -309,10 +322,10 @@ func apply_survival_checks(world, delta: float) -> bool:
 
 func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: float) -> void:
 	var desired_velocity := Vector2.ZERO
-	var effective_speed := desired_speed
+	var effective_speed := desired_speed * trait_speed
 	if move_vector.length_squared() > 0.0001:
 		var local_move_cost := maxf(1.0, world.get_move_cost_at_position(position))
-		effective_speed = desired_speed / local_move_cost
+		effective_speed = desired_speed * trait_speed / local_move_cost
 		desired_velocity = move_vector.normalized() * effective_speed
 	var fatigue_threshold := float(movement.get("fatigue_energy_ratio", 0.25)) * float(metabolism.get("max_energy", 100.0))
 	var fatigue_scale := lerpf(float(movement.get("exhausted_speed_ratio", 0.55)), 1.0, clampf(energy / maxf(1.0, fatigue_threshold), 0.0, 1.0))
@@ -382,7 +395,7 @@ func stop_motion(delta: float) -> void:
 
 func can_reproduce() -> bool:
 	return is_alive \
-		and age >= float(reproduction.get("maturity_age", 0.0)) \
+		and age >= float(reproduction.get("maturity_age", 0.0)) * trait_longevity \
 		and reproduction_cooldown <= 0.0 \
 		and energy >= float(reproduction.get("energy_threshold", 9999.0)) \
 		and hunger <= float(reproduction.get("max_hunger", need_max)) \
@@ -406,9 +419,9 @@ func reduce_thirst(amount: float) -> void:
 
 
 func get_age_stage() -> String:
-	if age < float(reproduction.get("maturity_age", 0.0)):
+	if age < float(reproduction.get("maturity_age", 0.0)) * trait_longevity:
 		return "young"
-	if age >= float(aging.get("old_age_start", aging.get("max_age", 9999.0))):
+	if age >= float(aging.get("old_age_start", aging.get("max_age", 9999.0))) * trait_longevity:
 		return "old"
 	return "adult"
 
@@ -690,7 +703,8 @@ func scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -
 			release_carcass_target(world)
 			target_position = null
 			return false
-		reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)))
+		# A quick metabolism fills up faster (`Traits`); the strength meat gives is the species'.
+		reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)) * trait_appetite)
 		restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
 		var updated: Dictionary = world.get_carcass(target_carcass_id)
 		if updated.is_empty() or float(updated.get("meat_remaining", 0.0)) <= 0.0:
@@ -771,9 +785,26 @@ func apply_save_state(state_data: Dictionary) -> void:
 	grass_target_tick = int(state_data.get("grass_target_tick", grass_target_tick))
 
 
+## Its inherited multipliers (`Traits.NAMES` order), and their cost on its needs and runs.
+func set_traits(values: Array) -> void:
+	var known: Array = values if values.size() == TraitsScript.NAMES.size() else TraitsScript.NEUTRAL
+	trait_speed = float(known[TraitsScript.SPEED])
+	trait_vision = float(known[TraitsScript.VISION])
+	trait_appetite = float(known[TraitsScript.APPETITE])
+	trait_longevity = float(known[TraitsScript.LONGEVITY])
+	var settings := trait_settings if not trait_settings.is_empty() else TraitsScript.DEFAULTS
+	trait_hunger = TraitsScript.hunger_factor(known, settings)
+	trait_run_cost = TraitsScript.run_cost_factor(known, settings)
+
+
+func traits() -> Array:
+	return [trait_speed, trait_vision, trait_appetite, trait_longevity]
+
+
 func export_runtime_state() -> Dictionary:
 	return {
 		"id": id,
+		"traits": traits(),
 		"species_type": species_type,
 		"target_carcass_id": target_carcass_id,
 		"position": position,
@@ -871,6 +902,8 @@ func apply_presentation_state(state_data: Dictionary) -> void:
 
 
 func apply_runtime_state(state_data: Dictionary) -> void:
+	if state_data.has("traits"):
+		set_traits(state_data["traits"])
 	position = state_data.get("position", position)
 	target_carcass_id = int(state_data.get("target_carcass_id", target_carcass_id))
 	velocity = state_data.get("velocity", velocity)

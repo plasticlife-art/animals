@@ -47,6 +47,9 @@ func _init() -> void:
 	_title = Label.new()
 	box.add_child(_title)
 	_counts = Label.new()
+	# The herd's mean traits ride on the head count's tooltip: a line of their own would push the
+	# card out from under the pinned list sooner.
+	_counts.mouse_filter = Control.MOUSE_FILTER_PASS
 	box.add_child(_counts)
 	_bars_view = Control.new()
 	_bars_view.custom_minimum_size = Vector2(300.0, 0.0)
@@ -144,6 +147,8 @@ func refresh() -> void:
 	_hunt.text = HerdReadoutScript.hunters_text(int(summary["hunters"]))
 	_loss.text = HerdReadoutScript.loss_text(losses.last_loss(species, group_id), simulation_manager.simulation_time)
 	_follow.text = HerdReadoutScript.follow_text(species)
+	_counts.tooltip_text = HerdReadoutScript.traits_tooltip(summary) \
+		if bool(agent.trait_settings.get("enabled", false)) else ""
 	# The herd's means against the selected animal's own limits: one species, one set.
 	_bars = AgentReadout.need_bars(float(summary["energy"]), float(summary["hunger"]), float(summary["thirst"]),
 		maxf(1.0, agent.need_max), maxf(1.0, float(agent.metabolism.get("max_energy", 100.0))),

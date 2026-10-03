@@ -1,6 +1,8 @@
 class_name StatsSystem
 extends RefCounted
 
+const TraitsScript := preload("res://scripts/agents/traits.gd")
+
 var event_bus
 var sample_interval_ticks: int = 5
 var history_limit: int = 720
@@ -252,6 +254,11 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		snapshot["dormant_%s_avg_hunger" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_hunger_sum" % species_id, 0.0)) / dormant
 		snapshot["dormant_%s_avg_thirst" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_thirst_sum" % species_id, 0.0)) / dormant
 		snapshot["dormant_%s_avg_energy" % species_id] = 0.0 if dormant == 0 else float(population_metrics.get("dormant_%s_energy_sum" % species_id, 0.0)) / dormant
+		# Each inherited trait's mean over the species, awake and asleep; 1.0 is the species as
+		# written, and with traits off it stays there.
+		for trait_name in TraitsScript.NAMES:
+			snapshot["trait_%s_%s" % [trait_name, species_id]] = 1.0 if active + dormant == 0 else \
+				float(population_metrics.get("%s_trait_%s_sum" % [species_id, trait_name], active + dormant)) / float(active + dormant)
 	for key in ["hunts_started", "chases_failed", "attack_attempts", "hunt_fail_lost_sight",
 			"search_started", "prey_reacquired", "search_expired"]:
 		snapshot[key] = counters[key]

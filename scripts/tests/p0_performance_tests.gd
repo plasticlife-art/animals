@@ -269,7 +269,7 @@ func _test_worker_load_and_shutdown_boundaries(a) -> void:
 	var world_data: Dictionary = manager.export_simulation_state()
 	a.is_true(not manager.is_worker_tick_in_flight(), "export synchronizes the in-flight worker before save")
 	var saved_tick: int = manager.current_tick
-	var data := {"version": 2, "selection": {}, "config_bundle": manager.config_bundle.duplicate(true),
+	var data := {"version": SaveSystemScript.SAVE_VERSION, "selection": {}, "config_bundle": manager.config_bundle.duplicate(true),
 		"seed": manager.seed, "tick": saved_tick, "simulation_time": manager.simulation_time,
 		"accumulator": manager.accumulator, "rng_seed": manager.rng.seed,
 		"rng_state": manager.rng.state, "world": world_data,

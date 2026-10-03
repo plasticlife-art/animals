@@ -125,7 +125,7 @@ func _test_save_and_budget(a) -> void:
 	file.store_var(data, true)
 	file.close()
 	var migrated: Dictionary = Save.read(path)
-	a.equal(int(migrated.get("version", 0)), 2, "v1 save migrates to the current version")
+	a.equal(int(migrated.get("version", 0)), Save.SAVE_VERSION, "v1 save migrates to the current version")
 	a.is_true(migrated.has("config_bundle"), "v1 migration resolves its selected config bundle")
 	var migrated_sector: Dictionary = migrated.world.sectors[0]
 	a.equal(migrated_sector.species_counts, {"herbivore": 7, "predator": 2},

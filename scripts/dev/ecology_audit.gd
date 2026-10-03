@@ -13,6 +13,7 @@ extends SceneTree
 ## manager has initialized. Keeping that distinction here matters: the old audit
 ## labelled runs as LOD while actually simulating every animal at LOD0.
 const SAMPLE_SECONDS := 60.0
+const TraitsScript := preload("res://scripts/agents/traits.gd")
 const PRIMARY_SPECIES := ["herbivore", "predator"]
 ## Risk above which ground counts as feared in the cascade figures. The shipped grazer
 ## tolerance, held here as a constant so a run with avoidance switched off (a huge
@@ -200,6 +201,12 @@ func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictio
 		row[species_id] = int(population.get("%s_count" % species_id, 0))
 		row["%s_starvation_risk" % species_id] = int(population.get(
 			"starvation_risk_%s_count" % species_id, 0))
+		# The species' mean inherited traits (`Traits`), while it has heredity and anyone left.
+		var count := int(row[species_id])
+		if count > 0 and TraitsScript.enabled(manager.config_bundle.get("species", {}).get(species_id, {})):
+			for trait_name in TraitsScript.NAMES:
+				row["%s_trait_%s" % [species_id, trait_name]] = snappedf(float(population.get(
+					"%s_trait_%s_sum" % [species_id, trait_name], count)) / float(count), 0.0001)
 	row["grass_biomass"] = manager.world_state.resource_system.get_total_biomass()
 	row["grass_density"] = snappedf(manager.world_state.resource_system.get_mean_density(), 0.001)
 	row["carcass_meat"] = manager.world_state.get_total_carcass_meat_remaining()

@@ -132,7 +132,8 @@ pipeline instead, which reports success even when tests fail:
 - `F11`: full screen on or off; «Настройки» in the pause menu and on the setup screen also sets
   the size of the interface (75-125 %), saved in `user://settings.cfg`
 - `F1`: open or close the help screen
-- `L`: open or close the chronicle («Летопись»): the selected animal's family and the records
+- `L`: open or close the chronicle («Летопись»): the selected animal's family, the records and
+  how each species' inherited traits have moved
 - `P`: photo mode - the world without the interface, a PNG of the screen or a 10-second GIF
   (640 px wide, 15 frames a second), saved to Pictures/Engine of Ecosystem; `H` hides its bar,
   `Esc` or `P` leaves it
@@ -165,7 +166,17 @@ animal in a list at the top left wherever it goes, asleep far away or dead - up 
 click there brings the camera to it. A grazer or a scavenger also gets its herd's card above
 its own: how many there are, near and far, how many are young,
 how fed, watered and rested they are, whether anything is hunting them, what they lost last,
-and a button to follow the herd.
+and a button to follow the herd; the head count's tooltip gives its members' mean traits.
+
+Animals differ, and pass it on. Each inherits four traits against its species - speed, sight,
+appetite and lifespan - and the card names the two it differs in most, «Черты: скорость −7 %,
+аппетит +4 %», with all four in the tooltip. A young one takes its parents' mean and changes a little; every advantage
+costs - a fast animal tires and hungers sooner, a far-sighted one hungers a little, a quick
+metabolism starves sooner but fills up sooner, a long life grows up late and breeds less
+often - so a species
+settles where its world pushes it rather than climbing to the limit. Selection works in
+sleeping sectors too: hunters there take the slow and short-sighted first. The chronicle's
+«Черты» draws each species' means since the world began. Per species in `species.<id>.traits`.
 
 Developer mode (`debug.developer_mode`, or `F12` while playing) puts the developer panel and the
 charts behind `Tab`, in place of the bar. From there you can also:
@@ -281,6 +292,7 @@ scripts/world/
   world_state.gd
 scripts/agents/
   agent_base.gd
+  traits.gd
   herbivore.gd
   perception.gd
   predator.gd
@@ -297,6 +309,7 @@ scripts/story/
   story_records.gd
   epitaph.gd
   family_tree.gd
+  trait_history.gd
 scripts/ui/
   charts_panel.gd
   debug_panel.gd
@@ -460,8 +473,8 @@ and predators searching last-seen positions. Run it once per style:
 
 ## Current Limitations
 
-- Three species, and every animal of a species is identical: there is no genetics or individual
-  variation.
+- Heredity is four multipliers with fixed costs, not a genome; in sleeping sectors it decides
+  only who dies, not how many.
 - Terrain and shadow art are placeholders, and the isometric style has no real terrain art. The
   opened and picked carcass stages are drawn by a script, not by an artist.
 - There is no shelter logic or authored scenario editor.

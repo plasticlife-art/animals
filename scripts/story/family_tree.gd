@@ -34,13 +34,14 @@ static func around(book, agent_id: int) -> Dictionary:
 		"children": children.slice(0, MAX_CHILDREN), "more": maxi(0, children.size() - MAX_CHILDREN)}
 
 
-## What a relative's box says: `{id, known, name, glyph, kind, status, dead, pinned}` - the
-## status an age, or «†» and the cause.
+## What a relative's box says: `{id, known, name, glyph, kind, status, dead, pinned, traits}` - the
+## status an age, or «†» and the cause; `traits` what it inherited, for the box's tooltip, empty
+## when not known.
 ## `now` is the world's clock, `calendar` `Climate.calendar()`.
 static func card(book, agent_id: int, now: float, calendar: Array = [120.0, 4]) -> Dictionary:
 	if agent_id < 0 or not book.lineage.knows(agent_id):
 		return {"id": agent_id, "known": false, "name": "неизвестно", "glyph": "", "kind": "", "status": "",
-			"dead": false, "pinned": false}
+			"dead": false, "pinned": false, "traits": ""}
 	var entry: Dictionary = book.lineage.entry(agent_id)
 	var sex := str(entry["sex"])
 	var dead: bool = book.lineage.is_dead(agent_id)
@@ -50,6 +51,7 @@ static func card(book, agent_id: int, now: float, calendar: Array = [120.0, 4]) 
 		# The cause alone: the age it died at is in its epitaph, and a box has one short line.
 		var cause := str(entry["cause"])
 		status = "† %s" % (HudText.cause_label(cause) if cause != "" else HudText.verb(sex, "умер", "умерла"))
+	var traits = entry.get("traits", null)
 	return {"id": agent_id, "known": true, "name": book.name_of_id(agent_id), "glyph": HudText.sex_glyph(sex),
 		"kind": HudText.animal_noun(str(entry["species"]), sex), "status": status, "dead": dead,
-		"pinned": book.is_pinned(agent_id)}
+		"pinned": book.is_pinned(agent_id), "traits": "" if traits == null else HudText.traits_text(Array(traits))}
