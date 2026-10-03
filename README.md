@@ -147,6 +147,14 @@ From the HUD you can:
 - toggle biome, obstacle, carcass, path, density, water, and debug overlays
 - export telemetry snapshots and event logs
 
+The map itself shows what the ecology is doing, with no overlay switched on:
+
+- the ground is tinted by how much grass each cell holds, from bare earth through dry straw to
+  lush green, and worn paths show where animals keep walking
+- watering holes are drawn on the ground, with depth, foam and a sandy shore, and on the minimap
+- an animal that dies in view falls through its death frames, with a red flash when it was
+  killed, and leaves its carcass where it fell
+
 ## Telemetry Exports
 
 Exports are written to `user://exports` by default:
@@ -170,6 +178,10 @@ The metrics carry, per species, how many animals are at risk of starvation (`sta
   Shared thresholds, herd weights, hunt rules, carcass behavior, lifecycle rules, AI selector tuning, evaluator weights, stats sampling
 - `data/config/debug.json`
   HUD defaults, UI refresh cadence, overlays, export directory, interactive LOD tuning
+- `data/config/visuals.json`
+  Sprite atlases and animation rows, the projection, the grass ramp and trails on the ground
+  (`ground`), the watering holes (`water`) and the event effects (`effects`). The simulation
+  reads only `props` from it, to place the scenery
 - `data/config/presets.json`
   Setup-screen option groups. Each option is a config patch deep-merged over the base
   configs, so adding a group here adds a row to the setup screen with no code change

@@ -37,8 +37,11 @@ const CARCASS_Z := -1
 # the atlas it belongs to. A hardcoded table here meant a new species silently
 # shared layer 0 with the herbivores and sorted against them by accident.
 const DEFAULT_SPECIES_Z := 0
+const DyingSpritesScript := preload("res://scripts/ui/dying_sprites.gd")
 
 var scene_batch = null
+## Animals that died in view, played through their `dead` row (`DyingSprites`).
+var _dying = DyingSpritesScript.new()
 var _needs_refresh: bool = true
 var _last_camera_rect := Rect2()
 var _render_positions: Dictionary = {}
@@ -98,6 +101,8 @@ func bind_manager(manager: SimulationManager) -> void:
 	# and a second unguarded connect is an error, not a no-op.
 	if not simulation_manager.tick_completed.is_connected(_on_tick_completed):
 		simulation_manager.tick_completed.connect(_on_tick_completed)
+	if not simulation_manager.world_event.is_connected(_on_world_event):
+		simulation_manager.world_event.connect(_on_world_event)
 	refresh()
 
 
@@ -106,6 +111,8 @@ func set_overview_mode(value: bool) -> void:
 		return
 	overview_mode = value
 	_needs_refresh = true
+	# Overview draws frozen idle frames a few pixels tall; a death there is not shown.
+	_dying.clear()
 	if _shadow_node != null:
 		_shadow_node.visible = not (value and bool(_overview_config.get("disable_shadows", true)))
 
@@ -143,12 +150,67 @@ func rebuild_batches() -> void:
 	_facing.clear()
 	_heading.clear()
 	_direction.clear()
+	_dying.clear()
 	_build_batches()
 	refresh()
 
 
 func request_refresh() -> void:
 	refresh()
+
+
+## The dying sprites the scene batch draws beside the living (`DyingSprites.states()`).
+func transient_sprites() -> Array:
+	return _dying.states()
+
+
+func transient_sprite(key: int) -> Dictionary:
+	return _dying.state(key)
+
+
+## True while the animal that left this carcass is still being shown dying, so the
+## scene batch draws the animal falling instead of the body already lying there.
+func hides_carcass(source_agent_id: int) -> bool:
+	return _dying.hides_carcass(source_agent_id)
+
+
+## Deaths in view start the dying animation. Only an awake animal is drawn to begin with;
+## a death in a sleeping sector (`agent_id` -1) has no sprite to play it on.
+func _on_world_event(event: Dictionary) -> void:
+	if simulation_manager == null or _batches.is_empty() or overview_mode:
+		return
+	if str(event.get("type", "")) == "AgentDied" and int(event.get("agent_id", -1)) >= 0:
+		_begin_dying(event)
+
+
+func _begin_dying(event: Dictionary) -> void:
+	var agent_id := int(event.get("agent_id", -1))
+	var batch: Dictionary = _batches.get(str(event.get("species", "")), {})
+	var spec: Dictionary = batch.get("animations", {}).get("dead", {})
+	var agent = _find_batched_agent(batch, agent_id)
+	# Not in the last refresh's visible set: it died off screen.
+	if spec.is_empty() or agent == null:
+		return
+	var at: Dictionary = event.get("position", {})
+	var died_at := Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
+	var directions: int = int(batch.get("directions", 1))
+	var row := int(spec.get("row", 0)) + (int(_direction.get(agent_id, 0)) if directions > 1 else 0)
+	var facing: float = 1.0 if directions > 1 else float(_facing.get(agent_id, 1.0))
+	var frames: PackedInt32Array = DyingSpritesScript.frames_for(str(event.get("data", {}).get("cause", "")), spec)
+	var tick: float = simulation_manager.tick_duration
+	# Started from the event's own time: the tick alpha is stale while a frame is being
+	# applied, and the tick that killed the animal is the one about to be drawn.
+	var start := float(event.get("time_seconds", simulation_manager.simulation_time)) + tick
+	if _dying.begin(agent_id, str(event.get("species", "")), _render_positions.get(agent_id, died_at), died_at,
+			row, frames, _age_scale_of(agent), facing, float(batch.get("ground_offset", 0.0)), start, tick * 2.0):
+		_needs_refresh = true
+
+
+static func _find_batched_agent(batch: Dictionary, agent_id: int):
+	for agent in batch.get("agents", []):
+		if agent != null and int(agent.id) == agent_id:
+			return agent
+	return null
 
 
 func refresh() -> void:
@@ -431,6 +493,7 @@ func _build_batches() -> void:
 	_walk_speed_threshold = float(animation_config.get("walk_speed_threshold", 8.0))
 	_run_speed_threshold = float(animation_config.get("run_speed_threshold", 85.0))
 	_phase_step = float(animation_config.get("phase_step", 0.37))
+	_dying.configure(visuals.get("effects", {}).get("death", {}))
 
 	var species_config: Dictionary = visuals.get("species", {})
 	for species_id in species_config.keys():
@@ -589,6 +652,10 @@ func _process(delta: float) -> void:
 		return
 	var started := Time.get_ticks_usec()
 	var view := _get_visible_world_rect(simulation_manager.world_state.bounds)
+	# A dying sprite that starts fading or finishes changes the draw order: the body
+	# appears under it, or it goes.
+	if not _dying.is_empty() and _dying.advance(simulation_manager.get_display_time()):
+		_needs_refresh = true
 	# Overview uses a frozen atlas frame and tiny sprites. Rewriting every visible
 	# transform between two simulation results only burns the main thread and
 	# competes with the worker. Refresh on a completed tick or while the camera is

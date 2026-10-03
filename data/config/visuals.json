@@ -29,6 +29,14 @@
     "ripple_speed": 0.06,
     "ripple_strength": 0.06
   },
+  "effects": {
+    "death": {
+      "enabled": true,
+      "play_seconds": 0.8,
+      "fade_seconds": 0.2,
+      "max_active": 24
+    }
+  },
   "tile_px": 32,
   "terrain": {
     "atlas": "res://assets/tiles/terrain_atlas.png",
@@ -120,7 +128,9 @@
         "dead": {
           "row": 16,
           "frames": 7,
-          "fps": 0.0
+          "fps": 0.0,
+          "kill_frames": [0, 1, 2, 3, 4],
+          "fall_frames": [0, 1, 2, 6]
         }
       },
       "z": 0,
@@ -161,7 +171,9 @@
         "dead": {
           "row": 16,
           "frames": 6,
-          "fps": 0.0
+          "fps": 0.0,
+          "kill_frames": [0, 1, 2, 3],
+          "fall_frames": [0, 1, 5]
         }
       },
       "z": 2,
@@ -209,7 +221,9 @@
         "dead": {
           "row": 16,
           "frames": 6,
-          "fps": 0.0
+          "fps": 0.0,
+          "kill_frames": [0, 1, 2, 3],
+          "fall_frames": [0, 1, 5]
         }
       }
     }

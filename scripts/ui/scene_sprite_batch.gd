@@ -15,6 +15,9 @@ var last_counts: Dictionary = {}
 var _last_generation: int = -1
 var _last_overview: bool = false
 var _dynamic_slots: Array = []
+## Slots of the dying sprites (`AgentSpriteRenderer.transient_sprites()`), rewritten every
+## frame like `_dynamic_slots`: they move and change frame between two order rebuilds.
+var _transient_slots: Array = []
 var _last_dynamic_signature := PackedInt64Array()
 var _last_depth_tick: int = -9999
 
@@ -88,6 +91,29 @@ static func scenery_visible(entry: Dictionary, overview: bool, overview_config: 
 		var keep_percent := clampi(int(round(float(overview_config.get("bush_keep_fraction", 0.35)) * 100.0)), 0, 100)
 		return posmod(int(entry.get("id", 0)) * 37, 100) < keep_percent
 	return true
+
+
+## The scene batch entry of a dying sprite, from its `DyingSprites` state: the species'
+## own atlas row and quad, scaled and mirrored like the living animal it was.
+func transient_entry(renderer, state: Dictionary, visuals: Dictionary) -> Dictionary:
+	var species := str(state.get("species", ""))
+	var batch: Dictionary = renderer._batches.get(species, {})
+	if batch.is_empty() or not regions.has(species):
+		return {}
+	var pixels: float = float(visuals.get("species", {}).get(species, {}).get("frame_px", 32))
+	var position: Vector2 = state["position"]
+	return {"depth": renderer._depth_of(position), "id": int(state["key"]), "depth_tie": 1,
+		"transform": transient_transform(renderer, state, batch.multimesh.mesh.size),
+		"color": Color(1.0, 1.0, 1.0, float(state["alpha"])),
+		"uv": uv_rect(species, Vector2(float(state["frame"]), float(state["row"])), Vector2.ONE * pixels),
+		"transient": true, "pixels": pixels}
+
+
+static func transient_transform(renderer, state: Dictionary, mesh_size: Vector2) -> Transform2D:
+	var scale := float(state["scale"])
+	return Transform2D(Vector2(float(state["facing"]) * scale * mesh_size.x, 0.0),
+		Vector2(0.0, scale * mesh_size.y),
+		renderer._anchor(state["position"], float(state["ground_offset"]) * scale))
 
 
 static func needs_order_rebuild(last_generation: int, generation: int, static_changed: bool) -> bool:
@@ -238,6 +264,12 @@ func render(renderer, alpha: float) -> void:
 				"transform": transform, "color": colors[i],
 				"uv": uv_rect(species, frame, Vector2.ONE * pixels),
 				"species": species, "source_index": i, "pixels": pixels})
+	var visible_transient := 0
+	for state in renderer.transient_sprites():
+		var entry := transient_entry(renderer, state, visuals)
+		if not entry.is_empty():
+			dynamic.append(entry)
+			visible_transient += 1
 	if renderer.overview_mode:
 		for sector_key in world._sector_states:
 			var sector: Dictionary = world._sector_states[sector_key]
@@ -270,6 +302,9 @@ func render(renderer, alpha: float) -> void:
 		for carcass in world.carcasses.values():
 			if not last_view.grow(size.y).has_point(carcass.position):
 				continue
+			# The animal is still being shown falling where this body will lie.
+			if renderer.hides_carcass(int(carcass.get("source_agent_id", -1))):
+				continue
 			var stages := int(config.get("stages", 3))
 			var fraction := float(carcass.meat_remaining) / maxf(0.001, float(carcass.meat_total))
 			var stage := clampi(int((1.0 - fraction) * stages), 0, stages - 1)
@@ -289,6 +324,7 @@ func render(renderer, alpha: float) -> void:
 	var previous_count := _last_order.size()
 	_last_order.resize(count)
 	_dynamic_slots.clear()
+	_transient_slots.clear()
 	var s := 0
 	var d := 0
 	for i in count:
@@ -309,12 +345,15 @@ func render(renderer, alpha: float) -> void:
 			_dynamic_slots.append({"slot": i, "id": int(entry.id),
 				"species": str(entry.species), "source_index": int(entry.source_index),
 				"pixels": float(entry.pixels)})
+		elif entry.has("transient"):
+			_transient_slots.append({"slot": i, "key": int(entry.id), "pixels": float(entry.pixels)})
 	multimesh.visible_instance_count = count
 	_static_changed = false
 	last_counts = {"visible_scenery": static_entries.size(),
 		"visible_scene_dynamic": dynamic.size(), "visible_carcasses": visible_carcasses,
 		"visible_animals": visible_active_animals + visible_dormant_animals,
 		"visible_dormant_animals": visible_dormant_animals,
+		"visible_transient": visible_transient,
 		"multimesh_writes": count,
 		"order_rebuilt": true}
 	renderer.simulation_manager.record_render_phase("multimesh_write",
@@ -346,6 +385,23 @@ func _update_dynamic(renderer) -> void:
 		if not renderer.overview_mode:
 			multimesh.set_instance_custom_data(slot, uv_rect(source.species,
 				frames[index], Vector2.ONE * float(source.pixels)))
+		writes += 1
+	for source in _transient_slots:
+		var slot := int(source.slot)
+		var state: Dictionary = renderer.transient_sprite(int(source.key))
+		if state.is_empty():
+			# Finished since the last order rebuild; the next one drops the slot.
+			multimesh.set_instance_color(slot, Color.TRANSPARENT)
+			writes += 1
+			continue
+		var species := str(state.get("species", ""))
+		var batch: Dictionary = renderer._batches.get(species, {})
+		if batch.is_empty():
+			continue
+		multimesh.set_instance_transform_2d(slot, transient_transform(renderer, state, batch.multimesh.mesh.size))
+		multimesh.set_instance_color(slot, Color(1.0, 1.0, 1.0, float(state["alpha"])))
+		multimesh.set_instance_custom_data(slot, uv_rect(species,
+			Vector2(float(state["frame"]), float(state["row"])), Vector2.ONE * float(source.pixels)))
 		writes += 1
 	last_counts["multimesh_writes"] = writes
 	last_counts["order_rebuilt"] = false

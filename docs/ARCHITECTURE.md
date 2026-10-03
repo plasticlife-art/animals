@@ -433,6 +433,18 @@ Utility actions inside `alive`:
   scenery; equal-depth ties put carcasses below animals and passable cover above
 - Interpolated positions are accepted only through a body-clear corridor; the
   sprite, shadow, selection marker and follow camera read the same render position
+- An animal that dies in view plays its species' `dead` row (`DyingSprites`, from
+  `world_event`), where it was last drawn and facing the way it was drawn. Every row in the
+  pack falls, flushes red at the blow and fades back to the body's own colours, at frames
+  that differ by species, so the row lists which to play: a kill (`kill_frames`) ends on the
+  reddest frame, and any other death (`fall_frames`) skips the red. A test reads the atlases
+  to hold the lists to the art. A dead animal leaves the simulation in the tick it dies, so
+  the row had never been drawn.
+  The sprite closes the tick-long gap between where it was drawn and where it died, runs on
+  `SimulationManager.get_display_time()` (it stops on pause and keeps pace at 4x) and holds
+  back the body it leaves until it starts to fade, then crossfades into it. Off screen, in a
+  sleeping sector (no sprite) and in overview a death only leaves its body; at most
+  `effects.death.max_active` play at once
 
 ### `WorldView`
 
@@ -799,6 +811,9 @@ millisecond setting squeezed to zero.
   foam, shore), the field's resolution in terrain cells (`texel_cells`) and lengths in art
   pixels (`*_px`, scaled by cell size / 32 like sprites): depth to the darkest colour, shore
   and foam widths, how far noise bends the edge, ripple size, speed and strength
+- `effects.death` switches the dying animation and sets how long the fall plays and fades
+  (simulated seconds) and how many play at once. Which frames of a species' `dead` row a
+  death shows sits beside the row, as `kill_frames` and `fall_frames`
 
 ## Built-In Tests
 
@@ -820,6 +835,9 @@ Current suites cover:
 - metrics CSV cells that stay in their own columns
 - trails: wear deposit and decay, live and sleeping animals, save round trip, and that the
   field changes nothing the animals do; the ground layer's mesh, textures and worker channel
+- what the view hears and draws: world events on the main thread and through the worker, the
+  display clock, and dying animals (the row, the frames against the atlases, the body held
+  back and handed over, nothing played unseen, asleep or in overview)
 
 ## Measuring Balance
 
@@ -887,4 +905,7 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics
 - Three species, with no variation between animals of the same species
-- Terrain, carcass and shadow art are placeholders
+- Terrain, carcass and shadow art are placeholders. Every species leaves the deer's
+  carcass, and a fresh one is the deer's red frame, so a fox or a grouse that dies in view
+  changes shape when its fall hands over to the body, and an animal that died without a
+  blow turns red
