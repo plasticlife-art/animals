@@ -445,6 +445,18 @@ Utility actions inside `alive`:
   back the body it leaves until it starts to fade, then crossfades into it. Off screen, in a
   sleeping sector (no sprite) and in overview a death only leaves its body; at most
   `effects.death.max_active` play at once
+- `EventEffects`, a child node, marks what just happened in view on the same clock: dust
+  behind a herbivore or predator running in a chase (the hunter in `hunt_prey`, the prey
+  fleeing or panicking), one puff per `effects.dust.spacing_px` of ground it covers, so a
+  faster animal raises more; a burst of puffs and a flash where a kill fell; a ring and
+  sparkles where a young animal was born (`reason` `reproduction`), while the newborn grows
+  in from a third of its size with a small overshoot. Birds raise no dust: their run row is
+  flight. In a pond the dust is spray. Dust, bursts and rings lie on the ground just above
+  the shadows, under the sprites, and darken at night with it; the flash and the sparkles are
+  added light above the sprites, unshaded like the animals. The marks sit in an
+  `EffectQueue`, capped at `effects.max_active`, recycled through a free list and scattered
+  by a hash of the animal's id rather than a random stream, so the view advances no
+  generator. Nothing is drawn in overview
 
 ### `WorldView`
 
@@ -818,6 +830,11 @@ millisecond setting squeezed to zero.
 - `effects.death` switches the dying animation and sets how long the fall plays and fades
   (simulated seconds) and how many play at once. Which frames of a species' `dead` row a
   death shows sits beside the row, as `kill_frames` and `fall_frames`
+- `effects.dust`, `effects.kill` and `effects.birth` switch and size the dust of a chase
+  (which species raise it, ground between puffs, its colour and the spray colour in a
+  pond), the burst and flash of a kill, and a birth's ring, sparkles and grow-in
+  (`pop_seconds`, `pop_from`); `effects.max_active` caps the marks on screen at once.
+  Durations are simulated seconds, `*_px` art pixels
 
 ## Built-In Tests
 
@@ -841,7 +858,10 @@ Current suites cover:
   field changes nothing the animals do; the ground layer's mesh, textures and worker channel
 - what the view hears and draws: world events on the main thread and through the worker, the
   display clock, and dying animals (the row, the frames against the atlases, the body held
-  back and handed over, nothing played unseen, asleep or in overview)
+  back and handed over, nothing played unseen, asleep or in overview); the marks queue (order,
+  cap, scatter), a kill's burst, a birth's ring and grow-in, dust once per stride and never
+  from a bird, a loaded save drawn with the shipped look, and a world run with the whole view
+  attached ending exactly as one run without it
 
 ## Measuring Balance
 

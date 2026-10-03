@@ -6,6 +6,8 @@ const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const AgentRendererScript := preload("res://scripts/ui/agent_renderer.gd")
 const DyingSpritesScript := preload("res://scripts/ui/dying_sprites.gd")
 const SaveSystemScript := preload("res://scripts/core/save_system.gd")
+const EffectQueueScript := preload("res://scripts/ui/effect_queue.gd")
+const EventEffectsScript := preload("res://scripts/ui/event_effects.gd")
 
 
 func run(a) -> void:
@@ -18,6 +20,11 @@ func run(a) -> void:
 	_test_no_death_drawn_unseen_asleep_or_in_overview(a)
 	_test_fall_starts_on_the_frame_the_death_is_drawn(a)
 	_test_old_save_is_drawn_as_today(a)
+	_test_effect_queue_keeps_order_cap_and_scatter(a)
+	_test_kill_in_view_bursts_and_flashes(a)
+	_test_birth_in_view_rings_and_grows_in(a)
+	_test_dust_once_per_stride_and_never_in_flight(a)
+	_test_view_leaves_the_world_alone(a)
 
 
 ## Deaths, births and herd splits reach `world_event`; grazing and the extra death notices
@@ -342,3 +349,200 @@ func _test_old_save_is_drawn_as_today(a) -> void:
 		"nothing shipped to take: the save's own bundle")
 	Helpers.destroy_manager(restored)
 	Helpers.destroy_manager(manager)
+
+
+## Marks leave in the order they came once their time is up, a full queue refuses new
+## ones rather than cutting old ones short, and the scatter is a pure function of its
+## inputs: no generator is advanced by drawing.
+func _test_effect_queue_keeps_order_cap_and_scatter(a) -> void:
+	var queue = EffectQueueScript.new()
+	queue.capacity = 3
+	a.is_true(queue.add(EffectQueueScript.Kind.DUST, Vector2(1.0, 0.0), 10.0, 0.5, 4.0), "a mark is taken")
+	queue.add(EffectQueueScript.Kind.BURST, Vector2(2.0, 0.0), 10.0, 1.0, 4.0)
+	queue.add(EffectQueueScript.Kind.DUST, Vector2(3.0, 0.0), 10.2, 0.5, 4.0)
+	a.is_true(not queue.add(EffectQueueScript.Kind.DUST, Vector2(4.0, 0.0), 10.2, 0.5, 4.0), "past the cap a mark is refused")
+	a.is_true(not EffectQueueScript.new().add(EffectQueueScript.Kind.DUST, Vector2.ZERO, 0.0, 0.0, 4.0),
+		"and so is one that would last no time")
+	a.near(EffectQueueScript.progress(queue.items()[0], 9.0), -1.0, 0.0001, "before its start a mark has not begun")
+	a.near(EffectQueueScript.progress(queue.items()[0], 10.25), 0.5, 0.0001, "halfway through its life")
+	a.is_true(queue.advance(10.6), "two are still alive")
+	var left: Array = []
+	for item in queue.items():
+		left.append(item.position.x)
+	a.equal(left, [2.0, 3.0], "the finished one left, the rest kept their order")
+	a.is_true(queue.add(EffectQueueScript.Kind.FLASH, Vector2(5.0, 0.0), 10.6, 0.5, 4.0), "its place is free again")
+	a.is_true(not queue.advance(20.0), "all gone in the end")
+	a.equal(queue.added, 4, "four were taken in all")
+	var scatter: Array = []
+	for index in range(64):
+		scatter.append(EffectQueueScript.jitter(17, index))
+	var again: Array = []
+	for index in range(64):
+		again.append(EffectQueueScript.jitter(17, index))
+	a.equal(scatter, again, "the scatter is the same every time")
+	a.is_true(scatter.min() >= 0.0 and scatter.max() < 1.0, "within 0..1")
+	a.is_true(scatter.max() - scatter.min() > 0.5, "and spread across it")
+
+
+## A kill in view throws up a burst of puffs around the body and a flash at it; a death
+## without a blow throws up nothing. The same kill always makes the same burst.
+func _test_kill_in_view_bursts_and_flashes(a) -> void:
+	var manager = Helpers.create_manager(621)
+	var renderer = _make_renderer(manager)
+	var world = manager.world_state
+	var puffs := int(manager.config_bundle.visuals.effects.kill.puffs)
+	var deer = Helpers.spawn_herbivore(world, Vector2(120.0, 120.0), 0)
+	_show(renderer, deer, Vector2(120.0, 120.0), 0)
+	world.kill_agent(deer, "predation")
+	var marks: Array = renderer._effects.queue.items()
+	a.equal(_kinds(marks), _repeat(EffectQueueScript.Kind.BURST, puffs) + [EffectQueueScript.Kind.FLASH],
+		"a burst of puffs and a flash")
+	var first: Array = _describe(marks)
+	var starved = Helpers.spawn_herbivore(world, Vector2(140.0, 140.0), 0)
+	_show(renderer, starved, Vector2(140.0, 140.0), 0)
+	world.kill_agent(starved, "starvation")
+	a.equal(renderer._effects.queue.items().size(), puffs + 1, "a death without a blow throws up nothing")
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+	manager = Helpers.create_manager(621)
+	renderer = _make_renderer(manager)
+	deer = Helpers.spawn_herbivore(manager.world_state, Vector2(120.0, 120.0), 0)
+	_show(renderer, deer, Vector2(120.0, 120.0), 0)
+	manager.world_state.kill_agent(deer, "predation")
+	a.equal(_describe(renderer._effects.queue.items()), first, "the same kill makes the same burst")
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+
+## A young animal born in view opens a ring with sparkles and grows in from small, a
+## little past full size and back; founders and animals born out of view just appear.
+func _test_birth_in_view_rings_and_grows_in(a) -> void:
+	var scale_at_start := EventEffectsScript.pop_scale(0.0, 0.3, 0.35)
+	var largest := 0.0
+	for step in range(31):
+		largest = maxf(largest, EventEffectsScript.pop_scale(0.01 * float(step), 0.3, 0.35))
+	a.near(scale_at_start, 0.35, 0.0001, "a newborn starts small")
+	a.is_true(largest > 1.0 and largest < 1.06, "it overshoots a little (largest %.3f)" % largest)
+	a.near(EventEffectsScript.pop_scale(0.3, 0.3, 0.35), 1.0, 0.0001, "and settles at full size")
+
+	var manager = Helpers.create_manager(622)
+	var renderer = _make_renderer(manager)
+	var world = manager.world_state
+	renderer.refresh()
+	var sparkles := int(manager.config_bundle.visuals.effects.birth.sparkles)
+	var calf = world.spawn_agent("herbivore", Vector2(100.0, 100.0), 0, "", {"reason": "reproduction"})
+	a.equal(_kinds(renderer._effects.queue.items()), [EffectQueueScript.Kind.RING] + _repeat(EffectQueueScript.Kind.SPARKLE, sparkles),
+		"a ring and sparkles where it was born")
+	var start := float(renderer._born.get(calf.id, -1.0))
+	renderer._now = start
+	a.near(renderer._pop_of(calf.id), 0.35, 0.0001, "it is drawn small on its first frame")
+	renderer._now = start + 0.15
+	var growing: float = renderer._pop_of(calf.id)
+	a.is_true(growing > 0.35 and growing < 1.06, "growing halfway in (%.3f)" % growing)
+	renderer._now = start + 0.31
+	a.near(renderer._pop_of(calf.id), 1.0, 0.0001, "full size once grown in")
+	a.is_true(not renderer._born.has(calf.id), "and forgotten")
+	var count: int = renderer._effects.queue.items().size()
+	world.spawn_agent("herbivore", Vector2(110.0, 110.0), 0, "", {"reason": "initial"})
+	a.equal(renderer._effects.queue.items().size(), count, "a founder just appears")
+	renderer._visible_rect = Rect2(0.0, 0.0, 40.0, 40.0)
+	world.spawn_agent("herbivore", Vector2(200.0, 200.0), 0, "", {"reason": "reproduction"})
+	a.equal(renderer._effects.queue.items().size(), count, "a birth out of view is not drawn")
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+
+## An animal running in a chase kicks up one puff per stride of `dust.spacing_px`, behind
+## it; one that is not in a chase raises none, and nor does a bird, whose run is flight.
+func _test_dust_once_per_stride_and_never_in_flight(a) -> void:
+	var manager = Helpers.create_manager(623)
+	var renderer = _make_renderer(manager)
+	var world = manager.world_state
+	var spacing: float = renderer._effects.dust_spacing
+	var deer = Helpers.spawn_herbivore(world, Vector2(100.0, 120.0), 0)
+	deer.current_action = &"flee_to_safe_area"
+	a.equal(_dust_after_strides(renderer, deer, spacing, [0.0, 0.4, 1.0, 1.5, 2.1, 3.3]), 3,
+		"a fleeing deer: one puff per stride covered, counted from its first")
+	var calm = Helpers.spawn_herbivore(world, Vector2(100.0, 160.0), 0)
+	calm.current_action = &"explore"
+	a.equal(_dust_after_strides(renderer, calm, spacing, [0.0, 1.0, 2.0, 3.0]), 0,
+		"an animal running on its own business raises none")
+	var crow = Helpers.spawn_species(world, "scavenger", Vector2(100.0, 200.0))
+	crow.current_action = &"flee_to_safe_area"
+	a.equal(_dust_after_strides(renderer, crow, spacing, [0.0, 1.0, 2.0, 3.0]), 0, "nor a bird, flying off")
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+
+## Runs `agent` through the frames of a run, its ground covered at `strides` x `spacing`,
+## and counts the puffs of dust it raised.
+static func _dust_after_strides(renderer, agent, spacing: float, strides: Array) -> int:
+	var batch: Dictionary = renderer._batches[agent.species_type]
+	batch["agents"] = [agent]
+	renderer._history[agent.id] = PackedVector2Array([agent.position - Vector2(30.0, 0.0),
+		agent.position - Vector2(20.0, 0.0), agent.position - Vector2(10.0, 0.0), agent.position])
+	renderer._drawn_speed[agent.id] = 120.0
+	var before: int = renderer._effects.queue.added
+	for stride in strides:
+		renderer._gait_distance[agent.id] = float(stride) * spacing
+		renderer._render_positions.clear()
+		renderer._animate_species(batch, 0.5, 1.0 / 60.0)
+	batch["agents"] = []
+	var raised: int = renderer._effects.queue.added - before
+	for item in renderer._effects.queue.items():
+		if int(item.kind) != EffectQueueScript.Kind.DUST:
+			raised = -100
+	renderer._effects.clear()
+	return raised
+
+
+## Drawing changes nothing it draws: a world run with the whole view attached - deaths,
+## births, dust and all - ends the same as the same world run without it.
+func _test_view_leaves_the_world_alone(a) -> void:
+	var watched = _chase_fixture(624)
+	var renderer = AgentRendererScript.new()
+	Engine.get_main_loop().root.add_child(renderer)
+	renderer.bind_manager(watched)
+	var unwatched = _chase_fixture(624)
+	for _tick in range(240):
+		watched.step_once()
+		renderer._process(1.0 / 60.0)
+		unwatched.step_once()
+	a.equal(Helpers.world_fingerprint(watched), Helpers.world_fingerprint(unwatched), "the same world either way")
+	a.equal(watched.stats_system.counters, unwatched.stats_system.counters, "with the same tallies")
+	a.is_true(renderer._effects.queue.added > 0, "and the view did draw something (%d marks)" % renderer._effects.queue.added)
+	_free_renderer(renderer)
+	Helpers.destroy_manager(watched)
+	Helpers.destroy_manager(unwatched)
+
+
+## A hungry predator beside a small herd, so a chase starts within seconds.
+static func _chase_fixture(seed_value: int):
+	var manager = Helpers.create_manager(seed_value)
+	var world = manager.world_state
+	Helpers.spawn_herd(world, Vector2(150.0, 130.0), 5, 0)
+	var fox = Helpers.spawn_predator(world, Vector2(90.0, 120.0))
+	fox.hunger = 85.0
+	return manager
+
+
+static func _kinds(items: Array) -> Array:
+	var kinds: Array = []
+	for item in items:
+		kinds.append(int(item.kind))
+	return kinds
+
+
+static func _repeat(value, count: int) -> Array:
+	var repeated: Array = []
+	for _index in range(count):
+		repeated.append(value)
+	return repeated
+
+
+static func _describe(items: Array) -> Array:
+	var described: Array = []
+	for item in items:
+		described.append([int(item.kind), item.position, item.start, item.seconds, item.size, item.drift, item.lift])
+	return described

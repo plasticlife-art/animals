@@ -153,7 +153,9 @@ The map itself shows what the ecology is doing, with no overlay switched on:
   lush green, and worn paths show where animals keep walking
 - watering holes are drawn on the ground, with depth, foam and a sandy shore, and on the minimap
 - an animal that dies in view falls through its death frames, with a red flash when it was
-  killed, and leaves its carcass where it fell
+  killed, and leaves its carcass where it fell; a kill throws up a burst of dust
+- animals running in a chase, hunter and prey, kick up dust behind them, spray in a pond
+- a young animal born in view grows in over a ring of light and a few sparkles
 
 ## Telemetry Exports
 

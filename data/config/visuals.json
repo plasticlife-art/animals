@@ -30,11 +30,45 @@
     "ripple_strength": 0.06
   },
   "effects": {
+    "max_active": 160,
     "death": {
       "enabled": true,
       "play_seconds": 0.8,
       "fade_seconds": 0.2,
       "max_active": 24
+    },
+    "dust": {
+      "enabled": true,
+      "species": ["herbivore", "predator"],
+      "spacing_px": 8.0,
+      "size_px": 7.0,
+      "seconds": 0.75,
+      "rise_px": 6.0,
+      "color": [0.92, 0.87, 0.74, 0.75],
+      "splash_color": [0.88, 0.95, 0.99, 0.7]
+    },
+    "kill": {
+      "enabled": true,
+      "puffs": 8,
+      "size_px": 9.0,
+      "spread_px": 22.0,
+      "seconds": 0.6,
+      "color": [0.93, 0.88, 0.76, 0.9],
+      "flash_px": 20.0,
+      "flash_seconds": 0.2,
+      "flash_color": [1.0, 0.82, 0.7, 0.8]
+    },
+    "birth": {
+      "enabled": true,
+      "ring_px": 13.0,
+      "seconds": 0.8,
+      "ring_color": [1.0, 0.95, 0.72, 0.85],
+      "sparkles": 5,
+      "sparkle_px": 2.0,
+      "sparkle_rise_px": 14.0,
+      "sparkle_color": [1.0, 0.95, 0.72, 0.8],
+      "pop_seconds": 0.3,
+      "pop_from": 0.35
     }
   },
   "tile_px": 32,

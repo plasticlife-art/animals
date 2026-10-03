@@ -38,10 +38,22 @@ const CARCASS_Z := -1
 # shared layer 0 with the herbivores and sorted against them by accident.
 const DEFAULT_SPECIES_Z := 0
 const DyingSpritesScript := preload("res://scripts/ui/dying_sprites.gd")
+const EventEffectsScript := preload("res://scripts/ui/event_effects.gd")
 
 var scene_batch = null
 ## Animals that died in view, played through their `dead` row (`DyingSprites`).
 var _dying = DyingSpritesScript.new()
+## Dust, the burst of a kill and the marks of a birth (`EventEffects`), drawn on the ground
+## under the sprites and in the air above them.
+var _effects = null
+## Newborns still growing in, by id: when each was first drawn, on the view's clock.
+var _born: Dictionary = {}
+## Ground covered (`_gait_distance`) when each running animal last kicked up dust.
+var _dust_mark: Dictionary = {}
+## The view's clock this frame (`SimulationManager.get_display_time()`).
+var _now: float = 0.0
+## What the last refresh treated as in view, in world space.
+var _visible_rect := Rect2()
 var _needs_refresh: bool = true
 var _last_camera_rect := Rect2()
 var _render_positions: Dictionary = {}
@@ -111,8 +123,12 @@ func set_overview_mode(value: bool) -> void:
 		return
 	overview_mode = value
 	_needs_refresh = true
-	# Overview draws frozen idle frames a few pixels tall; a death there is not shown.
+	# Overview draws frozen idle frames a few pixels tall; nothing that happens there is shown.
 	_dying.clear()
+	_born.clear()
+	_dust_mark.clear()
+	if _effects != null:
+		_effects.clear()
 	if _shadow_node != null:
 		_shadow_node.visible = not (value and bool(_overview_config.get("disable_shadows", true)))
 
@@ -127,11 +143,12 @@ func rebuild_batches() -> void:
 		remove_child(scene_batch)
 		scene_batch.queue_free()
 		scene_batch = null
-	for child in [_shadow_node]:
+	for child in [_shadow_node, _effects]:
 		if child != null:
 			remove_child(child)
 			child.queue_free()
 	_shadow_node = null
+	_effects = null
 	for entry in _batches.values():
 		var node = entry.get("node")
 		if node != null:
@@ -151,6 +168,8 @@ func rebuild_batches() -> void:
 	_heading.clear()
 	_direction.clear()
 	_dying.clear()
+	_born.clear()
+	_dust_mark.clear()
 	_build_batches()
 	refresh()
 
@@ -174,36 +193,106 @@ func hides_carcass(source_agent_id: int) -> bool:
 	return _dying.hides_carcass(source_agent_id)
 
 
-## Deaths in view start the dying animation. Only an awake animal is drawn to begin with;
-## a death in a sleeping sector (`agent_id` -1) has no sprite to play it on.
+## What the view shows of an event, when the player could see it. Only awake animals are
+## drawn, so an event from a sleeping sector (`agent_id` -1) has nothing to play on.
 func _on_world_event(event: Dictionary) -> void:
 	if simulation_manager == null or _batches.is_empty() or overview_mode:
 		return
-	if str(event.get("type", "")) == "AgentDied" and int(event.get("agent_id", -1)) >= 0:
-		_begin_dying(event)
-
-
-func _begin_dying(event: Dictionary) -> void:
 	var agent_id := int(event.get("agent_id", -1))
+	if agent_id < 0:
+		return
+	match str(event.get("type", "")):
+		"AgentDied":
+			_on_agent_died(event, agent_id)
+		"AgentBorn":
+			_on_agent_born(event, agent_id)
+
+
+## An animal drawn in the last refresh died: it falls through its `dead` row, and a kill
+## throws up a burst with a flash where the blow fell.
+func _on_agent_died(event: Dictionary, agent_id: int) -> void:
 	var batch: Dictionary = _batches.get(str(event.get("species", "")), {})
-	var spec: Dictionary = batch.get("animations", {}).get("dead", {})
 	var agent = _find_batched_agent(batch, agent_id)
 	# Not in the last refresh's visible set: it died off screen.
-	if spec.is_empty() or agent == null:
+	if agent == null:
 		return
-	var at: Dictionary = event.get("position", {})
-	var died_at := Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
+	var died_at := _event_position(event)
+	var start := _event_start(event)
+	var cause := str(event.get("data", {}).get("cause", ""))
+	if cause == "predation" and _effects != null:
+		_effects.add_kill(died_at, start, agent_id, float(batch.get("ground_offset", 0.0)) * _age_scale_of(agent))
+	var spec: Dictionary = batch.get("animations", {}).get("dead", {})
+	if spec.is_empty():
+		return
 	var directions: int = int(batch.get("directions", 1))
 	var row := int(spec.get("row", 0)) + (int(_direction.get(agent_id, 0)) if directions > 1 else 0)
 	var facing: float = 1.0 if directions > 1 else float(_facing.get(agent_id, 1.0))
-	var frames: PackedInt32Array = DyingSpritesScript.frames_for(str(event.get("data", {}).get("cause", "")), spec)
-	var tick: float = simulation_manager.tick_duration
-	# Started from the event's own time: the tick alpha is stale while a frame is being
-	# applied, and the tick that killed the animal is the one about to be drawn.
-	var start := float(event.get("time_seconds", simulation_manager.simulation_time)) + tick
+	var frames: PackedInt32Array = DyingSpritesScript.frames_for(cause, spec)
 	if _dying.begin(agent_id, str(event.get("species", "")), _render_positions.get(agent_id, died_at), died_at,
-			row, frames, _age_scale_of(agent), facing, float(batch.get("ground_offset", 0.0)), start, tick * 2.0):
+			row, frames, _age_scale_of(agent), facing, float(batch.get("ground_offset", 0.0)), start,
+			simulation_manager.tick_duration * 2.0):
 		_needs_refresh = true
+
+
+## A young animal born in view grows in from small, over a ring and sparkles. Animals made
+## any other way - the founders, a test - just appear.
+func _on_agent_born(event: Dictionary, agent_id: int) -> void:
+	if _effects == null or str(event.get("data", {}).get("reason", "")) != "reproduction":
+		return
+	var born_at := _event_position(event)
+	if not _visible_rect.has_point(born_at) or not bool(_effects.birth.get("enabled", true)):
+		return
+	var start := _event_start(event)
+	_born[agent_id] = start
+	_effects.add_birth(born_at, start, agent_id)
+
+
+static func _event_position(event: Dictionary) -> Vector2:
+	var at: Dictionary = event.get("position", {})
+	return Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
+
+
+## When the view first draws the tick an event happened in. Read from the event rather than
+## the clock: the tick alpha is stale while a frame is being applied, and the event's tick
+## is the one about to be drawn.
+func _event_start(event: Dictionary) -> float:
+	return float(event.get("time_seconds", simulation_manager.simulation_time)) + simulation_manager.tick_duration
+
+
+## How large a newborn is drawn now, as a share of its full size; 1 once it has grown in.
+func _pop_of(agent_id: int) -> float:
+	if _born.is_empty() or not _born.has(agent_id):
+		return 1.0
+	var seconds: float = float(_effects.birth.get("pop_seconds", 0.3)) if _effects != null else 0.0
+	var elapsed: float = _now - float(_born[agent_id])
+	if elapsed >= seconds:
+		_born.erase(agent_id)
+		return 1.0
+	return EventEffectsScript.pop_scale(maxf(elapsed, 0.0), seconds, float(_effects.birth.get("pop_from", 0.35)))
+
+
+## An animal in a chase: the hunter running its prey down, or the prey running for it.
+static func _in_chase(agent) -> bool:
+	return agent.ai_state == &"panic" or agent.current_action == &"flee_to_safe_area" \
+		or agent.current_action == &"hunt_prey"
+
+
+## One puff of dust behind a running animal per `dust_spacing` of ground it covers, so a
+## faster animal raises more and one held in place raises none.
+func _kick_dust(agent, drawn_at: Vector2) -> void:
+	var id: int = agent.id
+	var covered := float(_gait_distance.get(id, 0.0))
+	var mark = _dust_mark.get(id)
+	# The first stride of a run, or the distance wrapped: start counting from here.
+	if mark == null or covered < float(mark):
+		_dust_mark[id] = covered
+		return
+	if covered - float(mark) < _effects.dust_spacing:
+		return
+	_dust_mark[id] = covered
+	var step: Vector2 = _drawn_step(agent)
+	var heading := step.normalized() if step.length_squared() > _DRAWN_STEP_EPSILON_SQ else Vector2.ZERO
+	_effects.add_dust(drawn_at - heading * agent.get_body_radius() * 0.6, heading, _now, id, int(covered))
 
 
 static func _find_batched_agent(batch: Dictionary, agent_id: int):
@@ -222,6 +311,7 @@ func refresh() -> void:
 	var world = simulation_manager.world_state
 	_terrain = world.terrain_system
 	var visible_rect: Rect2 = _get_visible_world_rect(world.bounds).grow(48.0)
+	_visible_rect = visible_rect
 
 	for species_id in _buckets.keys():
 		_buckets[species_id].clear()
@@ -300,7 +390,7 @@ func _animate_shadows(alpha: float) -> void:
 		var agent = _shadow_agents[index]
 		if agent == null or not agent.is_alive:
 			continue
-		var scale_factor: float = _shadow_scale * _age_scale_of(agent)
+		var scale_factor: float = _shadow_scale * _age_scale_of(agent) * _pop_of(agent.id)
 		# Anchored to the ground point, never to the sprite: a bobbing animal
 		# should look like it is lifting off its shadow, not dragging it.
 		var ground: Vector2 = _anchor(_curve_position(agent, alpha), 0.0)
@@ -516,6 +606,7 @@ func _build_batches() -> void:
 			"ground_offset": _ground_offset(config),
 			"stride_length": float(config.get("stride_length", 26.0)),
 			"directions": maxi(1, int(config.get("directions", 1))),
+			"species": str(species_id),
 			"agents": [],
 			"scene_transforms": [],
 			"scene_frames": [],
@@ -524,6 +615,10 @@ func _build_batches() -> void:
 		_buckets[str(species_id)] = []
 
 	_build_shadow_batch(visuals.get("shadow", {}))
+	_effects = EventEffectsScript.new()
+	_effects.name = "EventEffects"
+	_effects.configure(self, visuals.get("effects", {}), _world_scale())
+	add_child(_effects)
 
 	var carcass_config: Dictionary = visuals.get("carcass", {})
 	if not carcass_config.is_empty():
@@ -652,9 +747,10 @@ func _process(delta: float) -> void:
 		return
 	var started := Time.get_ticks_usec()
 	var view := _get_visible_world_rect(simulation_manager.world_state.bounds)
+	_now = simulation_manager.get_display_time()
 	# A dying sprite that starts fading or finishes changes the draw order: the body
 	# appears under it, or it goes.
-	if not _dying.is_empty() and _dying.advance(simulation_manager.get_display_time()):
+	if not _dying.is_empty() and _dying.advance(_now):
 		_needs_refresh = true
 	# Overview uses a frozen atlas frame and tiny sprites. Rewriting every visible
 	# transform between two simulation results only burns the main thread and
@@ -691,11 +787,16 @@ func _process(delta: float) -> void:
 		scene_batch.last_counts["multimesh_writes"] = 0
 		scene_batch.last_counts["order_rebuilt"] = false
 	simulation_manager.record_render_phase("scene_batch", float(Time.get_ticks_usec() - phase_started) / 1000.0)
+	if _effects != null:
+		phase_started = Time.get_ticks_usec()
+		_effects.advance(_now)
+		simulation_manager.record_render_phase("effects", float(Time.get_ticks_usec() - phase_started) / 1000.0)
 	var visible_animals := 0
 	for batch in _batches.values():
 		visible_animals += batch.get("agents", []).size()
 	var counts := {"visible_animals": visible_animals,
 		"visible_shadows": 0 if _shadow_node == null or not _shadow_node.visible else _shadow_agents.size(),
+		"visible_effects": 0 if _effects == null else _effects.queue.items().size(),
 		"overview": overview_mode}
 	if scene_batch != null:
 		counts.merge(scene_batch.last_counts, true)
@@ -743,6 +844,8 @@ func _advance_histories(world) -> void:
 			_facing.erase(id)
 			_heading.erase(id)
 			_direction.erase(id)
+			_dust_mark.erase(id)
+			_born.erase(id)
 
 
 ## Catmull-Rom through the four samples, evaluated on the segment between the
@@ -869,6 +972,7 @@ func _animate_species(batch: Dictionary, alpha: float, delta: float) -> void:
 	var stride: float = maxf(1.0, float(batch.get("stride_length", 26.0)))
 	var directions: int = int(batch.get("directions", 1))
 	var ground_offset: float = float(batch["ground_offset"])
+	var dusty: bool = _effects != null and not overview_mode and _effects.dust_species.has(str(batch.get("species", "")))
 	var scene_transforms: Array = batch["scene_transforms"]
 	var scene_frames: Array = batch["scene_frames"]
 	var scene_colors: Array = batch["scene_colors"]
@@ -888,8 +992,14 @@ func _animate_species(batch: Dictionary, alpha: float, delta: float) -> void:
 		var frame: Vector2 = Vector2(0.0, float(animations.get("idle", {}).get("row", 0))) \
 			if simplified else _advance_frame(agent, animations, stride, delta, animation_id)
 		frame.y += float(direction_row)
-		var scale_factor: float = _age_scale_of(agent)
-		var point: Vector2 = _anchor(_curve_position(agent, alpha), ground_offset * scale_factor)
+		var scale_factor: float = _age_scale_of(agent) * _pop_of(agent.id)
+		var drawn_at: Vector2 = _curve_position(agent, alpha)
+		var point: Vector2 = _anchor(drawn_at, ground_offset * scale_factor)
+		if dusty:
+			if animation_id == "run" and _in_chase(agent):
+				_kick_dust(agent, drawn_at)
+			elif _dust_mark.has(agent.id):
+				_dust_mark.erase(agent.id)
 		# A standing animal that is perfectly still reads as frozen, so idle and
 		# eat breathe. Walking already has the leg cycle and needs no help.
 		if not simplified and _idle_bob_px > 0.0 and (animation_id == "idle" or animation_id == "eat"):
