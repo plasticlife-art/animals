@@ -172,7 +172,9 @@ static func restore(manager, data: Dictionary) -> bool:
 	if manager == null or data.is_empty():
 		return false
 	var selection: Dictionary = data.get("selection", {})
-	manager.initialize(data.get("config_bundle", ConfigLoader.load_config_bundle(selection)), int(data.get("seed", 0)))
+	var shipped: Dictionary = ConfigLoader.load_config_bundle(selection)
+	manager.initialize(ConfigLoader.with_shipped_presentation(data.get("config_bundle", shipped), shipped),
+		int(data.get("seed", 0)))
 	manager.world_state.import_state(data.get("world", {}))
 	manager.current_tick = int(data.get("tick", 0))
 	manager.simulation_time = float(data.get("simulation_time", 0.0))

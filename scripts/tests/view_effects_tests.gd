@@ -5,6 +5,7 @@ extends RefCounted
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const AgentRendererScript := preload("res://scripts/ui/agent_renderer.gd")
 const DyingSpritesScript := preload("res://scripts/ui/dying_sprites.gd")
+const SaveSystemScript := preload("res://scripts/core/save_system.gd")
 
 
 func run(a) -> void:
@@ -16,6 +17,7 @@ func run(a) -> void:
 	_test_death_frames_match_the_art(a)
 	_test_no_death_drawn_unseen_asleep_or_in_overview(a)
 	_test_fall_starts_on_the_frame_the_death_is_drawn(a)
+	_test_old_save_is_drawn_as_today(a)
 
 
 ## Deaths, births and herd splits reach `world_event`; grazing and the extra death notices
@@ -299,3 +301,44 @@ func _test_fall_starts_on_the_frame_the_death_is_drawn(a) -> void:
 	_free_renderer(renderer)
 	Helpers.destroy_manager(manager)
 
+
+## A save brings its world back as it was and draws it as the game draws today. A bundle
+## from before the grass ramp, the water, the effects and the death frame lists, with the
+## minimap's water off, comes back with the shipped look; what places the scenery and
+## runs the world stays as saved.
+func _test_old_save_is_drawn_as_today(a) -> void:
+	var manager = Helpers.create_manager(617)
+	Helpers.spawn_herbivore(manager.world_state, Vector2(100.0, 100.0), 0)
+	var old: Dictionary = manager.config_bundle.duplicate(true)
+	old.visuals.erase("water")
+	old.visuals.erase("effects")
+	old.visuals["ground"] = {"enabled": true, "update_interval_ticks": 18, "bare_color": [0.54, 0.43, 0.27, 0.6],
+		"bare_range": [0.4, 0.08], "lush_color": [0.16, 0.42, 0.14, 0.3], "lush_range": [0.62, 0.95]}
+	old.visuals.species.herbivore.animations.dead.erase("kill_frames")
+	old.visuals.species.herbivore.animations.dead.erase("fall_frames")
+	old.visuals.props["saved_only"] = true
+	old.debug.overlays["show_minimap_water"] = false
+	old.debug["ui_refresh_interval_ticks"] = 7
+	var data := {"version": SaveSystemScript.SAVE_VERSION, "selection": {}, "config_bundle": old, "seed": 617,
+		"tick": manager.current_tick, "simulation_time": manager.simulation_time, "accumulator": 0.0,
+		"rng_seed": manager.rng.seed, "rng_state": manager.rng.state,
+		"world": manager.export_simulation_state(), "stats": manager.stats_system.counters.duplicate()}
+	var restored = Helpers.create_manager(618)
+	a.is_true(SaveSystemScript.restore(restored, data), "the old save loads")
+	var shipped: Dictionary = Helpers.ConfigLoaderScript.load_config_bundle({})
+	var visuals: Dictionary = restored.config_bundle.visuals
+	a.equal(visuals.get("water"), shipped.visuals.water, "with water on the ground")
+	a.equal(visuals.get("ground"), shipped.visuals.ground, "with the grass ramp, not the old two ranges")
+	a.equal(visuals.get("effects"), shipped.visuals.effects, "with the effects")
+	a.equal(visuals.species.herbivore.animations.dead, shipped.visuals.species.herbivore.animations.dead,
+		"with the death frames listed")
+	a.is_true(bool(restored.debug_flags.get("show_minimap_water", false)), "and with water on the minimap")
+	a.is_true(bool(visuals.props.get("saved_only", false)), "the scenery is placed from the saved props")
+	a.equal(restored.ui_refresh_interval_ticks, 7, "the rest of the debug block is the save's")
+	a.equal(restored.config_bundle.world, old.world, "and so is the world's own config")
+	a.equal(restored.world_state.living_agents.size(), manager.world_state.living_agents.size(), "with its animals")
+	var bare := {"world": {"seed": 1}}
+	a.equal(Helpers.ConfigLoaderScript.with_shipped_presentation(bare, {}), bare,
+		"nothing shipped to take: the save's own bundle")
+	Helpers.destroy_manager(restored)
+	Helpers.destroy_manager(manager)

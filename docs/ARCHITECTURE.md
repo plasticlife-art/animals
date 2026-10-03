@@ -400,7 +400,7 @@ Utility actions inside `alive`:
   dry straw, the tile as drawn, the refuges fear leaves ungrazed), and paths where
   `TrailField` wear passes `ground.trail_range`. The ramp used to tint only below 0.4 and
   above 0.62, so ground grazed to half looked untouched. Missing keys take the defaults in
-  `GroundTraces.GROUND_DEFAULTS`, since a save carries the config it was made with
+  `GroundTraces.GROUND_DEFAULTS`
 - A quad per walkable terrain cell placed through `WorldProjection` at the cell's elevation,
   UV carrying the world position. `shaders/ground_traces.gdshader` reads grass, grass caps
   (`ResourceSystem.export_caps()`) and trails from float textures built straight from the
@@ -672,7 +672,11 @@ millisecond setting squeezed to zero.
   accumulated state - `SaveSystem` already round-trips `simulation_time`, so the clock costs
   no save-format change by itself. Save version 2 stores agent perception memory and the
   resolved configuration bundle; version 1 is migrated on read. Anything that starts accumulating here
-  has to move the version with it.
+  has to move the version with it. A save plays on with its own bundle but is drawn with
+  today's: `ConfigLoader.with_shipped_presentation()` takes `visuals` (apart from `props`,
+  which places the scenery) and the debug overlay switches from the shipped files, so an
+  old save gets the grass ramp, the water, the effects and animation rows that match the
+  atlases
   Shipped shape: a day is 120 s, a season is one day, a year is 480 s (8 minutes at 1x).
   Each season declares `regrowth_multiplier`, `metabolism_multiplier` and
   `perception_multiplier`; `day` declares the night versions of the same three plus the light
