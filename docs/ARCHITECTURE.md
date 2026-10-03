@@ -594,9 +594,9 @@ scavengers are 0.30 of predators' kills against 0.56 (0.21 at full fidelity), 0.
 predator-minute against 0.055 (0.023), and herbivores 0.044 against 0.035 (0.088). No
 species was lost. Predators spent less of the late half on their cap, 0.79 against 0.90,
 and starved 0.22 times an hour a head against 0.11 (0.37 at full fidelity). On two seeds
-they fell to 10 and 29 and came back; on the one probed, their first cohort was dying of
-age and too few pairs reached breeding energy to replace it (see Known Gaps). Full
-fidelity stays identical.
+they fell to 10 and 29 and came back; on the one probed, an age cohort was dying and too
+few pairs reached breeding energy to replace it (see Known Gaps). Full fidelity stays
+identical.
 
 `_split_oversized_herds()` runs for live and sleeping animals together. Offspring join
 their parents' herd and nothing ever left one, so herds only grew, and one too big for its
@@ -834,14 +834,24 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
 - Sleeping and live predators still eat differently. Both eat about half of a herbivore they
   kill and leave the rest (52% and 53% on three seeds), but a sleeping pack eats about what
   its hunger needs, 10.5 meat a minute a head against 15.4, since a chase costs it no energy
-  and resting restores it: it kills 0.044 herbivores a minute a head against 0.088. A pack
-  also shares each kill among all its members, so they reach breeding energy only when kills
-  come close together, and while an age cohort dies births can fall behind. Two ways to
-  change that did worse over 96-minute LOD runs: feeding at most `max_feeders` members, each
-  to the breeding reserve, halved scavenger births on one seed, and scavengers died out or
-  nearly on two seeds of three while herbivores fell to 8 on the third; letting a pack
-  eating its kill recover energy as one at a carcass does lost the predators on one seed of
-  eight
+  and resting restores it: it kills 0.044 herbivores a minute a head against 0.088
+- Predators in LOD still fall when an age cohort dies. The births that refill the
+  `population_regulation` cap make a cohort that ages together, and old age kills within
+  about four minutes of age (`aging.old_age_start` to `max_age`), so the cohort dies as one
+  and its replacements are born as one in turn, to die together a lifetime later. In
+  96-minute LOD runs predators fell to 10 on one seed of eight and to 29 on another, and
+  came back. How deep a wave goes depends on how fast pairs replace it. A sleeping pack
+  shares each kill among all its members, so they reach breeding energy only when kills
+  come close together, and the males ran lowest: on the seed probed most males were short of
+  it, and the ready females had no ready male within reach. Three ways to speed replacement
+  did worse: feeding at most `max_feeders` members, each to the breeding reserve, halved
+  scavenger births on one seed, and scavengers died out or nearly on two seeds of three
+  while herbivores fell to 8 on the third; letting a pack eating its kill recover energy as
+  one at a carcass does lost the predators on one seed of eight; a father's share of the
+  birth cost at 0 for predators (`father_cost_share`, not kept) removed the two deep falls
+  but made moderate ones on four other seeds, with predators starving 25 times a run
+  against 15. A soft birth cap and a wider old age were tried earlier and rejected as well.
+  A fix probably has to spread deaths across ages rather than move births
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics
