@@ -69,16 +69,18 @@ static func action_label(agent) -> String:
 static func vitals(agent) -> Array:
 	if agent == null:
 		return []
-	var thresholds: Dictionary = agent.balance.get("state_thresholds", {})
-	var need_max: float = maxf(1.0, agent.need_max)
-	var max_energy: float = maxf(1.0, float(agent.metabolism.get("max_energy", 100.0)))
+	return need_bars(agent.energy, agent.hunger, agent.thirst, maxf(1.0, agent.need_max),
+		maxf(1.0, float(agent.metabolism.get("max_energy", 100.0))), agent.balance.get("state_thresholds", {}))
+
+
+## The same three bars from raw values, for whatever has them: one animal above, a herd's
+## means on the herd card. `labels` names energy, food and water, in that order.
+static func need_bars(energy: float, hunger: float, thirst: float, need_max: float, max_energy: float,
+		thresholds: Dictionary, labels: Array = ["Energy", "Food", "Water"]) -> Array:
 	return [
-		_entry("Energy", agent.energy, max_energy,
-			agent.energy <= float(thresholds.get("rest_energy", 26.0))),
-		_entry("Food", need_max - agent.hunger, need_max,
-			agent.hunger >= float(thresholds.get("critical_hunger", 60.0))),
-		_entry("Water", need_max - agent.thirst, need_max,
-			agent.thirst >= float(thresholds.get("critical_thirst", 50.0))),
+		bar_entry(str(labels[0]), energy, max_energy, energy <= float(thresholds.get("rest_energy", 26.0))),
+		bar_entry(str(labels[1]), need_max - hunger, need_max, hunger >= float(thresholds.get("critical_hunger", 60.0))),
+		bar_entry(str(labels[2]), need_max - thirst, need_max, thirst >= float(thresholds.get("critical_thirst", 50.0))),
 	]
 
 
@@ -105,7 +107,7 @@ static func draw_bars(canvas: CanvasItem, origin: Vector2, width: float,
 	return y - origin.y - spacing
 
 
-static func _entry(label: String, value: float, maximum: float, is_low: bool) -> Dictionary:
+static func bar_entry(label: String, value: float, maximum: float, is_low: bool) -> Dictionary:
 	return {
 		"label": label,
 		"value": clampf(value, 0.0, maximum),

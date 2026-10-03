@@ -119,6 +119,7 @@ func _stage_scene() -> void:
 	main.ecology_strip.visible = false
 	main.selection_tag.visible = false
 	main.selection_card.visible = false
+	main.herd_card.set_allowed(false)
 	main.agent_renderer.rebuild_batches()
 	main.agent_renderer.request_refresh()
 	main.world_camera.global_position = WorldProjection.to_screen(anchor,

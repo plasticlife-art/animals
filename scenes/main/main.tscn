@@ -18,6 +18,7 @@
 [ext_resource type="Script" path="res://scripts/ui/help_screen.gd" id="16"]
 [ext_resource type="Script" path="res://scripts/ui/ground_traces.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/ui/ecology_strip.gd" id="18"]
+[ext_resource type="Script" path="res://scripts/ui/herd_card.gd" id="19"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -280,7 +281,7 @@ offset_bottom = 290.0
 grow_horizontal = 0
 script = ExtResource("6")
 
-[node name="SelectionCard" type="PanelContainer" parent="CanvasLayer/HUD" unique_id=900000002]
+[node name="CardStack" type="VBoxContainer" parent="CanvasLayer/HUD" unique_id=900000020]
 unique_name_in_owner = true
 layout_mode = 0
 anchor_top = 1.0
@@ -290,36 +291,48 @@ offset_top = -212.0
 offset_right = 344.0
 offset_bottom = -12.0
 grow_vertical = 0
+mouse_filter = 2
+theme_override_constants/separation = 8
+alignment = 2
+
+[node name="HerdCard" type="PanelContainer" parent="CanvasLayer/HUD/CardStack" unique_id=900000021]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("19")
+
+[node name="SelectionCard" type="PanelContainer" parent="CanvasLayer/HUD/CardStack" unique_id=900000002]
+unique_name_in_owner = true
+layout_mode = 2
 script = ExtResource("14")
 
-[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/HUD/SelectionCard" unique_id=900000003]
+[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/HUD/CardStack/SelectionCard" unique_id=900000003]
 layout_mode = 2
 theme_override_constants/margin_left = 10
 theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 10
 theme_override_constants/margin_bottom = 10
 
-[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD/SelectionCard/MarginContainer" unique_id=900000004]
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer" unique_id=900000004]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="TitleLabel" type="Label" parent="CanvasLayer/HUD/SelectionCard/MarginContainer/VBox" unique_id=900000005]
+[node name="TitleLabel" type="Label" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000005]
 unique_name_in_owner = true
 layout_mode = 2
 text = "No selection"
 
-[node name="BarsView" type="Control" parent="CanvasLayer/HUD/SelectionCard/MarginContainer/VBox" unique_id=900000006]
+[node name="BarsView" type="Control" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000006]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(300, 0)
 layout_mode = 2
 mouse_filter = 2
 
-[node name="ActionLabel" type="Label" parent="CanvasLayer/HUD/SelectionCard/MarginContainer/VBox" unique_id=900000007]
+[node name="ActionLabel" type="Label" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000007]
 unique_name_in_owner = true
 layout_mode = 2
 text = "-"
 
-[node name="FollowButton" type="Button" parent="CanvasLayer/HUD/SelectionCard/MarginContainer/VBox" unique_id=900000008]
+[node name="FollowButton" type="Button" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000008]
 unique_name_in_owner = true
 layout_mode = 2
 toggle_mode = true

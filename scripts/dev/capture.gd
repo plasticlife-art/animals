@@ -2,7 +2,10 @@ extends SceneTree
 
 # Screenshot harness for visual verification. Not part of the game.
 #
-#   Godot --path . --script res://scripts/dev/capture.gd -- <out.png> [zoom]
+#   Godot --path . --script res://scripts/dev/capture.gd -- <out.png> [zoom] [preset]
+# Presets: `selected` / `selected_hud` select an animal (with the Tab panels for the
+# second), `herd` selects a grazer in a herd so its herd card shows, `water` turns on the
+# minimap's water, `menu` shoots the setup screen.
 # Loads the real main scene, parks the camera, waits for
 # LOD sectors around it to reify, then writes a PNG.
 #
@@ -19,6 +22,7 @@ var _zoom := 0.55
 var _focus := Vector2.ZERO
 var _preset := ""
 var _hide_overlays := false
+var _parked_msec := 0
 
 const PARK_FRAME := 90
 const SETTLE_FRAMES := 300
@@ -49,7 +53,8 @@ func _process(_delta: float) -> bool:
 			return false
 		if menu != null and menu.visible:
 			var selection: Dictionary = ConfigLoader.default_selection()
-			if _preset != "":
+			# Anything that is not one of the shots below names an art style.
+			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd"]:
 				selection["style"] = _preset
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
@@ -75,7 +80,11 @@ func _process(_delta: float) -> bool:
 		_aim(_focus)
 	if _frames == PARK_FRAME + SETTLE_FRAMES:
 		_park_on_agent()
-	if _frames < PARK_FRAME + SETTLE_FRAMES + 8:
+		# macOS stops presenting a window that sits behind others, and the picture saved
+		# is then the last frame it drew, from before the camera moved.
+		DisplayServer.window_move_to_foreground()
+		_parked_msec = Time.get_ticks_msec()
+	if _frames < PARK_FRAME + SETTLE_FRAMES + 8 or Time.get_ticks_msec() - _parked_msec < 2500:
 		return false
 	root.get_texture().get_image().save_png(_out)
 	print("saved %s" % _out)
@@ -101,8 +110,14 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
+	if _preset == "herd":
+		# A grazer in a herd, so the herd card is up above the animal's own.
+		for agent in agents:
+			if agent.species_type == "herbivore" and int(agent.group_id) >= 0:
+				target = agent
+				break
 	_aim(target.position)
-	if _preset == "selected" or _preset == "selected_hud":
+	if _preset == "selected" or _preset == "selected_hud" or _preset == "herd":
 		# Centring is not selecting, and the tag and card only exist for a selection.
 		var radius := float(_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
 		_manager.select_agent_at_position(target.position, radius)

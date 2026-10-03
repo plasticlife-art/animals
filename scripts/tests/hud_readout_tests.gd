@@ -7,6 +7,9 @@ const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const EcologyReadoutScript := preload("res://scripts/ui/ecology_readout.gd")
 const EcologyStripScript := preload("res://scripts/ui/ecology_strip.gd")
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
+const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
+const HerdLossLogScript := preload("res://scripts/ui/herd_loss_log.gd")
+const HerdCardScript := preload("res://scripts/ui/herd_card.gd")
 
 
 func run(a) -> void:
@@ -16,6 +19,12 @@ func run(a) -> void:
 	_test_grass_is_read_against_what_each_biome_holds(a)
 	_test_strip_reads_the_running_world(a)
 	_test_words(a)
+	_test_herd_counts_near_and_far(a)
+	_test_herd_through_the_worker(a)
+	_test_hunters_after_the_herd(a)
+	_test_herd_texts(a)
+	_test_loss_log_keeps_each_herds_last(a)
+	_test_herd_card_follows_the_selection(a)
 
 
 static func _sample(tick: int, seconds: float, extra: Dictionary = {}) -> Dictionary:
@@ -147,3 +156,145 @@ func _test_words(a) -> void:
 	a.equal(HudTextScript.ago_text(40.2), "40 с назад", "seconds")
 	a.equal(HudTextScript.ago_text(185.0), "3 мин назад", "minutes")
 	a.equal(HudTextScript.ago_text(7300.0), "2 ч назад", "hours")
+
+
+## A herd counts its awake members from the living agents and its sleeping ones from the
+## aggregates of sleeping sectors; another species with the same group id is not in it.
+## Its needs are means over all of them.
+func _test_herd_counts_near_and_far(a) -> void:
+	var manager = Helpers.create_manager(641)
+	var world = manager.world_state
+	var herd: Array = Helpers.spawn_herd(world, Vector2(120.0, 120.0), 4, 0)
+	var calf = Helpers.spawn_herbivore(world, Vector2(160.0, 160.0), 0)
+	calf.age = 0.0
+	Helpers.spawn_species(world, "scavenger", Vector2(80.0, 80.0), 0)
+	Helpers.spawn_herbivore(world, Vector2(200.0, 200.0), 1)
+	var awake_hunger := 0.0
+	for member in herd:
+		member.age = float(member.reproduction.get("maturity_age", 0.0)) + 1.0
+	for member in herd + [calf]:
+		member.hunger = 20.0
+		awake_hunger += member.hunger
+	world._sector_states[Vector2i(40, 40)] = {"dormant": true, "dormant_aggregates": [
+		{"species_type": "herbivore", "group_id": 0, "count": 5, "mature_males": 1, "mature_females": 2,
+			"avg_hunger": 50.0, "avg_thirst": 10.0, "avg_energy": 60.0},
+		{"species_type": "scavenger", "group_id": 0, "count": 9},
+	]}
+	var summary: Dictionary = HerdReadoutScript.summarize(world, "herbivore", 0)
+	a.equal([summary.awake, summary.sleeping, summary.total], [5, 5, 10], "five near, five far")
+	a.equal(summary.young, 3, "the calf near and two of the five far are young")
+	a.near(float(summary.hunger), (awake_hunger + 50.0 * 5.0) / 10.0, 0.001, "hunger is the mean over all ten")
+	a.equal(HerdReadoutScript.summarize(world, "scavenger", 0).total, 10, "the flock with the same id is its own")
+	a.equal(HerdReadoutScript.summarize(world, "herbivore", 7).total, 0, "a herd that is not there is empty")
+	world._sector_states.erase(Vector2i(40, 40))
+	Helpers.destroy_manager(manager)
+
+
+## The view's copy of the world, after the worker took it over, gives the same herd.
+func _test_herd_through_the_worker(a) -> void:
+	var manager = Helpers.create_manager(642)
+	Helpers.spawn_herd(manager.world_state, Vector2(120.0, 120.0), 6, 0)
+	var before: int = HerdReadoutScript.summarize(manager.world_state, "herbivore", 0).total
+	manager.enable_interactive_worker()
+	var frame: Dictionary = manager._worker.step(manager.tick_duration, manager.current_tick, manager.simulation_time,
+		manager._build_lod_context(), -1, false)
+	manager._apply_worker_frame(frame)
+	a.equal(HerdReadoutScript.summarize(manager.world_state, "herbivore", 0).total, before, "six through the worker too")
+	Helpers.destroy_manager(manager)
+
+
+## A hunter is an animal that eats the species, in a hunting state, after one of the herd.
+func _test_hunters_after_the_herd(a) -> void:
+	var manager = Helpers.create_manager(643)
+	var world = manager.world_state
+	var herd: Array = Helpers.spawn_herd(world, Vector2(120.0, 120.0), 3, 0)
+	var stranger = Helpers.spawn_herbivore(world, Vector2(220.0, 220.0), 1)
+	var chasing = Helpers.spawn_predator(world, Vector2(40.0, 40.0))
+	chasing.state = "chase"
+	chasing.target_agent_id = herd[0].id
+	var elsewhere = Helpers.spawn_predator(world, Vector2(40.0, 200.0))
+	elsewhere.state = "chase"
+	elsewhere.target_agent_id = stranger.id
+	var resting = Helpers.spawn_predator(world, Vector2(200.0, 40.0))
+	resting.state = "rest"
+	resting.target_agent_id = herd[1].id
+	a.equal(HerdReadoutScript.summarize(world, "herbivore", 0).hunters, 1, "one is after the herd")
+	a.is_true(HerdReadoutScript.has_herd(world, herd[0]), "a grazer has a herd")
+	a.is_true(not HerdReadoutScript.has_herd(world, chasing), "a predator keeps to a pair, not a herd")
+	stranger.group_id = -1
+	a.is_true(not HerdReadoutScript.has_herd(world, stranger), "and a grazer out of any herd has none")
+	Helpers.destroy_manager(manager)
+
+
+func _test_herd_texts(a) -> void:
+	a.equal(HerdReadoutScript.title("herbivore", 4), "Травоядные · Стадо №5", "title")
+	a.equal(HerdReadoutScript.title("scavenger", 0), "Падальщики · Стая №1", "a flock's title")
+	a.equal(HerdReadoutScript.counts_text({"total": 34, "sleeping": 12, "young": 6}), "Голов: 34 (вдали: 12) · Молодых: 6",
+		"counts with some far")
+	a.equal(HerdReadoutScript.counts_text({"total": 8, "sleeping": 0, "young": 0}), "Голов: 8 · Молодых: 0",
+		"counts with none far")
+	a.equal(HerdReadoutScript.hunters_text(0), "Охоты нет", "no hunt")
+	a.equal(HerdReadoutScript.hunters_text(2), "Охотятся на них: 2", "two hunters")
+	a.equal(HerdReadoutScript.loss_text({}, 100.0), "Потерь пока нет", "no loss yet")
+	a.equal(HerdReadoutScript.loss_text({"time": 60.0, "cause": "predation"}, 100.0), "Последняя потеря: хищник, 40 с назад",
+		"a loss")
+	a.equal(HerdReadoutScript.follow_text("herbivore"), "Следить за стадом", "follow a herd")
+	a.equal(HerdReadoutScript.follow_text("scavenger"), "Следить за стаей", "follow a flock")
+
+
+## Each herd's last death and its cause, awake or asleep; a split forgets the id it hands
+## out, since ids are reused; past the cap the herd that lost longest ago goes.
+func _test_loss_log_keeps_each_herds_last(a) -> void:
+	var log = HerdLossLogScript.new()
+	log.hear({"type": "AgentDied", "species": "herbivore", "time_seconds": 10.0, "data": {"cause": "starvation", "group_id": 2}})
+	log.hear({"type": "AgentDied", "species": "herbivore", "time_seconds": 12.0, "data": {"cause": "predation", "group_id": 2, "dormant": true}})
+	log.hear({"type": "AgentDied", "species": "predator", "time_seconds": 13.0, "data": {"cause": "old_age", "group_id": -1}})
+	a.equal(log.last_loss("herbivore", 2), {"time": 12.0, "cause": "predation"}, "the latest, asleep or not")
+	a.is_true(log.last_loss("scavenger", 2).is_empty(), "another species' herd 2 lost nothing")
+	a.equal(log.size(), 1, "a death outside any herd is not kept")
+	log.hear({"type": "HerdSplit", "species": "herbivore", "time_seconds": 20.0, "data": {"new_group_id": 2, "size": 4}})
+	a.is_true(log.last_loss("herbivore", 2).is_empty(), "a split forgets the id it hands out")
+	for index in range(HerdLossLogScript.CAPACITY + 10):
+		log.hear({"type": "AgentDied", "species": "herbivore", "time_seconds": float(100 + index),
+			"data": {"cause": "thirst", "group_id": 1000 + index}})
+	a.equal(log.size(), HerdLossLogScript.CAPACITY, "kept within its cap")
+	a.is_true(log.last_loss("herbivore", 1000).is_empty() and not log.last_loss("herbivore", 1265).is_empty(),
+		"the oldest went first")
+
+
+## The card shows the selected animal's herd, goes for a predator, while the start menu is
+## up and when the animal dies, and hears what the herd lost.
+func _test_herd_card_follows_the_selection(a) -> void:
+	var manager = Helpers.create_manager(644)
+	var world = manager.world_state
+	var herd: Array = Helpers.spawn_herd(world, Vector2(120.0, 120.0), 4, 0)
+	var fox = Helpers.spawn_predator(world, Vector2(40.0, 40.0))
+	var card = HerdCardScript.new()
+	card.bind_manager(manager)
+	a.is_true(not card.visible, "nothing selected: no card")
+	manager.selected_agent_id = herd[0].id
+	card.refresh()
+	a.is_true(card.visible, "a grazer selected: its herd's card")
+	a.equal(int(card.summary.get("total", -1)), 4, "with its four")
+	world.kill_agent(herd[1], "predation")
+	card.refresh()
+	a.equal(card.losses.last_loss("herbivore", 0).get("cause", ""), "predation", "the kill is heard")
+	a.equal(card._loss.text, "Последняя потеря: хищник, только что", "and told")
+	card.set_follow_state("flock")
+	a.is_true(card._follow.button_pressed, "pressed while the camera follows the herd")
+	card.set_follow_state("agent")
+	a.is_true(not card._follow.button_pressed, "not while it follows the animal alone")
+	card.set_allowed(false)
+	a.is_true(not card.visible, "hidden under the start menu")
+	card.set_allowed(true)
+	manager.selected_agent_id = fox.id
+	card.refresh()
+	a.is_true(not card.visible, "a predator has no herd card")
+	manager.selected_agent_id = herd[0].id
+	world.kill_agent(herd[0], "old_age")
+	card.refresh()
+	a.is_true(not card.visible, "the selected animal died: the card goes")
+	card.bind_manager(manager)
+	a.equal(card.losses.size(), 0, "a new world starts with no losses")
+	card.free()
+	Helpers.destroy_manager(manager)

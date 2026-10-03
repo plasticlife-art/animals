@@ -468,6 +468,31 @@ Utility actions inside `alive`:
 - Binds simulation, camera, overlays, charts, minimap, and HUD
 - Keeps the LOD focus rect synced with the camera view
 - Handles pause menu and restart flow
+- Rebinds the ecology strip and the herd card on every world it adopts, from the setup
+  screen or a save: the strip's species come from the bundle, and the card's losses belong
+  to the world they were heard in
+- The herd card and the selection card stand in one bottom-left `CardStack`, which steps
+  right of the Tab panel as a whole
+
+### `HerdCard`
+
+- The selected animal's herd, above its own card, in Russian: the herd's name and number
+  («Травоядные · Стадо №5»), how many there are with how many sleep far off and how many
+  are young, the means of their energy, food and water as the selection card's bars
+  (`AgentReadout.need_bars()`, against the selected animal's own thresholds), how many
+  hunters are after them now, the last loss with its cause and how long ago, and a toggle
+  that follows the herd (`focus_mode` "flock")
+- Shown while a herding animal is selected: a species whose `role.social` is `herd` (grazers
+  and scavengers), never a predator, which keeps to a pair. It goes when the selection dies
+  and while the start menu is up
+- `HerdReadout` works it out apart from the drawing: awake members from the living agents,
+  sleeping ones from the aggregates of sleeping sectors (young = count less the mature),
+  hunters as awake animals of a species that eats this one, in `seek_prey`, `chase`,
+  `search_last_seen` or `attack`, whose target is a member. `HerdLossLog` keeps each herd's
+  last death from `world_event` - death events carry `group_id`, asleep or awake - and
+  forgets an id a split hands out, since ids are reused
+- The selection card's Follow is pressed only while the camera follows the animal itself;
+  pressed during a herd follow, it switches to the animal
 
 ### `GameCamera`
 
@@ -878,6 +903,9 @@ Current suites cover:
   cap, scatter), a kill's burst, a birth's ring and grow-in, dust once per stride and never
   from a bird, a loaded save drawn with the shipped look, and a world run with the whole view
   attached ending exactly as one run without it
+- the always-on readouts: the strip's minute window, trends, levels and grass against each
+  biome's capacity, through the worker too; the herd card's counts near and far, young,
+  hunters, texts, loss log and when it shows
 
 ## Measuring Balance
 

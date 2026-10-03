@@ -57,16 +57,18 @@ func bind_manager(manager: SimulationManager) -> void:
 ## Reflects the manager's focus mode, whatever changed it. A pan clears the focus
 ## without going through the button, and this is what makes that visible instead of
 ## leaving the camera silently detached.
+## Pressed only while the camera follows this animal: following its herd is the herd
+## card's toggle, and pressing this one then switches to the animal.
 func set_follow_state(mode: String) -> void:
 	if follow_button == null:
 		return
-	var following := mode != "off"
+	var following := mode == "agent"
 	follow_button.text = "Following" if following else "Follow"
 	follow_button.button_pressed = following
 
 
 func _on_follow_button_pressed() -> void:
-	follow_toggled.emit(simulation_manager == null or simulation_manager.focus_mode == "off")
+	follow_toggled.emit(simulation_manager == null or simulation_manager.focus_mode != "agent")
 
 
 func _on_selection_changed(_agent_id: int) -> void:

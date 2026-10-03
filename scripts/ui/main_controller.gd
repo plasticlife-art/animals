@@ -11,7 +11,9 @@ extends Node2D
 @onready var debug_panel = $CanvasLayer/HUD/DebugPanel
 @onready var charts_panel = $CanvasLayer/HUD/ChartsPanel
 @onready var selection_tag = $CanvasLayer/HUD/SelectionTag
-@onready var selection_card = $CanvasLayer/HUD/SelectionCard
+@onready var card_stack = $CanvasLayer/HUD/CardStack
+@onready var herd_card = $CanvasLayer/HUD/CardStack/HerdCard
+@onready var selection_card = $CanvasLayer/HUD/CardStack/SelectionCard
 @onready var minimap = $CanvasLayer/MiniMap
 @onready var climate_indicator = $CanvasLayer/ClimateIndicator
 @onready var ecology_strip = $CanvasLayer/EcologyStrip
@@ -116,8 +118,10 @@ func _adopt_running_simulation() -> void:
 	else:
 		_bind_view()
 		_bound = true
-	# Every time, not only on the first bind: the species it lists come from the bundle.
+	# Every time, not only on the first bind: the species the strip lists come from the
+	# bundle, and the herd card's losses belong to the world they were heard in.
 	ecology_strip.bind_manager(simulation_manager)
+	herd_card.bind_manager(simulation_manager)
 	_apply_debug_configuration()
 	debug_panel.set_paused_state(false)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
@@ -147,6 +151,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	ecology_strip.visible = false
 	selection_tag.visible = false
 	selection_card.visible = false
+	herd_card.set_allowed(false)
 	_set_pause_menu_visible(false)
 	set_hud_visible(false)
 	world_view.set_input_enabled(false)
@@ -167,6 +172,7 @@ func _hide_start_menu() -> void:
 	# The card is left alone: it shows itself on the next tick, and only if there is
 	# actually a live selection to show.
 	selection_card.refresh()
+	herd_card.set_allowed(true)
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
 	minimap.set_input_enabled(true)
@@ -197,6 +203,7 @@ func _bind_view() -> void:
 	debug_panel.export_requested.connect(_on_export_requested)
 	debug_panel.focus_mode_selected.connect(_on_focus_mode_selected)
 	selection_card.follow_toggled.connect(_on_follow_toggled)
+	herd_card.follow_toggled.connect(_on_herd_follow_toggled)
 	debug_panel.overlay_flag_changed.connect(_on_overlay_flag_changed)
 	debug_panel.lod_enabled_toggled.connect(_on_lod_enabled_toggled)
 	resume_button.pressed.connect(resume_game)
@@ -256,6 +263,10 @@ func _on_follow_toggled(enabled: bool) -> void:
 	_apply_focus_mode("agent" if enabled else "off")
 
 
+func _on_herd_follow_toggled(enabled: bool) -> void:
+	_apply_focus_mode("flock" if enabled else "off")
+
+
 ## Both follow controls route through here so they cannot disagree, and both are
 ## re-read from the manager rather than from the request: `set_focus_mode()` refuses
 ## anything but "off" when nothing is selected, and a control left showing the mode
@@ -264,6 +275,7 @@ func _apply_focus_mode(mode: String) -> void:
 	simulation_manager.set_focus_mode(mode)
 	debug_panel.set_focus_mode_state(simulation_manager.focus_mode)
 	selection_card.set_follow_state(simulation_manager.focus_mode)
+	herd_card.set_follow_state(simulation_manager.focus_mode)
 
 
 func _on_overlay_flag_changed(flag_name: String, enabled: bool) -> void:
@@ -416,8 +428,9 @@ func set_hud_visible(value: bool) -> void:
 	hud_visible = value
 	debug_panel.visible = value
 	charts_panel.visible = value
-	selection_card.offset_left = _selection_card_left(value)
-	selection_card.offset_right = selection_card.offset_left + SELECTION_CARD_WIDTH
+	# The two cards stand in one stack, which steps aside as a whole.
+	card_stack.offset_left = _selection_card_left(value)
+	card_stack.offset_right = card_stack.offset_left + SELECTION_CARD_WIDTH
 	if value:
 		charts_panel.request_refresh()
 

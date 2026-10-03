@@ -125,6 +125,7 @@ pipeline instead, which reports success even when tests fail:
 - `Esc`: open or close the pause menu
 - `F1`: open or close the help screen
 - `F`: toggle follow on the selected agent
+- `Следить за стадом` on the herd card: follow the selected animal's herd
 - `W`, `A`, `S`, `D`: pan camera
 - Mouse wheel / trackpad pinch: zoom
 - Mouse wheel over the debug panel: scroll the panel
@@ -142,6 +143,9 @@ From the HUD you can:
 - switch speed between configured speed presets
 - switch follow mode between `Off`, `Agent`, and `Flock`
 - inspect the selected agent, including AI state, current action, decision reason, and utility scores
+- see the selected animal's herd on a card above its own, in Russian: how many there are, near
+  and far, how many are young, how fed, watered and rested they are, whether anything is
+  hunting them, what they lost last, and a button to follow the herd
 - review recent events
 - toggle LOD on or off
 - toggle biome, obstacle, carcass, path, density, water, and debug overlays
