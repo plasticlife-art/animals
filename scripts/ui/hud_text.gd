@@ -141,6 +141,11 @@ static func verb(sex: String, masculine: String, feminine: String) -> String:
 	return feminine if sex == "female" else masculine
 
 
+## «погибла» to a hunter, «умерла» of hunger, thirst or age.
+static func died(sex: String, cause: String) -> String:
+	return verb(sex, "погиб", "погибла") if cause == "predation" else verb(sex, "умер", "умерла")
+
+
 static func age_label(stage: String, sex: String) -> String:
 	var forms: Array = AGE_STAGES.get(stage, [stage, stage])
 	return str(forms[1] if sex == "female" else forms[0])

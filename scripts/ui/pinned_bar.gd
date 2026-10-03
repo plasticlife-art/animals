@@ -2,10 +2,11 @@ class_name PinnedBar
 extends PanelContainer
 
 ## The animals the player pinned, under the bar at the top left, wherever they are: each by
-## name and kind, with «вдали» while its sector sleeps and «погиб» / «погибла» once it has
-## died. A click sends the camera to it (`focus_requested`): selected and followed when it is
-## awake, to where it sleeps or fell otherwise. Pinning is the animal's card's button
-## (`StoryBook`, at most `StoryBook.MAX_PINS`); a right click here unpins.
+## name and kind, with «вдали» while its sector sleeps and «погибла» (to a hunter) or
+## «умерла» once it has died. A click sends the camera to it (`focus_requested`): selected
+## and followed when it is awake, to where it sleeps or fell otherwise. Pinning is the
+## animal's card's button (`StoryBook`, at most `StoryBook.MAX_PINS`); a right click here
+## unpins.
 
 signal focus_requested(agent_id: int)
 
@@ -80,12 +81,12 @@ func refresh() -> void:
 	visible = _allowed and not story.pins.is_empty()
 
 
-## «Ветка · олениха», «Ветка · олениха — вдали», «Ветка · олениха — погибла».
+## «Ветка · олениха», «Ветка · олениха — вдали», «Ветка · олениха — погибла» / «— умерла».
 static func row_text(status: Dictionary) -> String:
 	var sex := str(status.get("sex", ""))
 	var text := "%s · %s" % [status.get("name", ""), HudTextScript.animal_noun(str(status.get("species", "")), sex)]
 	if bool(status.get("dead", false)):
-		return "%s — %s" % [text, HudTextScript.verb(sex, "погиб", "погибла")]
+		return "%s — %s" % [text, HudTextScript.died(sex, str(status.get("cause", "")))]
 	if not bool(status.get("awake", false)):
 		return "%s — вдали" % text
 	return text

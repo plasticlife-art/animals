@@ -496,9 +496,11 @@ Utility actions inside `alive`:
   tag, the pinned list and the event feed read. It hears `world_event` on the main thread and
   is saved with the world (`SaveSystem.save()`'s `story`; a save without one starts a new
   story). Nothing in it reaches the simulation
-- `AnimalNames`: a Russian name for every animal from a list for its species and sex (80 a
-  sex for deer, 50 for foxes and grouse), the first of a few picks hashed from its id that no
-  living animal answers to, so the same world names the same animals. Only when every pick is
+- `AnimalNames`: a Russian name for every animal from a list for its species and sex (157 a
+  sex for deer, 84 for grouse, 50 for foxes: each list holds more than half the largest
+  starting population any preset gives, so a numbered name stays rare until a population
+  outgrows its start), the first of a few picks hashed from its id that no living animal
+  answers to, so the same world names the same animals. Only when every pick is
   taken does a name get a number, «Ветка II», the lowest one no living Ветка holds; a death
   gives it back. Founders are named in id order as the world is adopted, newborns as they are
   heard, animals waking far off when the interface next refreshes

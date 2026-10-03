@@ -95,8 +95,9 @@ func _on_pin_button_pressed() -> void:
 	refresh()
 
 
-## «Мать: Ветка · Отец: Бурый» with the names as links, then «Детей: 3 (живы 2) · Потомков
-## живых: 5 · Поколение 2». A parent who died is marked so.
+## «Мать: Ветка · Отец: Бурый» with the names as links, then «Поколение 2 · детей: 3, живы 2»,
+## and «Живых потомков: 5» once there are grandchildren. A parent who died is marked so,
+## «погибла» to a hunter and «умерла» otherwise.
 static func family_line(story_book, agent) -> String:
 	var entry: Dictionary = story_book.lineage.entry(agent.id)
 	var parents: Array = []
@@ -111,15 +112,20 @@ static func family_line(story_book, agent) -> String:
 	for child in children:
 		if not story_book.lineage.is_dead(int(child)):
 			living += 1
-	return "%s\nДетей: %d (живы %d) · Потомков живых: %d · Поколение %d" % [" · ".join(parents),
-		children.size(), living, story_book.lineage.descendants_alive(agent.id), int(entry.get("generation", 1))]
+	var kids := "детей нет" if children.is_empty() else "детей: %d, живы %d" % [children.size(), living]
+	var lines := [" · ".join(parents), "Поколение %d · %s" % [int(entry.get("generation", 1)), kids]]
+	# Grandchildren and on: the line only says more than the children do when there are some.
+	var descendants: int = story_book.lineage.descendants_alive(agent.id)
+	if descendants > living:
+		lines.append("Живых потомков: %d" % descendants)
+	return "\n".join(lines)
 
 
 static func _parent_link(story_book, parent_id: int) -> String:
 	var name: String = story_book.name_of_id(parent_id)
 	if story_book.lineage.is_dead(parent_id):
-		var sex := str(story_book.lineage.entry(parent_id).get("sex", ""))
-		name += " (%s)" % HudText.verb(sex, "погиб", "погибла")
+		var parent: Dictionary = story_book.lineage.entry(parent_id)
+		name += " (%s)" % HudText.died(str(parent.get("sex", "")), str(parent.get("cause", "")))
 	return "[url=%d]%s[/url]" % [parent_id, name]
 
 

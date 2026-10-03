@@ -158,13 +158,15 @@ func unpin(agent_id: int) -> void:
 		pins_changed.emit()
 
 
-## Where a pinned animal is and how it is: `{id, name, species, sex, dead, awake, position}`.
+## Where a pinned animal is and how it is: `{id, name, species, sex, dead, cause, awake,
+## position}`.
 ## Awake it is where it is drawn; asleep, where its sleeping sector keeps it; dead, where it
 ## died. `position` is `Vector2.INF` when it is nowhere to be found.
 func pin_status(agent_id: int) -> Dictionary:
 	var entry: Dictionary = lineage.entry(agent_id)
 	var status := {"id": agent_id, "name": name_of_id(agent_id), "species": str(entry.get("species", "")),
-		"sex": str(entry.get("sex", "")), "dead": lineage.is_dead(agent_id), "awake": false, "position": Vector2.INF}
+		"sex": str(entry.get("sex", "")), "dead": lineage.is_dead(agent_id), "cause": str(entry.get("cause", "")),
+		"awake": false, "position": Vector2.INF}
 	if status["dead"]:
 		status["position"] = entry.get("position", Vector2.INF)
 		return status

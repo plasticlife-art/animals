@@ -15,6 +15,7 @@ const StoryFeedScript := preload("res://scripts/ui/story_feed.gd")
 
 func run(a) -> void:
 	_test_names_stay_and_number_while_alive(a)
+	_test_lists_name_the_largest_start(a)
 	_test_events_say_who_was_born_and_died(a)
 	_test_family_from_the_worlds_events(a)
 	_test_sleeping_births_join_the_family(a)
@@ -61,6 +62,31 @@ func _test_names_stay_and_number_while_alive(a) -> void:
 	a.equal(copy.known(2005), names.known(2005), "names come back from a save")
 	a.equal([AnimalNamesScript.roman(4), AnimalNamesScript.roman(14), AnimalNamesScript.roman(39)], ["IV", "XIV", "XXXIX"],
 		"numbers in Roman")
+
+
+## Each list holds more names than half the largest starting population any preset gives
+## its species, so a number stays the exception until a population outgrows its start, and
+## no list repeats a name.
+func _test_lists_name_the_largest_start(a) -> void:
+	var largest := {"herbivore": 0, "predator": 0, "scavenger": 0}
+	for group in Helpers.ConfigLoaderScript.list_option_groups():
+		for option in group["options"]:
+			var spawns: Dictionary = Helpers.ConfigLoaderScript.load_config_bundle({group["id"]: option["id"]}) \
+				.get("world", {}).get("spawns", {})
+			for species in largest.keys():
+				largest[species] = maxi(int(largest[species]), int(spawns.get("%s_count" % species, 0)))
+	for species in largest.keys():
+		a.is_true(int(largest[species]) > 0, "%s: a preset starts some" % species)
+		for sex in ["female", "male"]:
+			var listed: Array = AnimalNamesScript.LISTS[species][sex]
+			var distinct := {}
+			for name in listed:
+				distinct[name] = true
+			a.equal(distinct.size(), listed.size(), "%s %s: no name twice" % [species, sex])
+			@warning_ignore("integer_division")
+			var half: int = int(largest[species]) / 2
+			a.is_true(listed.size() > half, "%s %s: %d names for up to %d at the start" % [species, sex,
+				listed.size(), half])
 
 
 ## Another id whose first pick is the same name as `agent_id`'s.
@@ -238,19 +264,30 @@ func _test_card_and_list_words(a) -> void:
 	var calf = world.get_agent(world.next_agent_id - 1)
 	world.kill_agent(mother, "starvation")
 	var line: String = SelectionCardScript.family_line(book, calf)
-	a.is_true(line.contains("Мать: [url=%d]%s (погибла)[/url]" % [mother.id, book.name_of_id(mother.id)]),
-		"the dead mother, linked: %s" % line)
+	a.is_true(line.contains("Мать: [url=%d]%s (умерла)[/url]" % [mother.id, book.name_of_id(mother.id)]),
+		"the mother who starved, linked: %s" % line)
 	a.is_true(line.contains("Отец: [url=%d]%s[/url]" % [father.id, book.name_of_id(father.id)]), "the father, linked")
-	a.is_true(line.contains("Поколение 2"), "the generation")
+	a.is_true(line.contains("Поколение 2 · детей нет") and not line.contains("потомков"),
+		"the generation, no children: %s" % line)
 	var founder_line: String = SelectionCardScript.family_line(book, father)
-	a.is_true(founder_line.contains("Родители неизвестны") and founder_line.contains("Детей: 1 (живы 1)"),
-		"a founder: %s" % founder_line)
+	a.equal(founder_line.get_slice("\n", 1), "Поколение 1 · детей: 1, живы 1", "a founder: %s" % founder_line)
+	a.is_true(founder_line.begins_with("Родители неизвестны") and not founder_line.contains("потомков"),
+		"no line for descendants who are all children")
+	var mate = Helpers.spawn_herbivore(world, Vector2(108.0, 104.0), 0)
+	world.queue_spawn_agent("herbivore", Vector2(106.0, 105.0), 0, calf, mate)
+	world._flush_spawns()
+	a.equal(SelectionCardScript.family_line(book, father).get_slice("\n", 2), "Живых потомков: 2",
+		"a grandchild counts among the descendants")
+	world.kill_agent(father, "predation")
+	a.is_true(SelectionCardScript.family_line(book, calf).contains("(погиб)[/url]"), "a father a hunter took")
 	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": false, "awake": true}),
 		"Ветка · олениха", "awake")
 	a.equal(PinnedBarScript.row_text({"name": "Рыжик", "species": "predator", "sex": "male", "dead": false, "awake": false}),
 		"Рыжик · лис — вдали", "asleep")
-	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": true}),
-		"Ветка · олениха — погибла", "dead")
+	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": true,
+		"cause": "predation"}), "Ветка · олениха — погибла", "taken by a hunter")
+	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": true,
+		"cause": "old_age"}), "Ветка · олениха — умерла", "died of age")
 	Helpers.destroy_manager(manager)
 
 
