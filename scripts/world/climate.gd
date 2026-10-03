@@ -129,6 +129,18 @@ func blend_by_season(values_by_season: Dictionary, fallback: float = 0.0) -> flo
 		float(values_by_season.get(next_season_id, fallback)), season_blend)
 
 
+## How many seasons the clock has begun, the one `time_seconds` falls in counted from 0 at the
+## world's first (`start_season_index` shifts it as it shifts the year): its season is the
+## ordinal modulo the seasons in a year, its year the ordinal divided by them. -1 with the clock
+## off.
+static func season_ordinal(climate_config: Dictionary, time_seconds: float) -> int:
+	if not bool(climate_config.get("enabled", false)) or climate_config.get("seasons", []).is_empty():
+		return -1
+	var season_length := float(calendar(climate_config)[0])
+	var season_time := time_seconds + float(int(climate_config.get("start_season_index", 0))) * season_length
+	return int(floor(season_time / season_length))
+
+
 ## The pure core. Everything above is a cache over this.
 static func evaluate(climate_config: Dictionary, time_seconds: float) -> Dictionary:
 	var seasons: Array = climate_config.get("seasons", [])

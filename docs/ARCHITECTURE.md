@@ -692,6 +692,20 @@ Utility actions inside `alive`:
   and samples half as often, so any age fits. Kept with the story
 - `StoryRecords`: the chronicle's records from one pass over the tree - the oldest alive, the
   longest lives, the largest living families, the best hunters - three each, ties to the lower id
+- `SeasonLedger`: what each season did, for the season card and «Сезоны». The open season
+  counts what the book hears - births (awake and asleep) by species, deaths by species and
+  cause, kills per hunter (`other_agent_id` awake, `killer_record_id` asleep, as `killer_of()`
+  reads them), the ponds that dried and filled again. The book asks it on every
+  `tick_completed`; when `Climate.season_ordinal()` (seasons begun since the world's first, -1
+  with the clock off) has moved on, the season closes with each species' count as the world
+  stands (`get_population_metrics()`, asleep and awake), so a species' change is exactly its
+  births less its deaths; the best hunter (most kills, the lower id on a tie) and the ponds are
+  named as strings then, since names are given back at death, and the drought flag is the
+  water's own (`WaterSystem.is_drought_year()`). `season_closed(summary)` tells it. Through the
+  worker a frame of several ticks lands at once, its events before its `tick_completed`, so a
+  season ends on the first frame past its boundary and keeps everything up to it. Kept with the
+  story under an optional `"seasons"` key, 200 seasons (fifty years); a season met half-way - a
+  save without the key, a story begun mid-season - is `partial`
 - `Epitaph`: what is said of an animal when it dies - «Ветка, олениха — старейшая на карте.
   Прожила 2 года и 1 сезон. 7 детёнышей (живы 3), 12 живых потомков. Погибла у Тихой заводи:
   задрал лис Рыжик.» Written by `StoryBook` for a pinned animal, the selected one (or the one the
@@ -1308,6 +1322,10 @@ Current suites cover:
   and its mate, a fox litter's kin, litters against the cap awake and asleep, a sleeping litter
   with both parents and the shared stream untouched, awake and asleep agreeing, and a world
   without a season playing exactly as before
+- the season ledger (`SeasonTests`): which season a moment falls in, a season closing on its
+  tick with each species changed by exactly its births less its deaths, the best hunter with a
+  tie and a kill asleep, dried ponds by name and once each, a season met half-way, the ledger
+  through a save and a story saved before it, and nothing without a clock
 
 ## Measuring Balance
 

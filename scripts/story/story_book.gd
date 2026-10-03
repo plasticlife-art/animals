@@ -12,6 +12,8 @@ signal pins_changed
 ## A death worth remembering - a pinned animal's, the selected one's, a record holder's - and
 ## what is said of it (`Epitaph`).
 signal epitaph_written(agent_id: int, text: String, position: Vector2)
+## A season over, and what it did (`SeasonLedger.close()`).
+signal season_closed(summary: Dictionary)
 
 const AnimalNamesScript := preload("res://scripts/story/animal_names.gd")
 const LineageScript := preload("res://scripts/story/lineage.gd")
@@ -20,6 +22,7 @@ const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
 const EpitaphScript := preload("res://scripts/story/epitaph.gd")
 const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
 const TraitHistoryScript := preload("res://scripts/story/trait_history.gd")
+const SeasonLedgerScript := preload("res://scripts/story/season_ledger.gd")
 const TraitsScript := preload("res://scripts/agents/traits.gd")
 ## How long the records an epitaph checks against are trusted, in simulated seconds.
 const RECORDS_TTL := 5.0
@@ -38,6 +41,8 @@ var feed = StoryLogScript.new()
 var places = PlaceNamesScript.new()
 ## Each species' inherited traits over the world's life (`TraitHistory`), for «Черты».
 var trait_history = TraitHistoryScript.new()
+## What each season did (`SeasonLedger`), for the season card and «Сезоны».
+var seasons = SeasonLedgerScript.new()
 ## The species that inherit traits in this world, in the registry's order.
 var heredity_species: Array = []
 var pins: Array = []
@@ -61,6 +66,9 @@ func bind(simulation_manager) -> void:
 	manager = simulation_manager
 	if not manager.world_event.is_connected(hear):
 		manager.world_event.connect(hear)
+	# Every tick, not the interface's refresh: a season closes on the tick it ends.
+	if not manager.tick_completed.is_connected(_observe_season):
+		manager.tick_completed.connect(_observe_season)
 	if not manager.selection_changed.is_connected(_on_selection_changed):
 		manager.selection_changed.connect(_on_selection_changed)
 
@@ -81,6 +89,7 @@ func begin(saved: Dictionary = {}) -> void:
 	_released_id = -1
 	_selected_id = -1
 	trait_history.clear()
+	seasons.clear()
 	heredity_species.clear()
 	if manager != null and manager.world_state != null:
 		var species_config: Dictionary = manager.config_bundle.get("species", {})
@@ -90,6 +99,9 @@ func begin(saved: Dictionary = {}) -> void:
 	places.build(null if manager == null else manager.world_state, 0 if manager == null else int(manager.seed))
 	if int(saved.get("version", 0)) == STATE_VERSION:
 		import_state(saved)
+	if manager != null:
+		# The season the world is in: whole at the start, partial for a save that kept none.
+		seasons.observe(float(manager.simulation_time), manager, self)
 	meet_living()
 	pins_changed.emit()
 
@@ -101,6 +113,15 @@ func tick(now: float) -> void:
 	feed.tick(now)
 	if manager != null and manager.stats_system != null:
 		trait_history.sample(now, manager.stats_system.latest_snapshot, heredity_species)
+
+
+## Closes the season on the tick it ends (`SeasonLedger.observe()`) and tells it.
+func _observe_season(_tick: int, _snapshot) -> void:
+	if manager == null:
+		return
+	var summary: Dictionary = seasons.observe(float(manager.simulation_time), manager, self)
+	if not summary.is_empty():
+		season_closed.emit(summary)
 
 
 ## Names every awake animal not yet named, lowest id first.
@@ -117,6 +138,7 @@ func meet_living() -> void:
 
 
 func hear(event: Dictionary) -> void:
+	seasons.hear(event)
 	var data: Dictionary = event.get("data", {})
 	var agent_id := int(event.get("agent_id", -1))
 	var species := str(event.get("species", ""))
@@ -340,7 +362,8 @@ func pin_status(agent_id: int) -> Dictionary:
 
 func export_state() -> Dictionary:
 	return {"version": STATE_VERSION, "names": names.export_state(), "lineage": lineage.export_state(),
-		"pins": pins.duplicate(), "places": places.export_state(), "traits": trait_history.export_state()}
+		"pins": pins.duplicate(), "places": places.export_state(), "traits": trait_history.export_state(),
+		"seasons": seasons.export_state()}
 
 
 func import_state(data: Dictionary) -> void:
@@ -349,3 +372,4 @@ func import_state(data: Dictionary) -> void:
 	pins = data.get("pins", []).duplicate()
 	places.import_state(data.get("places", {}))
 	trait_history.import_state(data.get("traits", {}))
+	seasons.import_state(data.get("seasons", {}))
