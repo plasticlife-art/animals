@@ -86,25 +86,28 @@ func select(
 				chosen_action = current_action
 				did_switch = false
 				if context.diagnostics:
-					reason = "kept %s during minimum commitment (%d/%d ticks)" % [
+					reason = "kept %s during minimum commitment (%d/%d ticks)%s" % [
 						String(current_action),
 						ticks_in_current_action,
 						minimum_commitment_ticks,
+						_fragment_suffix(reasons_by_action.get(current_action, [])),
 					]
 			elif best_score <= current_score + switch_threshold_delta:
 				chosen_action = current_action
 				did_switch = false
 				if context.diagnostics:
-					reason = "kept %s because %.2f does not beat %.2f + %.2f" % [
+					reason = "kept %s because %.2f does not beat %.2f + %.2f%s" % [
 						String(current_action),
 						best_score,
 						current_score,
 						switch_threshold_delta,
+						_fragment_suffix(reasons_by_action.get(current_action, [])),
 					]
 		elif current_action == best_action:
 			did_switch = false
 			if context.diagnostics:
-				reason = "kept %s as top action" % String(current_action)
+				reason = "kept %s as top action%s" % [String(current_action),
+					_fragment_suffix(reasons_by_action.get(current_action, []))]
 	elif context.diagnostics and force_interrupt and chosen_action != current_action:
 		reason = "forced interrupt to %s; %s" % [String(chosen_action), reason]
 
@@ -122,7 +125,14 @@ func select(
 
 
 func _build_base_reason(best_action: StringName, best_score: float, reasons_by_action: Dictionary) -> String:
-	var fragments: Array = reasons_by_action.get(best_action, [])
+	return "selected %s at %.2f%s" % [String(best_action), best_score,
+		_fragment_suffix(reasons_by_action.get(best_action, []))]
+
+
+## « (thirst 0.80, water 0.91)»: up to three of an action's reason fragments, or nothing. A
+## decision that keeps its course carries them too, so what an animal goes on doing can still
+## be explained (the card's «Почему:», `WhyText`).
+func _fragment_suffix(fragments: Array) -> String:
 	var filtered: Array = []
 	for fragment in fragments:
 		var text := str(fragment)
@@ -131,8 +141,7 @@ func _build_base_reason(best_action: StringName, best_score: float, reasons_by_a
 		filtered.append(text)
 		if filtered.size() >= 3:
 			break
-	var suffix := "" if filtered.is_empty() else " (%s)" % ", ".join(filtered)
-	return "selected %s at %.2f%s" % [String(best_action), best_score, suffix]
+	return "" if filtered.is_empty() else " (%s)" % ", ".join(filtered)
 
 
 func _first_reason(reasons: Array) -> String:

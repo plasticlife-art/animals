@@ -17,6 +17,41 @@ const PinnedBarScript := preload("res://scripts/ui/pinned_bar.gd")
 const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
 const ChronicleWindowScript := preload("res://scripts/ui/chronicle_window.gd")
 const PlayerBarScript := preload("res://scripts/ui/player_bar.gd")
+const ActionSelectorScript := preload("res://scripts/agents/ai/action_selector.gd")
+const UtilityEvaluatorScript := preload("res://scripts/agents/ai/utility_evaluator.gd")
+const WhyTextScript := preload("res://scripts/ui/why_text.gd")
+const SelectionCardScript := preload("res://scripts/ui/selection_card.gd")
+const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
+const AgentAIState := preload("res://scripts/agents/ai/agent_ai_state.gd")
+
+
+## An evaluator that says what it is told to, in the evaluators' own forms.
+class ReasonEvaluator:
+	extends RefCounted
+
+	var score: float = 0.0
+	var reasons: Array = []
+	var vetoed: bool = false
+
+	func _init(new_score: float, new_reasons: Array, new_vetoed := false) -> void:
+		score = new_score
+		reasons = new_reasons
+		vetoed = new_vetoed
+
+	func evaluate(_agent, _context) -> Dictionary:
+		if vetoed:
+			return UtilityEvaluatorScript.veto(reasons)
+		return {"score": score, "reasons": reasons}
+
+
+class AgentStub:
+	extends RefCounted
+
+	var current_action: StringName = AgentAction.NONE
+	var action_ticks: int = 0
+
+	func get_ticks_in_current_action(_current_tick: int) -> int:
+		return action_ticks
 
 
 func run(a) -> void:
@@ -37,6 +72,8 @@ func run(a) -> void:
 	_test_epitaph_card_queue(a)
 	_test_family_tree_model(a)
 	_test_chronicle_window(a)
+	_test_why_from_real_reasons(a)
+	_test_card_keeps_the_last_reason(a)
 
 
 ## Names agree with their nouns in gender, and the phrases take the right case and preposition.
@@ -531,6 +568,86 @@ func _test_chronicle_window(a) -> void:
 			button.pressed.emit()
 	a.is_true(found and opened.size() == 1, "«Летопись» on the player bar")
 	bar.free()
+	Helpers.destroy_manager(manager)
+
+
+## The selector's own reasons, read back into Russian: what it took up and why, what it dropped
+## and why, nothing for a decision that only kept its course; and every label and veto the
+## evaluators can write has words.
+func _test_why_from_real_reasons(a) -> void:
+	var selector = ActionSelectorScript.new({"stickiness_bonus": 0.10, "switch_threshold_delta": 0.15,
+		"minimum_commitment_ticks": 6})
+	var policy = Helpers.build_policy(AgentAIState.ALIVE, [AgentAction.GRAZE, AgentAction.DRINK])
+	var context = Helpers.build_context({})
+	context.diagnostics = true
+	var thirst := ReasonEvaluator.new(0.8, [UtilityEvaluatorScript.reason_if("thirst", 0.8),
+		UtilityEvaluatorScript.reason_if("water", 0.91), UtilityEvaluatorScript.reason_if("risk", 0.1)])
+	var picked = selector.select(AgentStub.new(), policy, context,
+		{AgentAction.GRAZE: ReasonEvaluator.new(0.2, [UtilityEvaluatorScript.reason_if("hunger", 0.3)]),
+			AgentAction.DRINK: thirst}, 10, false)
+	a.equal(WhyTextScript.describe(picked.reason, "female"), "пьёт — вода рядом, жажда",
+		"what it took up, the strongest reason first: %s" % picked.reason)
+	var grazing := AgentStub.new()
+	grazing.current_action = AgentAction.GRAZE
+	grazing.action_ticks = 20
+	var full := {AgentAction.GRAZE: ReasonEvaluator.new(0.0, ["below hunger floor"], true), AgentAction.DRINK: thirst}
+	var dropped = selector.select(grazing, policy, context, full, 30, false)
+	a.equal(WhyTextScript.describe(dropped.reason, "female"), "перестала пастись — наелась; пьёт — вода рядом, жажда",
+		"what she dropped and why: %s" % dropped.reason)
+	a.equal(WhyTextScript.describe(dropped.reason, "male"), "перестал пастись — наелся; пьёт — вода рядом, жажда",
+		"and he")
+	var drinking := AgentStub.new()
+	drinking.current_action = AgentAction.DRINK
+	drinking.action_ticks = 20
+	var kept = selector.select(drinking, policy, context, {AgentAction.GRAZE: ReasonEvaluator.new(0.2, []),
+		AgentAction.DRINK: thirst}, 40, false)
+	a.is_true(str(kept.reason).begins_with("kept "), "a decision that kept its course: %s" % kept.reason)
+	a.equal(WhyTextScript.describe(kept.reason), "пьёт — вода рядом, жажда", "says why it goes on")
+	a.equal(WhyTextScript.describe("kept graze during minimum commitment (2/6 ticks)"), "",
+		"a kept course with no reasons of its own says nothing")
+	a.equal(WhyTextScript.describe("danger or recent threat"), "убегает — рядом опасность", "fleeing")
+	a.equal(WhyTextScript.describe("engaged flow: search_last_seen", "female"), "ищет, где видела добычу", "a hunt")
+	a.equal(WhyTextScript.describe("graze"), "", "a bare action, before a full reason, says nothing")
+	var missing: Array = []
+	var labels := RegEx.create_from_string("reason_if\\(\"([a-z_]+)\"")
+	var vetoes := RegEx.create_from_string("veto\\(\\(\\[\"([^\"]+)\"\\]")
+	for file in DirAccess.get_files_at("res://scripts/agents/ai/evaluators"):
+		if not file.ends_with(".gd"):
+			continue
+		var source := FileAccess.get_file_as_string("res://scripts/agents/ai/evaluators/" + file)
+		for found in labels.search_all(source):
+			if not WhyTextScript.FRAGMENTS.has(found.get_string(1)):
+				missing.append(found.get_string(1))
+		for found in vetoes.search_all(source):
+			if not WhyTextScript.VETOES.has(found.get_string(1)):
+				missing.append(found.get_string(1))
+	a.is_true(missing.is_empty(), "every evaluator label and veto has words: %s" % str(missing))
+	for action in ["graze", "drink", "rest", "explore", "join_herd", "flee_to_safe_area", "hunt_prey",
+			"scavenge_carcass", "investigate_water", "pair_cohesion", "patrol", "reproduce"]:
+		if not WhyTextScript.DROPPED.has(action):
+			missing.append(action)
+	a.is_true(missing.is_empty(), "and every action what stopping it is called")
+
+
+func _test_card_keeps_the_last_reason(a) -> void:
+	var manager = Helpers.create_manager(891)
+	var world = manager.world_state
+	var doe = Helpers.spawn_herbivore(world, Vector2(100.0, 100.0), 0)
+	var other = Helpers.spawn_herbivore(world, Vector2(140.0, 100.0), 0)
+	var card = SelectionCardScript.new()
+	doe.last_action_reason = "dropped graze (below hunger floor); selected drink at 0.80 (thirst 0.80, water 0.91)"
+	a.equal(card.why_line(doe), "Почему: перестала пастись — наелась; вода рядом, жажда",
+		"the card's line, the action left to the line above")
+	doe.last_action_reason = "kept drink as top action (thirst 0.40)"
+	a.equal(card.why_line(doe), "Почему: перестала пастись — наелась; вода рядом, жажда",
+		"a switch's words stay a while")
+	a.equal(card.why_line(doe, Time.get_ticks_msec() + SelectionCardScript.WHY_HOLD_MSEC + 10), "Почему: жажда",
+		"then the reasons for going on")
+	other.last_action_reason = "drink"
+	a.equal(card.why_line(other), "", "another animal starts afresh")
+	other.last_action_reason = "kept graze as top action (hunger 0.50, food 0.70)"
+	a.equal(card.why_line(other), "Почему: корм рядом, голод", "and is explained as it goes on")
+	card.free()
 	Helpers.destroy_manager(manager)
 
 

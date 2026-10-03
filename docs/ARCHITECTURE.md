@@ -265,7 +265,11 @@ Utility selection is shared under `scripts/agents/ai/`:
 - `StatePolicy`
   Declares which actions are legal in the current high-level state
 - `ActionSelector`
-  Scores actions, applies stickiness and switch thresholds, and returns an explainable decision
+  Scores actions, applies stickiness and switch thresholds, and returns an explainable decision.
+  The reason is written only under `context.diagnostics` (the inspected animal, or
+  `debug.ai_diagnostics`): «selected X at s (fragments)», «dropped X (veto); …», and the three
+  «kept X …» forms, which carry the kept action's own fragments so a course kept can be explained
+  too. `WhyText` reads these back into Russian for the card
 - evaluators
   Species-relevant utility functions for each action
 
@@ -623,6 +627,16 @@ Utility actions inside `alive`:
 - Supports click / drag camera repositioning
 - Its tooltip names the place under the cursor (`PlaceNames.place_at()`); `PixelUiTheme` styles
   tooltips on parchment
+
+### `WhyText`
+
+- The card's «Почему:» line: the selected animal's last reason (shipped for the inspected animal
+  only, `simulation_worker.gd`) read back into Russian - what it dropped and why («перестала
+  пастись — наелась»), what it does now and the two strongest fragments («жажда, вода рядом»),
+  the forced reasons («убегает — рядом опасность») and a hunt's state («ищет, где видела
+  добычу»). Every evaluator label and veto has words, which a test checks against the evaluators'
+  source; reasons in tests come from the real `ActionSelector`. The card holds a switch's words
+  `WHY_HOLD_MSEC` before the reasons for going on replace them
 
 ### `ChronicleWindow`
 

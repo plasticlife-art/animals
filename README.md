@@ -153,7 +153,9 @@ The interface is in Russian throughout. From the bar at the top left you can:
 
 Every animal has a name, from a list for its species and sex («Ветка», «Рыжик»), and a family:
 the selected animal's card at the bottom left names it, links its mother and father, and counts
-its children, its living descendants and its generation. «Закрепить» on the card keeps the
+its children, its living descendants and its generation. Under what it is doing the card says
+why, in the AI's own reasons put into words: «Почему: перестала пастись — наелась; жажда, вода
+рядом». «Закрепить» on the card keeps the
 animal in a list at the top left wherever it goes, asleep far away or dead - up to eight; a
 click there brings the camera to it. A grazer or a scavenger also gets its herd's card above
 its own: how many there are, near and far, how many are young,
@@ -305,6 +307,7 @@ scripts/ui/
   place_labels.gd
   epitaph_card.gd
   chronicle_window.gd
+  why_text.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

@@ -22,6 +22,7 @@ signal tree_requested(agent_id: int)
 @onready var title_label: Label = get_node_or_null("%TitleLabel")
 @onready var bars_view: Control = get_node_or_null("%BarsView")
 @onready var action_label: Label = get_node_or_null("%ActionLabel")
+@onready var why_label: Label = get_node_or_null("%WhyLabel")
 @onready var follow_button: Button = get_node_or_null("%FollowButton")
 @onready var family_text: RichTextLabel = get_node_or_null("%FamilyText")
 @onready var pin_button: Button = get_node_or_null("%PinButton")
@@ -34,6 +35,13 @@ const VALUE_COLUMN := 74.0
 var simulation_manager: SimulationManager
 ## The world's names and family tree (`StoryBook`); without it the card shows numbers.
 var story = null
+## The reason said for the animal on the card (`WhyText`). A switch's words - what it dropped,
+## what it took up - stay `WHY_HOLD_MSEC` before the reasons for going on replace them, or the
+## next decision, a fraction of a second later, would wipe them before anyone read them.
+const WHY_HOLD_MSEC := 4000
+var _why_id: int = -1
+var _why: String = ""
+var _why_at: int = -WHY_HOLD_MSEC
 var _vitals: Array = []
 
 
@@ -125,6 +133,26 @@ static func family_line(story_book, agent) -> String:
 	return "\n".join(lines)
 
 
+## «Почему: перестала пастись — наелась; жажда, вода рядом», «Почему: корм рядом, голод», from
+## the animal's last decision.
+func why_line(agent, now_msec := -1) -> String:
+	var now := Time.get_ticks_msec() if now_msec < 0 else now_msec
+	if agent.id != _why_id:
+		_why_id = agent.id
+		_why = ""
+		_why_at = -WHY_HOLD_MSEC
+	var reason := str(agent.last_action_reason)
+	# The action is a line above; the line says why.
+	var said := WhyText.describe(reason, str(agent.sex), false)
+	if said != "":
+		if not reason.begins_with("kept "):
+			_why = said
+			_why_at = now
+		elif _why == "" or now - _why_at >= WHY_HOLD_MSEC:
+			_why = said
+	return "Почему: " + _why if _why != "" else ""
+
+
 func _on_family_meta(meta) -> void:
 	var link := str(meta)
 	if link.begins_with("tree:"):
@@ -175,6 +203,9 @@ func refresh() -> void:
 		_show_pin(agent)
 	if action_label != null:
 		action_label.text = "%s  ·  %s" % [AgentReadout.action_label(agent), HudText.state_label(agent.state)]
+	if why_label != null:
+		why_label.text = why_line(agent)
+		why_label.visible = why_label.text != ""
 	_vitals = AgentReadout.vitals(agent)
 	if bars_view != null:
 		bars_view.queue_redraw()
