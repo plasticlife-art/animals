@@ -431,20 +431,32 @@ Utility actions inside `alive`:
   clock, so no visual state is stored on `AgentBase` and headless runs stay bit-identical
 - Depth sorting uses every object's projected base across species, carcasses and
   scenery; equal-depth ties put carcasses below animals and passable cover above
+- Animals, props and carcasses darken at night with the ground (`DayNightTint`). Their atlas
+  shaders used to be unshaded, which in Godot skips the canvas modulate along with lights,
+  so at midnight every animal and tree stood in daylight on dark-blue ground
 - Interpolated positions are accepted only through a body-clear corridor; the
   sprite, shadow, selection marker and follow camera read the same render position
 - An animal that dies in view plays its species' `dead` row (`DyingSprites`, from
   `world_event`), where it was last drawn and facing the way it was drawn. Every row in the
   pack falls, flushes red at the blow and fades back to the body's own colours, at frames
-  that differ by species, so the row lists which to play: a kill (`kill_frames`) ends on the
-  reddest frame, and any other death (`fall_frames`) skips the red. A test reads the atlases
-  to hold the lists to the art. A dead animal leaves the simulation in the tick it dies, so
-  the row had never been drawn.
+  that differ by species, so the row lists which to play: a kill (`kill_frames`) runs through
+  the reddest frame and stops on the next, still flushed, and any other death
+  (`fall_frames`) skips the red. A test reads the atlases to hold the lists to the art. A dead
+  animal leaves the simulation in the tick it dies, so the row had never been drawn.
   The sprite closes the tick-long gap between where it was drawn and where it died, runs on
   `SimulationManager.get_display_time()` (it stops on pause and keeps pace at 4x) and holds
   back the body it leaves until it starts to fade, then crossfades into it. Off screen, in a
   sleeping sector (no sprite) and in overview a death only leaves its body; at most
   `effects.death.max_active` play at once
+- A body is drawn from its own species' carcass sheet (`species.<id>.carcass_atlas`, built by
+  `tools/build_carcass_atlases.py` from the species' atlas): whole, then opened with the ribs
+  across it, then bones on the stain it left, as its meat goes (`carcass.stages`). It starts
+  from the frame the fall ended on, so the fall hands over in place: lying the way the animal
+  fell (`carcass_direction()`, remembered for each death seen; a death nobody saw lies a way
+  fixed by the body's id), at the size it had (a fawn's body is small), flushed red only
+  after a kill. Until 2026-10-03 every species left the deer's body, and a fresh one was the
+  deer's red flash frame, so a fox turned into a deer as it fell and a starved animal turned
+  red. A species without a sheet falls back on the shared `visuals.carcass` one
 - `EventEffects`, a child node, marks what just happened in view on the same clock: dust
   behind a herbivore or predator running in a chase (the hunter in `hunt_prey`, the prey
   fleeing or panicking), one puff per `effects.dust.spacing_px` of ground it covers, so a
@@ -453,7 +465,7 @@ Utility actions inside `alive`:
   in from a third of its size with a small overshoot. Birds raise no dust: their run row is
   flight. In a pond the dust is spray. Dust, bursts and rings lie on the ground just above
   the shadows, under the sprites, and darken at night with it; the flash and the sparkles are
-  added light above the sprites, unshaded like the animals. The marks sit in an
+  added light above the sprites, unshaded, so they stay bright at night. The marks sit in an
   `EffectQueue`, capped at `effects.max_active`, recycled through a free list and scattered
   by a hash of the animal's id rather than a random stream, so the view advances no
   generator. Nothing is drawn in overview
@@ -871,6 +883,9 @@ millisecond setting squeezed to zero.
 - `effects.death` switches the dying animation and sets how long the fall plays and fades
   (simulated seconds) and how many play at once. Which frames of a species' `dead` row a
   death shows sits beside the row, as `kill_frames` and `fall_frames`
+- `species.<id>.carcass_atlas` is the species' carcass sheet: three stages across, the four
+  directions down, a death without a blow first and a kill after. `carcass` is the shared
+  sheet for a species without one, and its `stages` is how many columns both have
 - `effects.dust`, `effects.kill` and `effects.birth` switch and size the dust of a chase
   (which species raise it, ground between puffs, its colour and the spray colour in a
   pond), the burst and flash of a kill, and a birth's ring, sparkles and grow-in
@@ -973,7 +988,5 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
 - No replay flow (save/load exists; see `SaveSystem`)
 - No genetics
 - Three species, with no variation between animals of the same species
-- Terrain, carcass and shadow art are placeholders. Every species leaves the deer's
-  carcass, and a fresh one is the deer's red frame, so a fox or a grouse that dies in view
-  changes shape when its fall hands over to the body, and an animal that died without a
-  blow turns red
+- Terrain and shadow art are placeholders. The opened and picked carcass stages are drawn
+  by a script over each species' last death frame, not by an artist

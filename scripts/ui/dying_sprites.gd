@@ -43,8 +43,10 @@ func configure(death: Dictionary) -> void:
 ## The frames of a species' `dead` row (`spec`, its animation entry in visuals.json) that
 ## a death by `cause` plays. Every row in the pack falls, flushes red at the blow and fades
 ## back to the body's own colours, at frames that differ by species, so the row itself
-## lists them: `kill_frames` for a kill, which ends at the reddest, and `fall_frames` for
-## any other death, which skips the red. A row that lists nothing plays whole.
+## lists them: `kill_frames` for a kill, which runs through the reddest frame and stops on
+## the next, still flushed, and `fall_frames` for any other death, which skips the red. Each
+## list ends on the frame the species' carcass sheet starts from, so the body takes over
+## from the fall unchanged. A row that lists nothing plays whole.
 static func frames_for(cause: String, spec: Dictionary) -> PackedInt32Array:
 	var count := maxi(1, int(spec.get("frames", 1)))
 	var listed = spec.get("kill_frames" if cause == "predation" else "fall_frames", [])

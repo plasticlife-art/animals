@@ -134,6 +134,7 @@
   "species": {
     "herbivore": {
       "atlas": "res://assets/sprites/herbivore_atlas.png",
+      "carcass_atlas": "res://assets/sprites/herbivore_carcass_atlas.png",
       "frame_px": 32,
       "sprite_scale": 0.85,
       "stride_length": 26.0,
@@ -163,7 +164,7 @@
           "row": 16,
           "frames": 7,
           "fps": 0.0,
-          "kill_frames": [0, 1, 2, 3, 4],
+          "kill_frames": [0, 1, 2, 3, 4, 5],
           "fall_frames": [0, 1, 2, 6]
         }
       },
@@ -177,6 +178,7 @@
     },
     "predator": {
       "atlas": "res://assets/sprites/predator_atlas.png",
+      "carcass_atlas": "res://assets/sprites/predator_carcass_atlas.png",
       "frame_px": 32,
       "sprite_scale": 0.72,
       "stride_length": 30.0,
@@ -206,7 +208,7 @@
           "row": 16,
           "frames": 6,
           "fps": 0.0,
-          "kill_frames": [0, 1, 2, 3],
+          "kill_frames": [0, 1, 2, 3, 4],
           "fall_frames": [0, 1, 5]
         }
       },
@@ -220,6 +222,7 @@
     },
     "scavenger": {
       "atlas": "res://assets/sprites/scavenger_atlas.png",
+      "carcass_atlas": "res://assets/sprites/scavenger_carcass_atlas.png",
       "frame_px": 32,
       "sprite_scale": 0.7,
       "stride_length": 18.0,
@@ -256,7 +259,7 @@
           "row": 16,
           "frames": 6,
           "fps": 0.0,
-          "kill_frames": [0, 1, 2, 3],
+          "kill_frames": [0, 1, 2, 3, 4],
           "fall_frames": [0, 1, 5]
         }
       }

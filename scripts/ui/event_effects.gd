@@ -8,8 +8,8 @@ extends Node2D
 ##
 ## The node draws on the ground: a child of the renderer just above the shadows and below
 ## the sprites, darkened at night with the ground it lies on. In a pond the dust is spray.
-## The air is a child drawn above the sprites with added light, unshaded like the animals,
-## so a flash stays a flash at midnight. Sizes are art pixels scaled by the map's cell
+## The air is a child drawn above the sprites with added light, unshaded, so a flash stays
+## a flash at midnight while the animals under it darken. Sizes are art pixels scaled by the map's cell
 ## size, as sprites are. Everything runs on the view's clock and stands still while the
 ## game is paused. Nothing here touches the simulation.
 

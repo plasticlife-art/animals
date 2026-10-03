@@ -12,6 +12,8 @@ extends SceneTree
 #   - a herbivore killed by a predator: its fall, the burst and the flash
 #     (`<prefix>-<noon|midnight>-kill-<offset>.png`);
 #   - a predator that starved: its fall without the red (`...-starved-<offset>.png`);
+#   - the bodies both leave, whole, half eaten and picked to the bones
+#     (`...-<kill|starved>-body-<meat share>.png`);
 #   - a calf born beside a herbivore: the ring, the sparkles and the calf growing in
 #     (`...-birth-<offset>.png`);
 #   - a real chase, followed for a moment at normal speed and then paused, for the dust
@@ -81,6 +83,12 @@ func _process(_delta: float) -> bool:
 				for offset in series[3]:
 					_steps.append(_freeze.bind(offset))
 					_steps.append(_save.bind("%s-%s-%.2f" % [moment[0], series[0], offset]))
+				if series[0] in ["kill", "starved"]:
+					# The body the fall left, whole, half eaten and picked to the bones.
+					_steps.append(_freeze.bind(2.0))
+					for share in [1.0, 0.5, 0.1]:
+						_steps.append(_set_body_meat.bind(share))
+						_steps.append(_save.bind("%s-%s-body-%.1f" % [moment[0], series[0], share]))
 			_steps.append(_follow_chase)
 			_steps.append(_stop_following)
 			_steps.append(_save.bind("%s-chase" % moment[0]))
@@ -188,6 +196,16 @@ func _freeze(offset: float) -> int:
 	for id in _renderer._born.keys():
 		_renderer._born[id] = float(_renderer._born[id]) + shift
 	_renderer._effects._dirty = true
+	_renderer._needs_refresh = true
+	return 2500
+
+
+## Leaves `share` of the staged body's meat on it, in the view's copy of the world only, for
+## a shot of its stages while the world stands paused.
+func _set_body_meat(share: float) -> int:
+	for carcass in _manager.world_state.carcasses.values():
+		if int(carcass.get("source_agent_id", -1)) == _aimed_id:
+			carcass["meat_remaining"] = float(carcass.get("meat_total", 1.0)) * share
 	_renderer._needs_refresh = true
 	return 2500
 

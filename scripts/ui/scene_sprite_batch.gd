@@ -26,6 +26,10 @@ func configure(renderer, visuals: Dictionary) -> void:
 	var sources: Dictionary = {}
 	for key in visuals.get("species", {}):
 		sources[key] = visuals.species[key]
+		# Each species' own bodies, from `tools/build_carcass_atlases.py`.
+		var carcass_atlas := str(visuals.species[key].get("carcass_atlas", ""))
+		if carcass_atlas != "":
+			sources[carcass_key(key)] = {"atlas": carcass_atlas}
 	sources["carcass"] = visuals.get("carcass", {})
 	sources["props"] = visuals.get("props", {})
 	var images: Dictionary = {}
@@ -114,6 +118,42 @@ static func transient_transform(renderer, state: Dictionary, mesh_size: Vector2)
 	return Transform2D(Vector2(float(state["facing"]) * scale * mesh_size.x, 0.0),
 		Vector2(0.0, scale * mesh_size.y),
 		renderer._anchor(state["position"], float(state["ground_offset"]) * scale))
+
+
+static func carcass_key(species: String) -> String:
+	return "carcass_" + species
+
+
+## The scene batch entry of a body. A species with a sheet of its own lies as its own body,
+## the way the animal fell (`AgentSpriteRenderer.carcass_direction()`), flushed red only
+## after a kill, then opened and picked to the bones as its meat goes: the sheet's columns
+## are the stages, its rows the directions, a death without a blow first and a kill after.
+## The size and the lift are the species' own, so the body takes over from the fall in
+## place - a fawn's body is a fawn's size. A species without one falls back on the shared
+## `visuals.carcass` sheet.
+func carcass_entry(renderer, carcass: Dictionary, visuals: Dictionary) -> Dictionary:
+	var species := str(carcass.get("source_species", ""))
+	var key := carcass_key(species)
+	var own: bool = regions.has(key) and visuals.get("species", {}).has(species)
+	if not own and not regions.has("carcass"):
+		return {}
+	var config: Dictionary = visuals.species[species] if own else visuals.get("carcass", {})
+	var pixels := float(config.get("frame_px", 32))
+	var scale: float = renderer.carcass_scale(carcass) if own else 1.0
+	var size: Vector2 = Vector2.ONE * pixels * float(config.get("sprite_scale", 1.0)) * renderer._world_scale() * scale
+	var stages := maxi(1, int(visuals.get("carcass", {}).get("stages", 3)))
+	var fraction := float(carcass.get("meat_remaining", 0.0)) / maxf(0.001, float(carcass.get("meat_total", 1.0)))
+	var cell := Vector2(clampi(int((1.0 - fraction) * stages), 0, stages - 1), 0.0)
+	if own:
+		var directions := maxi(1, int(config.get("directions", 1)))
+		var after_kill := 1 if str(carcass.get("death_cause", "")) == "predation" else 0
+		cell.y = float(after_kill * directions + posmod(renderer.carcass_direction(carcass), directions))
+	var position: Vector2 = carcass.get("position", Vector2.ZERO)
+	return {"depth": renderer._depth_of(position), "id": 100000000 + int(carcass.get("id", 0)), "depth_tie": 0,
+		"transform": Transform2D(Vector2(size.x, 0), Vector2(0, size.y),
+			renderer._anchor(position, renderer._ground_offset(config) * scale)),
+		"color": Color.WHITE, "uv": uv_rect(key if own else "carcass", cell, Vector2.ONE * pixels),
+		"reach": size.y}
 
 
 static func needs_order_rebuild(last_generation: int, generation: int, static_changed: bool) -> bool:
@@ -295,24 +335,15 @@ func render(renderer, alpha: float) -> void:
 						"color": Color.WHITE,
 						"uv": uv_rect(species, Vector2(0.0, idle_row), Vector2.ONE * pixels)})
 					visible_dormant_animals += 1
-	if regions.has("carcass"):
-		var config: Dictionary = visuals.carcass
-		var pixels: float = float(config.get("frame_px", 32))
-		var size: Vector2 = Vector2.ONE * pixels * float(config.get("sprite_scale", 1.0)) * renderer._world_scale()
-		for carcass in world.carcasses.values():
-			if not last_view.grow(size.y).has_point(carcass.position):
-				continue
-			# The animal is still being shown falling where this body will lie.
-			if renderer.hides_carcass(int(carcass.get("source_agent_id", -1))):
-				continue
-			var stages := int(config.get("stages", 3))
-			var fraction := float(carcass.meat_remaining) / maxf(0.001, float(carcass.meat_total))
-			var stage := clampi(int((1.0 - fraction) * stages), 0, stages - 1)
-			dynamic.append({"depth": renderer._depth_of(carcass.position), "id": 100000000 + int(carcass.id),
-				"depth_tie": 0,
-				"transform": Transform2D(Vector2(size.x, 0), Vector2(0, size.y), renderer._anchor(carcass.position, renderer._ground_offset(config))),
-				"color": Color.WHITE, "uv": uv_rect("carcass", Vector2(stage, 0), Vector2.ONE * pixels)})
-			visible_carcasses += 1
+	for carcass in world.carcasses.values():
+		# The animal is still being shown falling where this body will lie.
+		if renderer.hides_carcass(int(carcass.get("source_agent_id", -1))):
+			continue
+		var entry := carcass_entry(renderer, carcass, visuals)
+		if entry.is_empty() or not last_view.grow(float(entry["reach"])).has_point(carcass.position):
+			continue
+		dynamic.append(entry)
+		visible_carcasses += 1
 	dynamic.sort_custom(depth_less)
 	renderer.simulation_manager.record_render_phase("depth_order",
 		float(Time.get_ticks_usec() - order_started) / 1000.0)

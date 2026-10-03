@@ -1,5 +1,8 @@
 shader_type canvas_item;
-render_mode unshaded;
+// Lit like the rest of the canvas, so `DayNightTint` darkens animals, props and carcasses
+// at night along with the ground they stand on. Until 2026-10-03 this was an unshaded
+// shader, which skips the canvas modulate as well as lights: at midnight the ground went
+// dark blue and every animal and tree stayed in daylight.
 varying flat vec4 region;
 varying flat vec4 tint;
 void vertex() {

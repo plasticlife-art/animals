@@ -54,6 +54,9 @@ var _dust_mark: Dictionary = {}
 var _now: float = 0.0
 ## What the last refresh treated as in view, in world space.
 var _visible_rect := Rect2()
+## How each animal seen dying fell, by id - `{direction, scale}` - so its body lies the same
+## way and at the same size.
+var _fallen: Dictionary = {}
 var _needs_refresh: bool = true
 var _last_camera_rect := Rect2()
 var _render_positions: Dictionary = {}
@@ -170,6 +173,7 @@ func rebuild_batches() -> void:
 	_dying.clear()
 	_born.clear()
 	_dust_mark.clear()
+	_fallen.clear()
 	_build_batches()
 	refresh()
 
@@ -221,10 +225,11 @@ func _on_agent_died(event: Dictionary, agent_id: int) -> void:
 	var cause := str(event.get("data", {}).get("cause", ""))
 	if cause == "predation" and _effects != null:
 		_effects.add_kill(died_at, start, agent_id, float(batch.get("ground_offset", 0.0)) * _age_scale_of(agent))
+	var directions: int = int(batch.get("directions", 1))
+	_remember_fall(agent_id, int(_direction.get(agent_id, 0)) if directions > 1 else 0, _age_scale_of(agent))
 	var spec: Dictionary = batch.get("animations", {}).get("dead", {})
 	if spec.is_empty():
 		return
-	var directions: int = int(batch.get("directions", 1))
 	var row := int(spec.get("row", 0)) + (int(_direction.get(agent_id, 0)) if directions > 1 else 0)
 	var facing: float = 1.0 if directions > 1 else float(_facing.get(agent_id, 1.0))
 	var frames: PackedInt32Array = DyingSpritesScript.frames_for(cause, spec)
@@ -245,6 +250,35 @@ func _on_agent_born(event: Dictionary, agent_id: int) -> void:
 	var start := _event_start(event)
 	_born[agent_id] = start
 	_effects.add_birth(born_at, start, agent_id)
+
+
+## Which way a body lies: the way the animal faced as it was seen to fall, or, for a death
+## nobody watched - off screen, asleep, before a save was loaded - a way fixed by the body's
+## id, so it does not turn from one frame to the next.
+func carcass_direction(carcass: Dictionary) -> int:
+	var fall: Dictionary = _fallen.get(int(carcass.get("source_agent_id", -1)), {})
+	if not fall.is_empty():
+		return int(fall["direction"])
+	return posmod(int(carcass.get("id", 0)) * 7 + 1, 4)
+
+
+## The size a body is drawn at: the animal's own as it fell - a fawn leaves a small one - or
+## full size for a death nobody watched.
+func carcass_scale(carcass: Dictionary) -> float:
+	return float(_fallen.get(int(carcass.get("source_agent_id", -1)), {}).get("scale", 1.0))
+
+
+## Kept while the body is there. Past a few hundred, the ones whose body has gone are dropped.
+func _remember_fall(agent_id: int, direction: int, scale: float) -> void:
+	_fallen[agent_id] = {"direction": direction, "scale": scale}
+	if _fallen.size() <= 256 or simulation_manager == null or simulation_manager.world_state == null:
+		return
+	var lying := {}
+	for carcass in simulation_manager.world_state.carcasses.values():
+		lying[int(carcass.get("source_agent_id", -1))] = true
+	for id in _fallen.keys():
+		if not lying.has(id):
+			_fallen.erase(id)
 
 
 static func _event_position(event: Dictionary) -> Vector2:

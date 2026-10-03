@@ -149,7 +149,8 @@ def build_species(species, animal):
 
 
 def build_carcass():
-    """Three stages taken from the tail of the deer's death animation."""
+    """Three stages taken from the tail of the deer's death animation: the shared sheet,
+    drawn only for a species without one of its own (tools/build_carcass_atlases.py)."""
     sheet = Image.open(find_sheet("Deer", "Death")).convert("RGBA")
     frames = sheet.width // FRAME
     picks = [frames - 3, frames - 2, frames - 1]

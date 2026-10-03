@@ -25,6 +25,9 @@ func run(a) -> void:
 	_test_birth_in_view_rings_and_grows_in(a)
 	_test_dust_once_per_stride_and_never_in_flight(a)
 	_test_view_leaves_the_world_alone(a)
+	_test_sprites_take_the_night_tint(a)
+	_test_carcass_sheets_start_where_the_fall_ends(a)
+	_test_body_lies_as_the_animal_fell(a)
 
 
 ## Deaths, births and herd splits reach `world_event`; grazing and the extra death notices
@@ -127,7 +130,7 @@ func _test_death_plays_then_hands_over_to_the_body(a) -> void:
 		return
 	var state: Dictionary = sprites[0]
 	a.equal(int(state.row), dead_row + 3, "the dead row, in the direction it was drawn facing")
-	a.equal(Array(state.frames), [0, 1, 2, 3, 4], "a kill shows the blow")
+	a.equal(Array(state.frames), [0, 1, 2, 3, 4, 5], "a kill shows the blow")
 	a.equal(state.position, Vector2(112.0, 120.0), "it starts where the animal was last drawn")
 	a.equal(state.to, Vector2(120.0, 120.0), "and settles where it died")
 	a.is_true(renderer.hides_carcass(deer.id), "its body waits while it falls")
@@ -139,10 +142,10 @@ func _test_death_plays_then_hands_over_to_the_body(a) -> void:
 	var start := float(state.start)
 	var dying = renderer._dying
 	dying.advance(start + dying.play_seconds * 0.5)
-	a.equal(int(state.frame), 2, "halfway through it is falling")
+	a.equal(int(state.frame), 3, "halfway through it is falling")
 	a.equal(state.position, Vector2(120.0, 120.0), "having closed the gap to where it died")
 	a.is_true(dying.advance(start + dying.play_seconds + dying.fade_seconds * 0.5), "the fade is a change of draw order")
-	a.equal(int(state.frame), 4, "it fades on its last frame, the reddest")
+	a.equal(int(state.frame), 5, "it fades on its last frame, still flushed")
 	a.is_true(float(state.alpha) > 0.0 and float(state.alpha) < 1.0, "half faded")
 	a.is_true(not renderer.hides_carcass(deer.id), "the body shows through the fade")
 	renderer.refresh()
@@ -167,7 +170,7 @@ func _test_death_frames_follow_the_cause(a) -> void:
 	var species: Dictionary = manager.config_bundle.visuals.species
 	var deer_row: Dictionary = species.herbivore.animations.dead
 	var fox_row: Dictionary = species.predator.animations.dead
-	a.equal(Array(DyingSpritesScript.frames_for("predation", deer_row)), [0, 1, 2, 3, 4], "a deer killed: up to the blow")
+	a.equal(Array(DyingSpritesScript.frames_for("predation", deer_row)), [0, 1, 2, 3, 4, 5], "a deer killed: through the blow")
 	a.equal(Array(DyingSpritesScript.frames_for("starvation", deer_row)), [0, 1, 2, 6], "a deer starved: no red")
 	a.equal(Array(DyingSpritesScript.frames_for("old_age", fox_row)), [0, 1, 5], "a fox of old age: no red")
 	a.equal(Array(DyingSpritesScript.frames_for("predation", {"frames": 3})), [0, 1, 2], "a row listing nothing plays whole")
@@ -188,8 +191,9 @@ func _test_death_frames_follow_the_cause(a) -> void:
 
 
 ## The lists hold for the art they describe, in every direction: each `dead` row flushes
-## red in the middle and fades back, so a kill must end on the reddest frame and no frame
-## of a death without a blow may be a third of the way to it.
+## red in the middle and fades back, so a kill must run through the reddest frame and stop
+## on the next, still a third of the way to it, and no frame of a death without a blow may
+## be that red.
 func _test_death_frames_match_the_art(a) -> void:
 	var visuals: Dictionary = Helpers.build_test_bundle(616).visuals
 	for species_id in visuals.species.keys():
@@ -210,8 +214,11 @@ func _test_death_frames_match_the_art(a) -> void:
 			for frame in range(int(row.frames)):
 				redness.append(_redness(image, Rect2i(frame * pixels, (int(row.row) + direction) * pixels, pixels, pixels)))
 			var reddest := redness.find(redness.max())
-			a.equal(kill[kill.size() - 1], reddest, "%s facing %d: a kill ends on the reddest frame" % [species_id, direction])
 			var limit: float = float(redness[0]) + (float(redness[reddest]) - float(redness[0])) / 3.0
+			a.is_true(Array(kill).has(reddest) and kill[kill.size() - 1] == reddest + 1,
+				"%s facing %d: a kill runs through the reddest frame and stops on the next" % [species_id, direction])
+			a.is_true(float(redness[kill[kill.size() - 1]]) >= limit,
+				"%s facing %d: still flushed where it stops" % [species_id, direction])
 			for frame in fall:
 				a.is_true(float(redness[frame]) < limit, "%s facing %d: frame %d of a death without a blow is not red" % [
 					species_id, direction, frame])
@@ -546,3 +553,131 @@ static func _describe(items: Array) -> Array:
 	for item in items:
 		described.append([int(item.kind), item.position, item.start, item.seconds, item.size, item.drift, item.lift])
 	return described
+
+
+## Animals, props and carcasses go dark at night with the ground: their shaders are lit, so
+## `DayNightTint` reaches them. The flash and sparkles above them are added light and stay
+## bright.
+func _test_sprites_take_the_night_tint(a) -> void:
+	for path in ["res://shaders/scene_atlas.gdshader", "res://shaders/agent_atlas.gdshader"]:
+		var shader: Shader = load(path)
+		a.is_true(shader != null and not shader.code.contains("render_mode unshaded"), "%s takes the night tint" % path)
+	var manager = Helpers.create_manager(651)
+	var renderer = _make_renderer(manager)
+	a.equal(renderer._effects._air.material.light_mode, CanvasItemMaterial.LIGHT_MODE_UNSHADED,
+		"the air's light does not")
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+
+## Each species' carcass sheet begins with the very frame its fall ends on, in every
+## direction - the last of `fall_frames` without a blow, of `kill_frames` after one - so the
+## body takes over from the fall without a change; then two stages drawn over it.
+func _test_carcass_sheets_start_where_the_fall_ends(a) -> void:
+	var visuals: Dictionary = Helpers.build_test_bundle(652).visuals
+	for species_id in visuals.species.keys():
+		var config: Dictionary = visuals.species[species_id]
+		a.is_true(config.has("carcass_atlas"), "%s has a body of its own" % species_id)
+		if not config.has("carcass_atlas"):
+			continue
+		var animal: Image = _image(str(config.atlas))
+		var sheet: Image = _image(str(config.carcass_atlas))
+		var pixels := int(config.get("frame_px", 32))
+		var directions := int(config.get("directions", 1))
+		var dead: Dictionary = config.animations.dead
+		var stages := int(visuals.carcass.get("stages", 3))
+		a.equal(sheet.get_size(), Vector2i(stages * pixels, 2 * directions * pixels),
+			"%s: the stages across, the directions twice down" % species_id)
+		for variant in range(2):
+			var last: int = dead.kill_frames[dead.kill_frames.size() - 1] if variant == 1 \
+				else dead.fall_frames[dead.fall_frames.size() - 1]
+			for direction in range(directions):
+				var fell := animal.get_region(Rect2i(last * pixels, (int(dead.row) + direction) * pixels, pixels, pixels))
+				var row := (variant * directions + direction) * pixels
+				var whole := sheet.get_region(Rect2i(0, row, pixels, pixels))
+				a.is_true(_same_picture(whole, fell),
+					"%s %s facing %d: the body is the frame the fall ends on" % [species_id, ["fall", "kill"][variant], direction])
+				var bones := sheet.get_region(Rect2i((stages - 1) * pixels, row, pixels, pixels))
+				a.is_true(not _same_picture(bones, whole), "%s facing %d: picked to the bones it is not whole" % [
+					species_id, direction])
+
+
+## The same visible pixels. Fully transparent ones are left out: the importer's alpha border
+## fix gives them the colour of their neighbours, which differ between the two sheets.
+static func _same_picture(first: Image, second: Image) -> bool:
+	if first.get_size() != second.get_size():
+		return false
+	for y in range(first.get_height()):
+		for x in range(first.get_width()):
+			var one := first.get_pixel(x, y)
+			var other := second.get_pixel(x, y)
+			if (one.a > 0.0 or other.a > 0.0) and not one.is_equal_approx(other):
+				return false
+	return true
+
+
+static func _image(path: String) -> Image:
+	var image: Image = (load(path) as Texture2D).get_image()
+	if image.is_compressed():
+		image.decompress()
+	image.convert(Image.FORMAT_RGBA8)
+	return image
+
+
+## A body lies the way its animal was seen to fall and at its size, flushed only after a
+## kill, and is opened and then picked to the bones as its meat goes. One nobody saw fall
+## lies a way fixed by its id; a species without a sheet of its own gets the shared one.
+func _test_body_lies_as_the_animal_fell(a) -> void:
+	var manager = Helpers.create_manager(653)
+	var renderer = _make_renderer(manager)
+	var world = manager.world_state
+	var visuals: Dictionary = manager.config_bundle.visuals
+	var batch = renderer.scene_batch
+	var deer = Helpers.spawn_herbivore(world, Vector2(100.0, 100.0), 0)
+	_show(renderer, deer, Vector2(100.0, 100.0), 3)
+	world.kill_agent(deer, "predation")
+	var body := _body_of(world, deer.id)
+	var entry: Dictionary = batch.carcass_entry(renderer, body, visuals)
+	a.equal(entry.get("uv"), batch.uv_rect("carcass_herbivore", Vector2(0, 4 + 3), Vector2.ONE * 32.0),
+		"a deer killed facing east: its own body, flushed, lying east")
+	var fox = Helpers.spawn_predator(world, Vector2(140.0, 140.0))
+	_show(renderer, fox, Vector2(140.0, 140.0), 1)
+	world.kill_agent(fox, "starvation")
+	a.equal(batch.carcass_entry(renderer, _body_of(world, fox.id), visuals).get("uv"),
+		batch.uv_rect("carcass_predator", Vector2(0, 1), Vector2.ONE * 32.0),
+		"a fox that starved facing north: a fox's body in its own colours, lying north")
+	body["meat_remaining"] = float(body.meat_total) * 0.5
+	a.equal(batch.carcass_entry(renderer, body, visuals).get("uv"),
+		batch.uv_rect("carcass_herbivore", Vector2(1, 7), Vector2.ONE * 32.0), "half eaten: opened")
+	body["meat_remaining"] = float(body.meat_total) * 0.1
+	a.equal(batch.carcass_entry(renderer, body, visuals).get("uv"),
+		batch.uv_rect("carcass_herbivore", Vector2(2, 7), Vector2.ONE * 32.0), "nearly gone: bones")
+	var fawn = Helpers.spawn_herbivore(world, Vector2(60.0, 180.0), 0)
+	fawn.age = 0.0
+	_show(renderer, fawn, Vector2(60.0, 180.0), 0)
+	world.kill_agent(fawn, "predation")
+	var young: float = renderer._age_scale_of(fawn)
+	var small: Dictionary = batch.carcass_entry(renderer, _body_of(world, fawn.id), visuals)
+	a.is_true(young < 1.0, "fixture: a fawn is drawn smaller")
+	a.near((small.transform as Transform2D).x.x,
+		32.0 * float(visuals.species.herbivore.sprite_scale) * renderer._world_scale() * young, 0.001,
+		"and leaves a body as small as it was")
+	var unseen_id: int = Helpers.spawn_carcass(world, Vector2(200.0, 60.0))
+	var unseen: Dictionary = world.carcasses[unseen_id]
+	var lying: int = renderer.carcass_direction(unseen)
+	a.equal(lying, posmod(unseen_id * 7 + 1, 4), "a body nobody saw fall lies a way fixed by its id")
+	a.equal(batch.carcass_entry(renderer, unseen, visuals).get("uv"),
+		batch.uv_rect("carcass_herbivore", Vector2(0, lying), Vector2.ONE * 32.0), "unflushed: it was no kill")
+	unseen["source_species"] = "unknown"
+	a.equal(batch.carcass_entry(renderer, unseen, visuals).get("uv"),
+		batch.uv_rect("carcass", Vector2(0, 0), Vector2.ONE * float(visuals.carcass.get("frame_px", 32))),
+		"a species without a sheet of its own gets the shared one")
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+
+static func _body_of(world, agent_id: int) -> Dictionary:
+	for carcass in world.carcasses.values():
+		if int(carcass.get("source_agent_id", -1)) == agent_id:
+			return carcass
+	return {}
