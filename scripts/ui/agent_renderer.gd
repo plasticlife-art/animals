@@ -61,6 +61,8 @@ var _needs_refresh: bool = true
 var _last_camera_rect := Rect2()
 var _render_positions: Dictionary = {}
 var simulation_manager: SimulationManager
+## The pulsing ring under the selected animal; photo mode turns it off.
+var show_selection_ring: bool = true
 
 var _batches: Dictionary = {}
 var _carcass_batch: Dictionary = {}
@@ -541,7 +543,7 @@ func _compare_depth(a, b) -> bool:
 ## it. Drawn from `WorldView` - a node above the agents - the ring covered the
 ## animal instead.
 func _draw() -> void:
-	if simulation_manager == null or simulation_manager.world_state == null:
+	if simulation_manager == null or simulation_manager.world_state == null or not show_selection_ring:
 		return
 	var agent = simulation_manager.get_selected_agent()
 	if agent == null or not agent.is_alive:

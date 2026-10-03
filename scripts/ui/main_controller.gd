@@ -24,6 +24,7 @@ extends Node2D
 @onready var epitaph_card = $CanvasLayer/EpitaphCard
 @onready var chronicle_window = $CanvasLayer/ChronicleWindow
 @onready var settings_panel = $CanvasLayer/SettingsPanel
+@onready var photo_mode = $PhotoMode
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -196,6 +197,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	pinned_bar.set_allowed(false)
 	epitaph_card.set_allowed(false)
 	chronicle_window.close_window()
+	photo_mode.leave()
 	climate_indicator.visible = false
 	ecology_strip.visible = false
 	selection_tag.visible = false
@@ -259,6 +261,10 @@ func _bind_view() -> void:
 	chronicle_window.bind(story_book, simulation_manager)
 	chronicle_window.focus_requested.connect(_focus_animal)
 	player_bar.chronicle_requested.connect(toggle_chronicle)
+	player_bar.photo_requested.connect(photo_mode.enter)
+	photo_mode.bind(simulation_manager, [$CanvasLayer, overlay_renderer, world_view, place_labels], agent_renderer, world_view)
+	photo_mode.set_theme_for_bar(PixelUiTheme.build(true))
+	photo_mode.pause_toggled.connect(_on_pause_toggled)
 	selection_card.tree_requested.connect(open_chronicle)
 	story_book.feed.context_provider = _story_context
 	selection_card.family_clicked.connect(_focus_animal)
@@ -395,6 +401,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_follow_pressed = toggle_follow_pressed or event.keycode == KEY_F
 		toggle_help_pressed = toggle_help_pressed or event.keycode == KEY_F1
 
+	# Photo mode keeps its own keys: Esc or P leaves it, H hides its bar; nothing else acts.
+	if photo_mode.active:
+		if cancel_pressed or _is_key(event, "toggle_photo_mode", KEY_P):
+			photo_mode.leave()
+			get_viewport().set_input_as_handled()
+		elif _is_key(event, "photo_hide_bar", KEY_H):
+			photo_mode.toggle_bar()
+			get_viewport().set_input_as_handled()
+		return
+	if _is_key(event, "toggle_photo_mode", KEY_P):
+		if _bound and not start_menu.visible and not _pause_menu_open and not help_screen.visible \
+				and not settings_panel.visible:
+			photo_mode.enter()
+		get_viewport().set_input_as_handled()
+		return
 	# F11 switches full screen whatever is up.
 	if _is_key(event, "toggle_fullscreen", KEY_F11):
 		_settings["fullscreen"] = not bool(_settings.get("fullscreen", false))

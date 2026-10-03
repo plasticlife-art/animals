@@ -647,6 +647,26 @@ Utility actions inside `alive`:
 - Esc on the setup screen no longer opens the pause menu behind it, which before the first world
   had no buttons wired and on closing handed the mouse to a world under the menu
 
+### `PhotoMode`, `GifRecorder`, `GifEncoder`
+
+- Photo mode (P, «Фото» on the player bar) hides the HUD's single CanvasLayer - never panel by
+  panel, since the cards show themselves again on the next tick - with the overlays, the world
+  border, the place names and the selection ring (`AgentRenderer.show_selection_ring`), and gives
+  back exactly what was shown. The camera keeps moving; world clicks are off. Its own bar on a
+  CanvasLayer above: «Снимок», «GIF 10 с», «Пауза»/«Пуск», «Скрыть» (H), «Выйти» (Esc, P)
+- PNG: the bar hidden for a drawn frame, then the viewport read back at full size. Files go to
+  `OS.SYSTEM_DIR_PICTURES/Engine of Ecosystem`, or `user://photos` without one; the bar names the
+  file and offers «Открыть папку» (`OS.shell_show_in_file_manager`)
+- GIF: `GifRecorder` grabs the window 15 times a second for 10 seconds on the main thread (the
+  only one that may read the screen back), crops off the red frame that marks the recording,
+  scales to 640 wide, and feeds a coding thread through a queue; each frame lasts as long as it
+  really did until the next. The owner polls it each frame afterwards, so nothing calls back
+  across threads, and quitting mid-film waits for the file. `GifEncoder` is plain GDScript: one
+  palette from the first frame - a median cut of its 15-bit histogram plus a 27-colour lattice for
+  colours it lacked - colours looked up once per 15-bit value, LZW with growing code width and a
+  clear when the table fills, a NETSCAPE loop. Measured on this Mac: 147 frames in 10 s, about
+  9 MB, the game's frame time 9 ms on average and 28 ms at worst while recording
+
 ### `WhyText`
 
 - The card's «Почему:» line: the selected animal's last reason (shipped for the inspected animal

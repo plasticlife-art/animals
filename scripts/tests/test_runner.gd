@@ -21,6 +21,7 @@ const SUITES := [
 	{"name": "StoryTests", "script": preload("res://scripts/tests/story_tests.gd")},
 	{"name": "ChronicleTests", "script": preload("res://scripts/tests/chronicle_tests.gd")},
 	{"name": "ViewToolsTests", "script": preload("res://scripts/tests/view_tools_tests.gd")},
+	{"name": "PhotoModeTests", "script": preload("res://scripts/tests/photo_mode_tests.gd")},
 	{"name": "HerdMigrationTests", "script": preload("res://scripts/tests/herd_migration_tests.gd")},
 ]
 

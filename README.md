@@ -133,6 +133,9 @@ pipeline instead, which reports success even when tests fail:
   the size of the interface (75-125 %), saved in `user://settings.cfg`
 - `F1`: open or close the help screen
 - `L`: open or close the chronicle («Летопись»): the selected animal's family and the records
+- `P`: photo mode - the world without the interface, a PNG of the screen or a 10-second GIF
+  (640 px wide, 15 frames a second), saved to Pictures/Engine of Ecosystem; `H` hides its bar,
+  `Esc` or `P` leaves it
 - `F12`: switch developer mode; in it `Tab` shows or hides the developer panel and charts
 - `F`: toggle follow on the selected agent
 - `Следить за стадом` on the herd card: follow the selected animal's herd
@@ -312,6 +315,9 @@ scripts/ui/
   why_text.gd
   settings_store.gd
   settings_panel.gd
+  photo_mode.gd
+  gif_recorder.gd
+  gif_encoder.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

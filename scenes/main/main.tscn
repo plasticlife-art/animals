@@ -26,6 +26,7 @@
 [ext_resource type="Script" path="res://scripts/ui/epitaph_card.gd" id="24"]
 [ext_resource type="Script" path="res://scripts/ui/chronicle_window.gd" id="25"]
 [ext_resource type="Script" path="res://scripts/ui/settings_panel.gd" id="26"]
+[ext_resource type="Script" path="res://scripts/ui/photo_mode.gd" id="27"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -583,3 +584,6 @@ offset_bottom = 150.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("26")
+
+[node name="PhotoMode" type="CanvasLayer" parent="." unique_id=370118998]
+script = ExtResource("27")
