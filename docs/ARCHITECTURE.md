@@ -397,6 +397,14 @@ Utility actions inside `alive`:
   placed just after its row's tiles, so raised ground in front covers the tint behind it as
   it covers the ground. A single mesh drawn over the tiles painted the tint of low cells
   over the cliffs in front of them
+- Draws the watering holes too, under the animals and darkened at night with the ground: a
+  signed distance field (`WaterMask.bake()`, negative inside water, overlapping ponds joined)
+  baked once per world at half a terrain cell per texel, since ponds never move. The shader
+  shades water from shallow to deep with the distance, puts foam at the rim and a sand shore
+  outside it, bends the edge with noise and runs ripples on wall time. Water used to show only
+  as a debug disc drawn over the animals. It is on by default and independent of
+  `ground.enabled`; ponds stay walkable, so animals wade, and obstacles and props crossing a
+  pond draw over it. In the isometric view each row mesh carries the water at its cells' height
 - Refreshes every `ground.update_interval_ticks`. With the worker running, the manager asks
   it for the whole grass and trail grids on exactly those ticks (`ground` in the result),
   independent of the grass debug overlay's dirty-cell delta
@@ -762,15 +770,21 @@ millisecond setting squeezed to zero.
 ### `debug.json`
 
 - controls HUD defaults, overlay defaults, UI refresh frequency, and LOD settings
+- `overlays.show_minimap_water` is on: the minimap marks the watering holes, as the map
+  itself now does. `show_water_overlay` is still the debug disc drawn over the animals
 
 ### `visuals.json`
 
 - maps biomes and obstacles onto terrain atlas coordinates
 - declares per-species sprite atlases, frame size, draw scale, and the animation rows
 - holds the speed thresholds that pick between idle, walk and run
-- `ground` switches the `GroundTraces` layer and sets its colours (RGBA), the grass-share and
-  wear ranges each tint fades in over, its refresh interval and the noise that breaks up
-  cell edges
+- `ground` switches the `GroundTraces` grass and trail tint and sets its colours (RGBA), the
+  grass shares each ramp colour is reached at (`grass_stops`), the wear range trails fade in
+  over, its refresh interval and the noise that breaks up cell edges
+- `water` switches the watering holes on the ground and sets their colours (shallow, deep,
+  foam, shore), the field's resolution in terrain cells (`texel_cells`) and lengths in art
+  pixels (`*_px`, scaled by cell size / 32 like sprites): depth to the darkest colour, shore
+  and foam widths, how far noise bends the edge, ripple size, speed and strength
 
 ## Built-In Tests
 

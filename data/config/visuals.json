@@ -14,6 +14,21 @@
     "noise_size": 40.0,
     "noise_strength": 0.16
   },
+  "water": {
+    "enabled": true,
+    "texel_cells": 0.5,
+    "shallow_color": [0.33, 0.60, 0.72, 0.85],
+    "deep_color": [0.10, 0.28, 0.46, 0.93],
+    "foam_color": [0.90, 0.96, 0.97, 0.55],
+    "shore_color": [0.79, 0.71, 0.50, 0.50],
+    "depth_px": 48.0,
+    "shore_px": 12.0,
+    "foam_px": 3.0,
+    "edge_noise_px": 5.0,
+    "ripple_px": 40.0,
+    "ripple_speed": 0.06,
+    "ripple_strength": 0.06
+  },
   "tile_px": 32,
   "terrain": {
     "atlas": "res://assets/tiles/terrain_atlas.png",

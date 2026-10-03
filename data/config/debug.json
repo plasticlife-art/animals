@@ -33,7 +33,7 @@
     "show_carcasses": false,
     "show_selected_path": false,
     "show_lod_overlay": false,
-    "show_minimap_water": false
+    "show_minimap_water": true
   },
   "autosave_interval_ticks": 600,
   "ai_diagnostics": false

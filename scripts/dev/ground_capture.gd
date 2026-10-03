@@ -6,7 +6,8 @@ extends SceneTree
 # Runs the real main scene at top speed until `sim_seconds` have passed, so herds have
 # had time to graze pastures down and wear paths, then writes `<prefix>-map.png` with
 # the whole map in frame, `<prefix>-mid.png` at play distance and `<prefix>-close.png`
-# up close, both on the most worn ground.
+# up close, both on the most worn ground, and `<prefix>-pond.png` up close on the
+# watering hole nearest it.
 #
 # `variants.json` maps a name to a patch of `visuals.ground` keys. Each variant is put on
 # the ground layer in turn and shot from the same three views, as `<prefix>-<name>-<view>.png`,
@@ -93,6 +94,7 @@ func _queue_shots() -> void:
 		["map", _manager.world_state.bounds.get_center(), _map_zoom()],
 		["mid", _most_worn_position(), 0.2],
 		["close", _most_worn_position(), 0.45],
+		["pond", _pond_nearest(_most_worn_position()), 0.45],
 	]
 	var variants := {"": {}}
 	if _variants_path != "":
@@ -144,6 +146,18 @@ func _aim(world_position: Vector2, zoom: float) -> void:
 	_camera.global_position = WorldProjection.to_screen(world_position, level)
 	_camera.zoom = Vector2(zoom, zoom)
 	_camera.force_update_scroll()
+
+
+## The watering hole nearest `position`, where the animals that wore the ground drink.
+func _pond_nearest(position: Vector2) -> Vector2:
+	var best := position
+	var best_distance := INF
+	for source in _manager.world_state.water_sources:
+		var distance: float = position.distance_to(source["position"])
+		if distance < best_distance:
+			best_distance = distance
+			best = source["position"]
+	return best
 
 
 func _most_worn_position() -> Vector2:

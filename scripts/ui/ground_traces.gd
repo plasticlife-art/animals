@@ -10,6 +10,10 @@ extends Node2D
 ## chart; this is the same data as scenery. The ramp used to tint only the two ends,
 ## below 0.4 of a cell's cap and above 0.62, so ground grazed to half looked untouched.
 ##
+## The watering holes are drawn here too, with a sand shore, from a distance field baked
+## once per world (`WaterMask`). They used to show only as a debug overlay drawn over the
+## animals. Water is on by default and independent of the grass and trails.
+##
 ## The grids reach the GPU as float textures built straight from the packed arrays, so
 ## a refresh costs no loop in script. The mesh is one quad per walkable terrain cell,
 ## placed through `WorldProjection` with the cell's elevation.
@@ -39,6 +43,31 @@ const GROUND_DEFAULTS := {
 }
 const GROUND_COLORS := ["bare_color", "dry_color", "mid_color", "lush_color", "trail_color"]
 
+const WaterMaskScript := preload("res://scripts/ui/water_mask.gd")
+
+## `visuals.water` defaults, for the same reason. Lengths ending in `_px` are art pixels
+## and scale with the map's cell size, as sprites do; `texel_cells` is the water field's
+## resolution in terrain cells.
+const WATER_DEFAULTS := {
+	"enabled": true,
+	"texel_cells": 0.5,
+	"shallow_color": [0.33, 0.60, 0.72, 0.85],
+	"deep_color": [0.10, 0.28, 0.46, 0.93],
+	"foam_color": [0.90, 0.96, 0.97, 0.55],
+	"shore_color": [0.79, 0.71, 0.50, 0.50],
+	"depth_px": 48.0,
+	"shore_px": 12.0,
+	"foam_px": 3.0,
+	"edge_noise_px": 5.0,
+	"ripple_px": 40.0,
+	"ripple_speed": 0.06,
+	"ripple_strength": 0.06,
+}
+const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color"]
+## Shader uniform each `_px` length becomes, in world units.
+const WATER_LENGTHS := {"depth_px": "water_depth", "shore_px": "shore_width", "foam_px": "foam_width",
+	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size"}
+
 ## Layer-local units a row mesh is sorted after the tiles of its own row. Rows are half
 ## a tile apart, so this lands between one row and the next.
 const ROW_SORT_NUDGE := 1.0
@@ -52,6 +81,8 @@ var _material: ShaderMaterial
 var _grass_texture: ImageTexture
 var _trail_texture: ImageTexture
 var _interval_ticks: int = 0
+## The baked water field (`WaterMask.bake()`), empty while water is off.
+var _water_mask: Dictionary = {}
 
 
 func bind_manager(manager: SimulationManager, tiles: TerrainTileRenderer = null) -> void:
@@ -76,18 +107,23 @@ func rebuild() -> void:
 	_row_meshes.clear()
 	_grass_texture = null
 	_trail_texture = null
+	_water_mask = {}
 	if simulation_manager == null or simulation_manager.world_state == null:
 		return
+	var world = simulation_manager.world_state
+	var visuals: Dictionary = simulation_manager.config_bundle.get("visuals", {})
+	var water := resolve_water_config(visuals.get("water", {}))
+	var water_on: bool = bool(water["enabled"]) and not world.water_sources.is_empty()
 	_interval_ticks = simulation_manager.ground_update_interval_ticks()
-	visible = _interval_ticks > 0
+	visible = _interval_ticks > 0 or water_on
 	if not visible:
 		return
 	var started := Time.get_ticks_usec()
-	var world = simulation_manager.world_state
-	var config: Dictionary = simulation_manager.config_bundle.get("visuals", {}).get("ground", {})
 	_material = ShaderMaterial.new()
 	_material.shader = GROUND_SHADER
-	_apply_config(config)
+	_apply_config(visuals.get("ground", {}))
+	_material.set_shader_parameter("ground_enabled", 1.0 if _interval_ticks > 0 else 0.0)
+	_apply_water(world, water if water_on else {})
 	var grass: ResourceSystem = world.resource_system
 	var trails: TrailField = world.trail_field
 	_material.set_shader_parameter("grass_extent", Vector2(grass.cols, grass.rows) * grass.cell_size)
@@ -102,7 +138,8 @@ func rebuild() -> void:
 		_mesh_instance.mesh = _build_mesh(world.terrain_system, _all_walkable(world.terrain_system))
 		_mesh_instance.material = _material
 		add_child(_mesh_instance)
-	refresh()
+	if _interval_ticks > 0:
+		refresh()
 	simulation_manager.record_render_phase("ground_rebuild",
 		float(Time.get_ticks_usec() - started) / 1000.0)
 
@@ -155,19 +192,61 @@ func _apply_config(config: Dictionary) -> void:
 		_material.set_shader_parameter(key, float(ground[key]))
 
 
+## Bakes the ponds into the water field and hands it to the shader, or switches water
+## off when `water` is empty. Ponds never move, so this runs on rebuild only.
+func _apply_water(world, water: Dictionary) -> void:
+	if water.is_empty():
+		_material.set_shader_parameter("water_enabled", 0.0)
+		return
+	var started := Time.get_ticks_usec()
+	var cell_size: float = world.terrain_system.cell_size
+	var scale := cell_size / 32.0
+	for key in WATER_COLORS:
+		_material.set_shader_parameter(key, water[key])
+	for key in WATER_LENGTHS.keys():
+		_material.set_shader_parameter(WATER_LENGTHS[key], float(water[key]) * scale)
+	for key in ["ripple_speed", "ripple_strength"]:
+		_material.set_shader_parameter(key, float(water[key]))
+	# The field only has to reach as far as anything is drawn: the shore, how far the
+	# noise can push it, and two texels for the blend.
+	var texel := maxf(1.0, cell_size * float(water["texel_cells"]))
+	var reach := (float(water["shore_px"]) + float(water["edge_noise_px"])) * scale + texel * 2.0
+	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach)
+	var cols: int = _water_mask["cols"]
+	var rows: int = _water_mask["rows"]
+	_material.set_shader_parameter("water_tex", ImageTexture.create_from_image(
+		_float_image(_water_mask["cells"], cols, rows)))
+	_material.set_shader_parameter("water_extent", Vector2(cols, rows) * texel)
+	_material.set_shader_parameter("water_enabled", 1.0)
+	simulation_manager.record_render_phase("water_bake", float(Time.get_ticks_usec() - started) / 1000.0)
+
+
 ## `visuals.ground` with every key the layer reads, colours as `Color`. A key missing or
 ## malformed takes its default, so a save made before it existed still draws the ramp.
 static func resolve_ground_config(config: Dictionary) -> Dictionary:
+	return _resolve(config, GROUND_DEFAULTS, GROUND_COLORS)
+
+
+## `visuals.water` the same way. Water is on unless switched off.
+static func resolve_water_config(config: Dictionary) -> Dictionary:
+	var resolved := _resolve(config, WATER_DEFAULTS, WATER_COLORS)
+	resolved["enabled"] = bool(config.get("enabled", WATER_DEFAULTS["enabled"]))
+	return resolved
+
+
+static func _resolve(config: Dictionary, defaults: Dictionary, colors: Array) -> Dictionary:
 	var resolved := {}
-	for key in GROUND_DEFAULTS.keys():
-		var fallback = GROUND_DEFAULTS[key]
+	for key in defaults.keys():
+		var fallback = defaults[key]
 		var value = config.get(key, fallback)
 		if fallback is Array and not (value is Array and value.size() >= fallback.size()):
 			value = fallback
-		if GROUND_COLORS.has(key):
+		if colors.has(key):
 			resolved[key] = Color(value[0], value[1], value[2], value[3])
 		elif value is Array:
 			resolved[key] = value.duplicate()
+		elif value is bool:
+			resolved[key] = value
 		else:
 			resolved[key] = float(value)
 	return resolved

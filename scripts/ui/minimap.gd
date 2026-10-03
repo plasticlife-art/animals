@@ -5,8 +5,10 @@ const PANEL_BACKGROUND_COLOR := Color(0.05, 0.07, 0.08, 0.88)
 const PANEL_BORDER_COLOR := Color(0.82, 0.88, 0.9, 0.22)
 const MAP_BACKGROUND_COLOR := Color(0.1, 0.13, 0.12, 1.0)
 const MAP_BORDER_COLOR := Color(0.9, 0.95, 0.98, 0.2)
-const WATER_FILL_COLOR := Color(0.26, 0.52, 0.92, 0.72)
-const WATER_OUTLINE_COLOR := Color(0.82, 0.93, 1.0, 0.95)
+const WATER_FILL_COLOR := Color(0.24, 0.48, 0.78, 0.8)
+## A shade darker than the fill: a bright rim made fifty small ponds the loudest thing
+## on the map.
+const WATER_OUTLINE_COLOR := Color(0.16, 0.34, 0.6, 0.9)
 ## Fallback only. Real per-species colours and dot sizes come from
 ## `visuals.json -> species.<id>.ui_color` / `.minimap_radius`; anything that is
 ## not "predator" used to be drawn as a herbivore, so a third species would have
@@ -45,10 +47,11 @@ var _dot_texture: Texture2D
 var _dots_dirty: bool = true
 
 
-## Off by default: on a large map the generator places well over a hundred
-## watering holes, and drawn all at once they read as a lattice over the terrain
-## rather than as information.
-var _show_water: bool = false
+## On by default, as water is on the map itself. The large map has about fifty
+## watering holes, a few pixels each here; the "lush" scenario has a few hundred, and
+## there they read more as a lattice than as information, so the debug panel can still
+## switch them off.
+var _show_water: bool = true
 
 
 func _ready() -> void:

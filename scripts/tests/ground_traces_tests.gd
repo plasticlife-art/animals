@@ -6,6 +6,7 @@ const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const TrailFieldScript := preload("res://scripts/world/trail_field.gd")
 const SimulationWorkerScript := preload("res://scripts/core/simulation_worker.gd")
 const GroundTracesScript := preload("res://scripts/ui/ground_traces.gd")
+const WaterMaskScript := preload("res://scripts/ui/water_mask.gd")
 
 const HERD_CENTER := Vector2(768.0, 768.0)
 const STEP_SECONDS := 0.75
@@ -25,6 +26,8 @@ func run(a) -> void:
 	_test_layer_covers_walkable_ground_only(a)
 	_test_layer_is_off_when_switched_off(a)
 	_test_grass_ramp_has_no_dead_band(a)
+	_test_water_mask_marks_the_ponds(a)
+	_test_water_is_drawn_by_default(a)
 	_test_isometric_ground_and_sprites_rise_together(a)
 	_test_isometric_rows_sort_with_the_tiles(a)
 
@@ -276,11 +279,86 @@ func _test_layer_covers_walkable_ground_only(a) -> void:
 func _test_layer_is_off_when_switched_off(a) -> void:
 	var bundle: Dictionary = Helpers.build_test_bundle(508)
 	bundle["visuals"]["ground"] = {"enabled": false}
+	bundle["visuals"]["water"] = {"enabled": false}
 	var manager = Helpers.create_manager_with(bundle, 508)
 	a.equal(manager.ground_update_interval_ticks(), 0, "a switched-off layer asks the worker for nothing")
 	var layer = GroundTracesScript.new()
 	layer.bind_manager(manager)
-	a.is_true(not layer.visible and layer._mesh_instance == null, "and draws nothing")
+	a.is_true(not layer.visible and layer._mesh_instance == null, "and with water off too, draws nothing")
+	layer.free()
+	Helpers.destroy_manager(manager)
+
+
+## The water field is negative inside a pond, crosses zero at its edge, and holds
+## `reach` everywhere water is not near. Ponds that overlap join; one on the map's edge
+## is cut off, not wrapped.
+func _test_water_mask_marks_the_ponds(a) -> void:
+	var mask: Dictionary = WaterMaskScript.bake([{"position": Vector2(500, 400), "radius": 100.0}],
+		Vector2(1000, 800), 10.0, 40.0)
+	a.equal(Vector2i(mask["cols"], mask["rows"]), Vector2i(100, 80), "one texel per ten units")
+	a.is_true(WaterMaskScript.sample(mask, Vector2(500, 400)) < -90.0, "deep in the middle of the pond")
+	a.near(WaterMaskScript.sample(mask, Vector2(600, 400)), 0.0, 1.0, "about zero on its edge")
+	a.near(WaterMaskScript.sample(mask, Vector2(900, 100)), 40.0, 0.0001, "and dry land far from it")
+	var pair: Dictionary = WaterMaskScript.bake([{"position": Vector2(300, 400), "radius": 100.0},
+		{"position": Vector2(420, 400), "radius": 60.0}], Vector2(1000, 800), 10.0, 40.0)
+	a.is_true(WaterMaskScript.sample(pair, Vector2(360, 400)) < -30.0, "two ponds that overlap are one water")
+	a.is_true(WaterMaskScript.sample(pair, Vector2(470, 400)) < 0.0, "out to the far edge of the smaller one")
+	var corner: Dictionary = WaterMaskScript.bake([{"position": Vector2.ZERO, "radius": 50.0}],
+		Vector2(1000, 800), 10.0, 40.0)
+	a.is_true(WaterMaskScript.sample(corner, Vector2(5, 5)) < 0.0, "a pond on the edge of the map is water there")
+	a.near(WaterMaskScript.sample(corner, Vector2(995, 795)), 40.0, 0.0001, "and nowhere it does not reach")
+
+
+## Water is on by default, also in a save made before the setting existed, independent
+## of the grass and trails, and every watering hole is wet in the middle.
+func _test_water_is_drawn_by_default(a) -> void:
+	var manager = Helpers.create_manager(512)
+	var world = manager.world_state
+	WorldProjection.configure({"projection": "orthogonal"})
+	var layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	a.equal(layer._material.get_shader_parameter("water_enabled"), 1.0, "water is drawn by default")
+	var mask: Dictionary = layer._water_mask
+	var texture: Texture2D = layer._material.get_shader_parameter("water_tex")
+	a.equal(texture.get_size(), Vector2(mask["cols"], mask["rows"]), "the field reaches the GPU one texel per texel")
+	a.equal(layer._material.get_shader_parameter("water_extent"), Vector2(mask["cols"], mask["rows"]) * float(mask["texel"]),
+		"and the shader knows how much world it covers")
+	var dry := 0
+	for source in world.water_sources:
+		if WaterMaskScript.sample(mask, source["position"]) >= 0.0:
+			dry += 1
+	a.greater(world.water_sources.size(), 0, "fixture: the world has water")
+	a.equal(dry, 0, "every watering hole is water in the middle")
+	layer.free()
+	Helpers.destroy_manager(manager)
+
+	var legacy: Dictionary = Helpers.build_test_bundle(513)
+	legacy["visuals"].erase("water")
+	manager = Helpers.create_manager_with(legacy, 513)
+	layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	a.equal(layer._material.get_shader_parameter("water_enabled"), 1.0, "a save without the setting still shows water")
+	layer.free()
+	Helpers.destroy_manager(manager)
+
+	var dry_bundle: Dictionary = Helpers.build_test_bundle(514)
+	dry_bundle["visuals"]["water"] = {"enabled": false}
+	manager = Helpers.create_manager_with(dry_bundle, 514)
+	layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	a.equal(layer._material.get_shader_parameter("water_enabled"), 0.0, "switched off, no water")
+	a.is_true(layer._water_mask.is_empty(), "and nothing is baked")
+	layer.free()
+	Helpers.destroy_manager(manager)
+
+	var bare_bundle: Dictionary = Helpers.build_test_bundle(515)
+	bare_bundle["visuals"]["ground"] = {"enabled": false}
+	manager = Helpers.create_manager_with(bare_bundle, 515)
+	layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	a.is_true(layer.visible and layer._mesh_instance != null, "with grass and trails off, water is still drawn")
+	a.equal(layer._material.get_shader_parameter("ground_enabled"), 0.0, "without them")
+	a.equal(manager.ground_update_interval_ticks(), 0, "and the worker still ships no ground")
 	layer.free()
 	Helpers.destroy_manager(manager)
 
