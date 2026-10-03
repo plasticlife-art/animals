@@ -29,6 +29,11 @@
     "ripple_speed": 0.06,
     "ripple_strength": 0.06
   },
+  "borders": {
+    "enabled": true,
+    "reach": 0.45,
+    "noise_cells": 0.7
+  },
   "wind": {
     "enabled": true,
     "amplitude_px": 3.0,

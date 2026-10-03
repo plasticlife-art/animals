@@ -430,6 +430,15 @@ Utility actions inside `alive`:
   as a debug disc drawn over the animals. It is on by default and independent of
   `ground.enabled`; ponds stay walkable, so animals wade, and obstacles and props crossing a
   pond draw over it. In the isometric view each row mesh carries the water at its cells' height
+- Softens the biome borders too. The terrain grid is square cells, so its biomes met in a
+  staircase; now a fragment near a cell's edge looks a noise-warped way into the neighbouring
+  cell - the warp stepped to the art's pixel - and takes that cell's surface when it is another
+  walkable biome on the same level, so both sides fray into each other in pixel steps.
+  `biome_image()` bakes per cell the biome's index, its height and whether it is walkable, once
+  per world. Top-down the surface is read from the style's terrain atlas in world space (the
+  tile map's rotation variant may differ under it); isometric it is the biome's colour, which
+  is what the placeholder diamonds' top faces are, and skirts are left alone. Obstacle cells draw
+  above this layer and keep their square edges. Composite: tile, border, grass and trails, water
 - Refreshes every `ground.update_interval_ticks`. With the worker running, the manager asks
   it for the whole grass and trail grids on exactly those ticks (`ground` in the result),
   independent of the grass debug overlay's dirty-cell delta
@@ -1071,6 +1080,9 @@ millisecond setting squeezed to zero.
 - `species.<id>.carcass_atlas` is the species' carcass sheet: three stages across, the four
   directions down, a death without a blow first and a kill after. `carcass` is the shared
   sheet for a species without one, and its `stages` is how many columns both have
+- `borders` switches the frayed biome borders and sets how far into a cell they may reach and the
+  scale their noise varies over, both in cells (`reach` 0.45, `noise_cells` 0.7). The layer is
+  up whenever grass, water or borders are on
 - `wind` switches the sway of plants and sets it: `amplitude_px` (canvas pixels at the top of a
   weight-1 prop), `speed`, `gust`, `wavelength_px` of the wave across the field, and `weights` by
   prop group (the Kenney style patch keeps its mossy-rock swamp props still and its cacti nearly

@@ -64,6 +64,11 @@ const WATER_DEFAULTS := {
 	"ripple_strength": 0.06,
 }
 const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color"]
+## `visuals.borders` defaults: how far into a cell a border may reach and the scale its noise
+## varies over, both in cells.
+const BORDER_DEFAULTS := {"enabled": true, "reach": 0.45, "noise_cells": 0.7}
+## Biome order in the border field, as `surface_uv` and `biome_colors` are indexed.
+const BORDER_BIOMES := ["meadow", "forest", "drought", "swamp"]
 ## Shader uniform each `_px` length becomes, in world units.
 const WATER_LENGTHS := {"depth_px": "water_depth", "shore_px": "shore_width", "foam_px": "foam_width",
 	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size"}
@@ -114,8 +119,11 @@ func rebuild() -> void:
 	var visuals: Dictionary = simulation_manager.config_bundle.get("visuals", {})
 	var water := resolve_water_config(visuals.get("water", {}))
 	var water_on: bool = bool(water["enabled"]) and not world.water_sources.is_empty()
+	var borders: Dictionary = BORDER_DEFAULTS.duplicate()
+	borders.merge(visuals.get("borders", {}), true)
+	var borders_on := bool(borders["enabled"])
 	_interval_ticks = simulation_manager.ground_update_interval_ticks()
-	visible = _interval_ticks > 0 or water_on
+	visible = _interval_ticks > 0 or water_on or borders_on
 	if not visible:
 		return
 	var started := Time.get_ticks_usec()
@@ -124,6 +132,7 @@ func rebuild() -> void:
 	_apply_config(visuals.get("ground", {}))
 	_material.set_shader_parameter("ground_enabled", 1.0 if _interval_ticks > 0 else 0.0)
 	_apply_water(world, water if water_on else {})
+	_apply_borders(world.terrain_system, visuals, borders if borders_on else {})
 	var grass: ResourceSystem = world.resource_system
 	var trails: TrailField = world.trail_field
 	_material.set_shader_parameter("grass_extent", Vector2(grass.cols, grass.rows) * grass.cell_size)
@@ -219,6 +228,53 @@ func _apply_water(world, water: Dictionary) -> void:
 	_material.set_shader_parameter("water_extent", Vector2(cols, rows) * texel)
 	_material.set_shader_parameter("water_enabled", 1.0)
 	simulation_manager.record_render_phase("water_bake", float(Time.get_ticks_usec() - started) / 1000.0)
+
+
+## The border field and the surfaces a border takes, or borders off when `borders` is empty.
+func _apply_borders(terrain: TerrainSystem, visuals: Dictionary, borders: Dictionary) -> void:
+	if borders.is_empty():
+		_material.set_shader_parameter("borders_enabled", 0.0)
+		return
+	_material.set_shader_parameter("biome_tex", ImageTexture.create_from_image(biome_image(terrain)))
+	_material.set_shader_parameter("cell_size", terrain.cell_size)
+	_material.set_shader_parameter("border_reach", clampf(float(borders["reach"]), 0.0, 0.5))
+	_material.set_shader_parameter("border_noise", maxf(0.05, float(borders["noise_cells"])))
+	var colors: Array = []
+	for biome in BORDER_BIOMES:
+		colors.append(terrain.get_biome_color(biome))
+	_material.set_shader_parameter("biome_colors", colors)
+	var terrain_visuals: Dictionary = visuals.get("terrain", {})
+	var tile_px := float(visuals.get("tile_px", 32))
+	var subdivisions := maxi(1, int(terrain_visuals.get("subdivisions", 1)))
+	var tile_world := terrain.cell_size / float(subdivisions)
+	_material.set_shader_parameter("tile_world", tile_world)
+	_material.set_shader_parameter("art_px", maxf(0.5, tile_world / tile_px))
+	var atlas: Texture2D = load(str(terrain_visuals.get("atlas", ""))) if terrain_visuals.has("atlas") else null
+	var flat := atlas == null or not WorldProjection.is_identity()
+	_material.set_shader_parameter("flat_colors", 1.0 if flat else 0.0)
+	if not flat:
+		var size := Vector2(atlas.get_width(), atlas.get_height())
+		var surfaces: Array = []
+		for biome in BORDER_BIOMES:
+			var coords: Array = terrain_visuals.get("biomes", {}).get(biome, {}).get("atlas_coords", [0, 0])
+			surfaces.append(Vector2(float(coords[0]), float(coords[1])) * tile_px / size)
+		_material.set_shader_parameter("terrain_atlas", atlas)
+		_material.set_shader_parameter("tile_uv", Vector2(tile_px, tile_px) / size)
+		_material.set_shader_parameter("surface_uv", surfaces)
+	_material.set_shader_parameter("borders_enabled", 1.0)
+
+
+## One texel per terrain cell: the biome's index in `BORDER_BIOMES` (r), its elevation (g),
+## 255 when walkable (b).
+static func biome_image(terrain: TerrainSystem) -> Image:
+	var data := PackedByteArray()
+	data.resize(terrain.cols * terrain.rows * 4)
+	for index in range(terrain.cols * terrain.rows):
+		data[index * 4] = maxi(0, BORDER_BIOMES.find(terrain.get_biome_at_index(index)))
+		data[index * 4 + 1] = clampi(terrain.get_height_at_index(index), 0, 255)
+		data[index * 4 + 2] = 255 if terrain.is_walkable_index(index) else 0
+		data[index * 4 + 3] = 255
+	return Image.create_from_data(terrain.cols, terrain.rows, false, Image.FORMAT_RGBA8, data)
 
 
 ## `visuals.ground` with every key the layer reads, colours as `Color`. A key missing or

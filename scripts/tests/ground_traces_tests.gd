@@ -30,6 +30,7 @@ func run(a) -> void:
 	_test_water_is_drawn_by_default(a)
 	_test_isometric_ground_and_sprites_rise_together(a)
 	_test_isometric_rows_sort_with_the_tiles(a)
+	_test_biome_borders(a)
 
 
 func _field(half_life: float = 10.0) -> TrailField:
@@ -280,13 +281,24 @@ func _test_layer_is_off_when_switched_off(a) -> void:
 	var bundle: Dictionary = Helpers.build_test_bundle(508)
 	bundle["visuals"]["ground"] = {"enabled": false}
 	bundle["visuals"]["water"] = {"enabled": false}
+	bundle["visuals"]["borders"] = {"enabled": false}
 	var manager = Helpers.create_manager_with(bundle, 508)
 	a.equal(manager.ground_update_interval_ticks(), 0, "a switched-off layer asks the worker for nothing")
 	var layer = GroundTracesScript.new()
 	layer.bind_manager(manager)
-	a.is_true(not layer.visible and layer._mesh_instance == null, "and with water off too, draws nothing")
+	a.is_true(not layer.visible and layer._mesh_instance == null, "and with water and borders off too, draws nothing")
 	layer.free()
 	Helpers.destroy_manager(manager)
+	var borders_only: Dictionary = Helpers.build_test_bundle(508)
+	borders_only["visuals"]["ground"] = {"enabled": false}
+	borders_only["visuals"]["water"] = {"enabled": false}
+	var bordered = Helpers.create_manager_with(borders_only, 508)
+	var border_layer = GroundTracesScript.new()
+	border_layer.bind_manager(bordered)
+	a.is_true(border_layer.visible, "biome borders alone keep the layer up")
+	a.equal(float(border_layer._material.get_shader_parameter("ground_enabled")), 0.0, "without the grass tint")
+	border_layer.free()
+	Helpers.destroy_manager(bordered)
 
 
 ## The water field is negative inside a pond, crosses zero at its edge, and holds
@@ -519,4 +531,39 @@ func _test_isometric_rows_sort_with_the_tiles(a) -> void:
 	layer_node.free()
 	tiles.free()
 	WorldProjection.configure({"projection": "orthogonal"})
+	Helpers.destroy_manager(manager)
+
+
+## The border field holds each cell's biome, height and whether it is walkable; the surfaces
+## come from the style's terrain atlas top-down, from the biome colours in the iso view.
+func _test_biome_borders(a) -> void:
+	var manager = Helpers.create_manager_with(Helpers.ConfigLoaderScript.load_config_bundle(), 3)
+	var terrain = manager.world_state.terrain_system
+	var image: Image = GroundTracesScript.biome_image(terrain)
+	a.equal(Vector2i(image.get_width(), image.get_height()), Vector2i(terrain.cols, terrain.rows), "a texel per cell")
+	var wrong := 0
+	for index in range(0, terrain.cols * terrain.rows, 97):
+		var texel: Color = image.get_pixel(index % terrain.cols, index / terrain.cols)
+		if int(round(texel.r * 255.0)) != GroundTracesScript.BORDER_BIOMES.find(terrain.get_biome_at_index(index)) \
+				or (texel.b > 0.5) != terrain.is_walkable_index(index) \
+				or int(round(texel.g * 255.0)) != terrain.get_height_at_index(index):
+			wrong += 1
+	a.equal(wrong, 0, "each texel says the cell's biome, height and walkability")
+	var layer = GroundTracesScript.new()
+	layer.bind_manager(manager)
+	var material: ShaderMaterial = layer._material
+	a.equal(float(material.get_shader_parameter("borders_enabled")), 1.0, "borders on by default")
+	var visuals: Dictionary = manager.config_bundle["visuals"]
+	var tile_px := float(visuals["tile_px"])
+	var atlas: Texture2D = load(str(visuals["terrain"]["atlas"]))
+	var forest: Array = visuals["terrain"]["biomes"]["forest"]["atlas_coords"]
+	var surfaces: Array = material.get_shader_parameter("surface_uv")
+	a.is_true(surfaces.size() == 4 and Vector2(surfaces[1]).is_equal_approx(Vector2(float(forest[0]), float(forest[1]))
+		* tile_px / Vector2(atlas.get_width(), atlas.get_height())), "the forest's surface where the atlas has it")
+	a.equal(float(material.get_shader_parameter("tile_world")),
+		terrain.cell_size / float(visuals["terrain"].get("subdivisions", 1)), "the tile's size in the world")
+	var code: String = load("res://shaders/ground_traces.gdshader").code
+	a.is_true(code.contains("border_surface(world)") and code.contains("texelFetch(biome_tex"),
+		"the shader looks a warped way into the next cell")
+	layer.free()
 	Helpers.destroy_manager(manager)
