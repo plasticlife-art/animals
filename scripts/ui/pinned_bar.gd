@@ -77,16 +77,20 @@ func refresh() -> void:
 			_buttons[int(agent_id)] = button
 		_shown_pins = story.pins.duplicate()
 	for agent_id in _buttons:
-		_buttons[agent_id].text = row_text(story.pin_status(int(agent_id)))
+		var status: Dictionary = story.pin_status(int(agent_id))
+		_buttons[agent_id].text = row_text(status)
+		# A dead one's tooltip is what was said of it.
+		_buttons[agent_id].tooltip_text = story.epitaph_of(int(agent_id)) + "\n\nПравый клик - открепить" \
+			if bool(status.get("dead", false)) else "Показать; правый клик - открепить"
 	visible = _allowed and not story.pins.is_empty()
 
 
-## «Ветка · олениха», «Ветка · олениха — вдали», «Ветка · олениха — погибла» / «— умерла».
+## «Ветка · олениха», «Ветка · олениха — вдали», «† Ветка · олениха — погибла» / «— умерла».
 static func row_text(status: Dictionary) -> String:
 	var sex := str(status.get("sex", ""))
 	var text := "%s · %s" % [status.get("name", ""), HudTextScript.animal_noun(str(status.get("species", "")), sex)]
 	if bool(status.get("dead", false)):
-		return "%s — %s" % [text, HudTextScript.died(sex, str(status.get("cause", "")))]
+		return "† %s — %s" % [text, HudTextScript.died(sex, str(status.get("cause", "")))]
 	if not bool(status.get("awake", false)):
 		return "%s — вдали" % text
 	return text

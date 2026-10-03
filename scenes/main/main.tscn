@@ -23,6 +23,7 @@
 [ext_resource type="Script" path="res://scripts/ui/pinned_bar.gd" id="21"]
 [ext_resource type="Script" path="res://scripts/ui/story_feed.gd" id="22"]
 [ext_resource type="Script" path="res://scripts/ui/place_labels.gd" id="23"]
+[ext_resource type="Script" path="res://scripts/ui/epitaph_card.gd" id="24"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("8")
@@ -446,6 +447,18 @@ offset_bottom = 222.0
 grow_horizontal = 2
 mouse_filter = 2
 script = ExtResource("18")
+
+[node name="EpitaphCard" type="PanelContainer" parent="CanvasLayer" unique_id=370118995]
+unique_name_in_owner = true
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -270.0
+offset_top = 232.0
+offset_right = 270.0
+offset_bottom = 330.0
+grow_horizontal = 2
+script = ExtResource("24")
 
 [node name="PauseBlur" type="ColorRect" parent="CanvasLayer" unique_id=204192314]
 visible = false

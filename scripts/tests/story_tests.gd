@@ -285,9 +285,9 @@ func _test_card_and_list_words(a) -> void:
 	a.equal(PinnedBarScript.row_text({"name": "Рыжик", "species": "predator", "sex": "male", "dead": false, "awake": false}),
 		"Рыжик · лис — вдали", "asleep")
 	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": true,
-		"cause": "predation"}), "Ветка · олениха — погибла", "taken by a hunter")
+		"cause": "predation"}), "† Ветка · олениха — погибла", "taken by a hunter")
 	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": true,
-		"cause": "old_age"}), "Ветка · олениха — умерла", "died of age")
+		"cause": "old_age"}), "† Ветка · олениха — умерла", "died of age")
 	Helpers.destroy_manager(manager)
 
 
@@ -349,8 +349,8 @@ func _test_feed_tells_what_is_looked_at(a) -> void:
 	book.hear({"type": "AgentDied", "agent_id": -1, "species": "predator", "time_seconds": 5.0,
 		"position": {"x": 600.0, "y": 600.0}, "data": {"cause": "starvation", "dormant": true, "record_id": far_fox.id}})
 	var pinned: Dictionary = book.feed.lines[0]
-	a.is_true(bool(pinned.pinned) and str(pinned.text).ends_with("умер от голода вдали"),
-		"a pinned fox far away, off every named place: %s" % pinned.text)
+	a.is_true(bool(pinned.pinned) and str(pinned.kind) == "epitaph" and str(pinned.text).ends_with("Умер от голода."),
+		"a pinned fox far away, told by his epitaph: %s" % pinned.text)
 	world.emit_population_event("HerdSplit", "herbivore", Vector2(900.0, 900.0), {"size": 10, "new_group_id": 4, "group_id": 0, "moved": 5})
 	a.equal(str(book.feed.lines[0].text), "Стадо №1 разделилось: 5 голов ушли в новое Стадо №5", "the selected herd splits")
 	Helpers.destroy_manager(manager)

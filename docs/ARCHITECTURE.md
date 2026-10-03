@@ -526,6 +526,14 @@ Utility actions inside `alive`:
   30000 animals
 - `StoryRecords`: the chronicle's records from one pass over the tree - the oldest alive, the
   longest lives, the largest living families, the best hunters - three each, ties to the lower id
+- `Epitaph`: what is said of an animal when it dies - «Ветка, олениха — старейшая на карте.
+  Прожила 2 года и 1 сезон. 7 детёнышей (живы 3), 12 живых потомков. Погибла у Тихой заводи:
+  задрал лис Рыжик.» Written by `StoryBook` for a pinned animal, the selected one (or the one the
+  selection let go of within `RELEASE_GRACE` seconds) and a record holder; the records it held
+  are read just before its death is noted, against tops refreshed every `RECORDS_TTL` seconds
+  rather than per death, and «прожила дольше всех» needs at least a year. `epitaph_written`
+  carries it to `EpitaphCard`; the feed tells that death by it, in gold, never folded; the dead
+  pinned row is crossed and has it for a tooltip
 - Pins: up to eight animals the player keeps an eye on, from the card's «Закрепить». A pin
   does not keep an animal's sector awake, so a world plays the same with pins or without; a
   pinned animal asleep is followed through its sector's aggregate, and its death and its young
@@ -612,6 +620,12 @@ Utility actions inside `alive`:
 - Supports click / drag camera repositioning
 - Its tooltip names the place under the cursor (`PlaceNames.place_at()`); `PixelUiTheme` styles
   tooltips on parchment
+
+### `EpitaphCard`
+
+- Parchment card under the ecology strip with the epitaph of a death worth remembering, «Где
+  это» (camera to the place) and «Родословная» (the chronicle); ten seconds each, counted only
+  while the game runs, several queued; hidden by the start menu
 
 ### `PlaceLabels`
 

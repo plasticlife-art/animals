@@ -96,7 +96,9 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 	var group := int(data.get("group_id", -1))
 	var position := _position_of(event)
 	var pinned: bool = book != null and (book.is_pinned(victim) or book.is_pinned(killer))
-	if victim < 0 or not (pinned or _in_herd(context, species, group) or (not asleep and _in_view(context, position))):
+	var remembered: bool = book != null and book.epitaphs.has(victim)
+	if victim < 0 or not (pinned or remembered or _in_herd(context, species, group) \
+			or (not asleep and _in_view(context, position))):
 		_count("deaths:%s:%s" % [cause, species])
 		return
 	var entry: Dictionary = book.lineage.entry(victim) if book != null else {}
@@ -120,6 +122,12 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 			str(HudTextScript.CAUSES_FROM.get(cause, cause)), where]
 	# A living killer is the one to look at; otherwise where the body lies.
 	var focus := killer if killer >= 0 and book != null and not book.lineage.is_dead(killer) else -1
+	# A death worth remembering is told by its epitaph, in gold, and never folded into others.
+	if book != null and book.epitaphs.has(victim):
+		_add({"time": time, "text": str(book.epitaphs[victim]), "position": position, "focus_id": focus,
+			"pinned": true, "kind": "epitaph", "key": "", "count": 1, "species": species, "group": group,
+			"cause": cause, "at": place, "agent_id": victim})
+		return
 	_add({"time": time, "text": text, "position": position, "focus_id": focus, "pinned": pinned,
 		"kind": "death", "key": "death:%s:%s:%d" % [cause, species, group], "count": 1, "species": species,
 		"group": group, "cause": cause, "at": place})

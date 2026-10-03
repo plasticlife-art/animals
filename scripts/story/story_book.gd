@@ -9,11 +9,22 @@ extends RefCounted
 ## pins or without. Kept with the save (`export_state()`).
 
 signal pins_changed
+## A death worth remembering - a pinned animal's, the selected one's, a record holder's - and
+## what is said of it (`Epitaph`).
+signal epitaph_written(agent_id: int, text: String, position: Vector2)
 
 const AnimalNamesScript := preload("res://scripts/story/animal_names.gd")
 const LineageScript := preload("res://scripts/story/lineage.gd")
 const StoryLogScript := preload("res://scripts/story/story_log.gd")
 const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
+const EpitaphScript := preload("res://scripts/story/epitaph.gd")
+const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
+## How long the records an epitaph checks against are trusted, in simulated seconds.
+const RECORDS_TTL := 5.0
+## How long after the selection let go of an animal its death still counts as watched.
+const RELEASE_GRACE := 3.0
+## Epitaphs kept for the pinned list's tooltips; older ones are composed again when asked.
+const EPITAPHS_KEPT := 64
 const MAX_PINS := 8
 const STATE_VERSION := 1
 
@@ -25,6 +36,14 @@ var feed = StoryLogScript.new()
 var places = PlaceNamesScript.new()
 var pins: Array = []
 var manager = null
+## What was said of the animals that died lately, by id.
+var epitaphs: Dictionary = {}
+var _epitaph_order: Array = []
+var _record_tops: Dictionary = {}
+var _records_time: float = -INF
+var _released_id: int = -1
+var _released_at: float = -INF
+var _selected_id: int = -1
 
 
 func _init() -> void:
@@ -36,6 +55,8 @@ func bind(simulation_manager) -> void:
 	manager = simulation_manager
 	if not manager.world_event.is_connected(hear):
 		manager.world_event.connect(hear)
+	if not manager.selection_changed.is_connected(_on_selection_changed):
+		manager.selection_changed.connect(_on_selection_changed)
 
 
 ## A new world, or one loaded: the old one's names, family tree and pins go; `saved` - what
@@ -47,6 +68,12 @@ func begin(saved: Dictionary = {}) -> void:
 	lineage.clear()
 	pins.clear()
 	feed.clear()
+	epitaphs.clear()
+	_epitaph_order.clear()
+	_record_tops.clear()
+	_records_time = -INF
+	_released_id = -1
+	_selected_id = -1
 	places.build(null if manager == null else manager.world_state, 0 if manager == null else int(manager.seed))
 	if int(saved.get("version", 0)) == STATE_VERSION:
 		import_state(saved)
@@ -116,8 +143,14 @@ func hear(event: Dictionary) -> void:
 				else:
 					lineage.note_animal(killer, str(data.get("killer_species", "")), str(data.get("killer_sex", "")))
 			var at: Dictionary = event.get("position", {})
-			lineage.note_death(died, time, str(data.get("cause", "")), killer,
-				Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0))), float(data.get("age", -1.0)))
+			var position := Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
+			# The records it holds are read while it still counts among the living.
+			var held := _held_records(died, time)
+			lineage.note_death(died, time, str(data.get("cause", "")), killer, position, float(data.get("age", -1.0)))
+			if _outlived_everyone(died, time):
+				held.append("longest")
+			if remembers(died, time) or not held.is_empty():
+				_remember(died, EpitaphScript.compose(self, died, held, calendar()), position)
 			names.release(died)
 			if pins.has(died):
 				pins_changed.emit()
@@ -159,6 +192,74 @@ func name_of_id(agent_id: int) -> String:
 
 func is_pinned(agent_id: int) -> bool:
 	return pins.has(agent_id)
+
+
+## Whether the death of this animal is one the player was watching: pinned, selected, or
+## selected until just now.
+func remembers(agent_id: int, time: float) -> bool:
+	if pins.has(agent_id) or agent_id == _selected_id:
+		return true
+	if manager != null and int(manager.selected_agent_id) == agent_id:
+		return true
+	return agent_id == _released_id and absf(time - _released_at) <= RELEASE_GRACE
+
+
+## What is said of a dead animal: the epitaph written when it died, or one composed now.
+func epitaph_of(agent_id: int) -> String:
+	if epitaphs.has(agent_id):
+		return str(epitaphs[agent_id])
+	if not lineage.is_dead(agent_id):
+		return ""
+	return EpitaphScript.compose(self, agent_id, [], calendar())
+
+
+## Seconds a season and seasons a year, from the world's clock (`Climate.calendar()`).
+func calendar() -> Array:
+	if manager == null:
+		return [120.0, 4]
+	return Climate.calendar(manager.config_bundle.get("world", {}).get("climate", {}))
+
+
+func _remember(agent_id: int, text: String, position: Vector2) -> void:
+	if text == "":
+		return
+	epitaphs[agent_id] = text
+	_epitaph_order.append(agent_id)
+	while _epitaph_order.size() > EPITAPHS_KEPT:
+		epitaphs.erase(_epitaph_order.pop_front())
+	epitaph_written.emit(agent_id, text, position)
+
+
+## The records the animal holds, against tops refreshed every few seconds - a death does not
+## walk the whole tree.
+func _held_records(agent_id: int, time: float) -> Array:
+	if time - _records_time > RECORDS_TTL or time < _records_time:
+		_record_tops = StoryRecordsScript.all(self, time, 1)
+		_records_time = time
+	var held: Array = []
+	for kind in ["oldest", "family", "hunters"]:
+		var top: Array = _record_tops.get(kind, [])
+		if not top.is_empty() and int(top[0]["id"]) == agent_id:
+			held.append(kind)
+	return held
+
+
+## Whether, just dead, it lived longer than anyone the records knew of - and at least a year,
+## so the first calf to die is not the longest life the world has seen.
+func _outlived_everyone(agent_id: int, time: float) -> bool:
+	var lived: float = lineage.age_at(agent_id, time)
+	var year: Array = calendar()
+	if lived < float(year[0]) * float(year[1]):
+		return false
+	var top: Array = _record_tops.get("longest", [])
+	return top.is_empty() or lived > float(top[0]["value"])
+
+
+func _on_selection_changed(agent_id: int) -> void:
+	if agent_id < 0 and _selected_id >= 0:
+		_released_id = _selected_id
+		_released_at = 0.0 if manager == null else float(manager.simulation_time)
+	_selected_id = agent_id
 
 
 ## Pins the animal or unpins it; true if it ends up pinned. Past `MAX_PINS` it stays as it was.

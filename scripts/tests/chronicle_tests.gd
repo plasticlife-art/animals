@@ -11,6 +11,9 @@ const MiniMapScript := preload("res://scripts/ui/minimap.gd")
 const LineageScript := preload("res://scripts/story/lineage.gd")
 const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
 const AnimalNamesScript := preload("res://scripts/story/animal_names.gd")
+const EpitaphScript := preload("res://scripts/story/epitaph.gd")
+const EpitaphCardScript := preload("res://scripts/ui/epitaph_card.gd")
+const PinnedBarScript := preload("res://scripts/ui/pinned_bar.gd")
 
 
 func run(a) -> void:
@@ -26,6 +29,9 @@ func run(a) -> void:
 	_test_descendants_kept_running(a)
 	_test_age_text(a)
 	_test_records_rank(a)
+	_test_epitaph_words(a)
+	_test_remembered_deaths(a)
+	_test_epitaph_card_queue(a)
 
 
 ## Names agree with their nouns in gender, and the phrases take the right case and preposition.
@@ -128,7 +134,6 @@ func _test_feed_says_where(a) -> void:
 	a.is_true(not pond.is_empty(), "the fixture world has a pond")
 	var mother = Helpers.spawn_herbivore(world, pond.get("position", Vector2(100.0, 100.0)), 0)
 	book.feed.context_provider = func() -> Dictionary: return {"view": Rect2(-1000.0, -1000.0, 4000.0, 4000.0)}
-	book.toggle_pin(mother)
 	world.kill_agent(mother, "starvation")
 	var line: Dictionary = book.feed.lines[0] if not book.feed.lines.is_empty() else {}
 	a.is_true(str(line.get("text", "")).ends_with("от голода %s" % pond.get("at", "")),
@@ -343,6 +348,98 @@ func _test_records_rank(a) -> void:
 	a.equal(int(rows["hunters"][0]["value"]), 2, "with their kills")
 	a.equal(StoryRecordsScript.held_by(book, 1, 500.0), ["oldest", "family"], "the records an animal holds")
 	Helpers.destroy_manager(manager)
+
+
+## What is said of an animal: its age, its young, its descendants, its kills, and how and where
+## it died - with a hunter's name, or the cause.
+func _test_epitaph_words(a) -> void:
+	var manager = Helpers.create_manager(871)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var lineage = book.lineage
+	lineage.note_birth(1, "herbivore", "female", 0.0, 0, [])
+	lineage.note_birth(2, "herbivore", "male", 0.0, 0, [])
+	lineage.note_birth(3, "predator", "male", 0.0, -1, [])
+	lineage.note_birth(10, "herbivore", "female", 100.0, 0, [1, 2])
+	lineage.note_birth(11, "herbivore", "male", 120.0, 0, [1, 2])
+	lineage.note_birth(12, "herbivore", "male", 300.0, 0, [10, 2])
+	lineage.note_death(11, 400.0, "starvation", -1, Vector2(-50.0, -50.0))
+	lineage.note_death(1, 600.0, "predation", 3, Vector2(-50.0, -50.0))
+	var said: String = EpitaphScript.compose(book, 1, [])
+	var expected := "%s, олениха. Прожила 1 год и 1 сезон. 2 детёныша (живы 1), 2 живых потомка. Погибла: задрал лис %s." % [
+		book.name_of_id(1), book.name_of_id(3)]
+	a.equal(said, expected, "a doe a fox took, off every named place")
+	lineage.note_death(3, 900.0, "old_age", -1, Vector2(-50.0, -50.0))
+	a.equal(EpitaphScript.compose(book, 3, ["hunters"]),
+		"%s, лис — лучший охотник карты. Прожил 1 год и 3 сезона. Добыча: 1. Умер от старости." % book.name_of_id(3),
+		"a hunter, his record and his kills")
+	var pond: Dictionary = book.places.ponds[0] if not book.places.ponds.is_empty() else {}
+	if not pond.is_empty():
+		lineage.note_death(10, 500.0, "thirst", -1, pond["position"])
+		a.is_true(EpitaphScript.compose(book, 10, ["oldest"]).ends_with("Умерла от жажды %s." % pond["at"]),
+			"and where it died")
+		a.is_true(EpitaphScript.compose(book, 10, ["oldest"]).contains("олениха — старейшая на карте."),
+			"a record named after the kind: %s" % EpitaphScript.compose(book, 10, ["oldest"]))
+	a.equal(EpitaphScript.compose(book, 999, []), "", "nothing known, nothing said")
+	Helpers.destroy_manager(manager)
+
+
+## Pinned, selected and record-holding animals get an epitaph: a gold line in the feed, the card,
+## the dead row's tooltip. Others die without one.
+func _test_remembered_deaths(a) -> void:
+	var manager = Helpers.create_manager(872)
+	var world = manager.world_state
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var written: Array = []
+	book.epitaph_written.connect(func(agent_id: int, text: String, _position: Vector2) -> void:
+		written.append([agent_id, text]))
+	book.feed.context_provider = func() -> Dictionary: return {}
+	var stranger = Helpers.spawn_herbivore(world, Vector2(60.0, 60.0), 0)
+	var pinned = Helpers.spawn_herbivore(world, Vector2(80.0, 60.0), 0)
+	var watched = Helpers.spawn_herbivore(world, Vector2(100.0, 60.0), 0)
+	book.meet_living()
+	book.toggle_pin(pinned)
+	world.kill_agent(stranger, "thirst")
+	a.equal(written.size(), 0, "an animal no one watched dies without an epitaph")
+	world.kill_agent(pinned, "starvation")
+	a.equal(written.size(), 1, "a pinned one gets one")
+	a.is_true(not book.feed.lines.is_empty() and str(book.feed.lines[0]["kind"]) == "epitaph"
+		and bool(book.feed.lines[0]["pinned"]) and str(book.feed.lines[0]["text"]) == str(written[0][1]),
+		"told in the feed by its epitaph, in gold")
+	var bar = PinnedBarScript.new()
+	bar.bind(book, manager)
+	bar.refresh()
+	var button: Button = bar._buttons.get(pinned.id)
+	a.is_true(button != null and button.text.begins_with("† ") and button.tooltip_text.begins_with(str(written[0][1])),
+		"the dead row is crossed and its tooltip is the epitaph")
+	bar.free()
+	manager.selected_agent_id = watched.id
+	world.kill_agent(watched, "old_age")
+	a.equal(written.size(), 2, "the selected animal gets one")
+	Helpers.destroy_manager(manager)
+
+
+func _test_epitaph_card_queue(a) -> void:
+	var card = EpitaphCardScript.new()
+	card.show_epitaph(1, "Первая.", Vector2(10.0, 10.0))
+	card.show_epitaph(2, "Вторая.", Vector2(20.0, 20.0))
+	a.equal(card.current().get("id", -1), 1, "the first shown")
+	a.equal(card.waiting(), 1, "the second waits")
+	a.is_true(card.visible, "on screen")
+	card.set_allowed(false)
+	a.is_true(not card.visible, "hidden by the start menu")
+	card.set_allowed(true)
+	card._process(EpitaphCardScript.SHOW_SECONDS + 0.1)
+	a.equal(card.current().get("id", -1), 2, "then the next")
+	card._process(EpitaphCardScript.SHOW_SECONDS + 0.1)
+	a.is_true(card.current().is_empty() and not card.visible, "and gone when none wait")
+	for index in range(EpitaphCardScript.MAX_QUEUED + 3):
+		card.show_epitaph(index, "№%d" % index, Vector2.ZERO)
+	a.equal(card.waiting(), EpitaphCardScript.MAX_QUEUED, "a queue that cannot grow without end")
+	card.free()
 
 
 static func _ids(rows: Array) -> Array:

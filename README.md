@@ -175,6 +175,11 @@ lines with the time of day and the place: a kill in view with both names, a calf
 selected herd, the death of a pinned animal far away, a herd splitting. Everything else on the
 map is summed up once a minute; a click on a line takes the camera there.
 
+When a pinned animal dies, or the selected one, or one that held a record, it gets an epitaph:
+how long it lived, its young and its living descendants, its kills, how and where it died. It
+stays on a card under the strip for a few seconds - «Где это» takes the camera there - and in
+the feed in gold, and the dead pinned row keeps it as a tooltip.
+
 Every watering hole has a name, and so has every district of the map, after what grows there:
 «Тихая заводь», «Ольховый бор», «Совиное болото». The feed says where things happen («у Тихой
 заводи», «на Медовом лугу»), the names stand on the map - the ponds' once you zoom in, the
@@ -273,6 +278,8 @@ scripts/story/
   story_book.gd
   story_log.gd
   place_names.gd
+  story_records.gd
+  epitaph.gd
 scripts/ui/
   charts_panel.gd
   debug_panel.gd
@@ -289,6 +296,7 @@ scripts/ui/
   selection_card.gd
   story_feed.gd
   place_labels.gd
+  epitaph_card.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

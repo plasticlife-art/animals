@@ -21,6 +21,7 @@ extends Node2D
 @onready var climate_indicator = $CanvasLayer/ClimateIndicator
 @onready var ecology_strip = $CanvasLayer/EcologyStrip
 @onready var story_feed = $CanvasLayer/StoryFeed
+@onready var epitaph_card = $CanvasLayer/EpitaphCard
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -141,6 +142,7 @@ func _adopt_running_simulation() -> void:
 	story_book.bind(simulation_manager)
 	story_book.begin(_pending_story)
 	_pending_story = {}
+	epitaph_card.clear()
 	place_labels.configure(simulation_manager.config_bundle.get("visuals", {}))
 	_pending_focus_id = -1
 	_apply_debug_configuration()
@@ -171,6 +173,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	story_feed.visible = false
 	player_bar.visible = false
 	pinned_bar.set_allowed(false)
+	epitaph_card.set_allowed(false)
 	climate_indicator.visible = false
 	ecology_strip.visible = false
 	selection_tag.visible = false
@@ -198,6 +201,7 @@ func _hide_start_menu() -> void:
 	# actually a live selection to show.
 	selection_card.refresh()
 	herd_card.set_allowed(true)
+	epitaph_card.set_allowed(true)
 	_sync_player_bar()
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
@@ -225,6 +229,9 @@ func _bind_view() -> void:
 	story_feed.bind(story_book.feed, simulation_manager)
 	place_labels.bind(story_book, world_camera)
 	minimap.places = story_book.places
+	epitaph_card.simulation_manager = simulation_manager
+	story_book.epitaph_written.connect(epitaph_card.show_epitaph)
+	epitaph_card.place_requested.connect(_on_epitaph_place)
 	story_book.feed.context_provider = _story_context
 	selection_card.family_clicked.connect(_focus_animal)
 	pinned_bar.focus_requested.connect(_focus_animal)
@@ -523,7 +530,7 @@ func _apply_ui_theme() -> void:
 	var compact := PixelUiTheme.build(true)
 	var roomy := PixelUiTheme.build(false)
 	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip",
-			"CanvasLayer/StoryFeed"]:
+			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard"]:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact
@@ -558,6 +565,12 @@ func _focus_animal(agent_id: int) -> void:
 		world_camera.move_to_world_position(at)
 	if not bool(status.get("dead", false)):
 		_pending_focus_id = agent_id
+
+
+## «Где это» on the epitaph card: the camera to where the animal died.
+func _on_epitaph_place(position: Vector2) -> void:
+	if position != Vector2.INF:
+		world_camera.move_to_world_position(position)
 
 
 func _on_tick_for_story(tick: int, _snapshot: Dictionary) -> void:
