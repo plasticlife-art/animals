@@ -15,6 +15,7 @@ signal pause_toggled(is_paused: bool)
 signal speed_selected(multiplier: float)
 signal overlay_toggled(flag_name: String, enabled: bool)
 signal help_requested
+signal chronicle_requested
 
 ## The layers a player gets, as [debug flag, label, tooltip].
 const OVERLAYS := [
@@ -60,6 +61,11 @@ func _init() -> void:
 		row.add_child(toggle)
 		_overlays[str(overlay[0])] = toggle
 	row.add_child(VSeparator.new())
+	var chronicle := Button.new()
+	chronicle.text = "Летопись"
+	chronicle.tooltip_text = "Родословные и рекорды (L)"
+	chronicle.pressed.connect(func() -> void: chronicle_requested.emit())
+	row.add_child(chronicle)
 	var help := Button.new()
 	help.text = "?"
 	help.tooltip_text = "Справка (F1)"

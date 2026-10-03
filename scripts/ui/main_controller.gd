@@ -22,6 +22,7 @@ extends Node2D
 @onready var ecology_strip = $CanvasLayer/EcologyStrip
 @onready var story_feed = $CanvasLayer/StoryFeed
 @onready var epitaph_card = $CanvasLayer/EpitaphCard
+@onready var chronicle_window = $CanvasLayer/ChronicleWindow
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -143,6 +144,7 @@ func _adopt_running_simulation() -> void:
 	story_book.begin(_pending_story)
 	_pending_story = {}
 	epitaph_card.clear()
+	chronicle_window.reset()
 	place_labels.configure(simulation_manager.config_bundle.get("visuals", {}))
 	_pending_focus_id = -1
 	_apply_debug_configuration()
@@ -174,6 +176,7 @@ func _show_start_menu(continue_available: bool) -> void:
 	player_bar.visible = false
 	pinned_bar.set_allowed(false)
 	epitaph_card.set_allowed(false)
+	chronicle_window.close_window()
 	climate_indicator.visible = false
 	ecology_strip.visible = false
 	selection_tag.visible = false
@@ -232,6 +235,12 @@ func _bind_view() -> void:
 	epitaph_card.simulation_manager = simulation_manager
 	story_book.epitaph_written.connect(epitaph_card.show_epitaph)
 	epitaph_card.place_requested.connect(_on_epitaph_place)
+	epitaph_card.family_available = true
+	epitaph_card.family_requested.connect(open_chronicle)
+	chronicle_window.bind(story_book, simulation_manager)
+	chronicle_window.focus_requested.connect(_focus_animal)
+	player_bar.chronicle_requested.connect(toggle_chronicle)
+	selection_card.tree_requested.connect(open_chronicle)
 	story_book.feed.context_provider = _story_context
 	selection_card.family_clicked.connect(_focus_animal)
 	pinned_bar.focus_requested.connect(_focus_animal)
@@ -374,6 +383,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 
+	# The chronicle closes before the pause menu opens; L opens and closes it in play.
+	if chronicle_window.visible and cancel_pressed:
+		chronicle_window.close_window()
+		get_viewport().set_input_as_handled()
+		return
+	if _is_key(event, "toggle_chronicle", KEY_L):
+		if _bound and not start_menu.visible and not _pause_menu_open:
+			toggle_chronicle()
+		get_viewport().set_input_as_handled()
+		return
+
 	if toggle_help_pressed:
 		if start_menu.visible:
 			_open_help("start")
@@ -397,6 +417,28 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif cancel_pressed:
 		toggle_pause_menu()
 		get_viewport().set_input_as_handled()
+
+
+## An action, or its key by where it sits on the keyboard, so a Russian layout presses it too.
+static func _is_key(event: InputEvent, action: String, key: Key) -> bool:
+	if event.is_action_pressed(action):
+		return true
+	return event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == key
+
+
+## «Летопись» on the player bar, or L: open on the selected animal, or on whoever it showed last.
+func toggle_chronicle() -> void:
+	if chronicle_window.visible:
+		chronicle_window.close_window()
+		return
+	var selected := int(simulation_manager.selected_agent_id)
+	chronicle_window.open(selected if selected >= 0 else chronicle_window.focus_id())
+
+
+## The chronicle on one animal's family: from the card's link, an epitaph, a record.
+func open_chronicle(agent_id: int) -> void:
+	if agent_id >= 0:
+		chronicle_window.open(agent_id, "family")
 
 
 func toggle_pause_menu() -> void:
@@ -530,7 +572,7 @@ func _apply_ui_theme() -> void:
 	var compact := PixelUiTheme.build(true)
 	var roomy := PixelUiTheme.build(false)
 	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip",
-			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard"]:
+			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard", "CanvasLayer/ChronicleWindow"]:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact

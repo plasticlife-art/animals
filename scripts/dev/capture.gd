@@ -5,7 +5,8 @@ extends SceneTree
 #   Godot --path . --script res://scripts/dev/capture.gd -- <out.png> [zoom] [preset]
 # Presets: `selected` / `selected_hud` select an animal (with the Tab panels for the
 # second), `herd` selects a grazer in a herd so its herd card shows, `story` also pins it
-# and two others, `water` turns on the minimap's water, `menu` shoots the setup screen.
+# and two others, `chronicle` then opens the chronicle on it, `epitaph` tells the death of one
+# pinned animal far away, `water` turns on the minimap's water, `menu` shoots the setup screen.
 # Loads the real main scene, parks the camera, waits for
 # LOD sectors around it to reify, then writes a PNG.
 #
@@ -54,7 +55,8 @@ func _process(_delta: float) -> bool:
 		if menu != null and menu.visible:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
-			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story"]:
+			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
+					"epitaph"]:
 				selection["style"] = _preset
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
@@ -110,24 +112,54 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	if _preset == "herd" or _preset == "story":
+	var story_like := _preset in ["story", "chronicle", "epitaph"]
+	if _preset == "herd" or story_like:
 		# A grazer in a herd, so the herd card is up above the animal's own.
 		for agent in agents:
 			if agent.species_type == "herbivore" and int(agent.group_id) >= 0:
 				target = agent
 				break
 	_aim(target.position)
-	if _preset == "story":
+	if story_like:
 		# Three animals pinned - the one in view and two others - for the list at the top left.
 		var pinned := 0
 		for agent in agents:
 			if pinned < 3 and (agent == target or agent.species_type != target.species_type):
 				_main.story_book.toggle_pin(agent)
 				pinned += 1
-	if _preset == "selected" or _preset == "selected_hud" or _preset == "herd" or _preset == "story":
+	if _preset == "epitaph":
+		# The last pinned one dies far away, told the way a sleeping sector tells it.
+		var dying := int(_main.story_book.pins.back())
+		var where: Vector2 = _manager.world_state.water_sources[0]["position"] if not _manager.world_state.water_sources.is_empty() \
+			else target.position
+		_main.story_book.hear({"type": "AgentDied", "agent_id": -1, "species": str(_main.story_book.lineage.entry(dying)
+			.get("species", "")), "time_seconds": _manager.simulation_time, "position": {"x": where.x, "y": where.y},
+			"data": {"cause": "old_age", "dormant": true, "record_id": dying, "group_id": -1, "age": 1010.0}})
+	if _preset == "selected" or _preset == "selected_hud" or _preset == "herd" or story_like:
 		# Centring is not selecting, and the tag and card only exist for a selection.
 		var radius := float(_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
 		_manager.select_agent_at_position(target.position, radius)
+	if _preset == "chronicle":
+		# A family made up around the animal, since a fresh world has only founders: two
+		# parents, three grandparents, five young, one of them dead. The harness only.
+		var book = _main.story_book
+		var lineage = book.lineage
+		var t := float(_manager.simulation_time)
+		for relative in [[900001, "female", -900.0], [900002, "male", -900.0], [900003, "female", -900.0],
+				[900010, "female", -500.0], [900011, "male", -480.0]]:
+			lineage.note_birth(relative[0], "herbivore", relative[1], 0.0, 0, [])
+			lineage.entry(relative[0])["born"] = -1.0
+			lineage.note_animal(relative[0], "herbivore", relative[1], 0, -float(relative[2]), t)
+		lineage.note_birth(900010, "herbivore", "female", 0.0, 0, [900001, 900002])
+		lineage.note_birth(900011, "herbivore", "male", 0.0, 0, [900003])
+		lineage.note_death(900002, t, "predation", -1, target.position)
+		var entry: Dictionary = lineage.entry(target.id)
+		entry["mother"] = 900010
+		entry["father"] = 900011
+		for child in range(5):
+			lineage.note_birth(900100 + child, "herbivore", "male" if child % 2 == 0 else "female", t, 0, [target.id, 900011])
+		lineage.note_death(900103, t, "starvation", -1, target.position)
+		_main.open_chronicle(target.id)
 	var rect: Rect2 = _camera.get_visible_screen_rect()
 	var in_frame := 0
 	for agent in agents:

@@ -72,13 +72,14 @@ static func death_text(book, entry: Dictionary) -> String:
 		str(HudTextScript.CAUSES_FROM.get(cause, cause)), place]
 
 
-## How an epitaph names a record: «старейшая на карте», «лучший охотник карты».
+## How an epitaph names a record: «старейшая на карте», «долгожительница карты», «лучший охотник
+## карты».
 static func record_title(kind: String, sex: String) -> String:
 	match kind:
 		"oldest":
 			return HudTextScript.verb(sex, "старейший на карте", "старейшая на карте")
 		"longest":
-			return HudTextScript.verb(sex, "прожил дольше всех", "прожила дольше всех")
+			return HudTextScript.verb(sex, "долгожитель карты", "долгожительница карты")
 		"family":
 			return "глава самой большой семьи"
 		"hunters":

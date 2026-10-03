@@ -270,7 +270,8 @@ func _test_card_and_list_words(a) -> void:
 	a.is_true(line.contains("Поколение 2 · детей нет") and not line.contains("потомков"),
 		"the generation, no children: %s" % line)
 	var founder_line: String = SelectionCardScript.family_line(book, father)
-	a.equal(founder_line.get_slice("\n", 1), "Поколение 1 · детей: 1, живы 1", "a founder: %s" % founder_line)
+	a.equal(founder_line.get_slice("\n", 1), "Поколение 1 · детей: 1, живы 1 · [url=tree:%d]родословная[/url]" % father.id,
+		"a founder, with the link to his family: %s" % founder_line)
 	a.is_true(founder_line.begins_with("Родители неизвестны") and not founder_line.contains("потомков"),
 		"no line for descendants who are all children")
 	var mate = Helpers.spawn_herbivore(world, Vector2(108.0, 104.0), 0)

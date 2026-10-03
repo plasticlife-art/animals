@@ -130,6 +130,7 @@ pipeline instead, which reports success even when tests fail:
 
 - `Esc`: open or close the pause menu
 - `F1`: open or close the help screen
+- `L`: open or close the chronicle («Летопись»): the selected animal's family and the records
 - `F12`: switch developer mode; in it `Tab` shows or hides the developer panel and charts
 - `F`: toggle follow on the selected agent
 - `Следить за стадом` on the herd card: follow the selected animal's herd
@@ -175,9 +176,14 @@ lines with the time of day and the place: a kill in view with both names, a calf
 selected herd, the death of a pinned animal far away, a herd splitting. Everything else on the
 map is summed up once a minute; a click on a line takes the camera there.
 
+«Летопись» (L, or the button on the bar) shows an animal's family three generations deep -
+grandparents, parents, its young, alive or not - where a click on a relative takes the camera to
+it, and the records: the oldest alive, the longest lives, the largest living families and the
+best hunters. The card's «родословная» link opens it on that animal.
+
 When a pinned animal dies, or the selected one, or one that held a record, it gets an epitaph:
 how long it lived, its young and its living descendants, its kills, how and where it died. It
-stays on a card under the strip for a few seconds - «Где это» takes the camera there - and in
+stays on a card at the top right for a few seconds - «Где это» takes the camera there - and in
 the feed in gold, and the dead pinned row keeps it as a tooltip.
 
 Every watering hole has a name, and so has every district of the map, after what grows there:
@@ -280,6 +286,7 @@ scripts/story/
   place_names.gd
   story_records.gd
   epitaph.gd
+  family_tree.gd
 scripts/ui/
   charts_panel.gd
   debug_panel.gd
@@ -297,6 +304,7 @@ scripts/ui/
   story_feed.gd
   place_labels.gd
   epitaph_card.gd
+  chronicle_window.gd
   world_view.gd
 scripts/tests/
   test_runner.gd

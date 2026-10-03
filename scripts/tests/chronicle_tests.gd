@@ -14,6 +14,9 @@ const AnimalNamesScript := preload("res://scripts/story/animal_names.gd")
 const EpitaphScript := preload("res://scripts/story/epitaph.gd")
 const EpitaphCardScript := preload("res://scripts/ui/epitaph_card.gd")
 const PinnedBarScript := preload("res://scripts/ui/pinned_bar.gd")
+const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
+const ChronicleWindowScript := preload("res://scripts/ui/chronicle_window.gd")
+const PlayerBarScript := preload("res://scripts/ui/player_bar.gd")
 
 
 func run(a) -> void:
@@ -32,6 +35,8 @@ func run(a) -> void:
 	_test_epitaph_words(a)
 	_test_remembered_deaths(a)
 	_test_epitaph_card_queue(a)
+	_test_family_tree_model(a)
+	_test_chronicle_window(a)
 
 
 ## Names agree with their nouns in gender, and the phrases take the right case and preposition.
@@ -440,6 +445,93 @@ func _test_epitaph_card_queue(a) -> void:
 		card.show_epitaph(index, "№%d" % index, Vector2.ZERO)
 	a.equal(card.waiting(), EpitaphCardScript.MAX_QUEUED, "a queue that cannot grow without end")
 	card.free()
+
+
+## Three generations around an animal: grandparents by side, parents, children living first
+## and cut after a few; unknown relatives are -1 and say «неизвестно».
+func _test_family_tree_model(a) -> void:
+	var manager = Helpers.create_manager(881)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var lineage = book.lineage
+	for founder in [[1, "female"], [2, "male"], [3, "female"], [4, "male"]]:
+		lineage.note_birth(founder[0], "herbivore", founder[1], 0.0, 0, [])
+	lineage.note_birth(10, "herbivore", "female", 100.0, 0, [1, 2])
+	lineage.note_birth(11, "herbivore", "male", 100.0, 0, [3, 4])
+	lineage.note_birth(20, "herbivore", "female", 200.0, 0, [10, 11])
+	for child in range(30, 40):
+		lineage.note_birth(child, "herbivore", "male", 300.0, 0, [20, 11])
+	lineage.note_death(30, 350.0, "predation", -1, Vector2.ZERO)
+	var family: Dictionary = FamilyTreeScript.around(book, 20)
+	a.equal(family["parents"], [10, 11], "mother, then father")
+	a.equal(family["grandparents"], [1, 2, 3, 4], "the mother's parents, then the father's")
+	a.equal(family["children"].size(), FamilyTreeScript.MAX_CHILDREN, "the first few children")
+	a.equal(int(family["more"]), 10 - FamilyTreeScript.MAX_CHILDREN, "and how many more")
+	a.is_true(not family["children"].has(30), "the living first: the dead calf is past the cut")
+	var lone: Dictionary = FamilyTreeScript.around(book, 1)
+	a.equal(lone["parents"], [-1, -1], "a founder's parents are not known")
+	var unknown: Dictionary = FamilyTreeScript.card(book, -1, 0.0)
+	a.is_true(not bool(unknown["known"]) and str(unknown["name"]) == "неизвестно", "an unknown relative")
+	var calf: Dictionary = FamilyTreeScript.card(book, 30, 400.0)
+	a.is_true(bool(calf["dead"]) and str(calf["status"]).begins_with("† хищник"), "a dead calf: %s" % calf["status"])
+	var mother: Dictionary = FamilyTreeScript.card(book, 20, 440.0)
+	a.equal(mother["status"], "2 сезона", "a living one's age")
+	Helpers.destroy_manager(manager)
+
+
+## The window opens on an animal's family, a click on a relative moves to it and asks for the
+## camera, «Назад» comes back, and the records list the record holders.
+func _test_chronicle_window(a) -> void:
+	var manager = Helpers.create_manager(882)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var lineage = book.lineage
+	lineage.note_birth(1, "herbivore", "female", 0.0, 0, [])
+	lineage.note_birth(2, "herbivore", "male", 0.0, 0, [])
+	lineage.note_birth(10, "herbivore", "female", 100.0, 0, [1, 2])
+	lineage.note_birth(3, "predator", "male", 0.0, -1, [])
+	lineage.note_death(2, 200.0, "predation", 3, Vector2.ZERO)
+	var window = ChronicleWindowScript.new()
+	window.bind(book, manager)
+	var asked: Array = []
+	window.focus_requested.connect(func(agent_id: int) -> void: asked.append(agent_id))
+	window.open(10)
+	a.is_true(window.visible and window._tree.visible and window.focus_id() == 10, "open on the animal's family")
+	window._on_relative_picked(1)
+	a.is_true(window.focus_id() == 1 and asked == [1], "a relative clicked: the tree moves to her and the camera is asked")
+	a.is_true(window._back.visible, "with a way back")
+	window.go_back()
+	a.is_true(window.focus_id() == 10 and asked == [1, 10], "back to where it was")
+	window.show_tab("records")
+	a.is_true(window._records_scroll.visible and not window._tree.visible, "the records tab")
+	var texts: Array = []
+	for child in window._records_box.get_children():
+		if child is Button:
+			texts.append(child.text)
+	a.is_true(texts.has("%s · лис — добыча: 1" % book.name_of_id(3)), "the hunter with his kill: %s" % str(texts))
+	a.equal(ChronicleWindowScript.record_text({"name": "Ветка", "species": "herbivore", "sex": "female", "value": 600.0,
+		"dead": true}, "longest"), "Ветка · олениха † — 1 год и 1 сезон", "a record's words")
+	window._open_record(3)
+	a.is_true(window.focus_id() == 3 and window._tree.visible and asked.back() == 3, "a record opens that family")
+	window.close_window()
+	a.is_true(not window.visible, "closed")
+	window.reset()
+	window.open()
+	a.is_true(window._empty.visible, "with nobody chosen, it says how to choose")
+	window.free()
+	var bar = PlayerBarScript.new()
+	var opened: Array = []
+	bar.chronicle_requested.connect(func() -> void: opened.append(true))
+	var found := false
+	for button in bar.find_children("*", "Button", true, false):
+		if button.text == "Летопись":
+			found = true
+			button.pressed.emit()
+	a.is_true(found and opened.size() == 1, "«Летопись» on the player bar")
+	bar.free()
+	Helpers.destroy_manager(manager)
 
 
 static func _ids(rows: Array) -> Array:

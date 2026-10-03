@@ -16,6 +16,8 @@ extends PanelContainer
 signal follow_toggled(enabled: bool)
 ## A parent's name was clicked in the family line.
 signal family_clicked(agent_id: int)
+## «родословная» on the family line: the chronicle open on this animal.
+signal tree_requested(agent_id: int)
 
 @onready var title_label: Label = get_node_or_null("%TitleLabel")
 @onready var bars_view: Control = get_node_or_null("%BarsView")
@@ -41,7 +43,7 @@ func _ready() -> void:
 	if pin_button != null:
 		pin_button.pressed.connect(_on_pin_button_pressed)
 	if family_text != null:
-		family_text.meta_clicked.connect(func(meta) -> void: family_clicked.emit(int(str(meta))))
+		family_text.meta_clicked.connect(_on_family_meta)
 	if bars_view != null:
 		bars_view.draw.connect(_on_bars_view_draw)
 		# The strip is drawn, so nothing about it reaches the container's own sizing.
@@ -95,8 +97,9 @@ func _on_pin_button_pressed() -> void:
 	refresh()
 
 
-## «Мать: Ветка · Отец: Бурый» with the names as links, then «Поколение 2 · детей: 3, живы 2»,
-## and «Живых потомков: 5» once there are grandchildren. A parent who died is marked so,
+## «Мать: Ветка · Отец: Бурый» with the names as links, then «Поколение 2 · детей: 3, живы 2 ·
+## родословная» - the last a link to the chronicle - and «Живых потомков: 5» once there are
+## grandchildren. A parent who died is marked so,
 ## «погибла» to a hunter and «умерла» otherwise.
 static func family_line(story_book, agent) -> String:
 	var entry: Dictionary = story_book.lineage.entry(agent.id)
@@ -113,12 +116,21 @@ static func family_line(story_book, agent) -> String:
 		if not story_book.lineage.is_dead(int(child)):
 			living += 1
 	var kids := "детей нет" if children.is_empty() else "детей: %d, живы %d" % [children.size(), living]
-	var lines := [" · ".join(parents), "Поколение %d · %s" % [int(entry.get("generation", 1)), kids]]
+	var lines := [" · ".join(parents), "Поколение %d · %s · [url=tree:%d]родословная[/url]" % [
+		int(entry.get("generation", 1)), kids, agent.id]]
 	# Grandchildren and on: the line only says more than the children do when there are some.
 	var descendants: int = story_book.lineage.descendants_alive(agent.id)
 	if descendants > living:
 		lines.append("Живых потомков: %d" % descendants)
 	return "\n".join(lines)
+
+
+func _on_family_meta(meta) -> void:
+	var link := str(meta)
+	if link.begins_with("tree:"):
+		tree_requested.emit(int(link.substr(5)))
+	else:
+		family_clicked.emit(int(link))
 
 
 static func _parent_link(story_book, parent_id: int) -> String:

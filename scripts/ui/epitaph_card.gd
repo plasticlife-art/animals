@@ -2,7 +2,7 @@ class_name EpitaphCard
 extends PanelContainer
 
 ## A death worth remembering - a pinned animal's, the selected one's, a record holder's - on
-## parchment under the ecology strip for a few seconds: its epitaph (`Epitaph`), «Где это» to
+## parchment at the top right, clear of the animal in the middle, for a few seconds: its epitaph (`Epitaph`), «Где это» to
 ## take the camera to where it died, «Родословная» to open its family in the chronicle. Several
 ## at once wait their turn; the countdown stops while the game is paused. Hidden by the start
 ## menu and in photo mode.
@@ -12,7 +12,7 @@ signal family_requested(agent_id: int)
 
 const SHOW_SECONDS := 10.0
 const MAX_QUEUED := 6
-const WIDTH := 520.0
+const WIDTH := 460.0
 const TITLE_INK := Color(0.20, 0.13, 0.08, 0.6)
 
 var simulation_manager = null

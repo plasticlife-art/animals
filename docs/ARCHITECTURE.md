@@ -524,6 +524,9 @@ Utility actions inside `alive`:
   save without them: kills per hunter, and living and all descendants per animal - a birth adds
   one to every distinct ancestor, a death takes one off. The longest dead are forgotten past
   30000 animals
+- `FamilyTree`: three generations around one animal for the chronicle - four grandparents, two
+  parents, the first `MAX_CHILDREN` children (the living first) and how many more - and what each
+  relative's box says (name and sex, kind, age, or «†» and the cause)
 - `StoryRecords`: the chronicle's records from one pass over the tree - the oldest alive, the
   longest lives, the largest living families, the best hunters - three each, ties to the lower id
 - `Epitaph`: what is said of an animal when it dies - «Ветка, олениха — старейшая на карте.
@@ -597,7 +600,7 @@ Utility actions inside `alive`:
 ### `PlayerBar`
 
 - What a player needs, at the top left: pause, the speeds from `debug.speed_steps`, three
-  layers (grass, danger from `show_fear`, chases) and help. Built in code; it reports what was
+  layers (grass, danger from `show_fear`, chases), «Летопись» and help. Built in code; it reports what was
   pressed and `MainController` applies it, keeping the bar and the developer panel in step
 - Up while a world runs with nothing over it; it steps aside for the developer panel, which
   has the same controls, and for the menus
@@ -621,9 +624,21 @@ Utility actions inside `alive`:
 - Its tooltip names the place under the cursor (`PlaceNames.place_at()`); `PixelUiTheme` styles
   tooltips on parchment
 
+### `ChronicleWindow`
+
+- «Летопись», a parchment window over the map while the world runs: «Родословная» draws
+  `FamilyTree.around()` - grandparents, parents, the animal, its first eight children (the
+  living first) and how many more - as boxes and lines; relatives nobody knows are left out, and
+  a founder's says «основатель: родители неизвестны». A click on a relative re-centres the tree
+  and asks `MainController._focus_animal()` for the camera; «Назад» walks back. «Рекорды» lists
+  `StoryRecords`; a click opens that animal's family. Refreshed every 1.5 s while open
+- Opened by L (`toggle_chronicle`, by physical key so a Russian layout presses it too), the
+  player bar's «Летопись», the card's «родословная» link and the epitaph card; Esc closes it
+  before the pause menu would open
+
 ### `EpitaphCard`
 
-- Parchment card under the ecology strip with the epitaph of a death worth remembering, «Где
+- Parchment card at the top right, clear of the selected animal in the middle, with the epitaph of a death worth remembering, «Где
   это» (camera to the place) and «Родословная» (the chronicle); ten seconds each, counted only
   while the game runs, several queued; hidden by the start menu
 
