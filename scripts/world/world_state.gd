@@ -812,15 +812,11 @@ func carcass_search_radius(agent) -> float:
 
 
 ## How far an animal at `hunger` looks for carrion. Shared by live animals and sleeping
-## aggregates, so both reach for the same bodies. It widens past critical hunger, or from
-## `perception.carcass_search_widen_hunger` for a species that lives on carrion alone: a sleeping
-## flock of grouse at hunger 30 to 50 looked no further than 840 and wandered blind for a year,
-## never eating enough to breed, while bodies lay a little further off.
+## aggregates, so both reach for the same bodies.
 func carcass_search_radius_for(hunger: float, perception: Dictionary) -> float:
 	var balance: Dictionary = config_bundle.get("balance", {})
 	var base := float(balance.get("carcass", {}).get("search_radius", perception.get("vision_radius", 240.0)))
-	var critical := float(perception.get("carcass_search_widen_hunger",
-		balance.get("state_thresholds", {}).get("critical_hunger", 60.0)))
+	var critical := float(balance.get("state_thresholds", {}).get("critical_hunger", 60.0))
 	if hunger <= critical:
 		return base
 	var need_max := float(balance.get("need_max", 100.0))

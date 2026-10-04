@@ -231,7 +231,6 @@
       "danger_radius": 260.0,
       "water_search_radius": 1440.0,
       "water_memory_duration_seconds": 120.0,
-      "carcass_search_widen_hunger": 28.0,
       "neighbor_radius": 160.0,
       "separation_radius": 56.0,
       "mate_search_radius": 120.0,
