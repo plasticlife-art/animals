@@ -391,16 +391,17 @@ Shared capabilities include:
 - Off - the block switched off, missing from an old save's own bundle, or the climate off -
   a species breeds all year one young at a time, bit for bit as before (`BreedingTests`, and
   the identity audits with `species.<id>.breeding.enabled=false`)
-- Measured with ponds drying, on 8 seeds over 2880 s in LOD against both off
-  (`audit_matrix.py`): no species lost; late means herbivores +35 [-23..93] (+15 %), predators
-  -0.7 [-3.3..1.9], scavengers -11 [-18..-4] (-8.5 %, the yearly sawtooth: no young from
-  late summer to midwinter); thirst 7.7 % of herbivore deaths (8.1 % off), the worst drought
-  year 13.5 %; the tick's p95 in spring 1.13 times autumn's. Grouse fell to 37 on one seed
-  before the next season's young. At full fidelity (4 seeds, 1440 s) herbivores came out 38 %
-  below off: they leave winter too thin to breed in a spring-only window; a deer window to
-  the end of summer brought that to -12 % but let them swing lower in LOD (42 at the lowest
-  over twelve years against 79), so it is not shipped. Over 5760 s (4 seeds) foxes died out
-  on one seed and grouse on another (see Known Gaps)
+- Measured with ponds drying, against both off on the same code (`audit_matrix.py`, LOD): over
+  2880 s on 8 seeds no species lost; late means herbivores +30 [-14..73] (+14 %), predators
+  -1.3 [-2.7..0.0], scavengers -3.5 [-8.6..1.7] (the yearly sawtooth: no young from late
+  summer to midwinter); thirst 6.7 % of herbivore deaths (7.8 % off), the worst drought year
+  23 %; the tick's p95 in spring 1.08 times autumn's and no higher than off's. Over 5760 s on 8
+  seeds nothing died out either, where off lost its grouse on one seed; grouse fell to 12 on one
+  seed and 26 on another before their next young, predators never below 19, the worst drought
+  year took 27 % of the herbivores. That needed the fix for targets out of reach
+  (`AgentBase.unreachable_targets`): before it foxes died out on one seed of four and grouse on
+  another. At full fidelity (4 seeds, 1440 s) herbivores came out 47 % below off (see Known
+  Gaps)
 
 ### Hybrid AI Layer
 
@@ -1473,17 +1474,20 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   late low stayed where it was (39 ± 9 against 41 ± 10); the deep fall left seed 1 (19 to 41)
   and appeared on seeds 4 and 7 (48 to 23, 46 to 29). A tenth of a 1440 s life spreads a cohort's
   deaths by a couple of minutes, inside the four the old-age window already spans
-- Over twelve years in LOD a species can die out with breeding seasons and drying ponds: of
-  four seeds, foxes on one and grouse on the other (the latter with seven drought years of
-  eleven), and in two other mixes tried one or two seeds of seven. Without either the same
-  worlds came close (foxes to 6, grouse to 24). The seasons only bring forward two older
-  faults. Awake foxes chose carcasses and ponds behind long detours: the path search gives up
-  at `navigation.max_search_cells` and the animal stood still or wandered at zero energy, so
-  none bred. Sleeping grouse look for carrion only within `carcass.search_radius` (840) until
-  their hunger passes `critical_hunger`, so whole flocks wandered for a year at zero energy
-  and missed their season. Letting a hungry grouse look further, from the hunger it starts
-  eating at, was tried and taken back: flocks flew off to distant bodies away from water, died
-  of thirst in a drought year on one seed and stopped breeding on another
+- Herbivores at full fidelity breed far less with the season on: over 1440 s on 4 seeds they
+  ended 47 % below off (157 against 298 late), half the births. They leave winter too thin to
+  breed in a spring-only window, and a female misses her year. A deer window to the end of
+  summer narrowed the gap to 12 % (measured before the fix for targets out of reach, against an
+  off of 219) but let them swing lower in LOD (42 at the lowest over twelve years against 79), so
+  it is not shipped. In LOD, where most of a map sleeps, they stay within off's paired interval
+- Long runs still dip. Over twelve years in LOD, with seasons and drying ponds, grouse fell to
+  12 on one seed of eight and 26 on another before their next young; with neither, they died
+  out on a third. Sleeping grouse look for carrion only within `carcass.search_radius` (840)
+  until their hunger passes `critical_hunger`, and a whole flock can go a season without a meal
+  and so without young. Letting a hungry grouse look further, from the hunger it starts eating
+  at, was tried and taken back: flocks flew off to distant bodies away from water, died of
+  thirst in a drought year on one seed and stopped breeding on another. The worst drought year
+  over those twelve years took 27 % of the herbivores alive when it began
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - Heredity is four multipliers with fixed costs, not a genome: no trade-offs beyond the ones
