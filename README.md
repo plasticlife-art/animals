@@ -390,16 +390,18 @@ memory, not sight, and shrinking them would strand herds from water. Animals go 
 night, not amnesiac.
 
 Water runs out. Every watering hole fills in spring and goes down through the summer, drunk
-down by the herds that use it: the small ponds dry by late summer, the big ones keep about a
-third, and about one year in four is a drought year when the middling ones dry as well.
-Animals walk past a dry pond to the nearest one that holds water, sleeping herds too, and a
-herd leaves green ground whose water has gone.
+down by the herds that use it: a small pond a herd drinks from dries by late summer, the others
+shrink, and about one year in four is a drought year when the small ponds dry on their own and
+many more with them. Autumn and winter rains fill them again, so the dry spell runs from late
+summer into early autumn. Animals walk past a dry pond to the nearest one that holds water,
+sleeping herds too, and a herd leaves green ground whose water has gone.
 
-Young are born from late winter to midsummer, most of them in spring, and none in autumn or
-winter: deer have twins, foxes litters of three or four, grouse broods of four to six. Every
-young of the year has to get through its first winter. Each female's season opens on her own
-day of the spring and closes on her own day of the summer, so births come over weeks, not in
-one wave (`world.climate.breeding_curve`, `species.<id>.breeding`).
+Young are born from late winter to midsummer, most of them in spring, and none in autumn:
+deer have one or two fawns, twins more often than not, foxes litters of three or four, grouse
+broods of four to six. Grouse live on carrion and breed only when fed, so their season is
+longer, from midwinter to late summer. Every young of the year has to get through its first
+winter. Each female's season opens on her own day and closes on her own day, so births come
+over weeks, not in one wave (`world.climate.breeding_curve`, `species.<id>.breeding`).
 
 Herbivores also bed down. `rest` gains a weight proportional to how deep the night is and
 `explore` takes the matching penalty, so idle herds settle at dusk and move again at dawn -

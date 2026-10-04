@@ -7,7 +7,8 @@ extends SceneTree
 ##
 ## Trailing `key=value` pairs override the loaded config before the world is built,
 ## e.g. `world.grass.growth_rate=0.006 species.herbivore.feeding.nutrition_gain=0.25`,
-## so a balance sweep needs no edits to the shipped files.
+## so a balance sweep needs no edits to the shipped files. `selection.<group>=<option>`
+## picks a setup-screen option instead of the default one, e.g. `selection.map_size=small`.
 ##
 ## LOD is configured on SimulationManager, not by mutating debug.json after the
 ## manager has initialized. Keeping that distinction here matters: the old audit
@@ -28,11 +29,16 @@ func _initialize() -> void:
 	var requested_seconds := float(args[2]) if args.size() > 2 else 1440.0
 	var output_path := str(args[3]) if args.size() > 3 else ""
 	var selection := ConfigLoader.default_selection()
-	var bundle := ConfigLoader.load_config_bundle(selection)
 	var overrides := {}
 	for index in range(4, args.size()):
 		var pair := str(args[index]).split("=", true, 1)
-		if pair.size() == 2:
+		if pair.size() == 2 and pair[0].begins_with("selection."):
+			selection[pair[0].trim_prefix("selection.")] = pair[1]
+			overrides[pair[0]] = pair[1]
+	var bundle := ConfigLoader.load_config_bundle(selection)
+	for index in range(4, args.size()):
+		var pair := str(args[index]).split("=", true, 1)
+		if pair.size() == 2 and not pair[0].begins_with("selection."):
 			overrides[pair[0]] = _apply_override(bundle, pair[0], pair[1])
 	var manager = preload("res://scripts/core/simulation_manager.gd").new()
 	manager.initialize(bundle, run_seed)
@@ -56,6 +62,8 @@ func _initialize() -> void:
 	var total_ticks := int(ceil(requested_seconds * manager.tick_rate))
 	var sample_ticks := maxi(1, int(round(SAMPLE_SECONDS * manager.tick_rate)))
 	var tick_times: Array[float] = []
+	# Where the ticks of the window since the last history row begin.
+	var window_start := 0
 	var started := Time.get_ticks_usec()
 	var stop_reason := "duration"
 	for tick in total_ticks:
@@ -70,7 +78,13 @@ func _initialize() -> void:
 			risk_animal_seconds[species_id] = float(risk_animal_seconds[species_id]) \
 				+ float(population.get("starvation_risk_%s_count" % species_id, 0)) * manager.tick_duration
 		if tick == 0 or (tick + 1) % sample_ticks == 0 or tick + 1 == total_ticks:
-			history.append(_history_row(manager, population, species_ids))
+			var row := _history_row(manager, population, species_ids)
+			# The slowest ticks of the window since the last row: what each season costs.
+			var window: Array = tick_times.slice(window_start)
+			window.sort()
+			row["tick_p95"] = snappedf(_percentile(window, 0.95), 0.01)
+			window_start = tick_times.size()
+			history.append(row)
 		if _food_chain_broken(population):
 			stop_reason = "food_chain_broken"
 			break
@@ -210,6 +224,12 @@ func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictio
 			for trait_name in TraitsScript.NAMES:
 				row["%s_trait_%s" % [species_id, trait_name]] = snappedf(float(population.get(
 					"%s_trait_%s_sum" % [species_id, trait_name], count)) / float(count), 0.0001)
+	# Running births and deaths, all of them and of thirst, for what a season or a drought year did.
+	var counters: Dictionary = manager.stats_system.counters
+	for species_id in species_ids:
+		row["%s_born" % species_id] = int(counters.get("births_%s" % species_id, 0))
+		row["%s_died" % species_id] = int(counters.get("deaths_%s" % species_id, 0))
+		row["%s_thirst" % species_id] = int(counters.get("deaths_thirst_%s" % species_id, 0))
 	# The ponds (`WaterSystem`): how many are dry, how full they are on average, a drought year.
 	var water = manager.world_state.water
 	if water.enabled:

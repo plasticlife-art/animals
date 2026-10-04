@@ -59,8 +59,10 @@ func _three_ponds(config := {}) -> Array:
 	return [water, sources]
 
 
-## Runs `water` from `from` to `to` seconds; returns `{dried: {index: time}, refilled: {...}, low: [...]}`.
-func _run(water, from: float, to: float) -> Dictionary:
+## Runs `water` from `from` to `to` seconds, a herd drinking `herd_at` (a pond's index, -1 for
+## none) down by one starting herd's thirst a season; returns `{dried: {index: time},
+## refilled: {...}, low: [...]}`.
+func _run(water, from: float, to: float, herd_at := -1) -> Dictionary:
 	var climate = ClimateScript.new()
 	climate.configure({"climate": _shipped_climate()})
 	var dried := {}
@@ -70,6 +72,8 @@ func _run(water, from: float, to: float) -> Dictionary:
 	while time < to:
 		climate.sample(time)
 		water.step(TICK, climate)
+		if herd_at >= 0:
+			water.drink(herd_at, 840.0 / 120.0 * TICK)
 		for change in water.take_transitions():
 			var into: Dictionary = dried if str(change[1]) == "dried" else refilled
 			if not into.has(int(change[0])):
@@ -87,14 +91,18 @@ func _test_a_normal_year(a) -> void:
 	a.equal(float(sources[1]["bank_radius"]), 230.0, "a pond keeps its bank")
 	a.equal(int(sources[2]["index"]), 2, "and its place")
 	var year := _run(water, 0.0, 480.0)
-	a.is_true(year["dried"].has(0), "the small pond dries in the first summer")
-	a.is_true(float(year["dried"].get(0, 0.0)) > 180.0 and float(year["dried"].get(0, 999.0)) < 240.0,
-		"three quarters into summer (%.0f s)" % float(year["dried"].get(0, -1.0)))
-	a.is_true(not year["dried"].has(1), "a medium pond only shrinks")
-	a.near(float(year["low"][1]), 0.178, 0.02, "to about a sixth by autumn")
-	a.near(float(year["low"][2]), 0.446, 0.02, "a big one keeps nearly half")
-	a.is_true(year["refilled"].has(0) and float(year["refilled"][0]) < 480.0, "the small one is back by the end of winter")
-	var spring := _run(water, 480.0, 540.0)
+	a.is_true(year["dried"].is_empty(), "left alone, no pond dries in a normal summer")
+	a.near(float(year["low"][0]), 0.156, 0.02, "the small one falls to about a sixth")
+	a.near(float(year["low"][1]), 0.483, 0.02, "a medium one to about half")
+	a.near(float(year["low"][2]), 0.651, 0.02, "a big one keeps two thirds")
+	for index in range(3):
+		a.is_true(water.levels[index] > 0.95, "autumn and winter rains fill it again (%.2f)" % water.levels[index])
+	var drunk := _run(_three_ponds()[0], 0.0, 480.0, 0)
+	a.is_true(float(drunk["dried"].get(0, 0.0)) > 180.0 and float(drunk["dried"].get(0, 999.0)) < 240.0,
+		"a herd drinking the small one dries it late in summer (%.0f s)" % float(drunk["dried"].get(0, -1.0)))
+	a.is_true(float(drunk["refilled"].get(0, 999.0)) < 300.0,
+		"and it is back early in autumn (%.0f s)" % float(drunk["refilled"].get(0, -1.0)))
+	_run(water, 480.0, 540.0)
 	for index in range(3):
 		a.is_true(water.levels[index] > 0.95, "every pond full again in early spring (%.2f)" % water.levels[index])
 	a.near(float(sources[1]["radius"]), 230.0 * sqrt(water.levels[1]), 0.01, "its edge follows its level")
@@ -107,9 +115,11 @@ func _test_a_drought_year(a) -> void:
 	a.is_true(water.is_drought_year(1), "a drought year when it comes")
 	_run(water, 0.0, 480.0)
 	var year := _run(water, 480.0, 960.0)
-	a.is_true(year["dried"].has(0) and year["dried"].has(1), "a drought dries the medium pond too")
-	a.is_true(not year["dried"].has(2), "but not the big one")
-	a.near(float(year["low"][2]), 0.113, 0.02, "which goes down to about a tenth")
+	a.is_true(year["dried"].has(0), "a drought dries the small pond on its own")
+	a.near(float(year["low"][1]), 0.276, 0.02, "takes a medium one down to about a quarter")
+	a.near(float(year["low"][2]), 0.512, 0.02, "and a big one to half")
+	a.is_true(float(year["refilled"].get(0, 999.0)) < 780.0, "autumn rains bring the small one back (%.0f s)"
+		% float(year["refilled"].get(0, -1.0)))
 
 
 func _test_drought_years_are_rare(a) -> void:
@@ -132,7 +142,7 @@ func _test_drinking_down_and_the_brink(a) -> void:
 	var made := _three_ponds()
 	var water = made[0]
 	var full: float = water.capacity[1]
-	a.near(full, 5.0 * 840.0, 0.5, "a mean pond holds five seasons of one herd")
+	a.near(full, 6.0 * 840.0, 0.5, "a mean pond holds six seasons of one herd")
 	a.equal(water.drink(1, 50.0), 50.0, "a drink while there is water")
 	a.near(water.levels[1], 1.0 - 50.0 / full, 0.00001, "takes it from the pond")
 	water.levels[1] = 0.03

@@ -25,6 +25,8 @@ from pathlib import Path
 SUMMARIES = ["population", "population_min", "population_max", "regulation", "formation", "outcome",
              "reproductive_capacity", "initial_population", "starvation_risk_animal_seconds", "lod_counts",
              "stop_reason", "simulated_seconds"]
+# Wall-clock columns inside the compared blocks: a history row's slowest ticks.
+TIMINGS = {"tick_p95"}
 
 
 def first_difference(reference, candidate, path: str) -> str | None:
@@ -33,6 +35,8 @@ def first_difference(reference, candidate, path: str) -> str | None:
         if not isinstance(candidate, dict):
             return f"{path}: {type(candidate).__name__} instead of a dictionary"
         for key in reference:
+            if key in TIMINGS:
+                continue
             if key not in candidate:
                 return f"{path}.{key}: missing"
             found = first_difference(reference[key], candidate[key], f"{path}.{key}")

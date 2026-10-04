@@ -207,8 +207,8 @@ func _test_no_clock_no_seasons(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
-## A drought year's flag on the seasons it makes harsher - summer and autumn lose water - and not
-## on its spring or winter.
+## A drought year's flag on the seasons it makes harsher - those that lose water: summer, with
+## autumn's and winter's rains - and not on the others.
 func _test_drought_only_where_it_bites(a) -> void:
 	var manager = _world(9407)
 	var book = _book(manager)
@@ -221,10 +221,14 @@ func _test_drought_only_where_it_bites(a) -> void:
 			break
 	a.is_true(year > 0, "a drought year in sixty")
 	var flags := []
+	var losing := []
 	for index in range(4):
 		book.seasons._open(year * 4 + index, 0.0, {}, false)
-		flags.append(bool(book.seasons.close(1.0, manager, book)["drought"]))
-	a.equal(flags, [false, true, true, false], "summer and autumn of a drought year, not spring or winter")
+		var summary: Dictionary = book.seasons.close(1.0, manager, book)
+		flags.append(bool(summary["drought"]))
+		losing.append(float(water.settings["balance"].get(str(summary["season_id"]), 0.0)) < 0.0)
+	a.equal(flags, losing, "the seasons of a drought year that lose water (%s)" % str(flags))
+	a.is_true(flags[1] and not flags[0] and not flags[3], "its summer, not its spring or winter")
 	water.enabled = false
 	book.seasons._open(year * 4 + 1, 0.0, {}, false)
 	a.is_true(not bool(book.seasons.close(1.0, manager, book)["drought"]), "and none with the levels off")

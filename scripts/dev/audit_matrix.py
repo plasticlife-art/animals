@@ -60,6 +60,37 @@ def last_value(report: dict, key: str, default: float = 1.0) -> float:
     return default
 
 
+def thirst_share(report: dict, species: str) -> float:
+    """The share of a species' deaths that were of thirst."""
+    counters = report["counters"]
+    return counters.get(f"deaths_thirst_{species}", 0) / max(1, counters.get(f"deaths_{species}", 0))
+
+
+def drought_worst(report: dict, species: str) -> float:
+    """The worst drought year: its thirst deaths of a species against that species' count when
+    the year began (the history row before its first). 0 without a drought year or the columns."""
+    worst = 0.0
+    previous = None
+    start: dict = {}
+    for row in report.get("history", []):
+        if row.get("drought") and "season" in row and f"{species}_thirst" in row:
+            year = str(row["season"]).split()[-1]
+            if year not in start:
+                base = previous if previous is not None else row
+                start[year] = (float(base.get(f"{species}_thirst", 0)), max(1.0, float(base.get(species, 0))))
+            thirst0, count0 = start[year]
+            worst = max(worst, (float(row[f"{species}_thirst"]) - thirst0) / count0)
+        previous = row
+    return worst
+
+
+def season_tick_p95(report: dict, season: str) -> float:
+    """The mean of the per-minute tick p95 over the history rows in `season` (an id)."""
+    values = [float(row["tick_p95"]) for row in report.get("history", [])
+              if "tick_p95" in row and str(row.get("season", "")).startswith(season + " ")]
+    return sum(values) / len(values) if values else 0.0
+
+
 def trait_metrics() -> list:
     """Each species' mean inherited traits at the end of the run (1.0 without heredity)."""
     metrics = []
@@ -99,6 +130,15 @@ METRICS = [
     ("thirst_predator", "predators died of thirst", lambda r: r["counters"].get("deaths_thirst_predator", 0)),
     ("thirst_scavenger", "scavengers died of thirst", lambda r: r["counters"].get("deaths_thirst_scavenger", 0)),
     ("ponds_dried", "ponds dried", lambda r: r["counters"].get("ponds_dried", 0)),
+    ("thirst_share_herbivore", "herbivore deaths of thirst, share", lambda r: thirst_share(r, "herbivore")),
+    ("thirst_share_predator", "predator deaths of thirst, share", lambda r: thirst_share(r, "predator")),
+    ("thirst_share_scavenger", "scavenger deaths of thirst, share", lambda r: thirst_share(r, "scavenger")),
+    ("drought_herbivore", "worst drought year, herbivores dead of thirst / count", lambda r: drought_worst(r, "herbivore")),
+    ("drought_predator", "worst drought year, predators dead of thirst / count", lambda r: drought_worst(r, "predator")),
+    ("drought_scavenger", "worst drought year, scavengers dead of thirst / count", lambda r: drought_worst(r, "scavenger")),
+    ("tick_p95", "tick p95, ms", lambda r: r["tick_ms"]["p95"]),
+    ("tick_p95_spring", "tick p95 per minute in spring, ms", lambda r: season_tick_p95(r, "spring")),
+    ("tick_p95_autumn", "tick p95 per minute in autumn, ms", lambda r: season_tick_p95(r, "autumn")),
     ("species_lost", "species lost", lambda r: sum(1 for count in r["population"].values() if int(count) == 0)),
     ("herbivore_min", "herbivores, lowest", lambda r: r["population_min"]["herbivore"]),
     ("predator_min", "predators, lowest", lambda r: r["population_min"]["predator"]),
@@ -268,6 +308,18 @@ def self_test() -> None:
     assert expected_overrides(["a.b=0.5", "a.c=false", "a.d=text"]) == {"a.b": 0.5, "a.c": False, "a.d": "text"}
     report = {"history": [{"herbivore_trait_speed": 1.02}, {"herbivore": 0}]}
     assert last_value(report, "herbivore_trait_speed") == 1.02 and last_value(report, "predator_trait_speed") == 1.0
+    assert thirst_share({"counters": {"deaths_thirst_herbivore": 3, "deaths_herbivore": 12}}, "herbivore") == 0.25
+    drought = {"history": [
+        {"season": "winter 0", "herbivore": 100, "herbivore_thirst": 4},
+        {"season": "spring 1", "drought": True, "herbivore": 120, "herbivore_thirst": 5},
+        {"season": "summer 1", "drought": True, "herbivore": 90, "herbivore_thirst": 24},
+        {"season": "spring 2", "herbivore": 80, "herbivore_thirst": 30}]}
+    # A year begun at 100 with 4 dead of thirst before it, 24 by its summer: a fifth.
+    assert abs(drought_worst(drought, "herbivore") - 0.2) < 1e-9, drought_worst(drought, "herbivore")
+    assert drought_worst({"history": []}, "herbivore") == 0.0
+    ticks = {"history": [{"season": "spring 0", "tick_p95": 4.0}, {"season": "spring 0", "tick_p95": 6.0},
+                         {"season": "autumn 0", "tick_p95": 3.0}]}
+    assert season_tick_p95(ticks, "spring") == 5.0 and season_tick_p95(ticks, "autumn") == 3.0
     print("self test passed")
 
 

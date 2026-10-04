@@ -97,7 +97,7 @@
     },
     "breeding": {
       "enabled": true,
-      "litter_mean": 2.0,
+      "litter_mean": 1.7,
       "litter_max": 2
     }
   },
@@ -288,7 +288,8 @@
     "breeding": {
       "enabled": true,
       "litter_mean": 4.0,
-      "litter_max": 6
+      "litter_max": 6,
+      "curve": [[0, 1], [1.2, 1], [2, 0], [3.5, 0]]
     }
   }
 }

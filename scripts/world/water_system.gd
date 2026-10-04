@@ -2,9 +2,12 @@ class_name WaterSystem
 extends RefCounted
 
 ## Watering holes that fill and dry. Each pond holds a level, 0 to 1 of its basin: spring rains
-## fill it, summer takes it down, and whoever drinks there drinks it down too. A small pond
-## dries by late summer, a big one keeps about a third; about one year in four is a drought
-## year, its dry seasons harsher, and medium ponds dry as well. Spring fills them all again.
+## fill it, summer takes it down, and whoever drinks there drinks it down too. A small pond a
+## herd drinks from dries by late summer, the others shrink; about one year in four is a
+## drought year, its summer harsher, when small ponds dry on their own and many more with them.
+## Autumn and winter rains fill them again, so the dry spell runs from late summer into early
+## autumn: left dry through the winter, the ponds still wet drew every herd and were drunk dry
+## in turn.
 ##
 ## The level moves by the season's balance (`balance`, per season id, eased between seasons
 ## as the climate's multipliers are; a drought year multiplies its losses by
@@ -25,14 +28,14 @@ const TraitsScript := preload("res://scripts/agents/traits.gd")
 const DROUGHT_SALT := 0xD4A09000
 const DEFAULTS := {
 	"enabled": false,
-	"balance": {"spring": 2.0, "summer": -0.75, "autumn": -0.15, "winter": 0.05},
-	"capacity_seasons": 5.0,
+	"balance": {"spring": 2.0, "summer": -0.6, "autumn": 0.2, "winter": 0.6},
+	"capacity_seasons": 6.0,
 	"size_exponent": 2.0,
 	"capacity_exponent": 3.0,
 	"dry_level": 0.02,
 	"wet_level": 0.10,
 	"drought_chance": 0.25,
-	"drought_strength": 1.6,
+	"drought_strength": 1.4,
 }
 
 var enabled: bool = false

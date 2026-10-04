@@ -183,18 +183,28 @@ ground against the rest.
 Watering holes that fill and dry (`scripts/world/water_system.gd`, owned by `WorldState`).
 Each pond holds a level, 0 to 1 of its basin. It moves by the season's balance
 (`water_levels.balance` per season id, eased between seasons by `Climate.blend_by_season()`:
-spring +2.0, summer -0.75, autumn -0.15, winter +0.05, in basins per season), faster the
+spring +2.0, summer -0.6, autumn +0.2, winter +0.6, in basins per season), faster the
 smaller the pond (`(R̄ / R) ^ size_exponent`), and by what is drunk against the pond's capacity
-in thirst points: `capacity_seasons` (5) times the thirst of one starting herd in a season, or
+in thirst points: `capacity_seasons` (6) times the thirst of one starting herd in a season, or
 the map's thirst per pond if that is more (`WorldState._water_demand_unit()`, so a pond lasts
 as long on every map size and difficulty), scaled by `(R / R̄) ^ capacity_exponent`. A drought
 year - a hash of the year and the world's seed under `drought_chance` (0.25), never the first
-- multiplies the dry seasons by `drought_strength` (1.6).
+- multiplies the dry seasons by `drought_strength` (1.4).
 
-On the large map (radii 180-280, mean 230) a radius-180 pond dries about three quarters into
-summer and is back near the end of winter; a 230 one falls to about 0.18 in autumn, a 280 one
-to about 0.45; a drought dries the 230 ones as well and leaves the 280 ones about a tenth.
-Every pond is full again early in spring.
+On the large map (radii 180-280, mean 230), left alone, a radius-180 pond falls to about a sixth
+late in summer, a 230 one to about half, a 280 one to two thirds; one a herd drinks from dries
+late in summer and is back early in autumn. A drought dries the 180 ones on their own and takes
+a 230 one to about a quarter. Autumn and winter rains fill them all again, so the dry spell
+runs from late summer into early autumn. Over six years on eight seeds a normal summer dried
+about 5 of the 52 ponds at once (1-11), a drought summer about 16 (14-21).
+
+The first settings (summer -0.75, autumn -0.15, winter +0.05, capacity 5, drought x1.6) left
+30 to all 52 ponds dry from late autumn to spring: drinking crowded onto the ponds still wet
+and drank them dry in turn, and a winter balance of +0.05 brought none back. Thirst took a
+quarter of the deer that died (against 8 % with ponds that never change) and a drought year up
+to 93 % of the deer alive when it began; a pure model of the levels with drinking spread over
+the wet ponds reproduces the cascade. With the rains, thirst is 8 % of deer deaths again and
+the worst drought year took 13.5 %.
 
 - A pond keeps `bank_radius` and `index`; its `radius`, which every drinker, query and drawing
   reads, is the water's edge, `bank_radius * sqrt(level)`. What needs the basin (the water
@@ -351,7 +361,11 @@ Shared capabilities include:
   breeding_curve` `[[0,1],[0.6,1],[1.5,0],[3.75,0]]` - open through the first 60 % of spring,
   closing over the next 108 s to midsummer, opening again over the last 30 s of winter; a 210 s
   window, 44 % of the year, exactly 1.0 at t=0. A species may carry its own
-  `species.<id>.breeding.curve`
+  `species.<id>.breeding.curve`, and grouse do: `[[0,1],[1.2,1],[2,0],[3.5,0]]`, midwinter to
+  late summer. A sleeping flock breeds only right after a meal - its energy decays above the
+  rest ceiling (`_dormant_energy_recovery_ceiling()`) - and in a spring with little carrion
+  whole flocks sat near zero energy through the season: on the shared curve grouse died out
+  on two of eight seeds within six years
 - A male breeds whenever the curve is above 0; a female where it is 1, and on its ramps when
   her own draw for the year (`Traits.unit(id, FERTILITY_SALT + year, world)`) lies below it.
   The season so opens and closes over its ramps rather than in one step, a sleeping pair and
@@ -362,18 +376,29 @@ Shared capabilities include:
   or leaves a carcass; the engaged flow comes in without asking) and in
   `_is_valid_mate_candidate()`; `_dormant_record_can_breed()` for a sleeping group's tally and
   its births. `get_reproductive_capacity()` is never gated
-- A spring is shorter than a deer's 200 s wait, so a mating brings a litter: `litter_mean`
-  young (its fraction a hashed chance of one more), at most `litter_max` - deer 2, foxes 3
-  (at most 4), grouse 4 (at most 6), in `species.<id>.breeding`. Capacity is reserved for
-  the whole litter; near the cap a pair has as many as there is room for. Asleep, the litters
-  are reserved together and handed out by the females' ids; a pair left nothing does not
-  breed. `births_this_step` names a mother (and `fathers_this_step` a father) once a young,
-  so the reconcile makes each newborn as before. Cost and wait are once a mating. A parent
-  keeps only the first of a litter as kin (`_flush_spawns()`), or a fox pair's kin centre
-  would drag it towards the den
+- A spring is shorter than a deer's 200 s wait, so a mating brings a litter: `litter_mean` young
+  (its fraction a hashed chance of one more), at most `litter_max` - deer 1.7 (at most 2), foxes
+  3 (at most 4), grouse 4 (at most 6), in `species.<id>.breeding`. Twins every time overshot:
+  without dry ponds the deer climbed to 720 on one seed and starved by the hundred. Capacity is
+  reserved for the whole litter; near the cap a pair has as many as there is room for. Asleep,
+  the litters are reserved together and handed out by the females' ids; a pair left nothing does
+  not breed. `births_this_step` names a mother (and `fathers_this_step` a father) once a young,
+  so the reconcile makes each newborn as before. Cost and wait are once a mating. A parent keeps
+  only the first of a litter as kin (`_flush_spawns()`), or a fox pair's kin centre would drag
+  it towards the den
 - Off - the block switched off, missing from an old save's own bundle, or the climate off -
   a species breeds all year one young at a time, bit for bit as before (`BreedingTests`, and
   the identity audits with `species.<id>.breeding.enabled=false`)
+- Measured with ponds drying, on 8 seeds over 2880 s in LOD against both off
+  (`audit_matrix.py`): no species lost; late means herbivores +35 [-23..93] (+15 %), predators
+  -0.7 [-3.3..1.9], scavengers -11 [-18..-4] (-8.5 %, the yearly sawtooth: no young from
+  late summer to midwinter); thirst 7.7 % of herbivore deaths (8.1 % off), the worst drought
+  year 13.5 %; the tick's p95 in spring 1.13 times autumn's. Grouse fell to 37 on one seed
+  before the next season's young. At full fidelity (4 seeds, 1440 s) herbivores came out 38 %
+  below off: they leave winter too thin to breed in a spring-only window; a deer window to
+  the end of summer brought that to -12 % but let them swing lower in LOD (42 at the lowest
+  over twelve years against 79), so it is not shipped. Over 5760 s (4 seeds) foxes died out
+  on one seed and grouse on another (see Known Gaps)
 
 ### Hybrid AI Layer
 
@@ -904,10 +929,10 @@ Utility actions inside `alive`:
   behind itself). «Летопись» opens «Сезоны» and puts the card away. Hidden by the start menu, by
   the developer panels (the charts stand where it does) and in photo mode
 - `SeasonReport` words a summary: years from 1 as the season bar counts them, «засуха» only on a
-  drought year's summer and autumn, «не с начала» for a season met half-way, the young in
-  their own nouns, the dead by cause over every species, «Лучшая охотница» for a vixen, a single
-  pond's verb in its gender, three ponds named and more cut to «и ещё N водоёмов»; a line with
-  nothing to say is left out
+  drought year's seasons that lose water (its summer, with autumn's rains), «не с начала» for a
+  season met half-way, the young in their own nouns, the dead by cause over every species,
+  «Лучшая охотница» for a vixen, a single pond's verb in its gender, three ponds named and more
+  cut to «и ещё N водоёмов»; a line with nothing to say is left out
 
 ### `PlaceLabels`
 
@@ -1355,17 +1380,22 @@ Current suites cover:
   tick with each species changed by exactly its births less its deaths, the best hunter with a
   tie and a kill asleep, dried ponds by name and once each, a season met half-way, the ledger
   through a save and a story saved before it, nothing without a clock, the drought flag only on
-  a drought year's summer and autumn, and the season going left open; the report's words (the
-  title three ways, each line, a huntress, signs, a pond's gender, the long list cut), the card
-  replacing, waiting while paused, going after eight seconds and opening the chronicle, and
-  «Сезоны» keeping its rows until a season closes, and saying so without a clock
+  the seasons of a drought year that lose water, and the season going left open; the report's
+  words (the title three ways, each line, a huntress, signs, a pond's gender, the long list
+  cut), the card replacing, waiting while paused, going after eight seconds and opening the
+  chronicle, and «Сезоны» keeping its rows until a season closes, and saying so without a clock
 
 ## Measuring Balance
 
 `scripts/dev/ecology_audit.gd` runs one seed deterministically, LOD or full fidelity, with
 config overrides as `key=value` arguments, and writes a JSON report: populations over time,
 the late-half `regulation` block, counters, timing. One seed says little. The same change
-has moved herbivores +44% on one map and -20% on the next.
+has moved herbivores +44% on one map and -20% on the next. `selection.<group>=<option>`
+picks a setup-screen option instead of the default (`selection.map_size=small`). Each minute's
+history row carries the season, each species' count, running births and deaths (all, and of
+thirst: `herbivore_born`, `_died`, `_thirst`), the ponds (`ponds_dry`, `water_mean`, `drought`)
+and the minute's slowest ticks (`tick_p95`), so a season's or a drought year's toll and cost
+can be read off the report.
 
 `scripts/dev/audit_matrix.py` runs variants over many seeds and compares each with a
 baseline seed by seed:
@@ -1377,7 +1407,10 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
 
 - Per metric, the mean and spread over seeds, and against the baseline the mean
   difference with its 95% interval (paired t) and on how many seeds the variant was
-  higher. An arrow marks an interval clear of zero.
+  higher. An arrow marks an interval clear of zero. Besides counts, births and deaths:
+  each species' share of deaths that were of thirst, the worst drought year (its thirst
+  deaths against the species' count when the year began), and the tick p95 overall and
+  per minute in spring and in autumn.
 - `@path=DIR` in a variant runs it from another imported checkout, to compare code.
 - Reports are kept per variant and seed and reused when they match, so a matrix resumes
   after an interruption; `--summary-only` rebuilds `summary.md` / `summary.json`. Godot's
@@ -1426,6 +1459,15 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   late low stayed where it was (39 ± 9 against 41 ± 10); the deep fall left seed 1 (19 to 41)
   and appeared on seeds 4 and 7 (48 to 23, 46 to 29). A tenth of a 1440 s life spreads a cohort's
   deaths by a couple of minutes, inside the four the old-age window already spans
+- Over twelve years in LOD a species can die out with breeding seasons and drying ponds: of
+  four seeds, foxes on one and grouse on the other (the latter with seven drought years of
+  eleven), and in two other mixes tried one or two seeds of seven. Without either the same
+  worlds came close (foxes to 6, grouse to 24). The seasons only bring forward two older
+  faults. Awake foxes chose carcasses and ponds behind long detours: the path search gives up
+  at `navigation.max_search_cells` and the animal stood still or wandered at zero energy, so
+  none bred. Sleeping grouse look for carrion only within `carcass.search_radius` (840) until
+  their hunger passes `critical_hunger`, so whole flocks wandered for a year at zero energy
+  and missed their season
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - Heredity is four multipliers with fixed costs, not a genome: no trade-offs beyond the ones
