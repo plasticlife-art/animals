@@ -1154,9 +1154,34 @@ func _resolve_predator_water_search_radius(agent) -> float:
 ## dry beds about it chose to drink, found nothing, explored, and chose to drink again.
 func _water_target_for(agent, radius: float) -> Dictionary:
 	var target := _resolve_water_source(agent.position, radius)
+	# A pond it found no route to (`AgentBase.unreachable_targets`): the next one it may reach.
+	if not target.is_empty() and agent.is_unreachable(AgentBaseScript.place_key(target["position"]), current_time):
+		target = water_for(agent, radius)
 	if target.is_empty() and water.enabled and agent.is_drinking_allowed():
-		target = water.nearest_wet(agent.position)
+		target = water_for(agent, INF)
 	return target
+
+
+## The nearest pond within `radius` (of its centre) that holds water and that `agent` has not
+## found unreachable, or {}.
+func water_for(agent, radius: float) -> Dictionary:
+	var best: Dictionary = {}
+	var best_distance_sq := INF if radius == INF else radius * radius
+	for source in water_sources:
+		if water.enabled and water.is_dry(int(source.get("index", -1))):
+			continue
+		if agent.is_unreachable(AgentBaseScript.place_key(source["position"]), current_time):
+			continue
+		var distance_sq: float = agent.position.distance_squared_to(source["position"])
+		if distance_sq < best_distance_sq:
+			best_distance_sq = distance_sq
+			best = source
+	return best
+
+
+## How long an animal leaves alone a target it found no route to (`navigation`).
+func unreachable_memory_seconds() -> float:
+	return float(navigation_config.get("unreachable_memory_seconds", 30.0))
 
 
 ## What a drink takes from `source`: the species' `restore` while ponds never change; with
@@ -1771,6 +1796,7 @@ func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: i
 		agent.path_cells.clear()
 		agent.path_index = 0
 		agent.local_path = PackedVector2Array()
+		agent.path_reachable = true
 		return target
 	return local_waypoint(agent, _coarse_waypoint(from_position, target, agent_id, force_repath))
 
@@ -1786,6 +1812,7 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 	var start_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(from_position))
 	var goal_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(target))
 	if start_index == -1 or goal_index == -1:
+		agent.path_reachable = false
 		return from_position
 
 	var goal_radius_cells: int = maxi(0, int(navigation_config.get("goal_reached_radius_cells", 1)))
@@ -1793,6 +1820,7 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 		agent.path_cells = []
 		agent.path_index = 0
 		agent.path_goal_cell = goal_index
+		agent.path_reachable = true
 		return target
 
 	var repath_interval: int = maxi(1, int(navigation_config.get("repath_interval_ticks", 8)))
@@ -1816,6 +1844,8 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 		agent.path_cells = path_cells.duplicate()
 		agent.path_goal_cell = goal_index
 		agent.last_repath_tick = current_tick
+		# A search still running is no answer yet; one that finished without the goal is.
+		agent.path_reachable = bool(path_result.get("pending", false)) or bool(path_result.get("reachable", false))
 		agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
 		if agent.path_cells.is_empty():
 			return from_position

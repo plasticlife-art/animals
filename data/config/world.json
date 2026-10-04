@@ -261,6 +261,7 @@
     "repath_interval_ticks": 12,
     "goal_reached_radius_cells": 1,
     "max_search_cells": 2400,
+    "unreachable_memory_seconds": 30.0,
     "grass_candidate_limit": 24,
     "path_budget_per_tick": 96,
     "max_new_paths_per_tick": 28,

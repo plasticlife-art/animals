@@ -527,8 +527,12 @@ func _patrol(world, delta: float) -> void:
 	var patrol_goal: Variant = _resolve_patrol_goal(world)
 	if patrol_goal != null:
 		var patrol_waypoint: Vector2 = world.get_next_waypoint(position, patrol_goal, id)
-		move_with_vector(world, Steering.seek(position, patrol_waypoint), float(movement.get("max_speed", 84.0)), delta)
-		return
+		if path_reachable:
+			move_with_vector(world, Steering.seek(position, patrol_waypoint), float(movement.get("max_speed", 84.0)), delta)
+			return
+		# No route to that stretch of country: sweep this one until the goal is chosen again.
+		leave_unreachable(world, place_key(patrol_goal))
+		_patrol_goal = null
 	# Nothing anywhere in range holds prey, so fall back to covering ground. The jitter
 	# is far smaller than the herding one for the reason documented on `Steering.wander`.
 	var jitter := float(movement.get("patrol_wander_jitter", 0.06))
@@ -577,6 +581,8 @@ func _resolve_patrol_goal(world) -> Variant:
 	# instead of milling on the spot - `_patrol`'s low-jitter wander covers ground.
 	var goal_position: Vector2 = goal["goal_position"]
 	if position.distance_to(goal_position) <= float(perception.get("vision_radius", 240.0)) * trait_vision:
+		return null
+	if is_unreachable(place_key(goal_position), world.current_time):
 		return null
 	_patrol_goal = goal_position
 	return _patrol_goal
@@ -804,6 +810,10 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 
 	set_state("seek_water", world.current_tick)
 	var water_waypoint: Vector2 = world.get_next_waypoint(position, water["position"], id)
+	if not path_reachable:
+		forget_water(water.get("position", null))
+		leave_unreachable(world, place_key(water["position"]))
+		return false
 	move_with_vector(world, Steering.seek(position, water_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	return true
 
@@ -819,6 +829,8 @@ func _resolve_water_target(world, thresholds: Dictionary = {}) -> Dictionary:
 		position,
 		search_radius
 	)
+	if not visible_water.is_empty() and is_unreachable(place_key(visible_water["position"]), world.current_time):
+		visible_water = world.water_for(self, search_radius)
 	if not visible_water.is_empty():
 		_remember_water_source(world, visible_water)
 		return visible_water
@@ -826,6 +838,8 @@ func _resolve_water_target(world, thresholds: Dictionary = {}) -> Dictionary:
 	var remembered_sources := get_recent_water_sources(world.current_time, float(perception.get("water_memory_duration_seconds", 0.0)))
 	# The first remembered pond still holding water (`WaterSystem`); all of them while none dry.
 	for remembered in remembered_sources:
+		if is_unreachable(place_key(remembered.get("position", Vector2.INF)), world.current_time):
+			continue
 		var live: Dictionary = world.live_water(remembered)
 		if not live.is_empty():
 			return live
@@ -873,6 +887,10 @@ func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> 
 	if position.distance_squared_to(source["position"]) > investigate_distance * investigate_distance:
 		set_state("investigate_water", world.current_tick)
 		var waypoint: Vector2 = world.get_next_waypoint(position, source["position"], id)
+		if not path_reachable:
+			mark_water_source_investigated(source["position"], world.current_time)
+			leave_unreachable(world, place_key(source["position"]))
+			return false
 		move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("max_speed", 84.0)), delta)
 		return true
 
@@ -904,6 +922,8 @@ func _get_recent_investigation_water_source(world) -> Dictionary:
 	)
 	for source in remembered_sources:
 		if float(source.get("last_herbivore_seen_time", -1.0)) < 0.0:
+			continue
+		if is_unreachable(place_key(source.get("position", Vector2.INF)), world.current_time):
 			continue
 		# Prey does not come to a dry pond.
 		if world.live_water(source).is_empty():

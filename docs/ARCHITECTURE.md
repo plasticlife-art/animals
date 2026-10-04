@@ -285,7 +285,9 @@ Shared state includes:
 
 - needs: energy, hunger, thirst, age
 - AI runtime: `ai_state`, `current_action`, action age, switch reason, utility scores
-- navigation: path cells, path index, repath timing, stuck timer
+- navigation: path cells, path index, repath timing, stuck timer, whether the route last
+  walked reaches its goal (`path_reachable`), and the carcasses, ponds and patrol goals it found
+  no route to and leaves alone for a while (`unreachable_targets`)
 - targeting: `target_agent_id`, `target_position`
 - memory: recent water sources and kin IDs
 - runtime: interaction timers, attack cooldown, chase timer, LOD tier
@@ -1197,6 +1199,15 @@ millisecond setting squeezed to zero.
   queue peaking at 12 instead of 22-28. 768 cost 6.5% more.
   `path_time_warning_ms_per_tick` only reports: a tick whose route search took longer counts in
   the `path_time_warning_ticks` counter and changes nothing.
+- `navigation.unreachable_memory_seconds` (30) is how long an awake animal leaves alone a
+  carcass, a pond or a patrol goal its route search found no way to: the search gives up at
+  `max_search_cells`, or the goal is walled off, and `get_next_waypoint()` says so
+  (`AgentBase.path_reachable`). Feeding, drinking, the predator's watch at the water and its
+  patrol drop such a target and choose again (`choose_carcass()` and `WorldState.water_for()`
+  pass it by). They used to keep it: a one-cell route left the animal standing, a partial one
+  walked it away along the searched part, and in the map's centre most awake foxes stood at
+  zero energy for whole seasons - starving, thirsting, breeding no more - until their cohort
+  died out
 - `navigation.prey_pressure_refresh_ticks` throttles the sector-level herbivore census that
   is the simulation's only long-range prey signal. Both the dormant goal selector and the
   live predator patrol read it.
@@ -1384,6 +1395,9 @@ Current suites cover:
   words (the title three ways, each line, a huntress, signs, a pond's gender, the long list
   cut), the card replacing, waiting while paused, going after eight seconds and opening the
   chronicle, and «Сезоны» keeping its rows until a season closes, and saying so without a clock
+- targets out of reach (`ReachTests`): navigation saying when its route search found no way to
+  a walled-off goal, a deer leaving such a pond and a predator such a carcass for ones they can
+  reach, the memory lapsing and keeping to a dozen, and travelling with the animal's state
 
 ## Measuring Balance
 

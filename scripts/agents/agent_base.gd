@@ -68,6 +68,17 @@ var navigation_input_goal := Vector2(INF, INF)
 var navigation_free_goal := Vector2.ZERO
 var navigation_direct_clear: bool = false
 var navigation_direct_check_tick: int = -9999
+## Whether the route `WorldState.get_next_waypoint()` last walked reaches its goal. False when
+## the path search gave up (`navigation.max_search_cells`) - the goal lies behind a detour too
+## long to plan - and what it handed back leads nowhere: the walker stood still, or wandered
+## off along the part it had searched, and starved at a carcass or thirsted at a pond it could
+## not reach. Callers leave such a goal (`unreachable_targets`).
+var path_reachable: bool = true
+## Targets this animal found no route to, by key (`carcass_key()`, `place_key()`), until when
+## in simulated seconds (`navigation.unreachable_memory_seconds`): its choices of carcass,
+## pond and patrol goal pass them by until then.
+var unreachable_targets: Dictionary = {}
+const MAX_UNREACHABLE := 12
 var stuck_timer: float = 0.0
 var last_decision_tick: int = -9999
 var cached_snapshot = null
@@ -443,7 +454,47 @@ func clear_navigation() -> void:
 	navigation_free_goal = Vector2.ZERO
 	navigation_direct_clear = false
 	navigation_direct_check_tick = -9999
+	path_reachable = true
 	stuck_timer = 0.0
+
+
+## Leaves `key` alone for `seconds` from `now`: a target it found no route to. Past a dozen,
+## the lapsed ones go, then the soonest to lapse.
+func mark_unreachable(key: String, now: float, seconds: float) -> void:
+	unreachable_targets[key] = now + seconds
+	if unreachable_targets.size() <= MAX_UNREACHABLE:
+		return
+	for other in unreachable_targets.keys():
+		if float(unreachable_targets[other]) <= now:
+			unreachable_targets.erase(other)
+	while unreachable_targets.size() > MAX_UNREACHABLE:
+		var soonest := ""
+		for other in unreachable_targets:
+			if soonest == "" or float(unreachable_targets[other]) < float(unreachable_targets[soonest]) \
+					or (float(unreachable_targets[other]) == float(unreachable_targets[soonest]) and str(other) < soonest):
+				soonest = str(other)
+		unreachable_targets.erase(soonest)
+
+
+func is_unreachable(key: String, now: float) -> bool:
+	return float(unreachable_targets.get(key, -INF)) > now
+
+
+static func carcass_key(carcass_id: int) -> String:
+	return "c%d" % carcass_id
+
+
+## A place - a pond's centre, a patrol goal - as a key, to the unit.
+static func place_key(place: Vector2) -> String:
+	return "p%d,%d" % [roundi(place.x), roundi(place.y)]
+
+
+## Gives up the target at `key` for a while (`WorldState.unreachable_memory_seconds()`) and the
+## route to it: the path search found none.
+func leave_unreachable(world, key: String) -> void:
+	mark_unreachable(key, world.current_time, world.unreachable_memory_seconds())
+	target_position = null
+	clear_navigation()
 
 
 func move_to_target(world, target: Vector2, desired_speed: float, delta: float, force_repath: bool = false) -> void:
@@ -695,6 +746,10 @@ func scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -
 			target_position = alternate["position"]
 			set_state("seek_carcass", world.current_tick)
 			var alternate_waypoint: Vector2 = world.get_next_waypoint(position, alternate["position"], id)
+			if not path_reachable:
+				leave_unreachable(world, carcass_key(target_carcass_id))
+				release_carcass_target(world)
+				return false
 			move_with_vector(world, Steering.seek(position, alternate_waypoint), float(movement.get("max_speed", 84.0)), delta)
 			return true
 
@@ -720,6 +775,12 @@ func scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -
 
 	set_state("seek_carcass", world.current_tick)
 	var carcass_waypoint: Vector2 = world.get_next_waypoint(position, carcass["position"], id)
+	# No route inside the path search: leave the body for one it can reach, rather than stand
+	# at the edge of a wood it cannot round until its strength is gone.
+	if not path_reachable:
+		leave_unreachable(world, carcass_key(target_carcass_id))
+		release_carcass_target(world)
+		return false
 	move_with_vector(world, Steering.seek(position, carcass_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	return true
 
@@ -762,6 +823,8 @@ func choose_carcass(world, carcasses: Array = []) -> Dictionary:
 		carcasses = world.query_carcasses(position, search_radius)
 	for carcass in carcasses:
 		if not accepts_carcass(world, carcass):
+			continue
+		if is_unreachable(carcass_key(int(carcass.get("id", -1))), world.current_time):
 			continue
 		var active_feeders: Array = carcass.get("active_feeder_ids", [])
 		if not active_feeders.has(id) and active_feeders.size() >= int(carcass.get("max_feeders", 1)):
@@ -846,6 +909,8 @@ func export_runtime_state() -> Dictionary:
 		"path_goal_cell": path_goal_cell,
 		"last_repath_tick": last_repath_tick,
 		"stuck_timer": stuck_timer,
+		"path_reachable": path_reachable,
+		"unreachable_targets": unreachable_targets.duplicate(),
 	}
 
 
@@ -944,6 +1009,8 @@ func apply_runtime_state(state_data: Dictionary) -> void:
 	path_goal_cell = int(state_data.get("path_goal_cell", path_goal_cell))
 	last_repath_tick = int(state_data.get("last_repath_tick", last_repath_tick))
 	stuck_timer = float(state_data.get("stuck_timer", stuck_timer))
+	path_reachable = bool(state_data.get("path_reachable", true))
+	unreachable_targets = state_data.get("unreachable_targets", {}).duplicate()
 	clear_decision_cache()
 
 
