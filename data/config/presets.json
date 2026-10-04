@@ -144,6 +144,7 @@
                 "headless_active_radius": 960.0
               },
               "water_generation": {
+                "sources_per_million_units": 4.05,
                 "radius_min": 60.0,
                 "radius_max": 93.3
               },
@@ -191,8 +192,8 @@
                   "offspring_spawn_radius": 20.0
                 },
                 "metabolism": {
-                  "hunger_rate": 1.95,
-                  "thirst_rate": 1.55
+                  "hunger_rate": 0.312,
+                  "thirst_rate": 0.279
                 }
               },
               "scavenger": {
@@ -252,6 +253,7 @@
                 "headless_active_radius": 1920.0
               },
               "water_generation": {
+                "sources_per_million_units": 1.0125,
                 "radius_min": 120.0,
                 "radius_max": 186.7
               },
@@ -299,8 +301,8 @@
                   "offspring_spawn_radius": 40.0
                 },
                 "metabolism": {
-                  "hunger_rate": 1.5,
-                  "thirst_rate": 1.2
+                  "hunger_rate": 0.24,
+                  "thirst_rate": 0.216
                 }
               },
               "scavenger": {
@@ -411,8 +413,8 @@
                   "offspring_spawn_radius": 90.0
                 },
                 "metabolism": {
-                  "hunger_rate": 1.0,
-                  "thirst_rate": 0.8
+                  "hunger_rate": 0.16,
+                  "thirst_rate": 0.144
                 }
               },
               "scavenger": {

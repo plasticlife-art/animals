@@ -20,6 +20,7 @@ func run(a) -> void:
 	_test_exhausted_predator_does_not_start_hunt(a)
 	_test_critical_thirst_expands_water_search(a)
 	_test_founders_start_at_spread_ages(a)
+	_test_map_sizes_scale_the_large_map(a)
 
 
 ## Comfortably past the species' `maturity_age`, whatever a rebalance makes it.
@@ -313,3 +314,41 @@ func _test_founders_start_at_spread_ages(a) -> void:
 			aged += 1
 	a.equal(aged, 0, "at a share of 0 every founder starts newborn, as before")
 	Helpers.destroy_manager(newborn)
+
+
+## Every map size is the large map scaled: at least as many ponds (`water_generation`'s density
+## over its area), a deer anywhere within its water search of one, and a predator's hunger and
+## thirst a modest multiple of the large map's. The other sizes' predator rates were written against an
+## older base and left five to ten times too hungry when it fell, so on the small map predators
+## starved out within minutes; and its six ponds lay further apart than a deer looks for water,
+## so nearly half the deer that died, died of thirst.
+func _test_map_sizes_scale_the_large_map(a) -> void:
+	var large := ConfigLoader.load_config_bundle(ConfigLoader.default_selection())
+	var large_ponds := _pond_count(large)
+	var large_metabolism: Dictionary = large["species"]["predator"]["metabolism"]
+	for size in ["small", "medium", "huge"]:
+		var selection := ConfigLoader.default_selection()
+		selection["map_size"] = size
+		var bundle := ConfigLoader.load_config_bundle(selection)
+		var ponds := _pond_count(bundle)
+		a.is_true(ponds >= large_ponds, "%s: at least the large map's %d ponds (%d)" % [size, large_ponds, ponds])
+		var metabolism: Dictionary = bundle["species"]["predator"]["metabolism"]
+		for rate in ["hunger_rate", "thirst_rate"]:
+			var ratio := float(metabolism[rate]) / float(large_metabolism[rate])
+			a.is_true(ratio >= 0.5 and ratio <= 2.0,
+				"%s: a predator's %s within twice the large map's (x%.2f)" % [size, rate, ratio])
+		# The furthest a deer can stand from a pond: half a grid cell's diagonal, widened by the jitter.
+		var world_size: Dictionary = bundle["world"]["world_size"]
+		var step := sqrt(float(world_size["x"]) * float(world_size["y"]) / float(maxi(1, ponds)))
+		var jitter := float(bundle["world"]["water_generation"].get("jitter", 0.35))
+		var furthest := step * sqrt(2.0) * 0.5 * (1.0 + jitter)
+		var search := float(bundle["species"]["herbivore"]["perception"]["water_search_radius"])
+		a.is_true(search >= furthest, "%s: a deer anywhere looks far enough to find a pond (%.0f against %.0f)"
+			% [size, search, furthest])
+
+
+## What `WorldState._generate_water_sources()` places: the density over the area, rounded.
+func _pond_count(bundle: Dictionary) -> int:
+	var world: Dictionary = bundle["world"]
+	var density := float(world.get("water_generation", {}).get("sources_per_million_units", 1.39))
+	return maxi(1, int(round(density * float(world["world_size"]["x"]) * float(world["world_size"]["y"]) / 1000000.0)))

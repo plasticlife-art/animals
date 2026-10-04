@@ -1339,6 +1339,24 @@ millisecond setting squeezed to zero.
   (`pop_seconds`, `pop_from`); `effects.max_active` caps the marks on screen at once.
   Durations are simulated seconds, `*_px` art pixels
 
+### `presets.json`
+
+- The setup screen's option groups, each a patch over the base configs. The map sizes are the
+  large map scaled by a third, two thirds and one and a half: the world and its cells, every
+  perception, body and feeding radius, the ponds' radii and the LOD window's margins. On the
+  small and medium maps pond density (`water_generation.sources_per_million_units`) goes the
+  other way, by the square, so they have the large map's 52 ponds and a deer anywhere is within
+  its water search of one. The huge map keeps the large map's density, 118 ponds: cut to 52, 6
+  to 15 % of its deer that died, died of thirst, against under 2 %
+- A predator's hunger and thirst rates are the large map's times 1.56 and 1.55 on the small
+  map, 1.2 on the medium, 0.8 on the huge: written out as numbers, so a change to the predator's
+  `metabolism` in `species.json` has to be carried here too. It once was not - the large map's
+  rates fell from 1.25 and 1.0 to 0.2 and 0.18 and the others kept the old ones, five to ten
+  times too hungry - and on the small map predators starved out within minutes, while its six
+  ponds, further apart than a deer looks, made nearly half the deer that died die of thirst.
+  `P3BalanceTests` holds every size to at least the large map's ponds, the deer's reach and a
+  predator's rates within twice the large map's
+
 ## Built-In Tests
 
 The project includes an internal headless test runner in `scenes/tests/test_runner.tscn`.
@@ -1352,6 +1370,8 @@ Current suites cover:
 - selector stickiness and threshold behavior
 - state-policy expectations
 - small simulation regression scenarios
+- the map sizes as scaled copies of the large map (`P3BalanceTests`): at least its ponds, a
+  deer anywhere within reach of one, and a predator's hunger and thirst within twice its rates
 - deterministic action/state traces across repeated seeded runs
 - full-world replays through sector sleep and wake, and a shared random stream the dormant path
   never touches
