@@ -1215,6 +1215,13 @@ millisecond setting squeezed to zero.
 ### `species.json`
 
 - tunes each species independently without code changes
+- `perception.carcass_search_widen_hunger` (grouse 28, the hunger they start eating at) is where
+  a species that lives on carrion alone starts looking further for it: the search widens from
+  `carcass.search_radius` (840) towards four times that as hunger rises, and without the key only
+  past `critical_hunger` (60), as a fox, which hunts, still does. Asleep at hunger 30 to 50,
+  whole flocks of grouse looked no further than 840, wandered blind for a year at zero energy
+  and missed their breeding season (`WorldState.carcass_search_radius_for()`, shared awake and
+  asleep)
 - Herbivore numbers are set by grass, so its food knobs are balance knobs:
   `feeding.nutrition_gain` (hunger removed per unit of grass; lower means more grass per
   animal), `feeding.good_sward_fraction` (how full a cell must be for a fed grazer to walk
@@ -1397,7 +1404,9 @@ Current suites cover:
   chronicle, and «Сезоны» keeping its rows until a season closes, and saying so without a clock
 - targets out of reach (`ReachTests`): navigation saying when its route search found no way to
   a walled-off goal, a deer leaving such a pond and a predator such a carcass for ones they can
-  reach, the memory lapsing and keeping to a dozen, and travelling with the animal's state
+  reach, the memory lapsing and keeping to a dozen, and travelling with the animal's state; a
+  hungry grouse looking further for carrion than a fox, and a sleeping flock at hunger 40 going
+  for a body 1150 away
 
 ## Measuring Balance
 

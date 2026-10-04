@@ -3,7 +3,8 @@ extends RefCounted
 ## Targets an awake animal cannot reach (`AgentBase.unreachable_targets`): navigation says when
 ## its route search found none, and a deer leaves a pond, a predator a carcass it cannot get
 ## to, for one it can, instead of standing at the wall until its strength is gone. The memory
-## lapses, keeps to a dozen and travels with the animal's state.
+## lapses, keeps to a dozen and travels with the animal's state. And carrion further off: a
+## species that lives on it looks further once it is hungry at all, asleep as awake.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const AgentBaseScript := preload("res://scripts/agents/agent_base.gd")
@@ -20,6 +21,7 @@ func run(a) -> void:
 	_test_predator_leaves_a_carcass_it_cannot_reach(a)
 	_test_memory_lapses_and_keeps_to_a_dozen(a)
 	_test_memory_travels_with_the_animal(a)
+	_test_hungry_carrion_eaters_look_further(a)
 
 
 ## Walls in the cells around `SHUT_IN`: rows and columns 4 to 7, the inner four left open.
@@ -141,3 +143,41 @@ func _test_memory_travels_with_the_animal(a) -> void:
 	a.is_true(not other.path_reachable, "with what its route last said")
 	Helpers.destroy_manager(manager)
 
+
+func _test_hungry_carrion_eaters_look_further(a) -> void:
+	var manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(9506), 9506)
+	var world = manager.world_state
+	var species: Dictionary = manager.config_bundle["species"]
+	var grouse: Dictionary = species["scavenger"]["perception"]
+	var fox: Dictionary = species["predator"]["perception"]
+	var base: float = world.carcass_search_radius_for(10.0, grouse)
+	a.equal(world.carcass_search_radius_for(20.0, grouse), base, "a grouse not yet hungry looks as far as ever")
+	a.greater(world.carcass_search_radius_for(40.0, grouse), base + 300.0, "a hungry one further")
+	a.equal(world.carcass_search_radius_for(40.0, fox), world.carcass_search_radius_for(10.0, fox),
+		"a fox, which hunts, only once its hunger is critical")
+	# A sleeping flock at hunger 40 with a body some 1150 away: it used to wander.
+	var center := Vector2(768.0, 768.0)
+	for index in range(6):
+		var bird = world.spawn_agent("scavenger", center + Vector2(float(index % 3) * 40.0, float(index / 3) * 40.0), 0,
+			AgentBaseScript.SEX_FEMALE if index % 2 == 0 else AgentBaseScript.SEX_MALE, {"reason": "test"})
+		bird.age = 60.0
+		bird.hunger = 40.0
+		bird.thirst = 0.0
+	Helpers._refresh_spatial_queries(world)
+	var sector_key: Vector2i = world._get_sector_key(center)
+	world._sleep_sector(sector_key)
+	var aggregates: Array = world._sector_states[sector_key].get("dormant_aggregates", [])
+	a.is_true(not aggregates.is_empty(), "the flock sleeps")
+	if aggregates.is_empty():
+		Helpers.destroy_manager(manager)
+		return
+	var flock: Dictionary = aggregates[0]
+	flock["avg_hunger"] = 40.0
+	flock["peak_hunger"] = 40.0
+	flock["avg_thirst"] = 0.0
+	flock["peak_thirst"] = 0.0
+	var carcass := Helpers.spawn_carcass(world, center + Vector2(1150.0, 40.0), 120.0)
+	var goal: Dictionary = world._select_dormant_goal(sector_key, flock)
+	a.equal(str(goal.get("goal_kind", "")), "seek_carcass", "now it goes for the body (%s)" % str(goal.get("goal_kind", "")))
+	a.equal(int(goal.get("carcass_id", -1)), carcass, "that body")
+	Helpers.destroy_manager(manager)
