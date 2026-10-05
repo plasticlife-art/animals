@@ -1494,20 +1494,32 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   late low stayed where it was (39 ± 9 against 41 ± 10); the deep fall left seed 1 (19 to 41)
   and appeared on seeds 4 and 7 (48 to 23, 46 to 29). A tenth of a 1440 s life spreads a cohort's
   deaths by a couple of minutes, inside the four the old-age window already spans
-- Herbivores at full fidelity breed far less with the season on: over 1440 s on 4 seeds they
-  ended 47 % below off (157 against 298 late), half the births. They leave winter too thin to
-  breed in a spring-only window, and a female misses her year. A deer window to the end of
-  summer narrowed the gap to 12 % (measured before the fix for targets out of reach, against an
-  off of 219) but let them swing lower in LOD (42 at the lowest over twelve years against 79), so
-  it is not shipped. In LOD, where most of a map sleeps, they stay within off's paired interval
+- Awake herbivores breed too seldom to hold their numbers for long. At full fidelity over 5760 s
+  (twelve years, 2 seeds) the deer died out on both seeds with no season (in years 8 and 10)
+  and on one of the two with it (year 9; on the other they fell to 51 and came back to 188). A
+  live mating needs a female and a male of one herd within `mate_search_radius` (128, against a
+  spacing of 84 and more) both at `energy_threshold` (66) at that moment, which they reach only
+  just after eating; as herds thin, such meetings stop and births with them. A sleeping herd
+  pairs its ready members anywhere within the same radius of its packed formation and is fed to
+  full energy at its grass, so LOD holds. With the season on it is worse over 1440 s: 47 % below
+  off (157 against 298 late), half the births, as a mating's 200 s wait is about the whole
+  spring window and a female has one litter a year. A deer window to the end of summer narrowed
+  that gap to 12 % (before the fix for targets out of reach) but in LOD its births overshot the
+  grass and starved: retested over 2880 s on 8 seeds, the deer fell to 9 and 17 on two seeds and
+  ended 20 % below off, so it is not shipped
 - Long runs still dip. Over twelve years in LOD, with seasons and drying ponds, grouse fell to
   12 on one seed of eight and 26 on another before their next young; with neither, they died
-  out on a third. Sleeping grouse look for carrion only within `carcass.search_radius` (840)
-  until their hunger passes `critical_hunger`, and a whole flock can go a season without a meal
-  and so without young. Letting a hungry grouse look further, from the hunger it starts eating
-  at, was tried and taken back: flocks flew off to distant bodies away from water, died of
-  thirst in a drought year on one seed and stopped breeding on another. The worst drought year
-  over those twelve years took 27 % of the herbivores alive when it began
+  out on a third. The dips are whole years without young: a sleeping flock breeds only just
+  after a meal, and in a lean season no meal falls in its window. Four remedies were tried and
+  taken back. Looking further for carrion from the hunger they start eating at: flocks flew off
+  to distant bodies away from water and died of thirst in a drought year on one seed, and
+  stopped breeding on another. Spreading old age (from 700 to 1500 s at 0.002 a second instead
+  of 1000 to 1200 at 0.004): the dips went deeper (to 4). Sending a hungry flock to the nearest
+  herds, where bodies turn up: grouse held at 72 and up, but they ate the kills sleeping packs
+  need to reach breeding energy and foxes died out on one seed (58 born against 201). Breeding
+  at hunger up to 60 instead of 40: better on the two seeds tried, but over twelve years on the
+  next four foxes died out on one, grouse on another and deer fell to 5 on a third. The worst
+  drought year over those twelve years took 27 % of the herbivores alive when it began
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - Heredity is four multipliers with fixed costs, not a genome: no trade-offs beyond the ones
