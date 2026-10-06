@@ -408,9 +408,21 @@ func can_reproduce() -> bool:
 	return is_alive \
 		and age >= float(reproduction.get("maturity_age", 0.0)) * trait_longevity \
 		and reproduction_cooldown <= 0.0 \
-		and energy >= float(reproduction.get("energy_threshold", 9999.0)) \
+		and energy >= breeding_energy_threshold(reproduction, sex, 9999.0) \
 		and hunger <= float(reproduction.get("max_hunger", need_max)) \
 		and thirst <= float(reproduction.get("max_thirst", need_max))
+
+
+## The strength breeding takes at the moment of mating: `reproduction.energy_threshold`, and
+## for a male `male_energy_threshold` where the species sets one. A doe is that strong only
+## for the few seconds after a meal; asking the buck to be so at the same moment left thinning
+## herds without young, so a deer or a grouse male needs only to be grown, rested since his
+## last young, fed and watered. Awake and asleep read it here.
+static func breeding_energy_threshold(reproduction_config: Dictionary, animal_sex: String, fallback: float) -> float:
+	var threshold := float(reproduction_config.get("energy_threshold", fallback))
+	if animal_sex == SEX_MALE:
+		return float(reproduction_config.get("male_energy_threshold", threshold))
+	return threshold
 
 
 func spend_energy(amount: float) -> void:

@@ -363,29 +363,15 @@ func _regroup(world, delta: float, neighbors: Array, group_center = null) -> voi
 func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array = []) -> bool:
 	if not world.has_reproductive_capacity(species_type):
 		return false
+	# The mate before the danger: a buck that needs no strength to breed is ready for most
+	# of the season, and nearly always nobody in his herd is ready for him.
+	var chosen_mate = _choose_mate(world)
+	if chosen_mate == null:
+		return false
 	var safe_radius := float(reproduction.get("safe_radius", 100.0))
 	if predators.is_empty():
 		predators = world.query_agents_multi(position, safe_radius, world.species_registry.predator_set(species_type), id)
 	if not predators.is_empty():
-		return false
-
-	var mates: Array = Perception.get_nearby_agents(
-		world,
-		position,
-		float(perception.get("mate_search_radius", 70.0)),
-		species_type,
-		id
-	)
-	var chosen_mate = null
-	for mate in mates:
-		if mate.sex == sex or not world.can_breed(mate):
-			continue
-		if mate.group_id != -1 and group_id != -1 and mate.group_id != group_id:
-			continue
-		chosen_mate = mate
-		break
-
-	if chosen_mate == null:
 		return false
 
 	target_agent_id = chosen_mate.id
@@ -424,6 +410,34 @@ func _attempt_reproduce(world, delta: float, neighbors: Array, predators: Array 
 	spend_energy(float(reproduction.get("birth_energy_cost", 18.0)))
 	chosen_mate.spend_energy(float(chosen_mate.reproduction.get("birth_energy_cost", 18.0)))
 	return true
+
+
+## The mate to go to. With `reproduction.herd_mates`, the nearest ready animal of the other sex
+## anywhere in the herd (the lower id on a tie): a herd grazes spread wider than
+## `mate_search_radius`, and a doe is ready only for the few seconds after a meal. Otherwise, or
+## for an animal outside a herd, the first ready one within that radius not of another herd.
+func _choose_mate(world):
+	if group_id != -1 and bool(reproduction.get("herd_mates", false)):
+		var nearest = null
+		var nearest_distance_sq := INF
+		for mate in world.herd_members(self):
+			if mate.sex == sex or not mate.is_alive or mate.group_id != group_id:
+				continue
+			var distance_sq: float = position.distance_squared_to(mate.position)
+			if distance_sq > nearest_distance_sq or (distance_sq == nearest_distance_sq and mate.id > nearest.id):
+				continue
+			if world.can_breed(mate):
+				nearest = mate
+				nearest_distance_sq = distance_sq
+		return nearest
+	for mate in Perception.get_nearby_agents(world, position, float(perception.get("mate_search_radius", 70.0)),
+			species_type, id):
+		if mate.sex == sex or not world.can_breed(mate):
+			continue
+		if mate.group_id != -1 and group_id != -1 and mate.group_id != group_id:
+			continue
+		return mate
+	return null
 
 
 func _execute_selected_action(world, delta: float, neighbors: Array, predators: Array, action_name: StringName, snapshot = null) -> void:

@@ -99,6 +99,9 @@ var lod_counts := {
 }
 var _living_agent_index_by_id: Dictionary = {}
 var _group_state_cache: Dictionary = {}
+## The awake members of each herd, by `_group_cache_key()`, kept beside `_group_state_cache`
+## but out of it: the worker sends that cache to the view, and these are the live animals.
+var _herd_member_lists: Dictionary = {}
 var _agent_sector_cells: Dictionary = {}
 var _sector_states: Dictionary = {}
 var _sector_size: float = 512.0
@@ -236,6 +239,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	living_agents.clear()
 	_living_agent_index_by_id.clear()
 	_group_state_cache.clear()
+	_herd_member_lists.clear()
 	_agent_sector_cells.clear()
 	_sector_states.clear()
 	_sector_grass_cache.clear()
@@ -675,6 +679,7 @@ func shutdown() -> void:
 	performance_counters.clear()
 	_living_agent_index_by_id.clear()
 	_group_state_cache.clear()
+	_herd_member_lists.clear()
 	_agent_sector_cells.clear()
 	_sector_states.clear()
 	_sector_grass_cache.clear()
@@ -1010,6 +1015,14 @@ func find_carcass_by_source_agent(source_agent_id: int) -> Dictionary:
 		if int(carcass.get("source_agent_id", -1)) == source_agent_id and _is_carcass_available(carcass):
 			return carcass
 	return {}
+
+
+## The awake animals of `agent`'s herd, itself among them; empty for one without a herd. The
+## world keeps the list as animals wake, sleep, are born and die: read it, do not change it.
+func herd_members(agent) -> Array:
+	if agent == null or agent.group_id == -1:
+		return []
+	return _herd_member_lists.get(_group_cache_key(agent.species_type, agent.group_id), [])
 
 
 func get_group_center(group_id: int, species_type: String, exclude_id: int = -1):
@@ -2901,6 +2914,7 @@ func _add_agent_to_group_cache(agent) -> void:
 	group_state["sum"] = sum
 	group_state["center"] = sum / float(count)
 	_group_state_cache[cache_key] = group_state
+	_herd_member_lists.get_or_add(cache_key, []).append(agent)
 
 
 func _remove_agent_from_group_cache(agent) -> void:
@@ -2910,9 +2924,11 @@ func _remove_agent_from_group_cache(agent) -> void:
 	var group_state: Dictionary = _group_state_cache.get(cache_key, {})
 	if group_state.is_empty():
 		return
+	_herd_member_lists.get(cache_key, []).erase(agent)
 	var count := int(group_state.get("count", 0)) - 1
 	if count <= 0:
 		_group_state_cache.erase(cache_key)
+		_herd_member_lists.erase(cache_key)
 		return
 	var sum: Vector2 = Vector2(group_state.get("sum", Vector2.ZERO)) - agent.position
 	group_state["count"] = count
@@ -2942,6 +2958,7 @@ func _move_agent_in_group_cache(agent, previous_position: Vector2) -> void:
 
 func _rebuild_group_state_cache() -> void:
 	_group_state_cache.clear()
+	_herd_member_lists.clear()
 	for agent in living_agents:
 		if agent == null or not agent.is_alive:
 			continue
@@ -2957,6 +2974,7 @@ func _rebuild_group_state_cache() -> void:
 		var running_sum: Vector2 = group_state.get("sum", Vector2.ZERO)
 		group_state["sum"] = running_sum + agent.position
 		_group_state_cache[cache_key] = group_state
+		_herd_member_lists.get_or_add(cache_key, []).append(agent)
 	for cache_key in _group_state_cache.keys():
 		var group_state: Dictionary = _group_state_cache[cache_key]
 		var count: int = int(group_state.get("count", 0))
@@ -4483,8 +4501,9 @@ func _queue_dormant_deaths(aggregate: Dictionary, cause: String, count: int, det
 
 ## Births in the coarse path, paired the way a live animal pairs.
 ##
-## A ready female breeds with a ready male within `perception.mate_search_radius` of her:
-## her bonded mate if he is there, otherwise the nearest. "Ready" is
+## A ready female breeds with a ready male within `perception.mate_search_radius` of her
+## (anywhere in the group for a species with `reproduction.herd_mates`): her bonded mate if
+## he is there, otherwise the nearest. "Ready" is
 ## `AgentBase.can_reproduce()` read off the record. Both parents pay
 ## `birth_energy_cost` and start `reproduction.cooldown` here, so their own cooldowns
 ## limit the rate. The step used to meter births as a debt of one per `cooldown`
@@ -4498,6 +4517,8 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, _elapsed: floa
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 	var reproduction_config: Dictionary = species_config.get("reproduction", {})
 	var mate_radius_sq := pow(float(species_config.get("perception", {}).get("mate_search_radius", 80.0)), 2.0)
+	if int(aggregate.get("group_id", -1)) != -1 and bool(reproduction_config.get("herd_mates", false)):
+		mate_radius_sq = INF
 	var males: Array = []
 	var females: Array = []
 	for record in members:
@@ -4584,7 +4605,8 @@ static func _dormant_record_can_reproduce(record: Dictionary, reproduction_confi
 	return float(record.get("age", 0.0)) >= float(reproduction_config.get("maturity_age", 0.0)) \
 			* float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY]) \
 		and float(record.get("reproduction_cooldown", 0.0)) <= 0.0 \
-		and float(record.get("energy", 0.0)) >= float(reproduction_config.get("energy_threshold", INF)) \
+		and float(record.get("energy", 0.0)) >= AgentBaseScript.breeding_energy_threshold(reproduction_config,
+			str(record.get("sex", AgentBaseScript.SEX_FEMALE)), INF) \
 		and float(record.get("hunger", 0.0)) <= float(reproduction_config.get("max_hunger", 100.0)) \
 		and float(record.get("thirst", 0.0)) <= float(reproduction_config.get("max_thirst", 100.0))
 

@@ -93,16 +93,23 @@ func _test_dormant_pair_breeds_only_when_ready(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
+## For a herd of a species that does not look for mates across itself, and for animals outside
+## any herd. A herd that does (`reproduction.herd_mates`) pairs anywhere in it (`BreedingTests`).
 func _test_dormant_mates_must_be_within_search_radius(a) -> void:
-	var manager = Helpers.create_manager(88)
-	var world = manager.world_state
-	var male = Helpers.spawn_species(world, "herbivore", Vector2(40, 40), 5, AgentBase.SEX_MALE)
-	var female = Helpers.spawn_species(world, "herbivore", Vector2(220, 220), 5, AgentBase.SEX_FEMALE)
-	var records := [_ready_record(male, _adult_age(male), AgentBase.SEX_MALE), _ready_record(female, _adult_age(female), AgentBase.SEX_FEMALE)]
-	var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
-	a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 0,
-		"ready animals farther apart than their mate search radius do not breed")
-	Helpers.destroy_manager(manager)
+	for herd_wide in [false, true]:
+		var bundle := Helpers.build_test_bundle(88)
+		bundle["species"]["herbivore"]["reproduction"]["herd_mates"] = herd_wide
+		var manager = Helpers.create_manager_with(bundle, 88)
+		var world = manager.world_state
+		var group := -1 if herd_wide else 5
+		var male = Helpers.spawn_species(world, "herbivore", Vector2(40, 40), group, AgentBase.SEX_MALE)
+		var female = Helpers.spawn_species(world, "herbivore", Vector2(220, 220), group, AgentBase.SEX_FEMALE)
+		var records := [_ready_record(male, _adult_age(male), AgentBase.SEX_MALE), _ready_record(female, _adult_age(female), AgentBase.SEX_FEMALE)]
+		var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
+		a.equal(world._compute_dormant_births_for_aggregate(aggregate, 1.0, records), 0,
+			"ready animals outside any herd farther apart than their mate search radius do not breed" if herd_wide
+			else "ready animals farther apart than their mate search radius do not breed")
+		Helpers.destroy_manager(manager)
 
 
 func _test_dormant_female_breeds_with_her_bonded_mate(a) -> void:

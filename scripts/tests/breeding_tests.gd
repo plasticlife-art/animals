@@ -2,7 +2,9 @@ extends RefCounted
 
 ## The breeding season and litters (`Breeding`): the curve over the year, who may breed on its
 ## ramps, how many young a pair has, the same answers awake and asleep, litters against the
-## cap, and a world without a season playing exactly as before.
+## cap, and a world without a season playing exactly as before. And who pairs with whom: a
+## male needs no strength at the moment of mating, and a herd animal looks for its mate across
+## the whole herd.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const BreedingScript := preload("res://scripts/agents/breeding.gd")
@@ -24,6 +26,10 @@ func run(a) -> void:
 	_test_litters_against_the_cap(a)
 	_test_sleeping_litters(a)
 	_test_sleeping_and_awake_agree(a)
+	_test_a_male_needs_no_strength(a)
+	_test_mates_found_across_the_herd(a)
+	_test_herd_lists_follow_the_animals(a)
+	_test_sleeping_herd_pairs_across_it(a)
 
 
 ## A world whose clock runs, starting in `season` (0 spring .. 3 winter), with every species
@@ -316,6 +322,10 @@ func _test_sleeping_and_awake_agree(a) -> void:
 			var animal = Helpers.spawn_species(world, "scavenger", Vector2(40.0 + float(index) * 8.0, 200.0), 5,
 				"female" if index % 3 != 0 else "male")
 			var record := _ready_record(animal)
+			if index % 4 == 1:
+				# Spent: a male breeds all the same, a female does not.
+				animal.energy = 5.0
+				record = animal.export_runtime_state()
 			var awake: bool = world.can_breed(animal)
 			if awake != world._dormant_record_can_breed(record, config, "scavenger"):
 				disagreements += 1
@@ -331,5 +341,134 @@ func _test_sleeping_and_awake_agree(a) -> void:
 			a.equal(int(tally.get("ready_females", 0)) + int(tally.get("ready_males", 0)), 0,
 				"and a sleeping group counts nobody ready")
 		if season == 0:
-			a.equal(fertile, 24, "everybody in spring")
+			a.equal(fertile, 20, "everybody in spring but the four spent females")
+		Helpers.destroy_manager(manager)
+
+
+## A grown deer of `sex` in herd `group`, rested, fed, watered and at full strength.
+func _ready_deer(world, where: Vector2, group: int, sex: String):
+	var deer = Helpers.spawn_species(world, "herbivore", where, group, sex)
+	deer.age = float(deer.reproduction.get("maturity_age", 0.0)) + 30.0
+	deer.reproduction_cooldown = 0.0
+	deer.energy = float(deer.metabolism.get("max_energy", 100.0))
+	deer.hunger = 0.0
+	deer.thirst = 0.0
+	return deer
+
+
+func _ids(animals: Array) -> Array:
+	var ids: Array = []
+	for animal in animals:
+		ids.append(animal.id)
+	ids.sort()
+	return ids
+
+
+## A male needs no strength at the moment of mating (`male_energy_threshold`), only to be
+## grown, rested since his last young, fed and watered; a female still needs hers. Asleep alike.
+func _test_a_male_needs_no_strength(a) -> void:
+	var manager = Helpers.create_manager_with(_seasonal_bundle(9208, 0), 9208)
+	var world = manager.world_state
+	var config: Dictionary = world.config_bundle["species"]["herbivore"]["reproduction"]
+	var pair := _ready_pair(world, "herbivore", Vector2(120.0, 120.0))
+	var doe = pair[0]
+	var buck = pair[1]
+	for animal in pair:
+		animal.energy = 5.0
+	a.is_true(world.can_breed(buck), "a spent buck breeds")
+	a.is_true(not world.can_breed(doe), "a spent doe does not")
+	a.is_true(world._dormant_record_can_breed(buck.export_runtime_state(), config, "herbivore")
+		and not world._dormant_record_can_breed(doe.export_runtime_state(), config, "herbivore"), "the same asleep")
+	buck.hunger = float(config.get("max_hunger", 0.0)) + 1.0
+	a.is_true(not world.can_breed(buck), "but not a hungry one")
+	buck.hunger = 0.0
+	buck.thirst = float(config.get("max_thirst", 0.0)) + 1.0
+	a.is_true(not world.can_breed(buck), "nor a thirsty one")
+	buck.thirst = 0.0
+	buck.reproduction_cooldown = 1.0
+	a.is_true(not world.can_breed(buck), "nor one resting from his last young")
+	buck.reproduction_cooldown = 0.0
+	buck.age = 1.0
+	a.is_true(not world.can_breed(buck), "nor a young one")
+	buck.age = float(config.get("maturity_age", 0.0)) + 30.0
+	doe.energy = float(doe.metabolism.get("max_energy", 100.0))
+	var first = doe if doe.id < buck.id else buck
+	a.is_true(first._attempt_reproduce(world, manager.tick_duration, [], []), "a strong doe mates with the spent buck")
+	a.equal(world.pending_spawns.size(), 2, "and has her twins")
+	a.equal(buck.energy, 0.0, "his share of the cost taken from what he had")
+	var strict: Dictionary = config.duplicate()
+	strict.erase("male_energy_threshold")
+	var other = _ready_deer(world, Vector2(60.0, 60.0), 3, "male")
+	other.energy = 5.0
+	other.reproduction = strict
+	a.is_true(not world.can_breed(other), "a species without the rule asks its males for strength too")
+	a.is_true(not world._dormant_record_can_breed(other.export_runtime_state(), strict, "herbivore"), "asleep as well")
+	Helpers.destroy_manager(manager)
+
+
+## A deer looks for its mate across its whole herd (`herd_mates`), not only within
+## `mate_search_radius`: the nearest ready one of the other sex, never one of another herd.
+func _test_mates_found_across_the_herd(a) -> void:
+	var manager = Helpers.create_manager_with(_seasonal_bundle(9209, 0), 9209)
+	var world = manager.world_state
+	var radius := float(world.config_bundle["species"]["herbivore"]["perception"]["mate_search_radius"])
+	var doe = _ready_deer(world, Vector2(24.0, 128.0), 7, "female")
+	var far_buck = _ready_deer(world, Vector2(232.0, 128.0), 7, "male")
+	var stranger = _ready_deer(world, Vector2(60.0, 128.0), 8, "male")
+	a.is_true(doe.position.distance_to(far_buck.position) > radius, "her herd's buck is beyond the search radius")
+	a.equal(doe._choose_mate(world), far_buck, "she finds him all the same, passing another herd's buck")
+	var near_buck = _ready_deer(world, Vector2(150.0, 128.0), 7, "male")
+	a.equal(doe._choose_mate(world), near_buck, "the nearest buck of her herd")
+	near_buck.reproduction_cooldown = 50.0
+	a.equal(doe._choose_mate(world), far_buck, "that is ready")
+	a.is_true(doe._attempt_reproduce(world, manager.tick_duration, [], []) and doe.target_agent_id == far_buck.id,
+		"and she sets off for him")
+	a.equal(far_buck._choose_mate(world), doe, "as he looks for her")
+	var plain: Dictionary = doe.reproduction.duplicate()
+	plain["herd_mates"] = false
+	doe.reproduction = plain
+	a.equal(doe._choose_mate(world), null, "without the rule only the radius counts, and another herd's buck never")
+	stranger.group_id = -1
+	a.equal(doe._choose_mate(world), stranger, "an animal outside any herd still pairs within it")
+	Helpers.destroy_manager(manager)
+
+
+## `WorldState.herd_members()` keeps up with deaths and with animals changing herds.
+func _test_herd_lists_follow_the_animals(a) -> void:
+	var manager = Helpers.create_manager(9210)
+	var world = manager.world_state
+	var herd := Helpers.spawn_herd(world, Vector2(128.0, 128.0), 4, 5)
+	var loner = Helpers.spawn_herbivore(world, Vector2(30.0, 30.0), -1)
+	var other = Helpers.spawn_herbivore(world, Vector2(220.0, 40.0), 6)
+	a.equal(_ids(world.herd_members(herd[0])), _ids(herd), "a herd's animals")
+	a.equal(world.herd_members(loner), [], "none for an animal outside a herd")
+	a.equal(_ids(world.herd_members(other)), [other.id], "another herd has its own")
+	world.kill_agent(herd[1], "test")
+	world._flush_removals()
+	a.equal(_ids(world.herd_members(herd[0])), _ids([herd[0], herd[2], herd[3]]), "the dead leave it")
+	herd[3].group_id = 6
+	world._rebuild_group_state_cache()
+	a.equal(_ids(world.herd_members(other)), _ids([other, herd[3]]), "one that moves to another herd joins that")
+	a.equal(_ids(world.herd_members(herd[0])), _ids([herd[0], herd[2]]), "and leaves its own")
+	Helpers.destroy_manager(manager)
+
+
+## Asleep the same: a herd that seeks its mates across itself pairs a doe with a buck further
+## off than `mate_search_radius`, a spent buck among them; without the rule it does not.
+func _test_sleeping_herd_pairs_across_it(a) -> void:
+	for herd_wide in [true, false]:
+		var bundle := _seasonal_bundle(9211, 0)
+		bundle["species"]["herbivore"]["reproduction"]["herd_mates"] = herd_wide
+		var manager = Helpers.create_manager_with(bundle, 9211)
+		var world = manager.world_state
+		var doe = Helpers.spawn_species(world, "herbivore", Vector2(24.0, 128.0), 7, "female")
+		var buck = Helpers.spawn_species(world, "herbivore", Vector2(232.0, 128.0), 7, "male")
+		var records := [_ready_record(doe), _ready_record(buck)]
+		records[1]["energy"] = 5.0
+		var aggregate: Dictionary = world._build_dormant_aggregates(records, Vector2i.ZERO)[0]
+		var births: int = world._compute_dormant_births_for_aggregate(aggregate, 1.0, records)
+		if herd_wide:
+			a.equal(births, 2, "a sleeping doe has twins by a spent buck across the herd")
+		else:
+			a.equal(births, 0, "without the rule he is too far off")
 		Helpers.destroy_manager(manager)

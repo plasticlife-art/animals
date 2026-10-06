@@ -72,6 +72,8 @@
     "reproduction": {
       "maturity_age": 90.0,
       "energy_threshold": 66.0,
+      "male_energy_threshold": 0.0,
+      "herd_mates": true,
       "cooldown": 200.0,
       "birth_energy_cost": 22.0,
 	  "max_hunger": 30.0,
@@ -262,6 +264,8 @@
     "reproduction": {
       "maturity_age": 18.0,
       "energy_threshold": 45.0,
+      "male_energy_threshold": 0.0,
+      "herd_mates": true,
       "cooldown": 65.0,
       "birth_energy_cost": 16.0,
 	  "max_hunger": 40.0,
