@@ -407,12 +407,13 @@ Shared capabilities include:
 
 - A female needs `reproduction.energy_threshold` at the moment of mating, and a doe (66 of 100,
   losing 2.4 a second) has it only for the dozen seconds after a meal. A male needs
-  `male_energy_threshold` where his species sets one - 0 for deer and grouse - and otherwise
-  only to be grown, fed (`max_hunger`), watered (`max_thirst`) and past his wait (`cooldown`):
-  `AgentBase.breeding_energy_threshold()`, read by `can_reproduce()` awake and by
+  `male_energy_threshold` where his species sets one - 0 for deer, grouse and foxes - and
+  otherwise only to be grown, fed (`max_hunger`), watered (`max_thirst`) and past his wait
+  (`cooldown`): `AgentBase.breeding_energy_threshold()`, read by `can_reproduce()` awake and by
   `_dormant_record_can_reproduce()` asleep, so the two still agree. He pays `birth_energy_cost`
-  all the same, down to 0. Foxes keep the old rule: their pairs hold together, and a fox is
-  limited by its kills, not its meetings
+  all the same, down to 0. Foxes got it with Rare prey: at full fidelity a fox is above its 70
+  for about half a minute after a big meal and near 0 the rest of the time (the median over the
+  last two minutes of every fox's life on seed 1), so two of them were seldom ready at once
 - With `reproduction.herd_mates` a deer or a grouse goes to the nearest ready animal of the
   other sex anywhere in its herd (`Herbivore._choose_mate()`, the lower id on a tie), from
   `WorldState.herd_members()`: each herd's awake animals, kept beside `_group_state_cache` but
@@ -579,6 +580,36 @@ Utility actions inside `alive`:
 - patrol
 
 `engaged` keeps existing locked flows such as chase, attack, carcass feeding, water investigation, and reproduction instead of re-scoring every tick.
+
+### Rare prey (`prey_preference`)
+
+- A hunter goes after a prey species less readily as it grows rare: `WorldState.
+  prey_preference()` is 1 while the species is at least its `balance.prey_switching.
+  reference_share` of all the prey on the map (deer 0.5, grouse 0.2), awake and asleep
+  counted, and below that its share over the reference, down to `min_preference` (0.1). It
+  is worked out once a tick
+- Awake, `Predator._choose_prey()` notices a prey only within the part of its sight the
+  preference leaves, the area in proportion to it (radius times its square root), so a fox
+  sees the last deer only near it and goes for the grouse it meets meanwhile. A chase under
+  way is not dropped. Asleep, `_resolve_dormant_predation()` counts a group's catchable heads
+  by the preference too, both for the kill rate and for which group is taken first, and
+  `_sector_catchable_prey()` steers a sleeping pack the same way
+- Why: at full fidelity grouse stay at their cap, so they and their carrion fed 30 to 43
+  foxes while the deer dwindled, and the foxes went on killing about as many deer when a few
+  dozen were left as when there were hundreds - each deer's risk grew as they grew fewer, and
+  the deer were hunted out (seed 2 over twelve years, 52 to 2). With the risk falling as they
+  do, a rare species gets the respite it needs to come back
+- Off - the block off or absent, or every species at its reference share - the world is bit
+  for bit as before (identity audits off 300 s, LOD 600 s; `PreySwitchingTests`)
+- Measured with the fox rule of Who pairs with whom, as shipped, against the code before
+  both (`audit_matrix.py`). At full fidelity over twelve years the deer held at 87 and 75 and
+  up on seeds 1 and 2, where they had fallen to 2 on seed 2, but the foxes died out on both
+  (years 7 and 10; see Known Gaps). Over 1440 s on 4 seeds nothing died out, the deer 217 late
+  against 231. In LOD over 2880 s on 8 seeds nothing died out, the deer 228 late against 219;
+  over 5760 s nothing died out where the code before lost the grouse on one seed, though grouse
+  fell to 4 on that seed and the deer to 57 on another. Without the fox rule the switch alone
+  lost the grouse on two seeds of eight over twelve years in LOD, and the fox rule alone helps
+  the foxes refill after a fall (30 cubs in a spring against 9 on seed 1)
 
 ## UI Layer
 
@@ -1453,7 +1484,10 @@ Current suites cover:
   ramps, litters, autumn barren and spring twins, a predator out of season keeping its carcass
   and its mate, a fox litter's kin, litters against the cap awake and asleep, a sleeping litter
   with both parents and the shared stream untouched, awake and asleep agreeing, and a world
-  without a season playing exactly as before
+  without a season playing exactly as before; a spent buck breeding and a spent doe not,
+  awake and asleep, a doe finding the nearest ready buck of her herd past the search radius
+  and never another herd's, the herd lists following deaths and moves, and a sleeping herd
+  pairing across itself
 - the season ledger (`SeasonTests`): which season a moment falls in, a season closing on its
   tick with each species changed by exactly its births less its deaths, the best hunter with a
   tie and a kill asleep, dried ponds by name and once each, a season met half-way, the ledger
@@ -1465,6 +1499,10 @@ Current suites cover:
 - targets out of reach (`ReachTests`): navigation saying when its route search found no way to
   a walled-off goal, a deer leaving such a pond and a predator such a carcass for ones they can
   reach, the memory lapsing and keeping to a dozen, and travelling with the animal's state
+- rare prey (`PreySwitchingTests`): the preference following a species' share and its floor,
+  a fox among grouse passing the last deer far off and taking one close by, a sleeping fox
+  gaining on a kill as much slower as the deer's preference, and nothing changed with the
+  block off
 
 ## Measuring Balance
 
@@ -1540,35 +1578,39 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   late low stayed where it was (39 ± 9 against 41 ± 10); the deep fall left seed 1 (19 to 41)
   and appeared on seeds 4 and 7 (48 to 23, 46 to 29). A tenth of a 1440 s life spreads a cohort's
   deaths by a couple of minutes, inside the four the old-age window already spans
-- Live play still loses a species over twelve years. At full fidelity over 5760 s (2 seeds)
-  the deer used to die out on both seeds with no season (in years 8 and 10) and on one with it
-  (year 9): a live mating needed a doe and a buck of one herd within `mate_search_radius` both
-  at `energy_threshold` at once. A buck now needs no strength and a doe looks across her herd
-  (Who pairs with whom): 44 to 47 % of the grown does have young in a year against 24 to 34 %,
-  and over 1440 s the deer are 22 % below off with the season instead of 47 %. But the chain
-  still breaks, at the foxes. At full fidelity the grouse sit at their cap (126) and feed the
-  foxes as prey and carrion, so 30 to 43 foxes stay on while the deer dwindle (seed 2, with the
-  season: from 52 to 2 over five years); with no season the deer's boom feeds a fox boom that
-  ends in none (years 7 and 12), and with it the foxes died out on seed 1 in year 7. A fix is
-  most likely on the foxes' side: hunting the prey there is most of, or room for foxes that
-  follows the deer. A deer window to the end of summer narrowed the 1440 s gap to 12 % (before
-  the fix for targets out of reach) but in LOD its births overshot the grass and starved:
-  retested over 2880 s on 8 seeds, the deer fell to 9 and 17 on two seeds and ended 20 % below
-  off, so it is not shipped
+- Live play still loses a species over twelve years, now the foxes. At full fidelity over 5760 s
+  (2 seeds) the deer used to die out on both seeds with no season (in years 8 and 10) and on one
+  with it (year 9): a live mating needed a doe and a buck of one herd within
+  `mate_search_radius` both at `energy_threshold` at once. A buck now needs no strength and a
+  doe looks across her herd (Who pairs with whom): 44 to 47 % of the grown does have young in a
+  year against 24 to 34 %, and over 1440 s the deer are 22 % below off with the season instead
+  of 47 %. Then the foxes, fed by grouse at their cap, hunted the thinning deer out (seed 2:
+  from 52 to 2 over five years) until rare prey got its respite (Rare prey); the deer now hold,
+  and the foxes die out on both seeds (years 7 and 10). `predator_probe.gd` on seed 1 shows why:
+  the first spring's litters fill the predator cap (48), births stop while it is full, and that
+  wave ages as one and dies within minutes (about 25 deaths of old age in six minutes in year
+  3); the few left are scattered - by then hardly one has a fox of the other sex within 480 -
+  and weak, near 0 energy most of the time, and do not refill it before the next wave goes. The
+  same cap-and-cohort wave loses grouse in LOD (Long runs still dip). A deer window to the end
+  of summer narrowed the 1440 s gap to 12 % (before the fix for targets out of reach) but in LOD
+  its births overshot the grass and starved: retested over 2880 s on 8 seeds, the deer fell to 9
+  and 17 on two seeds and ended 20 % below off, so it is not shipped
 - Long runs still dip. Over twelve years in LOD, with seasons and drying ponds, grouse fell to
   12 on one seed of eight and 26 on another before their next young; with neither, they died out
   on a third; with the buck and herd rules (Who pairs with whom) they held at 58 and up on seven
-  seeds and died out on the eighth. The dips are whole years without young: a sleeping flock
-  breeds only just after a meal, and in a lean season no meal falls in its window. Four remedies
-  were tried and taken back. Looking further for carrion from the hunger they start eating at:
-  flocks flew off to distant bodies away from water and died of thirst in a drought year on one
-  seed, and stopped breeding on another. Spreading old age (from 700 to 1500 s at 0.002 a second
-  instead of 1000 to 1200 at 0.004): the dips went deeper (to 4). Sending a hungry flock to the
-  nearest herds, where bodies turn up: grouse held at 72 and up, but they ate the kills sleeping
-  packs need to reach breeding energy and foxes died out on one seed (58 born against 201).
-  Breeding at hunger up to 60 instead of 40: better on the two seeds tried, but over twelve
-  years on the next four foxes died out on one, grouse on another and deer fell to 5 on a third.
-  The worst drought year over those twelve years took 27 % of the herbivores alive when it began
+  seeds and died out on the eighth, and with rare prey's respite as well (Rare prey) they died
+  out on none but fell to 4 on that one. The dips are whole years without young: a sleeping
+  flock breeds only just after a meal, and in a lean season no meal falls in its window. Four
+  remedies were tried and taken back. Looking further for carrion from the hunger they start
+  eating at: flocks flew off to distant bodies away from water and died of thirst in a drought
+  year on one seed, and stopped breeding on another. Spreading old age (from 700 to 1500 s at
+  0.002 a second instead of 1000 to 1200 at 0.004): the dips went deeper (to 4). Sending a
+  hungry flock to the nearest herds, where bodies turn up: grouse held at 72 and up, but they
+  ate the kills sleeping packs need to reach breeding energy and foxes died out on one seed (58
+  born against 201). Breeding at hunger up to 60 instead of 40: better on the two seeds tried,
+  but over twelve years on the next four foxes died out on one, grouse on another and deer fell
+  to 5 on a third. The worst drought year over those twelve years took 27 % of the herbivores
+  alive when it began
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - Heredity is four multipliers with fixed costs, not a genome: no trade-offs beyond the ones

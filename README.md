@@ -402,10 +402,13 @@ broods of four to six. Grouse live on carrion and breed only when fed, so their 
 longer, from midwinter to late summer. Every young of the year has to get through its first
 winter. Each female's season opens on her own day and closes on her own day, so births come
 over weeks, not in one wave (`world.climate.breeding_curve`, `species.<id>.breeding`).
-A doe or a hen needs strength to breed, which she has for a short while after a meal; a buck
-or a cock needs only to be grown, fed, watered and rested since his last young
+A doe, a hen or a vixen needs strength to breed, which she has for a short while after a
+meal; a male needs only to be grown, fed, watered and rested since his last young
 (`reproduction.male_energy_threshold`), and deer and grouse look for a mate across the whole
-herd or flock, not only nearby (`reproduction.herd_mates`). Foxes keep to their pairs.
+herd or flock, not only nearby (`reproduction.herd_mates`). Foxes keep to their pairs. A fox
+turns from a prey grown rare to the common one: when deer are few among the grouse, it notices
+a deer only close by, and sleeping packs catch fewer of them (`balance.prey_switching`), so the
+last of a species gets the respite to come back.
 
 Herbivores also bed down. `rest` gains a weight proportional to how deep the night is and
 `explore` takes the matching penalty, so idle herds settle at dusk and move again at dawn -

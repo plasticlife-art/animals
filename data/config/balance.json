@@ -226,6 +226,14 @@
     "neighbor_radius": 126.0,
     "reference_neighbor_count": 10.0
   },
+  "prey_switching": {
+    "enabled": true,
+    "reference_share": {
+      "herbivore": 0.5,
+      "scavenger": 0.2
+    },
+    "min_preference": 0.1
+  },
   "dormant_ecology": {
     "kill_rate_per_prey_per_second": 0.006,
     "prey_catchability": {

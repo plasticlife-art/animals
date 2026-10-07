@@ -86,6 +86,9 @@ var species_registry
 ## Derived from the registry at initialize() so the tick never walks roles.
 var _prey_species_ids: Array = []
 var _threat_species_ids: Array = []
+## `prey_preference()` by prey species, worked out once a tick.
+var _prey_preferences: Dictionary = {}
+var _prey_preferences_tick: int = -1
 var navigation_config: Dictionary = {}
 var simulation_lod_config: Dictionary = {}
 var current_tick: int = 0
@@ -232,6 +235,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_dormant_reify_budget_per_tick = maxi(0, int(simulation_lod_config.get("dormant_reify_budget_per_tick", 1)))
 	_reproduction_population_counts.clear()
 	_reproduction_birth_reservations.clear()
+	_prey_preferences.clear()
+	_prey_preferences_tick = -1
 
 	spatial_grid = SpatialGridScript.new()
 	spatial_grid.configure(float(world_config.get("spatial_cell_size", 96.0)))
@@ -597,6 +602,34 @@ func is_fertile(agent_id: int, sex: String, species_type: String) -> bool:
 		return true
 	return BreedingScript.fertile(agent_id, sex, float(_breeding_values.get(species_type, 1.0)), climate.year,
 		trait_world)
+
+
+## How readily hunters go after `prey_species` now (`balance.prey_switching`): 1 while it is
+## at least its `reference_share` of all the prey on the map, awake and asleep, and less as it
+## grows rarer - its share over that reference, down to `min_preference`. 1 with the block off
+## and for a species it names no share for. Foxes fed on grouse at their cap used to kill as
+## many deer when a few dozen were left as when there were hundreds, and hunted them out; a
+## rare prey is now looked for less (`Predator._choose_prey()`) and caught less asleep
+## (`_resolve_dormant_predation()`), and the hunters turn to the common one.
+func prey_preference(prey_species: String) -> float:
+	var settings: Dictionary = config_bundle.get("balance", {}).get("prey_switching", {})
+	if not bool(settings.get("enabled", false)):
+		return 1.0
+	var reference := float(settings.get("reference_share", {}).get(prey_species, 0.0))
+	if reference <= 0.0:
+		return 1.0
+	if _prey_preferences_tick != current_tick:
+		_prey_preferences.clear()
+		_prey_preferences_tick = current_tick
+	if _prey_preferences.has(prey_species):
+		return float(_prey_preferences[prey_species])
+	var total := 0
+	for species_id in _prey_species_ids:
+		total += _reproduction_population_count(species_id)
+	var share := float(_reproduction_population_count(prey_species)) / float(maxi(1, total))
+	var preference := clampf(share / reference, clampf(float(settings.get("min_preference", 0.1)), 0.0, 1.0), 1.0)
+	_prey_preferences[prey_species] = preference
+	return preference
 
 
 ## Ready to breed and in season: what an awake animal and its mate are both asked.
@@ -4307,7 +4340,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 			if hunted_species.has(str(aggregate.get("species_type", ""))):
 				prey_aggregates.append(aggregate)
 				local_prey += count
-				catchable_prey += float(count) * _prey_catchability(catchability, aggregate)
+				catchable_prey += float(count) * _prey_catchability(catchability, aggregate) \
+					* prey_preference(str(aggregate.get("species_type", "")))
 
 	if hunting_predators > 0:
 		performance_counters["dormant_hunting_predator_steps"] += hunting_predators
@@ -4333,11 +4367,13 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	if kills > 0:
 		var remaining: int = kills
 		# Largest herd first: a predator in a sector hunts where the prey actually is,
-		# counted by how catchable it is. The group key breaks ties, since `sort_custom`
-		# is not stable.
+		# counted by how catchable it is and how readily it is hunted (`prey_preference()`).
+		# The group key breaks ties, since `sort_custom` is not stable.
 		prey_aggregates.sort_custom(func(a, b):
-			var count_a := float(a.get("count", 0)) * _prey_catchability(catchability, a)
-			var count_b := float(b.get("count", 0)) * _prey_catchability(catchability, b)
+			var count_a := float(a.get("count", 0)) * _prey_catchability(catchability, a) \
+				* prey_preference(str(a.get("species_type", "")))
+			var count_b := float(b.get("count", 0)) * _prey_catchability(catchability, b) \
+				* prey_preference(str(b.get("species_type", "")))
 			if count_a != count_b:
 				return count_a > count_b
 			return _get_dormant_aggregate_key(str(a.get("species_type", "")), int(a.get("group_id", -1))) \
@@ -5237,7 +5273,8 @@ func _sector_catchable_prey(sector_state: Dictionary) -> float:
 	var catchability: Dictionary = config_bundle.get("balance", {}).get("dormant_ecology", {}).get("prey_catchability", {})
 	var total := 0.0
 	for species_id in _prey_species_ids:
-		total += float(counts.get(species_id, 0)) * clampf(float(catchability.get(species_id, 1.0)), 0.0, 1.0)
+		total += float(counts.get(species_id, 0)) * clampf(float(catchability.get(species_id, 1.0)), 0.0, 1.0) \
+			* prey_preference(species_id)
 	return total
 
 

@@ -58,6 +58,9 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# Ponds that never change: the fixtures' two ponds are 18 units across and a climate
 	# switched on to watch the grass would dry them in a season. `WaterTests` switches it on.
 	bundle["world"]["water_levels"] = {"enabled": false}
+	# And hunters turning from rare prey: a fixture with one deer among a flock must not find
+	# its fox blind to it. `PreySwitchingTests` switches it on.
+	bundle["balance"]["prey_switching"] = {"enabled": false}
 	bundle["world"]["terrain"]["cell_size"] = 32.0
 	# Pinned flat on purpose: the fixtures assert on routes and reachability, so
 	# turning relief on in world.json must not reach them.

@@ -173,6 +173,7 @@
     "reproduction": {
       "maturity_age": 20.0,
 	  "energy_threshold": 70.0,
+	  "male_energy_threshold": 0.0,
       "cooldown": 60.0,
       "birth_energy_cost": 18.0,
 	  "max_hunger": 60.0,

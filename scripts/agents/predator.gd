@@ -637,6 +637,11 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 		if (prey.id == abandoned_prey_id and world.current_time < retry_after) or not world.can_see(self, prey, vision_radius):
 			continue
 		var distance_sq: float = position.distance_squared_to(prey.position)
+		# A rare prey is looked for less (`WorldState.prey_preference()`): noticed only within
+		# the part of the sight its rarity leaves, the area in proportion to it.
+		var preference: float = world.prey_preference(prey.species_type)
+		if preference < 1.0 and distance_sq > vision_radius * vision_radius * preference:
+			continue
 		var distance_score: float = 1.0 - clampf(sqrt(distance_sq) / maxf(vision_radius, 1.0), 0.0, 1.0)
 		var isolation: float = _prey_isolation(world, prey)
 		var prey_energy: float = 1.0 - clampf(prey.energy / maxf(1.0, float(prey.metabolism.get("max_energy", 100.0))), 0.0, 1.0)
