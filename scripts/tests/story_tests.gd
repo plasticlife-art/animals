@@ -354,6 +354,9 @@ func _test_feed_tells_what_is_looked_at(a) -> void:
 		"a pinned fox far away, told by his epitaph: %s" % pinned.text)
 	world.emit_population_event("HerdSplit", "herbivore", Vector2(900.0, 900.0), {"size": 10, "new_group_id": 4, "group_id": 0, "moved": 5})
 	a.equal(str(book.feed.lines[0].text), "Стадо №1 разделилось: 5 голов ушли в новое Стадо №5", "the selected herd splits")
+	world.emit_population_event("HerdSplit", "scavenger", Vector2(100.0, 100.0), {"size": 42, "new_group_id": 6, "group_id": 0, "moved": 21})
+	a.equal(str(book.feed.lines[0].text), "Стая №1 разделилась%s: 21 птица ушла в новую Стаю №7" % _place(book, Vector2(100.0, 100.0)),
+		"a flock in view splits, in birds")
 	Helpers.destroy_manager(manager)
 
 

@@ -27,6 +27,7 @@ func run(a) -> void:
 	_test_fear_survives_a_save(a)
 	_test_an_outgrown_herd_divides(a)
 	_test_a_sleeping_herd_divides_too(a)
+	_test_an_outgrown_flock_divides(a)
 	_test_a_starved_animal_leaves_little_meat(a)
 	_test_a_grazer_moves_on_from_a_grazed_out_cell(a)
 	_test_a_hungry_grazer_eats_a_half_grazed_sward_underfoot(a)
@@ -386,6 +387,55 @@ func _test_a_sleeping_herd_divides_too(a) -> void:
 	counts.sort()
 	a.equal(counts, [(split_size + 8) / 2, (split_size + 8) / 2], "a sleeping herd divides into two aggregates")
 	a.equal(state["dormant_records"].size(), split_size + 8, "and loses no one doing it")
+	Helpers.destroy_manager(manager)
+
+
+## Grouse flocks divide too (`species.scavenger.herd.split_size`). Their young join the
+## mother's flock and nothing else ever divided one, so over twelve years the flocks drew
+## together into one; a lean season for it was a year without young for every grouse.
+func _test_an_outgrown_flock_divides(a) -> void:
+	var manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(418), 418)
+	var world = manager.world_state
+	var split_size := int(manager.config_bundle["species"]["scavenger"]["herd"]["split_size"])
+	a.equal(split_size, 20, "a flock divides past twenty")
+	var flock: Array = []
+	for index in range(split_size + 6):
+		flock.append(Helpers.spawn_species(world, "scavenger", Vector2(800.0 + float(index % 6) * 30.0,
+			800.0 + floorf(float(index) / 6.0) * 30.0), 0, "female" if index % 2 == 0 else "male"))
+	var small: Array = []
+	for index in range(split_size):
+		small.append(Helpers.spawn_species(world, "scavenger", Vector2(2300.0 + float(index % 5) * 30.0,
+			2300.0 + floorf(float(index) / 5.0) * 30.0), 1))
+	world._split_oversized_herds()
+	var stayed := 0
+	for bird in flock:
+		if bird.group_id == 0:
+			stayed += 1
+	@warning_ignore("integer_division")
+	var half: int = (split_size + 6) / 2
+	a.equal([stayed, flock.size() - stayed], [half, (split_size + 6) - half], "an outgrown flock divides in half")
+	var whole := 0
+	for bird in small:
+		if bird.group_id == 1:
+			whole += 1
+	a.equal(whole, split_size, "a flock at its split size stays whole")
+	Helpers.destroy_manager(manager)
+	manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(419), 419)
+	world = manager.world_state
+	for index in range(split_size + 4):
+		Helpers.spawn_species(world, "scavenger", Vector2(768.0 + float(index % 6) * 30.0,
+			768.0 + floorf(float(index) / 6.0) * 30.0), 0)
+	var sector_key: Vector2i = world._get_sector_key(Vector2(768.0, 768.0))
+	world._sleep_sector(sector_key)
+	world._split_oversized_herds()
+	var counts: Array = []
+	for aggregate in world._sector_states[sector_key]["dormant_aggregates"]:
+		if str(aggregate.get("species_type", "")) == "scavenger":
+			counts.append(int(aggregate["count"]))
+	counts.sort()
+	@warning_ignore("integer_division")
+	var sleeping_half: int = (split_size + 4) / 2
+	a.equal(counts, [sleeping_half, sleeping_half], "a sleeping flock divides into two groups")
 	Helpers.destroy_manager(manager)
 
 

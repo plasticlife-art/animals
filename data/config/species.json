@@ -262,6 +262,9 @@
       "drink_duration": 0.3,
       "gorge_below_energy_threshold": true
     },
+    "herd": {
+      "split_size": 20
+    },
     "reproduction": {
       "maturity_age": 18.0,
       "energy_threshold": 45.0,

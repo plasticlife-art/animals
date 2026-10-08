@@ -26,6 +26,8 @@ const COALESCE_SECONDS := 12.0
 const SUMMARY_SECONDS := 60.0
 ## Accusative of a new herd: «в новое Стадо №8», «в новую Стаю №2».
 const NEW_GROUP := {"herbivore": "новое Стадо", "scavenger": "новую Стаю"}
+## Who leaves a group that divides: «5 голов» of a herd, «12 птиц» of a flock.
+const MOVED_NOUNS := {"herbivore": ["голова", "головы", "голов"], "scavenger": ["птица", "птицы", "птиц"]}
 
 ## Newest first: `{time, text, position, focus_id, pinned, kind, key, count, species, ...}`.
 ## `position` is `Vector2.INF` for a summary; `focus_id` is the animal a click should select.
@@ -172,9 +174,10 @@ func _hear_split(event: Dictionary, data: Dictionary, time: float, context: Dict
 		return
 	var moved := int(data.get("moved", 0))
 	var place := _place_of(position)
-	var text := "%s разделилось%s: %d %s ушли в %s №%d" % [HudTextScript.herd_name(species, group),
-		" " + place if place != "" else "", moved, HudTextScript.plural(moved, ["голова", "головы", "голов"]),
-		str(NEW_GROUP.get(species, "новую группу")), HudTextScript.herd_number(int(data.get("new_group_id", -1)))]
+	var text := "%s разделилось%s: %d %s %s в %s №%d" % [HudTextScript.herd_name(species, group),
+		" " + place if place != "" else "", moved, HudTextScript.plural(moved, MOVED_NOUNS.get(species, MOVED_NOUNS["herbivore"])),
+		HudTextScript.plural(moved, ["ушла", "ушли", "ушли"]), str(NEW_GROUP.get(species, "новую группу")),
+		HudTextScript.herd_number(int(data.get("new_group_id", -1)))]
 	if species == "scavenger":
 		text = text.replace("разделилось", "разделилась")
 	_add({"time": time, "text": text, "position": position, "focus_id": -1, "pinned": false, "kind": "split",

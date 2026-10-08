@@ -408,7 +408,9 @@ meal; a male needs only to be grown, fed, watered and rested since his last youn
 herd or flock, not only nearby (`reproduction.herd_mates`). Foxes keep to their pairs. A fox
 turns from a prey grown rare to the common one: when deer are few among the grouse, it notices
 a deer only close by, and sleeping packs catch fewer of them (`balance.prey_switching`), so the
-last of a species gets the respite to come back.
+last of a species gets the respite to come back. Grouse flocks divide past twenty birds,
+as deer herds do past forty (`species.<id>.herd.split_size`); left whole they drew together
+over the years into one flock, and one lean season for it cost every grouse a year's young.
 
 Herbivores also bed down. `rest` gains a weight proportional to how deep the night is and
 `explore` takes the matching penalty, so idle herds settle at dusk and move again at dawn -

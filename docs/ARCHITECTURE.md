@@ -1197,6 +1197,12 @@ identical.
 their parents' herd and nothing ever left one, so herds only grew, and one too big for its
 range starves and is never replaced. A herd past its species' `herd.split_size` divides
 at the median of the axis it is spread widest on; the far half takes the next group id.
+Deer divide past 40, grouse flocks past 20. Grouse flocks used to be left whole: the
+flocks whose hens bred most grew while the rest aged away, and by the ninth or tenth year
+in LOD one flock held 124 or 125 of the 126 grouse. A sleeping flock shares each carcass
+among all its members, so in that flock the hens rarely reached breeding energy, and one
+lean season for it was a year without young for every grouse; they then aged out (on the
+two seeds probed, 125 to 28 in three years and 125 to 82 in one).
 
 This path uses no `rng` calls, so it cannot perturb the shared RNG stream that determinism
 depends on. That covers waking too: a dormant newborn's sex comes from `_deterministic_sex()` on
@@ -1293,6 +1299,8 @@ millisecond setting squeezed to zero.
 ### `species.json`
 
 - tunes each species independently without code changes
+- `scavenger.herd.split_size` (20): the flock size past which a grouse flock divides, as a
+  herd does (see `_split_oversized_herds()`); 0 or absent leaves flocks whole.
 - Herbivore numbers are set by grass, so its food knobs are balance knobs:
   `feeding.nutrition_gain` (hunger removed per unit of grass; lower means more grass per
   animal), `feeding.good_sward_fraction` (how full a cell must be for a fed grazer to walk
@@ -1604,22 +1612,28 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   (before the fix for targets out of reach) but in LOD its births overshot the grass and starved:
   retested over 2880 s on 8 seeds, the deer fell to 9 and 17 on two seeds and ended 20 % below
   off, so it is not shipped
-- Long runs still dip. Over twelve years in LOD, with seasons and drying ponds, grouse fell to
-  12 on one seed of eight and 26 on another before their next young; with neither, they died out
-  on a third; with the buck and herd rules (Who pairs with whom) they held at 58 and up on seven
+- Long runs dip less. Over twelve years in LOD, with seasons and drying ponds, grouse fell to 12
+  on one seed of eight and 26 on another before their next young; with neither, they died out on
+  a third; with the buck and herd rules (Who pairs with whom) they held at 58 and up on seven
   seeds and died out on the eighth, and with rare prey's respite as well (Rare prey) they died
-  out on none but fell to 4 on that one. The dips are whole years without young: a sleeping
-  flock breeds only just after a meal, and in a lean season no meal falls in its window. Four
-  remedies were tried and taken back. Looking further for carrion from the hunger they start
-  eating at: flocks flew off to distant bodies away from water and died of thirst in a drought
-  year on one seed, and stopped breeding on another. Spreading old age (from 700 to 1500 s at
-  0.002 a second instead of 1000 to 1200 at 0.004): the dips went deeper (to 4). Sending a
-  hungry flock to the nearest herds, where bodies turn up: grouse held at 72 and up, but they
-  ate the kills sleeping packs need to reach breeding energy and foxes died out on one seed (58
-  born against 201). Breeding at hunger up to 60 instead of 40: better on the two seeds tried,
-  but over twelve years on the next four foxes died out on one, grouse on another and deer fell
-  to 5 on a third. The worst drought year over those twelve years took 27 % of the herbivores
-  alive when it began
+  out on none but fell to 4 on that one. The dips were whole years without young, and their cause
+  was a flock grown to nearly every grouse there was (see the flock split above). With flocks
+  divided past 20 the grouse held at 72 on all eight seeds and no year went without young; past
+  30 they fell to 45 on one. The deer paid on two seeds of eight: after a bigger boom they fell
+  to 32 and 42 (133 on both before) and stayed low for some years with the foxes on their cap,
+  then came back to 207 and 259; across the eight their late mean was 208 against 233, within
+  what one seed differs from the next. Over 2880 s in LOD on 8 seeds and 1440 s at full fidelity
+  on 4 nothing changed beyond the noise, and foxes took as many grouse as before (32 against 33).
+  Four earlier remedies were tried and taken back. Looking further for carrion from the hunger
+  they start eating at: flocks flew off to distant bodies away from water and died of thirst in a
+  drought year on one seed, and stopped breeding on another. Spreading old age (from 700 to
+  1500 s at 0.002 a second instead of 1000 to 1200 at 0.004): the dips went deeper (to 4).
+  Sending a hungry flock to the nearest herds, where bodies turn up: grouse held at 72 and up,
+  but they ate the kills sleeping packs need to reach breeding energy and foxes died out on one
+  seed (58 born against 201). Breeding at hunger up to 60 instead of 40: better on the two seeds
+  tried, but over twelve years on the next four foxes died out on one, grouse on another and deer
+  fell to 5 on a third. The worst drought year over those twelve years took 27 % of the
+  herbivores alive when it began
 - No authored scenarios or scenario editor
 - No replay flow (save/load exists; see `SaveSystem`)
 - Heredity is four multipliers with fixed costs, not a genome: no trade-offs beyond the ones
