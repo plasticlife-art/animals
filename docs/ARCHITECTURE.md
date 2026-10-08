@@ -1580,21 +1580,30 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   deaths by a couple of minutes, inside the four the old-age window already spans
 - Live play still loses a species over twelve years, now the foxes. At full fidelity over 5760 s
   (2 seeds) the deer used to die out on both seeds with no season (in years 8 and 10) and on one
-  with it (year 9): a live mating needed a doe and a buck of one herd within
-  `mate_search_radius` both at `energy_threshold` at once. A buck now needs no strength and a
-  doe looks across her herd (Who pairs with whom): 44 to 47 % of the grown does have young in a
-  year against 24 to 34 %, and over 1440 s the deer are 22 % below off with the season instead
-  of 47 %. Then the foxes, fed by grouse at their cap, hunted the thinning deer out (seed 2:
-  from 52 to 2 over five years) until rare prey got its respite (Rare prey); the deer now hold,
-  and the foxes die out on both seeds (years 7 and 10). `predator_probe.gd` on seed 1 shows why:
-  the first spring's litters fill the predator cap (48), births stop while it is full, and that
-  wave ages as one and dies within minutes (about 25 deaths of old age in six minutes in year
-  3); the few left are scattered - by then hardly one has a fox of the other sex within 480 -
-  and weak, near 0 energy most of the time, and do not refill it before the next wave goes. The
-  same cap-and-cohort wave loses grouse in LOD (Long runs still dip). A deer window to the end
-  of summer narrowed the 1440 s gap to 12 % (before the fix for targets out of reach) but in LOD
-  its births overshot the grass and starved: retested over 2880 s on 8 seeds, the deer fell to 9
-  and 17 on two seeds and ended 20 % below off, so it is not shipped
+  with it (year 9): a live mating needed a doe and a buck of one herd within `mate_search_radius`
+  both at `energy_threshold` at once. A buck now needs no strength and a doe looks across her
+  herd (Who pairs with whom): 44 to 47 % of the grown does have young in a year against 24 to
+  34 %, and over 1440 s the deer are 22 % below off with the season instead of 47 %. Then the
+  foxes, fed by grouse at their cap, hunted the thinning deer out (seed 2: from 52 to 2 over five
+  years) until rare prey got its respite (Rare prey); the deer now hold, and the foxes die out on
+  both seeds (years 7 and 10). `predator_probe.gd` on seed 1 shows why: the first spring's
+  litters fill the predator cap (48), births stop while it is full, and that wave ages as one and
+  dies within minutes (about 25 deaths of old age in six minutes in year 3); the few left are
+  scattered - by then hardly one has a fox of the other sex within 480 - and weak, near 0 energy
+  most of the time, and do not refill it before the next wave goes. Over seeds 1 to 4 the chain
+  held on two, 3 and 4 (on 4 the deer fell to 21 and the foxes to 9). Taking fertility off as a
+  species fills its room did not cure it: from half the cap, or 0.7 of it, fewer vixens and hens
+  were open each year, through the season's own draw, so no mating went without young
+  (`population_regulation.fertility_start`, not kept). It thinned the foxes instead of spreading
+  their ages - 119 cubs against 206 on seed 3, where they then died out - and the chain held on
+  one seed of four at 0.7 and on none at 0.5; in LOD over 2880 s the grouse, kept below their
+  cap, went two years without young on one seed and died out at 0.5 (fell to 7 at 0.7), where
+  without it they never fell below 72. The foxes' trouble is as much their strength, near 0 most
+  of the time so that most hunts fail, as the waves. The same cap-and-cohort wave loses grouse in
+  LOD (Long runs still dip). A deer window to the end of summer narrowed the 1440 s gap to 12 %
+  (before the fix for targets out of reach) but in LOD its births overshot the grass and starved:
+  retested over 2880 s on 8 seeds, the deer fell to 9 and 17 on two seeds and ended 20 % below
+  off, so it is not shipped
 - Long runs still dip. Over twelve years in LOD, with seasons and drying ponds, grouse fell to
   12 on one seed of eight and 26 on another before their next young; with neither, they died out
   on a third; with the buck and herd rules (Who pairs with whom) they held at 58 and up on seven
