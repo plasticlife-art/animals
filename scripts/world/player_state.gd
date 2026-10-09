@@ -18,6 +18,10 @@ var revision: int = 0
 var journal: Array = []
 ## Per power: `{charges, cooldown_until}`; `charges` is UNLIMITED for no limit.
 var budget: Dictionary = {}
+## The ponds the player dug, in the order dug: `{position, bank_radius, index}`. Not part of the
+## map the seed makes, so a save and the view's copy add them back from here
+## (`WorldState._restore_player_ponds()`).
+var ponds: Array = []
 var _powers: Dictionary = {}
 
 
@@ -28,6 +32,7 @@ func configure(powers_config: Dictionary) -> void:
 	for power in _powers.keys():
 		budget[str(power)] = {"charges": int(_powers[power].get("charges", UNLIMITED)), "cooldown_until": 0.0}
 	journal.clear()
+	ponds.clear()
 	revision = 0
 
 
@@ -57,6 +62,11 @@ func spend(power: String, now: float) -> void:
 	revision += 1
 
 
+func add_pond(position: Vector2, bank_radius: float, index: int) -> void:
+	ponds.append({"position": position, "bank_radius": bank_radius, "index": index})
+	revision += 1
+
+
 func record(command: Dictionary, tick: int, result: Dictionary) -> void:
 	journal.append({"seq": int(command.get("seq", 0)), "tick": tick, "type": str(command.get("type", "")),
 		"params": command.get("params", {}).duplicate(true), "result": result.duplicate(true)})
@@ -65,16 +75,18 @@ func record(command: Dictionary, tick: int, result: Dictionary) -> void:
 ## What the view needs to draw the player's state, whole each time: it is small, and a frame
 ## that brings it twice must leave the view as one that brought it once.
 func presentation_block() -> Dictionary:
-	return {"revision": revision, "budget": budget.duplicate(true)}
+	return {"revision": revision, "budget": budget.duplicate(true), "ponds": ponds.duplicate(true)}
 
 
 func apply_presentation_block(block: Dictionary) -> void:
 	revision = int(block.get("revision", revision))
 	budget = block.get("budget", budget).duplicate(true)
+	ponds = block.get("ponds", ponds).duplicate(true)
 
 
 func export_state() -> Dictionary:
-	return {"revision": revision, "journal": journal.duplicate(true), "budget": budget.duplicate(true)}
+	return {"revision": revision, "journal": journal.duplicate(true), "budget": budget.duplicate(true),
+		"ponds": ponds.duplicate(true)}
 
 
 ## A save from before the player had powers carries none of this: the charges stay as
@@ -84,6 +96,7 @@ func import_state(data: Dictionary) -> void:
 		return
 	revision = int(data.get("revision", 0))
 	journal = data.get("journal", []).duplicate(true)
+	ponds = data.get("ponds", []).duplicate(true)
 	var saved: Dictionary = data.get("budget", {})
 	for power in saved.keys():
 		budget[str(power)] = saved[power].duplicate(true)

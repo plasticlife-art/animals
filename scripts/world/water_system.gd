@@ -45,6 +45,9 @@ var dry := PackedByteArray()
 var capacity := PackedFloat32Array()
 var size_factor := PackedFloat32Array()
 var mean_radius: float = 0.0
+## The thirst a pond of mean size is measured against, kept for the ponds added later
+## (`add_source()`): measured against the same, the ponds the world began with keep theirs.
+var demand_unit: float = 1.0
 var season_length: float = 120.0
 var world_seed: int = 0
 ## `[index, "dried" | "refilled"]` since the world last took them.
@@ -55,9 +58,9 @@ var _wet_count: int = 0
 
 
 ## `sources` are the world's ponds (`WorldState.water_sources`), given their `index` and
-## `bank_radius` here whether or not levels are on. `demand_unit` is the thirst, in points,
+## `bank_radius` here whether or not levels are on. `demand_unit_value` is the thirst, in points,
 ## a pond of mean size is measured against (`WorldState._water_demand_unit()`).
-func initialize(water_config: Dictionary, sources: Array, demand_unit: float, season_seconds: float,
+func initialize(water_config: Dictionary, sources: Array, demand_unit_value: float, season_seconds: float,
 		clock_running: bool, seed_value: int) -> void:
 	settings = DEFAULTS.duplicate(true)
 	for key in water_config.keys():
@@ -70,6 +73,7 @@ func initialize(water_config: Dictionary, sources: Array, demand_unit: float, se
 	enabled = bool(settings["enabled"]) and clock_running and not sources.is_empty()
 	season_length = maxf(0.001, season_seconds)
 	world_seed = seed_value
+	demand_unit = maxf(1.0, demand_unit_value)
 	_sources = sources
 	_index_by_position.clear()
 	levels = PackedFloat32Array()
@@ -90,10 +94,32 @@ func initialize(water_config: Dictionary, sources: Array, demand_unit: float, se
 		var relative := maxf(0.01, float(source["bank_radius"]) / reference)
 		levels.append(1.0)
 		dry.append(0)
-		capacity.append(maxf(1.0, float(settings["capacity_seasons"]) * maxf(1.0, demand_unit)
-			* pow(relative, float(settings["capacity_exponent"]))))
+		capacity.append(_capacity_for(relative))
 		size_factor.append(pow(1.0 / relative, float(settings["size_exponent"])))
 	_wet_count = sources.size()
+
+
+## A pond added while the world runs (`WorldState._add_pond_source()`), already appended to the
+## world's list - which is this system's own: given its `index`, measured against the mean and
+## the demand the map began with, so no other pond's capacity moves, and filled to `level`.
+func add_source(source: Dictionary, level: float) -> void:
+	var index := levels.size()
+	assert(_sources.size() == index + 1 and _sources[index] == source, "append the pond to the world's list first")
+	source["index"] = index
+	source["bank_radius"] = float(source.get("bank_radius", source.get("radius", 0.0)))
+	_index_by_position[source["position"]] = index
+	var relative := maxf(0.01, float(source["bank_radius"]) / maxf(1.0, mean_radius))
+	levels.append(clampf(level, 0.0, 1.0))
+	dry.append(1 if levels[index] <= float(settings["dry_level"]) else 0)
+	capacity.append(_capacity_for(relative))
+	size_factor.append(pow(1.0 / relative, float(settings["size_exponent"])))
+	if dry[index] == 0:
+		_wet_count += 1
+	_set_shore(index)
+
+
+func _capacity_for(relative: float) -> float:
+	return maxf(1.0, float(settings["capacity_seasons"]) * demand_unit * pow(relative, float(settings["capacity_exponent"])))
 
 
 ## One tick: the season's balance on every pond. `climate` is the world's `Climate`, sampled.

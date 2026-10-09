@@ -21,7 +21,7 @@ extends RefCounted
 ## two runs drift apart over hundreds of ticks. Populations and behaviour match;
 ## individual trajectories eventually do not.
 
-const SAVE_VERSION := 3
+const SAVE_VERSION := 4
 const MIN_READABLE_VERSION := 1
 const SAVE_DIR := "user://saves"
 const SLOTS := ["autosave_a.dat", "autosave_b.dat"]
@@ -119,6 +119,8 @@ static func read(path: String) -> Dictionary:
 		data = _migrate_v1_to_v2(data)
 	if int(data.get("version", 0)) == 2:
 		data = _migrate_v2_to_v3(data)
+	if int(data.get("version", 0)) == 3:
+		data = _migrate_v3_to_v4(data)
 	return data
 
 
@@ -173,6 +175,17 @@ static func _migrate_v1_to_v2(source: Dictionary) -> Dictionary:
 static func _migrate_v2_to_v3(source: Dictionary) -> Dictionary:
 	var data: Dictionary = source
 	data["version"] = 3
+	return data
+
+
+## V4 worlds carry the player's state (`PlayerState`: the powers' charges and cooldowns, the
+## orders given, the ponds dug), which the seed cannot make again. A v3 save has none: the powers
+## start as configured, and its own bundle, from before them, takes them as shipped
+## (`ConfigLoader.with_shipped_presentation()`). The version moved so an older build refuses a
+## world with dug ponds rather than lose them.
+static func _migrate_v3_to_v4(source: Dictionary) -> Dictionary:
+	var data: Dictionary = source
+	data["version"] = 4
 	return data
 
 

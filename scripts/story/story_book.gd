@@ -196,6 +196,10 @@ func hear(event: Dictionary) -> void:
 			names.release(died)
 			if pins.has(died):
 				pins_changed.emit()
+		"PlayerCommand":
+			# A pond the player dug is named before the feed tells of it.
+			if bool(data.get("ok", false)) and str(data.get("power", "")) == "dig_pond" and manager != null:
+				places.name_new_ponds(manager.world_state, int(manager.seed))
 	# After the names and the family tree, which the line is written from.
 	feed.hear(event)
 

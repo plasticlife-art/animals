@@ -67,6 +67,8 @@ func hear(event: Dictionary) -> void:
 		"PondDried", "PondRefilled":
 			_hear_pond(str(event.get("type", "")) == "PondDried", int(data.get("index", -1)), time, context,
 				_position_of(event))
+		"PlayerCommand":
+			_hear_player_command(data, time, _position_of(event))
 
 
 ## Closes the minute when it is over: one line for everything that had no line of its own.
@@ -203,6 +205,22 @@ func _hear_pond(dried: bool, index: int, time: float, context: Dictionary, posit
 	var kind := "pond_dried" if dried else "pond_refilled"
 	_add({"time": time, "text": text, "position": position, "focus_id": -1, "pinned": false, "kind": kind,
 		"key": kind, "count": 1, "first": pond["name"]})
+
+
+## What the player's own orders did, wherever the camera is: «Выкопан водопой: Тихий пруд на
+## Медовом лугу». A refused order is the power bar's to explain, not the feed's.
+func _hear_player_command(data: Dictionary, time: float, position: Vector2) -> void:
+	if not bool(data.get("ok", false)):
+		return
+	match str(data.get("power", "")):
+		"dig_pond":
+			var index := int(data.get("index", -1))
+			if book == null or book.places == null or index < 0 or index >= book.places.ponds.size():
+				return
+			var district: int = book.places.district_at(position)
+			var where := "" if district < 0 else " " + str(book.places.districts[district]["at"])
+			_add({"time": time, "text": "Выкопан водопой: %s%s" % [book.places.ponds[index]["name"], where],
+				"position": position, "focus_id": -1, "pinned": false, "kind": "player", "key": "", "count": 1})
 
 
 ## «За минуту: хищники — 4 оленя, 1 тетерев · голод — 2 лисы · родились — 6 оленят».

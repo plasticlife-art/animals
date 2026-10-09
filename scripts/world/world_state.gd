@@ -224,6 +224,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player = PlayerStateScript.new()
 	player.configure(config_bundle.get("powers", {}))
 	player_command_handlers.clear()
+	player_command_handlers["dig_pond"] = _command_dig_pond
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -1569,6 +1570,79 @@ func _apply_player_commands(commands: Array) -> void:
 			PlayerCommandsScript.position_of(params, "position", Vector2.ZERO), data)
 
 
+## The player's state as a worker frame brings it (`PlayerState.presentation_block()`), with the
+## ponds dug since the last one added to this world's water, before the frame's levels.
+## Applying the same block twice leaves the world as once.
+func apply_player_block(block: Dictionary) -> void:
+	player.apply_presentation_block(block)
+	_restore_player_ponds()
+
+
+## Every pond the player dug that this world's water does not have yet, in the order dug - so
+## each takes the index it had - filled for now; a save's or a frame's levels follow.
+func _restore_player_ponds() -> void:
+	for pond in player.ponds:
+		var index := int(pond.get("index", -1))
+		if index < water_sources.size():
+			continue
+		if index != water_sources.size():
+			push_warning("Pond %d dug, but this world has %d ponds; not added." % [index, water_sources.size()])
+			return
+		_add_pond_source(Vector2(pond.get("position", Vector2.ZERO)), float(pond.get("bank_radius", 0.0)), 1.0)
+
+
+## A pond added while the world runs - dug, or coming back with a save or a frame: on the water's
+## list and in its level arrays in one step (`WaterSystem.add_source()`). Returns its index.
+func _add_pond_source(position: Vector2, bank_radius: float, level: float) -> int:
+	var source := {"position": position, "radius": bank_radius, "bank_radius": bank_radius}
+	water_sources.append(source)
+	water.add_source(source, level)
+	return int(source["index"])
+
+
+## How big a pond the player digs: the map's mean pond times `powers.dig_pond.radius_of_mean`,
+## so it holds about as long on every map size, whatever their radii.
+func player_pond_radius() -> float:
+	return maxf(1.0, water.mean_radius * float(player.settings("dig_pond").get("radius_of_mean", 1.0)))
+
+
+## Why a pond cannot be dug at `position`, or "": it must lie wholly on the map, on open ground
+## with no trees or stones on its bank, and clear of every other pond's bank by a quarter of its
+## own radius. The view asks the same to draw where it can go.
+func dig_pond_refusal(position: Vector2) -> String:
+	if not position.is_finite():
+		return PlayerCommandsScript.REFUSED_BAD_TARGET
+	var radius := player_pond_radius()
+	if not bounds.grow(-radius).has_point(position):
+		return "off_map"
+	for probe in range(9):
+		var point := position if probe == 0 else position + Vector2.from_angle(float(probe) * TAU / 8.0) * radius * 0.7
+		if not terrain_system.is_walkable_position(point):
+			return "blocked"
+	for source in water_sources:
+		var gap := position.distance_to(source["position"]) - float(source.get("bank_radius", source.get("radius", 0.0))) - radius
+		if gap < radius * 0.25:
+			return "too_close"
+	for entry in scenery.query_rect(Rect2(position - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)):
+		if position.distance_to(entry.position) < radius \
+				and (float(entry.get("radius", 0.0)) > 0.0 or float(entry.get("cover_radius", 0.0)) > 0.0):
+			return "overgrown"
+	return ""
+
+
+## «Водопой»: a pond of `player_pond_radius()` at the order's `position`, filled to
+## `powers.dig_pond.start_level`. It fills and dries like any other from then on.
+func _command_dig_pond(command: Dictionary) -> Dictionary:
+	var position := PlayerCommandsScript.position_of(command.get("params", {}))
+	var refusal := dig_pond_refusal(position)
+	if refusal != "":
+		return {"ok": false, "reason": refusal}
+	var radius := player_pond_radius()
+	var index := _add_pond_source(position, radius, float(player.settings("dig_pond").get("start_level", 0.8)))
+	player.add_pond(position, radius, index)
+	return {"ok": true, "index": index, "radius": radius}
+
+
 func export_state() -> Dictionary:
 	var agent_records: Array = []
 	for agent in living_agents:
@@ -1639,10 +1713,13 @@ func import_state(data: Dictionary) -> void:
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
 	fear_field.import_cells(data.get("fear", PackedFloat32Array()))
 	trail_field.import_cells(data.get("trails", PackedFloat32Array()))
+	# The ponds the player dug before their levels: the levels are for every pond, and the map
+	# the seed makes has only its own. Nothing is told: they were dug long ago.
+	player.import_state(data.get("player", {}))
+	_restore_player_ponds()
 	# A save from before ponds had levels keeps them full.
 	water.import_state(data.get("water", {}))
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
-	player.import_state(data.get("player", {}))
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))

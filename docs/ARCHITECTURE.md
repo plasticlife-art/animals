@@ -227,6 +227,13 @@ the worst drought year took 13.5 %.
   full, and its own bundle has no `water_levels`, so they never change. Off
   (`water_levels.enabled`, or the climate off) the ponds never change and every query keeps
   its old path
+- A pond can be added while the world runs - one the player digs (Player orders):
+  `WaterSystem.add_source()` gives it the next `index`, grows every level array with it and
+  measures it against the mean radius and demand unit the map began with
+  (`WaterSystem.demand_unit` is kept for this), so no other pond's capacity moves. The world's
+  `water_sources` and the system's list are one array, so `WorldState._add_pond_source()`
+  appends to it and grows the arrays in one step. Levels for another number of ponds than the
+  world has are refused with a warning, never silently
 
 ### `TrailField`
 
@@ -308,6 +315,28 @@ Current snapshot categories:
   which sectors sleep, and with that who draws from `rng`): it is a record for the save and for
   scripted headless runs, not a replay
 - With no orders the world is bit for bit as before (identity audits, off 300 s and LOD 600 s)
+- «Водопой» (`dig_pond`, `WorldState._command_dig_pond()`): a pond at the order's `position`
+  of `player_pond_radius()` - the map's mean pond times `powers.dig_pond.radius_of_mean`, so it
+  holds about as long on every map size, where a fixed radius would be a lake on the small map
+  and a puddle on the huge one - filled to `start_level` (0.8). It fills, is drunk and dries
+  like any other pond from then on. `dig_pond_refusal()` refuses a place half off the map
+  (`off_map`), on ground no animal walks (`blocked`), within a quarter of its radius of another
+  pond's bank (`too_close`) or with trees or stones on its bank (`overgrown`); the view asks it
+  too, to show where a pond can go. Navigation is untouched: water does not block movement
+- The dug ponds are the player's (`PlayerState.ponds`, `{position, bank_radius, index}`), not
+  the map's: the seed cannot make them again. A save carries them and `import_state()` adds them
+  back after the map is built and before the levels (`_restore_player_ponds()`, in the order
+  dug, so each takes its index), telling nothing. The view's world adds them from the frame's
+  player block the same way (`apply_player_block()`), before the frame's levels; a block
+  applied twice adds nothing twice. `SaveSystem.SAVE_VERSION` is 4 so an older build refuses a
+  world with dug ponds instead of losing them
+- In the view: `GroundTraces.refresh_water_sources()` stamps a dug pond into the baked water
+  field (`WaterMask.stamp()`) and hands the field and a shrink texture one pond longer to the
+  shader; the minimap redraws it, baking it into its map when ponds have no levels;
+  `PlaceNames.name_new_ponds()` names it with an adjective and noun no pond has yet - the map's
+  own ponds are named as if none were dug (how many there are sets how often a word repeats),
+  so digging renames nothing; and the feed says «Выкопан водопой: Тихий пруд на Медовом лугу»
+  wherever the camera is
 
 ## Agent Model
 
@@ -1550,6 +1579,12 @@ Current suites cover:
   a fox among grouse passing the last deer far off and taking one close by, a sleeping fox
   gaining on a kill as much slower as the deer's preference, and nothing changed with the
   block off
+- «Водопой» (`WaterholeTests`): a dug pond joining the water with every array in step and no
+  other pond's capacity moved; each bad place refused and paid for by nothing; deer awake and
+  asleep drinking from it and it drying; it coming back with a save with its level, a deer's
+  memory of it and no news; the view's world getting it across a lost frame; the map's ponds
+  keeping their names at 52 ponds and the dug one taking a new one through a save; the ground
+  stamping it; and the feed telling of it
 - the player's orders (`PlayerCommandTests`): an order carried out on the tick it was handed
   to, with its event and journal entry on that tick; the same order on the worker thread and
   inline leaving the worlds alike; charges and cooldowns in simulated time, kept through a

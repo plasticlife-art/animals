@@ -24,24 +24,39 @@ static func bake(sources: Array, world_size: Vector2, texel: float, reach: float
 	var ids := PackedFloat32Array()
 	ids.resize(cols * rows)
 	ids.fill(-1.0)
+	var mask := {"cells": cells, "ids": ids, "cols": cols, "rows": rows, "texel": texel}
 	for pond in range(sources.size()):
-		var source: Dictionary = sources[pond]
-		var center: Vector2 = source.get("position", Vector2.ZERO)
-		var radius := float(source.get("bank_radius", source.get("radius", 0.0)))
-		var extent := radius + reach
-		var low_x := maxi(0, int(floor((center.x - extent) / texel)))
-		var high_x := mini(cols - 1, int(ceil((center.x + extent) / texel)))
-		var low_y := maxi(0, int(floor((center.y - extent) / texel)))
-		var high_y := mini(rows - 1, int(ceil((center.y + extent) / texel)))
-		for y in range(low_y, high_y + 1):
-			var texel_y := (float(y) + 0.5) * texel
-			for x in range(low_x, high_x + 1):
-				var index := y * cols + x
-				var distance := Vector2((float(x) + 0.5) * texel, texel_y).distance_to(center) - radius
-				if distance < cells[index]:
-					cells[index] = distance
-					ids[index] = float(pond)
-	return {"cells": cells, "ids": ids, "cols": cols, "rows": rows, "texel": texel}
+		stamp(mask, sources[pond], pond, reach)
+	return mask
+
+
+## Adds one pond to a baked field - a pond the player dug, after the map's own were baked: only
+## its box grown by `reach` is visited, and a texel takes it where it is nearer than what the
+## texel had.
+static func stamp(mask: Dictionary, source: Dictionary, pond: int, reach: float) -> void:
+	var cells: PackedFloat32Array = mask["cells"]
+	var ids: PackedFloat32Array = mask["ids"]
+	var cols: int = mask["cols"]
+	var rows: int = mask["rows"]
+	var texel: float = mask["texel"]
+	var center: Vector2 = source.get("position", Vector2.ZERO)
+	var radius := float(source.get("bank_radius", source.get("radius", 0.0)))
+	var extent := radius + reach
+	var low_x := maxi(0, int(floor((center.x - extent) / texel)))
+	var high_x := mini(cols - 1, int(ceil((center.x + extent) / texel)))
+	var low_y := maxi(0, int(floor((center.y - extent) / texel)))
+	var high_y := mini(rows - 1, int(ceil((center.y + extent) / texel)))
+	for y in range(low_y, high_y + 1):
+		var texel_y := (float(y) + 0.5) * texel
+		for x in range(low_x, high_x + 1):
+			var index := y * cols + x
+			var distance := Vector2((float(x) + 0.5) * texel, texel_y).distance_to(center) - radius
+			if distance < cells[index]:
+				cells[index] = distance
+				ids[index] = float(pond)
+	# Packed arrays are values: hand the changed ones back.
+	mask["cells"] = cells
+	mask["ids"] = ids
 
 
 ## The field at `world_position`, read the way the shader reads it: blended between the

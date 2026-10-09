@@ -3,7 +3,9 @@
   "powers": {
     "dig_pond": {
       "charges": -1,
-      "cooldown_seconds": 480.0
+      "cooldown_seconds": 480.0,
+      "radius_of_mean": 1.0,
+      "start_level": 0.8
     },
     "lead_herd": {
       "charges": -1,

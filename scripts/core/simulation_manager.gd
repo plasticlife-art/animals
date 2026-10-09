@@ -860,7 +860,7 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		world_state.trail_field.import_cells(data.ground.trails)
 	# Before the water: what the player dug changes how many ponds the levels are for.
 	if data.has("player"):
-		world_state.player.apply_presentation_block(data.player)
+		world_state.apply_player_block(data.player)
 	if data.has("water"):
 		world_state.water.import_state(data.water)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes

@@ -114,8 +114,35 @@ func build(world, seed_value: int) -> void:
 	_cols = terrain.cols
 	_rows = terrain.rows
 	_cell_size = terrain.cell_size
-	_name_ponds(world.water_sources, terrain, seed_value)
+	# The map's own ponds as if none were dug - how many there are sets how often a word may
+	# repeat - then the dug ones after them, so digging renames nothing.
+	var sources: Array = world.water_sources
+	var player = world.get("player")
+	var dug: int = 0 if player == null else player.ponds.size()
+	_name_ponds(sources.slice(0, maxi(0, sources.size() - dug)), terrain, seed_value)
 	_split_districts(world.bounds, terrain, seed_value)
+	name_new_ponds(world, seed_value)
+
+
+## Names every pond of `world` past the ones named so far - those the player dug - each with an
+## adjective and noun no pond has yet, so neither the names the map began with nor a dug pond's,
+## once given, ever change. Returns how many it named.
+func name_new_ponds(world, seed_value: int) -> int:
+	if world == null or world.terrain_system == null:
+		return 0
+	var sources: Array = world.water_sources
+	if ponds.size() >= sources.size():
+		return 0
+	var taken := {}
+	for pond in ponds:
+		taken[str(pond["name"])] = true
+	var named_count := 0
+	for index in range(ponds.size(), sources.size()):
+		var source: Dictionary = sources[index]
+		var named := _pick(POND_ADJECTIVES, POND_NOUNS, seed_value, 0x4447, index, taken, false, {}, 1 << 30)
+		_add_pond_name(source, world.terrain_system, named)
+		named_count += 1
+	return named_count
 
 
 ## The place at a world position: `{name, at, kind}` - «у Тихой заводи» near a pond, else the
@@ -213,11 +240,15 @@ func _name_ponds(sources: Array, terrain, seed_value: int) -> void:
 	for index in range(sources.size()):
 		var source: Dictionary = sources[index]
 		var named := _pick(POND_ADJECTIVES, POND_NOUNS, seed_value, 0x504F, index, taken, false, uses, share)
-		var position: Vector2 = source.get("position", Vector2.ZERO)
-		# The bank: a pond named while low is still its whole basin.
-		ponds.append({"position": position, "radius": float(source.get("bank_radius", source.get("radius", 0.0))),
-			"level": _level_at(terrain, position), "name": named["name"], "at": named["at"],
-			"in": str(named.get("in", named["at"])), "gender": str(named.get("gender", "m"))})
+		_add_pond_name(source, terrain, named)
+
+
+func _add_pond_name(source: Dictionary, terrain, named: Dictionary) -> void:
+	var position: Vector2 = source.get("position", Vector2.ZERO)
+	# The bank: a pond named while low is still its whole basin.
+	ponds.append({"position": position, "radius": float(source.get("bank_radius", source.get("radius", 0.0))),
+		"level": _level_at(terrain, position), "name": named["name"], "at": named["at"],
+		"in": str(named.get("in", named["at"])), "gender": str(named.get("gender", "m"))})
 
 
 ## Districts: a jittered grid of centres over the map, each cell going to the nearest; each

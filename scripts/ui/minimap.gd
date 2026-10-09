@@ -101,6 +101,15 @@ func bind_manager(manager: SimulationManager) -> void:
 	queue_redraw()
 
 
+## A pond the player dug: drawn live with the rest while ponds have levels, baked into the map
+## otherwise.
+func _on_player_state_changed() -> void:
+	if simulation_manager != null and simulation_manager.world_state != null \
+			and not _water_levels_on(simulation_manager.world_state):
+		_rebuild_static_cache()
+	queue_redraw()
+
+
 func bind_camera(camera: GameCamera) -> void:
 	world_camera = camera
 	_last_camera_rect = Rect2()
@@ -224,6 +233,8 @@ func _connect_manager() -> void:
 		simulation_manager.tick_completed.connect(_on_tick_completed)
 	if not simulation_manager.selection_changed.is_connected(_on_selection_changed):
 		simulation_manager.selection_changed.connect(_on_selection_changed)
+	if not simulation_manager.player_state_changed.is_connected(_on_player_state_changed):
+		simulation_manager.player_state_changed.connect(_on_player_state_changed)
 
 
 func _disconnect_manager() -> void:
@@ -233,6 +244,8 @@ func _disconnect_manager() -> void:
 		simulation_manager.tick_completed.disconnect(_on_tick_completed)
 	if simulation_manager.selection_changed.is_connected(_on_selection_changed):
 		simulation_manager.selection_changed.disconnect(_on_selection_changed)
+	if simulation_manager.player_state_changed.is_connected(_on_player_state_changed):
+		simulation_manager.player_state_changed.disconnect(_on_player_state_changed)
 
 
 func _initialize_dot_batch() -> void:

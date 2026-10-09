@@ -101,6 +101,10 @@ var _water_mask: Dictionary = {}
 var water_shrinks := PackedFloat32Array()
 var _shrink_texture: ImageTexture
 var _dry_shrink: float = 0.0
+## How many ponds the water field holds, and how far it reaches past a bank: a pond the player
+## digs is stamped into it (`refresh_water_sources()`).
+var _baked_ponds: int = 0
+var _water_reach: float = 0.0
 
 
 func bind_manager(manager: SimulationManager, tiles: TerrainTileRenderer = null) -> void:
@@ -108,6 +112,8 @@ func bind_manager(manager: SimulationManager, tiles: TerrainTileRenderer = null)
 	terrain_tiles = tiles
 	if not manager.tick_completed.is_connected(_on_tick_completed):
 		manager.tick_completed.connect(_on_tick_completed)
+	if not manager.player_state_changed.is_connected(refresh_water_sources):
+		manager.player_state_changed.connect(refresh_water_sources)
 	rebuild()
 
 
@@ -128,6 +134,7 @@ func rebuild() -> void:
 	_water_mask = {}
 	water_shrinks = PackedFloat32Array()
 	_shrink_texture = null
+	_baked_ponds = 0
 	if simulation_manager == null or simulation_manager.world_state == null:
 		return
 	var world = simulation_manager.world_state
@@ -255,25 +262,46 @@ func _apply_water(world, water: Dictionary) -> void:
 	var texel := maxf(1.0, cell_size * float(water["texel_cells"]))
 	var reach := (float(water["shore_px"]) + float(water["edge_noise_px"])) * scale + texel * 2.0
 	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach)
+	_baked_ponds = world.water_sources.size()
+	_water_reach = reach
+	_material.set_shader_parameter("water_extent", Vector2(_water_mask["cols"], _water_mask["rows"]) * texel)
+	_material.set_shader_parameter("water_enabled", 1.0)
+	_dry_shrink = float(water["edge_noise_px"]) * scale * 2.0 + texel
+	_upload_water_field(world)
+	simulation_manager.record_render_phase("water_bake", float(Time.get_ticks_usec() - started) / 1000.0)
+
+
+## The water field and, for ponds with levels, which pond owns each texel and how far each has
+## shrunk, handed to the shader whole.
+func _upload_water_field(world) -> void:
 	var cols: int = _water_mask["cols"]
 	var rows: int = _water_mask["rows"]
 	_material.set_shader_parameter("water_tex", ImageTexture.create_from_image(
 		_float_image(_water_mask["cells"], cols, rows)))
-	_material.set_shader_parameter("water_extent", Vector2(cols, rows) * texel)
-	_material.set_shader_parameter("water_enabled", 1.0)
-	# Ponds with levels: which pond owns each texel, and how far each has shrunk.
 	var levels_on: bool = world.water.enabled
 	_material.set_shader_parameter("water_levels", 1.0 if levels_on else 0.0)
 	if levels_on:
 		_material.set_shader_parameter("water_id_tex", ImageTexture.create_from_image(
 			_float_image(_water_mask["ids"], cols, rows)))
-		_dry_shrink = float(water["edge_noise_px"]) * scale * 2.0 + texel
 		water_shrinks = PackedFloat32Array()
 		water_shrinks.resize(world.water_sources.size())
 		_shrink_texture = ImageTexture.create_from_image(_float_image(water_shrinks, water_shrinks.size(), 1))
 		_material.set_shader_parameter("water_shrink_tex", _shrink_texture)
 		refresh_water()
-	simulation_manager.record_render_phase("water_bake", float(Time.get_ticks_usec() - started) / 1000.0)
+
+
+## Ponds the player dug since the field was baked (`PlayerState`): stamped into the field, which
+## goes to the shader again, with a shrink for each. The map's own ponds never move.
+func refresh_water_sources() -> void:
+	if _water_mask.is_empty() or simulation_manager == null or simulation_manager.world_state == null:
+		return
+	var sources: Array = simulation_manager.world_state.water_sources
+	if sources.size() <= _baked_ponds:
+		return
+	for index in range(_baked_ponds, sources.size()):
+		WaterMaskScript.stamp(_water_mask, sources[index], index, _water_reach)
+	_baked_ponds = sources.size()
+	_upload_water_field(simulation_manager.world_state)
 
 
 ## The border field and the surfaces a border takes, or borders off when `borders` is empty.
