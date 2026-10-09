@@ -14,6 +14,10 @@ signal world_event(event: Dictionary)
 ## Raised on the main thread once the change has reached `world_state`, from a worker frame or
 ## an inline tick alike.
 signal player_state_changed
+## A scenario's goal changed state (`ScenarioRunner`: `pending`, `met`, `failed`), and its result
+## is in, with the runner's summary. Raised on the main thread, from the world the view is shown.
+signal scenario_goal_changed(goal_id: String, state: String)
+signal scenario_finished(won: bool, summary: Dictionary)
 
 ## The event types `world_event` carries. Everything else stays on the bus: grazing and
 ## drinking alone fire many times a tick.
@@ -30,6 +34,7 @@ const WorldStateScript = preload("res://scripts/world/world_state.gd")
 const StatsSystemScript = preload("res://scripts/stats/stats_system.gd")
 const TelemetryLoggerScript = preload("res://scripts/stats/telemetry_logger.gd")
 const PlayerCommandsScript = preload("res://scripts/core/player_commands.gd")
+const ScenarioRunnerScript = preload("res://scripts/core/scenario_runner.gd")
 
 const MAX_SIMULATION_STEPS_PER_FRAME := 2
 ## Short worker spikes (birth/death batches, sector wakes, OS scheduling) may take
@@ -108,6 +113,9 @@ var _command_queue: Array = []
 var _next_command_seq: int = 1
 ## The `PlayerState.revision` the view last announced (`player_state_changed`).
 var _seen_player_revision: int = 0
+## The score of the scenario this world is played as (the bundle's `challenge`); inactive for a
+## world without one. Begun by `initialize()`, carried on by every tick or frame applied.
+var scenario: ScenarioRunner = ScenarioRunnerScript.new()
 
 
 func _ready() -> void:
@@ -176,7 +184,22 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	speed_multiplier = float(speeds[default_index])
 
 	stats_system.record_sample(world_state, current_tick, simulation_time)
+	_start_scenario()
 	tick_completed.emit(current_tick, stats_system.get_snapshot_view())
+
+
+## A fresh score for the world just built: its own herd and the count to measure against.
+func _start_scenario() -> void:
+	scenario = ScenarioRunnerScript.new()
+	scenario.goal_changed.connect(scenario_goal_changed.emit)
+	scenario.finished.connect(scenario_finished.emit)
+	scenario.start(self)
+
+
+## A saved score (`ScenarioRunner.export_state()`) over the world just restored: the starting
+## count and the goals decided are the saved ones.
+func import_scenario(data: Dictionary) -> void:
+	scenario.import_state(self, data)
 
 
 func _process(delta: float) -> void:
@@ -279,6 +302,7 @@ func step_once() -> void:
 		selection_changed.emit(selected_agent_id)
 		clear_focus()
 	stats_system.record_sample(world_state, current_tick, simulation_time)
+	scenario.update(self)
 	_announce_player_state()
 	tick_completed.emit(current_tick, stats_system.get_snapshot_view())
 
@@ -355,6 +379,7 @@ func _unwatch_event_bus(bus) -> void:
 
 func _forward_view_event(event: Dictionary) -> void:
 	if VIEW_EVENT_TYPES.has(event.get("type", "")):
+		scenario.hear(event)
 		world_event.emit(event)
 
 
@@ -899,6 +924,7 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		selected_agent_id = -1
 		selection_changed.emit(-1)
 		clear_focus()
+	scenario.update(self)
 	_announce_player_state()
 	tick_completed.emit(current_tick, data.metrics)
 

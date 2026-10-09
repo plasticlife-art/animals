@@ -14,7 +14,6 @@ extends SceneTree
 ## `seed` -1 is the scenario's own. The run goes on `after_seconds` past the result, to see what
 ## the season after it does. Trailing `key=value` pairs override the scenario's bundle, as in
 ## `ecology_audit.gd`. The rules read the world and draw nothing from its rng.
-const ScenarioRunnerScript := preload("res://scripts/core/scenario_runner.gd")
 const SAMPLE_SECONDS := 10.0
 const POLICY_SECONDS := 2.0
 const CLOSE_HALF_EXTENT := 800.0
@@ -50,9 +49,8 @@ func _initialize() -> void:
 	manager.initialize(bundle, run_seed)
 	manager.set_lod_enabled(true)
 	var world = manager.world_state
-	var runner = ScenarioRunnerScript.new()
-	runner.start(manager)
-	manager.world_event.connect(runner.hear)
+	# The manager keeps the score, as in the game (`SimulationManager.scenario`).
+	var runner = manager.scenario
 	var all_deaths := {}
 	manager.world_event.connect(func(event: Dictionary) -> void:
 		if str(event.get("type", "")) == "AgentDied" and str(event.get("species", "")) == runner.species:
@@ -82,7 +80,6 @@ func _initialize() -> void:
 			if not issued.is_empty():
 				commands.append(issued)
 		manager.step_once()
-		runner.update(manager)
 		tick += 1
 		if tick % sample_ticks == 0:
 			samples.append(_sample(manager, runner, _herd_state(world, runner)))

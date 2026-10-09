@@ -48,7 +48,9 @@ var decide_times: Dictionary = {}
 ## "", "won" or "lost".
 var result: String = ""
 var decided_at: float = -1.0
-## `[time, count]` every `SERIES_SECONDS`, for the result's curve.
+## `[time, own herd, its whole species]` every `SERIES_SECONDS` and at the result, for the
+## result's curves. Kept here and saved with the score: the stats' own series is not saved, and
+## a curve drawn from it after a load would begin at the load.
 var series: Array = []
 
 
@@ -106,7 +108,7 @@ func start(manager) -> void:
 			decide_ordinals[goal_id] = ordinal
 			decide_times[goal_id] = season_start_time(climate_config, ordinal) \
 				+ float(goal.get("days", 0.0)) * float(climate_config.get("day_length_seconds", 120.0))
-	series.append([snappedf(started_at, 0.01), count])
+	_sample(world, started_at)
 
 
 ## A world event as the view hears it: a split of the own herd adds the half that left to it, a
@@ -133,7 +135,7 @@ func update(manager) -> void:
 	count = count_own(manager.world_state)
 	lowest = mini(lowest, count)
 	if series.is_empty() or now - float(series[series.size() - 1][0]) >= SERIES_SECONDS:
-		series.append([snappedf(now, 0.01), count])
+		_sample(manager.world_state, now)
 	var ordinal := ClimateScript.season_ordinal(manager.config_bundle.get("world", {}).get("climate", {}), now)
 	for goal in challenge.get("goals", []):
 		var goal_id := str(goal.get("id", ""))
@@ -281,6 +283,10 @@ func import_state(manager, data: Dictionary) -> void:
 	series = data.get("series", []).duplicate(true)
 
 
+func _sample(world, now: float) -> void:
+	series.append([snappedf(now, 0.01), count, int(world.get_population_metrics().get("%s_count" % species, 0))])
+
+
 func _set_state(goal_id: String, state: String) -> void:
 	states[goal_id] = state
 	goal_changed.emit(goal_id, state)
@@ -295,5 +301,5 @@ func _finish(won: bool, now: float, manager) -> void:
 		var goal_id := str(goal.get("id", ""))
 		if str(states.get(goal_id, PENDING)) == PENDING:
 			_set_state(goal_id, MET if holds(goal) else FAILED)
-	series.append([snappedf(now, 0.01), count])
+	_sample(manager.world_state, now)
 	finished.emit(won, summary(manager))

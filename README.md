@@ -92,7 +92,8 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 1. Open the project in Godot.
 2. Run the project, or open `res://scenes/main/main.tscn`.
 3. The main menu opens first. `Новая симуляция` reveals the setup options,
-   `Продолжить` resumes the latest autosave, and `Помощь` describes the controls
+   `Продолжить` resumes the latest autosave (a scenario's or the sandbox's, whichever was
+   written last; each keeps its own two slots), and `Помощь` describes the controls
    and the mechanics. Nothing is simulated until a run is started.
 4. Press `Tab` to show or hide the HUD. The HUD starts hidden by default and
    scrolls when its contents outgrow the window.

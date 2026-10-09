@@ -386,6 +386,21 @@ Current snapshot categories:
   `days` into it; or `always`. Its `role` is `win` (won or lost at its moment), `lose` (lost the
   moment it fails) or `bonus`. Once the result is in (`finished`), the score keeps still and the
   world can be watched on
+- `SimulationManager.scenario` keeps the score of the world it runs: begun by `initialize()`,
+  hearing the view events as they are forwarded and updated after every inline tick and every
+  worker frame applied, its changes raised as `scenario_goal_changed` and `scenario_finished`.
+  A world without a challenge has an inactive one - the sandbox, whose powers have no charges,
+  only their cooldowns (`powers.json`). The runner keeps its own curve, `[time, own herd, its
+  species]` every 5 s and at the result: the stats' series is not saved, and a curve drawn from
+  it after a load would begin at the load
+- A save carries the score under `scenario`, and `SaveSystem.restore()` takes it back after the
+  world and its clock (`import_scenario()`): the starting count, the herd, the deaths and the
+  goals decided are the saved ones, and a result already in is not announced again. A scenario
+  saves into its own pair of slots (`SCENARIO_SLOTS`), so playing one does not write over the
+  world the player left in the sandbox. Every save says when it was written (`saved_at`), and
+  Continue opens whichever slot of either kind was written last: by tick, a world begun anew
+  lost Continue to an older one that had run longer. A save from before `saved_at` counts as
+  the oldest. `SaveSystem.save_dir` lets a test write its slots elsewhere
 - `scripts/dev/scenario_probe.gd` plays a scenario without a window through the real order
   queue and the runner: the camera kept on the own herd (`herd`, which keeps it awake as a
   player watching it would) or on the whole map (`overview`), and a fixed rule for the powers -
@@ -1691,7 +1706,12 @@ Current suites cover:
   powers; the own herd nearest the middle, a split half still its own, counted asleep; its deaths
   by cause and another herd's not; the bonus lost to one death of thirst, the scenario lost
   under a quarter with the open goals settled and `finished` once; the result on the very tick
-  autumn begins, or `days` into it; and the score saved, the starting count not taken again
+  autumn begins, or `days` into it; and the score saved, the starting count not taken again;
+  the manager keeping it from an inline tick and a worker frame, and none for a plain world,
+  whose powers have no charges; a save carrying it and a load taking it back, a result to come
+  decided at its time and one already in not announced again; a scenario's own slots, Continue
+  opening the save written last, a version 3 save without a time the oldest and still loading;
+  and the first season of a world begun in summer seen whole
 - the player's orders (`PlayerCommandTests`): an order carried out on the tick it was handed
   to, with its event and journal entry on that tick; the same order on the worker thread and
   inline leaving the worlds alike; charges and cooldowns in simulated time, kept through a

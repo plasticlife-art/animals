@@ -24,58 +24,90 @@ extends RefCounted
 const SAVE_VERSION := 4
 const MIN_READABLE_VERSION := 1
 const SAVE_DIR := "user://saves"
+## The sandbox's slots, and a scenario's: a scenario played does not write over the world the
+## player left in the sandbox.
 const SLOTS := ["autosave_a.dat", "autosave_b.dat"]
+const SCENARIO_SLOTS := ["scenario_a.dat", "scenario_b.dat"]
+const KIND_SANDBOX := "sandbox"
+const KIND_SCENARIO := "scenario"
+
+## Where the slots are; a test points it elsewhere so it never touches the player's saves.
+static var save_dir: String = SAVE_DIR
 
 
-static func slot_paths() -> Array:
+## The slots of `kind` (`KIND_SANDBOX`, `KIND_SCENARIO`), or of both by default.
+static func slot_paths(kind: String = "") -> Array:
+	var names: Array = []
+	if kind != KIND_SCENARIO:
+		names.append_array(SLOTS)
+	if kind != KIND_SANDBOX:
+		names.append_array(SCENARIO_SLOTS)
 	var paths: Array = []
-	for slot in SLOTS:
-		paths.append("%s/%s" % [SAVE_DIR, slot])
+	for slot in names:
+		paths.append("%s/%s" % [save_dir, slot])
 	return paths
 
 
-## The most recent readable save, or "" when there is none.
+## The most recently written readable save of either kind, or "" when there is none: what
+## Continue opens.
 ##
-## Two slots are written alternately so that a crash during a write cannot
-## destroy the only copy; this is what picks the survivor.
+## Two slots of each kind are written alternately so that a crash during a write cannot
+## destroy the only copy; this is what picks the survivor. Saves are told apart by when they
+## were written (`saved_at`), then by tick: a tick says nothing between two worlds, and a world
+## begun anew after a long one used to lose Continue to the old one's higher tick. A save from
+## before `saved_at` counts as the oldest.
 static func latest_slot() -> String:
 	var newest := ""
-	var newest_tick := -1
+	var newest_key := [-1.0, -1]
 	for path in slot_paths():
 		if not FileAccess.file_exists(path):
 			continue
 		var header := _read_header(path)
 		if header.is_empty() or not _is_readable_version(int(header.get("version", 0))):
 			continue
-		var tick := int(header.get("tick", -1))
-		if tick > newest_tick:
-			newest_tick = tick
+		var key := _age_key(header)
+		if _is_later(key, newest_key):
+			newest_key = key
 			newest = path
 	return newest
 
 
-static func next_slot() -> String:
+## The slot of `kind` the next save goes to: an empty one, else the older of the two.
+static func next_slot(kind: String = KIND_SANDBOX) -> String:
 	var oldest := ""
-	var oldest_tick := 1 << 62
-	for path in slot_paths():
+	var oldest_key := [INF, 1 << 62]
+	for path in slot_paths(kind):
 		if not FileAccess.file_exists(path):
 			return path
-		var header := _read_header(path)
-		var tick := int(header.get("tick", -1))
-		if tick < oldest_tick:
-			oldest_tick = tick
+		var key := _age_key(_read_header(path))
+		if _is_later(oldest_key, key):
+			oldest_key = key
 			oldest = path
 	return oldest
 
 
+## Which kind of slot `manager`'s world saves to.
+static func kind_of(manager) -> String:
+	return KIND_SCENARIO if manager != null and manager.scenario != null and manager.scenario.is_active() else KIND_SANDBOX
+
+
+static func _age_key(header: Dictionary) -> Array:
+	return [float(header.get("saved_at", 0.0)), int(header.get("tick", -1))]
+
+
+static func _is_later(key: Array, than: Array) -> bool:
+	return float(key[0]) > float(than[0]) or (float(key[0]) == float(than[0]) and int(key[1]) > int(than[1]))
+
+
 ## `story` is the view's story of the world (`StoryBook.export_state()`): names, family tree
-## and pins. The simulation never reads it; a save without it loads with none.
+## and pins. The simulation never reads it; a save without it loads with none. A scenario's score
+## (`ScenarioRunner`) goes under `scenario`, and the save into the scenario's slots.
 static func save(manager, selection: Dictionary, path: String = "", story: Dictionary = {}) -> bool:
 	if manager == null or manager.world_state == null:
 		return false
 	var world_data: Dictionary = manager.export_simulation_state()
-	var target := path if path != "" else next_slot()
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SAVE_DIR))
+	var target := path if path != "" else next_slot(kind_of(manager))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(target.get_base_dir()))
 	var file := FileAccess.open(target, FileAccess.WRITE)
 	if file == null:
 		push_error("Could not open save file for writing: %s" % target)
@@ -94,6 +126,8 @@ static func save(manager, selection: Dictionary, path: String = "", story: Dicti
 		"world": world_data,
 		"stats": manager.stats_system.counters.duplicate(),
 		"story": story.duplicate(true),
+		"scenario": manager.scenario.export_state() if kind_of(manager) == KIND_SCENARIO else {},
+		"saved_at": Time.get_unix_time_from_system(),
 	}, true)
 	file.close()
 	return true
@@ -211,6 +245,9 @@ static func restore(manager, data: Dictionary) -> bool:
 			manager.stats_system.counters[key] = data["stats"][key]
 	manager.rng.seed = int(data.get("rng_seed", manager.seed))
 	manager.rng.state = int(data.get("rng_state", 0))
+	# After the world and its clock: the score's own herd and goals are the saved ones, measured
+	# against the world as it was saved.
+	manager.import_scenario(data.get("scenario", {}))
 	# The snapshot the HUD and the charts read was taken during `initialize`, so
 	# without this the interface shows the freshly generated world for a tick.
 	manager.stats_system.refresh_snapshot(
@@ -237,4 +274,6 @@ static func _read_header(path: String) -> Dictionary:
 		"tick": data.get("tick", -1),
 		"seed": data.get("seed", 0),
 		"selection": data.get("selection", {}),
+		"saved_at": float(data.get("saved_at", 0.0)),
+		"scenario": str(data.get("config_bundle", {}).get("challenge", {}).get("id", "")),
 	}

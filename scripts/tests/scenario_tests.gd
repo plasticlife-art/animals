@@ -4,11 +4,16 @@ extends RefCounted
 ## bundle a scenario is played with - its own options and patch over the player's look, its
 ## challenge kept in it - the world it begins, the herd that is the player's, awake and asleep
 ## and split, the deaths and goals counted, the result decided on the very tick autumn begins,
-## and the score saved.
+## and the score saved; the manager keeping it inline and from worker frames, a save carrying it
+## into its own slots and back without taking the start again or repeating the result, Continue
+## opening the save written last, a version 3 save still loading, and the first season of a world
+## begun in summer seen whole.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
 const ScenarioRunnerScript := preload("res://scripts/core/scenario_runner.gd")
+const StoryBookScript := preload("res://scripts/story/story_book.gd")
+const TEST_SAVE_DIR := "user://test_scenario_saves"
 
 const OWN_AT := Vector2(1200.0, 1200.0)
 const OTHER_AT := Vector2(2500.0, 2500.0)
@@ -30,6 +35,10 @@ func run(a) -> void:
 	_test_deaths_and_goals(a)
 	_test_decided_when_autumn_begins(a)
 	_test_the_score_is_saved(a)
+	_test_the_manager_keeps_score(a)
+	_test_a_scenario_saved_and_loaded(a)
+	_test_its_own_slots(a)
+	_test_the_first_season_seen_whole(a)
 
 
 ## A map wide enough for two herds apart, every animal awake unless a test puts a sector to
@@ -210,4 +219,139 @@ func _test_the_score_is_saved(a) -> void:
 	a.equal(int(loaded.decide_ordinals.keep_herd), 2, "decided when it was to be")
 	loaded.update(manager)
 	a.is_true(loaded.count == 5 and loaded.result == "", "it counts on from there")
+	Helpers.destroy_manager(manager)
+
+
+## The manager's own score (`SimulationManager.scenario`), begun again here once the herds are in
+## place: it hears an inline tick's deaths and counts after it, and a worker frame's alike.
+func _test_the_manager_keeps_score(a) -> void:
+	var manager = _world(9926)
+	var world = manager.world_state
+	var own: Array = Helpers.spawn_herd(world, OWN_AT, 10, 0)
+	Helpers.spawn_herd(world, OTHER_AT, 6, 1)
+	manager._start_scenario()
+	var changed: Array = []
+	manager.scenario_goal_changed.connect(func(goal_id: String, state: String) -> void: changed.append([goal_id, state]))
+	a.is_true(manager.scenario.is_active() and manager.scenario.baseline == 10, "the manager keeps the score of a scenario world")
+	world.kill_agent(own[0], "thirst")
+	manager.step_once()
+	a.is_true(manager.scenario.thirst_deaths() == 1 and manager.scenario.count == 9, "an inline tick: the death heard, the herd counted")
+	a.equal(changed, [["no_thirst", "failed"]], "and the manager says what changed")
+	manager.enable_interactive_worker()
+	manager.begin_interactive_stepping()
+	var worker_world = manager._worker.world
+	# Dies of thirst on the worker's next tick, as it would in a game.
+	for agent in worker_world.get_living_agents():
+		if agent.is_alive and agent.group_id == 0:
+			agent.thirst = agent.need_max
+			break
+	manager._post_worker_job()
+	manager.synchronize_worker()
+	a.is_true(manager.scenario.thirst_deaths() == 2 and manager.scenario.count == 8,
+		"a worker frame: the same (%d of thirst, %d left)" % [manager.scenario.thirst_deaths(), manager.scenario.count])
+	Helpers.destroy_manager(manager)
+	var plain = Helpers.create_manager(9927)
+	a.is_true(not plain.scenario.is_active(), "a world without a challenge keeps none")
+	var player = plain.world_state.player
+	a.is_true(int(player.budget.dig_pond.charges) == -1 and int(player.budget.lead_herd.charges) == -1
+		and float(player.settings("dig_pond").cooldown_seconds) > 0.0, "the sandbox: powers without charges, only cooldowns")
+	Helpers.destroy_manager(plain)
+
+
+## A save carries the score and a load takes it back: the starting count, the deaths, the goals
+## and the curve as saved, not taken again from the world loaded; a result already in is not
+## announced again, and one still to come is decided at its time.
+func _test_a_scenario_saved_and_loaded(a) -> void:
+	var manager = _world(9928)
+	var world = manager.world_state
+	var own: Array = Helpers.spawn_herd(world, OWN_AT, 10, 0)
+	Helpers.spawn_herd(world, OTHER_AT, 6, 1)
+	manager._start_scenario()
+	world.kill_agent(own[0], "thirst")
+	world.kill_agent(own[1], "predation")
+	manager.step_once()
+	var path := TEST_SAVE_DIR + "/roundtrip.dat"
+	a.is_true(SaveSystem.save(manager, {}, path), "a scenario world saves")
+	var data: Dictionary = SaveSystem.read(path)
+	a.is_true(int(data.get("scenario", {}).get("baseline", -1)) == 10 and float(data.get("saved_at", 0.0)) > 0.0,
+		"with its score and when it was written")
+	var loaded = Helpers.create_manager(9929)
+	var results: Array = []
+	loaded.scenario_finished.connect(func(won: bool, _summary: Dictionary) -> void: results.append(won))
+	a.is_true(SaveSystem.restore(loaded, data), "and loads")
+	var score = loaded.scenario
+	a.is_true(score.is_active() and score.baseline == 10 and score.groups.keys() == [0], "the starting count and the herd as saved")
+	a.is_true(score.thirst_deaths() == 1 and int(score.deaths.get("predation", 0)) == 1 and score.count == 8,
+		"the deaths and the count")
+	a.equal(score.series.size(), manager.scenario.series.size(), "the curve")
+	var decide_at := float(score.decide_times.keep_herd)
+	loaded.simulation_time = decide_at - loaded.tick_duration * 0.5
+	loaded.step_once()
+	a.is_true(score.result == "won" and results == [true], "decided at its time after the load")
+	SaveSystem.save(loaded, {}, path)
+	var again = Helpers.create_manager(9930)
+	var repeated: Array = []
+	again.scenario_finished.connect(func(won: bool, _summary: Dictionary) -> void: repeated.append(won))
+	SaveSystem.restore(again, SaveSystem.read(path))
+	again.step_once()
+	a.is_true(again.scenario.result == "won" and repeated.is_empty(), "a result already in is not announced again")
+	for manager_done in [manager, loaded, again]:
+		Helpers.destroy_manager(manager_done)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+## A scenario saves into its own slots and the sandbox into its own; Continue opens whichever was
+## written last; a version 3 sandbox save, without a time, counts as the oldest and still loads.
+func _test_its_own_slots(a) -> void:
+	var shipped_dir: String = SaveSystem.save_dir
+	SaveSystem.save_dir = TEST_SAVE_DIR
+	for path in SaveSystem.slot_paths():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var sandbox = Helpers.create_manager(9931)
+	Helpers.spawn_herbivore(sandbox.world_state, Vector2(100.0, 100.0), 0)
+	var scenario_world = _world(9932)
+	Helpers.spawn_herd(scenario_world.world_state, OWN_AT, 6, 0)
+	scenario_world._start_scenario()
+	a.is_true(SaveSystem.kind_of(sandbox) == "sandbox" and SaveSystem.kind_of(scenario_world) == "scenario", "each world knows its kind")
+	SaveSystem.save(sandbox, {})
+	SaveSystem.save(scenario_world, {})
+	a.equal(SaveSystem.latest_slot().get_file(), "scenario_a.dat", "the scenario in its own slot, and Continue opens it")
+	SaveSystem.save(sandbox, {})
+	a.equal(SaveSystem.latest_slot().get_file(), "autosave_b.dat", "the sandbox written after it is opened instead")
+	SaveSystem.save(sandbox, {})
+	a.is_true(FileAccess.file_exists(TEST_SAVE_DIR + "/scenario_a.dat") and SaveSystem.next_slot("scenario").get_file() == "scenario_b.dat",
+		"the sandbox writing on leaves the scenario's slot alone")
+	a.equal(SaveSystem.next_slot().get_file(), "autosave_b.dat", "and alternates its own")
+	# A save as version 3 wrote it: no player, no score, no time.
+	var old: Dictionary = SaveSystem.read(TEST_SAVE_DIR + "/autosave_a.dat")
+	old["version"] = 3
+	old.erase("saved_at")
+	old.erase("scenario")
+	old["world"].erase("player")
+	var file := FileAccess.open(TEST_SAVE_DIR + "/autosave_a.dat", FileAccess.WRITE)
+	file.store_var(old, true)
+	file.close()
+	SaveSystem.save(sandbox, {}, TEST_SAVE_DIR + "/autosave_b.dat")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_SAVE_DIR + "/scenario_a.dat"))
+	a.equal(SaveSystem.latest_slot().get_file(), "autosave_b.dat", "a save without a time is the oldest")
+	var loaded = Helpers.create_manager(9933)
+	a.is_true(SaveSystem.restore(loaded, SaveSystem.read(TEST_SAVE_DIR + "/autosave_a.dat"))
+		and not loaded.scenario.is_active() and loaded.world_state.get_living_agents().size() == 1,
+		"a version 3 save still loads, as a sandbox")
+	for path in SaveSystem.slot_paths():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	SaveSystem.save_dir = shipped_dir
+	for manager_done in [sandbox, scenario_world, loaded]:
+		Helpers.destroy_manager(manager_done)
+
+
+## A world begun in summer opens its first season on its first tick: the season book sees it
+## whole, not met half-way.
+func _test_the_first_season_seen_whole(a) -> void:
+	var manager = _world(9934)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	a.is_true(int(book.seasons.open.get("ordinal", -1)) == 1 and not bool(book.seasons.open.get("partial", true)),
+		"summer, seen whole")
 	Helpers.destroy_manager(manager)
