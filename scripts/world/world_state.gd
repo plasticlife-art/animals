@@ -1666,6 +1666,10 @@ func _command_lead_herd(command: Dictionary) -> Dictionary:
 	var center: Vector2 = herd["center"]
 	if center.distance_to(goal) > float(player.settings("lead_herd").get("max_distance", 2400.0)):
 		return {"ok": false, "reason": "too_far"}
+	# The same search the herd walks by: a goal past a ridge it finds no way round, it would
+	# stand facing until the walk timed out.
+	if not bool(terrain_system.find_path(get_nearest_walkable_position(center), goal).get("reachable", false)):
+		return {"ok": false, "reason": "no_route"}
 	var key := _get_dormant_aggregate_key(species_key, group_id)
 	herd_migrations[key] = {"goal": goal, "since": current_time, "player": true}
 	player.lead(key, species_key, group_id, goal, current_time)

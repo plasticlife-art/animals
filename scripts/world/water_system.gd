@@ -36,6 +36,11 @@ const DEFAULTS := {
 	"wet_level": 0.10,
 	"drought_chance": 0.25,
 	"drought_strength": 1.4,
+	# Years that are droughts whatever the hash says, the first among them if named - a
+	# scenario's (`scenarios.json`); none by default.
+	"drought_years": [],
+	# How full the ponds start, 0 to 1; a scenario may start them low.
+	"initial_level": 1.0,
 }
 
 var enabled: bool = false
@@ -70,6 +75,12 @@ func initialize(water_config: Dictionary, sources: Array, demand_unit_value: flo
 			settings["balance"] = balance
 		else:
 			settings[key] = water_config[key]
+	# JSON gives the years as floats; held as ints so `has()` finds them.
+	var drought_years: Array[int] = []
+	if settings["drought_years"] is Array:
+		for year in settings["drought_years"]:
+			drought_years.append(int(year))
+	settings["drought_years"] = drought_years
 	enabled = bool(settings["enabled"]) and clock_running and not sources.is_empty()
 	season_length = maxf(0.001, season_seconds)
 	world_seed = seed_value
@@ -90,13 +101,19 @@ func initialize(water_config: Dictionary, sources: Array, demand_unit_value: flo
 		radius_sum += float(source["bank_radius"])
 	mean_radius = radius_sum / float(maxi(1, sources.size()))
 	var reference := maxf(1.0, mean_radius)
+	var initial := clampf(float(settings["initial_level"]), 0.0, 1.0)
+	_wet_count = 0
 	for source in sources:
 		var relative := maxf(0.01, float(source["bank_radius"]) / reference)
-		levels.append(1.0)
-		dry.append(0)
+		levels.append(initial)
+		dry.append(1 if initial <= float(settings["dry_level"]) else 0)
 		capacity.append(_capacity_for(relative))
 		size_factor.append(pow(1.0 / relative, float(settings["size_exponent"])))
-	_wet_count = sources.size()
+		if dry[dry.size() - 1] == 0:
+			_wet_count += 1
+	if initial < 1.0:
+		for index in range(sources.size()):
+			_set_shore(index)
 
 
 ## A pond added while the world runs (`WorldState._add_pond_source()`), already appended to the
@@ -192,8 +209,11 @@ func mean_level() -> float:
 	return total / float(levels.size())
 
 
-## Whether `year` is a drought year: a hash of the year and the world's seed, never the first.
+## Whether `year` is a drought year: one `drought_years` names, or by a hash of the year and the
+## world's seed, never the first.
 func is_drought_year(year: int) -> bool:
+	if settings["drought_years"].has(year):
+		return true
 	return year > 0 and TraitsScript.unit(year, DROUGHT_SALT, world_seed) < float(settings["drought_chance"])
 
 

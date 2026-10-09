@@ -1,0 +1,37 @@
+{
+  "_comment": "Scenarios: a world with a goal (`ConfigLoader.load_scenario_bundle`, `ScenarioRunner`). `selection` picks setup options as the setup screen does (the style stays the player's); `patch` is merged over the bundle after them; `challenge` goes into the bundle as it is and is what the runner keeps score by. `own_herd.near` is a point in fractions of the map: the herd of `own_herd.species` nearest it at the start is the player's. A goal names what must hold - `share_at_least`, the own herd against its size at the start, `thirst_deaths_at_most`, its deaths of thirst, or `thirst_share_at_most`, those as a share of its size at the start - and when: `form` `at_season_start` on the first tick of `season` (or `days` into it), `always` on every tick. Its `role` says what it decides: `win`, won if it holds at its moment and lost if not; `lose`, lost the moment it stops holding; `bonus`, nothing - it is kept or not.",
+  "order": ["long_drought"],
+  "scenarios": {
+    "long_drought": {
+      "label": "Долгая сушь",
+      "brief": "Засушливое лето: пруды с первого дня наполовину пусты, к концу лета пересохнут почти все, а дожди наполнят их только посреди осени. Сохраните хотя бы половину своего стада оленей до осенних дождей. Один раз можно выкопать водопой и дважды — повести стадо к воде.",
+      "seed": 7,
+      "selection": {"map_size": "medium", "mix": "balanced", "scenario": "normal", "rules": "normal", "difficulty": "normal"},
+      "patch": {
+        "world": {
+          "climate": {"start_season_index": 1, "season_length_days": 3.0},
+          "terrain": {"height": {"levels": 1}},
+          "water_levels": {"drought_years": [0], "initial_level": 0.5}
+        },
+        "balance": {"lifecycle": {"founder_age_share": 0.4}},
+        "powers": {
+          "powers": {
+            "dig_pond": {"charges": 1},
+            "lead_herd": {"charges": 2, "cooldown_seconds": 60.0}
+          }
+        }
+      },
+      "challenge": {
+        "own_herd": {"species": "herbivore", "near": [0.5, 0.5]},
+        "goals": [
+          {"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "autumn", "days": 1.5, "share_at_least": 0.5,
+            "label": "Сохранить половину стада до осенних дождей"},
+          {"id": "not_wiped", "role": "lose", "form": "always", "share_at_least": 0.25,
+            "label": "Не дать стаду растаять: не меньше четверти"},
+          {"id": "no_thirst", "role": "bonus", "form": "always", "thirst_deaths_at_most": 0,
+            "label": "Ни одной смерти от жажды"}
+        ]
+      }
+    }
+  }
+}

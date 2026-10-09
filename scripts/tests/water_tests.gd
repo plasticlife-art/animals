@@ -23,6 +23,7 @@ func run(a) -> void:
 	_test_a_normal_year(a)
 	_test_a_drought_year(a)
 	_test_drought_years_are_rare(a)
+	_test_a_scenario_names_its_drought(a)
 	_test_drinking_down_and_the_brink(a)
 	_test_levels_off_change_nothing(a)
 	_test_world_skips_dry_ponds(a)
@@ -136,6 +137,26 @@ func _test_drought_years_are_rare(a) -> void:
 		if other.is_drought_year(year) == water.is_drought_year(year):
 			same += 1
 	a.is_true(same < 100, "another world has other droughts (%d of 100 alike)" % same)
+
+
+## A scenario's drought (`drought_years`, `initial_level`): the years it names are droughts, the
+## first among them, and its ponds start as low as it says; without them the world is as it was.
+func _test_a_scenario_names_its_drought(a) -> void:
+	var made := _three_ponds({"drought_years": [0.0, 3.0], "initial_level": 0.5})
+	var water = made[0]
+	var sources: Array = made[1]
+	a.is_true(water.is_drought_year(0) and water.is_drought_year(3), "the years named are droughts, the first too")
+	a.near(float(water.levels[1]), 0.5, 0.0001, "the ponds start at the level given")
+	a.near(float(sources[1]["radius"]), 230.0 * sqrt(0.5), 0.01, "and their edge with it")
+	a.equal(water.wet_count(), 3, "none dry at half")
+	var year := _run(water, 120.0, 480.0)
+	a.is_true(year["dried"].has(0) and year["dried"].has(1), "half full in a drought summer, the small and the mean pond dry")
+	a.is_true(float(year["dried"].get(0, 999.0)) < float(year["dried"].get(1, 0.0)), "the small one first (%.0f s, %.0f s)"
+		% [float(year["dried"].get(0, -1.0)), float(year["dried"].get(1, -1.0))])
+	var empty = _three_ponds({"initial_level": 0.0})[0]
+	a.equal(empty.dry_count(), 3, "empty ponds start dry")
+	var plain = _three_ponds()[0]
+	a.is_true(not plain.is_drought_year(0) and plain.levels[0] == 1.0, "without them, no drought the first year and full ponds")
 
 
 func _test_drinking_down_and_the_brink(a) -> void:

@@ -278,6 +278,9 @@ The metrics carry, per species, how many animals are at risk of starvation (`sta
   reads only `props` from it, to place the scenery
 - `data/config/powers.json`
   The player's powers: charges and cooldowns, and each power's own settings
+- `data/config/scenarios.json`
+  Scenarios: a world with a goal - the setup options and config patch it is played with, the
+  herd that is the player's, the goals and the powers it allows
 - `data/config/presets.json`
   Setup-screen option groups. Each option is a config patch deep-merged over the base
   configs, so adding a group here adds a row to the setup screen with no code change
@@ -513,6 +516,22 @@ and predators searching last-seen positions. Run it once per style:
   --script res://scripts/dev/p2_visual_audit.gd -- \
   isometric_craftpix /private/tmp/animals-p2-visual 2301
 ```
+
+## Scenario tuning
+
+`scenario_probe.gd` plays a scenario without a window, using the powers by a fixed rule, and
+writes how the player's herd fared (`docs/ARCHITECTURE.md`, Scenarios):
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+  --script res://scripts/dev/scenario_probe.gd -- \
+  long_drought both/0.05/1500 herd -1 120 /private/tmp/drought.json
+```
+
+The arguments are the scenario, the rule (`none`, `dig`, `lead`, `both`, with an optional
+`/low/far` for when the herd's water counts as running out), the camera (`herd` or
+`overview`), the seed (-1 for the scenario's own), how many seconds to watch on after the
+result, the report, and any `key=value` overrides of the scenario's bundle.
 
 ## Current Limitations
 

@@ -12,6 +12,7 @@ const CONFIG_FILES := {
 
 const OPTIONS_FILE := "res://data/config/presets.json"
 const HELP_FILE := "res://data/config/help.json"
+const SCENARIOS_FILE := "res://data/config/scenarios.json"
 
 
 ## Loads every config file and overlays the chosen setup options.
@@ -57,6 +58,53 @@ static func with_shipped_presentation(saved: Dictionary, shipped: Dictionary) ->
 	if not bundle.has("powers") and shipped.get("powers") is Dictionary:
 		bundle["powers"] = shipped["powers"].duplicate(true)
 	return bundle
+
+
+## The bundle scenario `scenario_id` is played with (`scenarios.json`): the setup options the
+## scenario names over `selection` - so only what it leaves out, the style above all, stays the
+## player's - then its `patch` merged over the bundle, new keys and all, and its `challenge`
+## under that key, with its id, label, brief and seed. A save keeps the bundle, so the goals and
+## powers it was begun with go on whatever the file says later. {} for an unknown id.
+static func load_scenario_bundle(scenario_id: String, selection: Dictionary = {}) -> Dictionary:
+	var scenario: Dictionary = _load_json(SCENARIOS_FILE).get("scenarios", {}).get(scenario_id, {})
+	if scenario.is_empty():
+		push_error("Unknown scenario '%s'" % scenario_id)
+		return {}
+	var chosen := default_selection()
+	chosen.merge(selection, true)
+	chosen.merge(scenario.get("selection", {}), true)
+	var bundle := load_config_bundle(chosen)
+	var patch: Dictionary = scenario.get("patch", {})
+	for key in patch.keys():
+		if bundle.get(key) is Dictionary and patch[key] is Dictionary:
+			_merge_into(bundle[key], patch[key].duplicate(true))
+		else:
+			bundle[key] = patch[key].duplicate(true) if patch[key] is Dictionary else patch[key]
+	var challenge: Dictionary = scenario.get("challenge", {}).duplicate(true)
+	challenge["id"] = scenario_id
+	challenge["label"] = str(scenario.get("label", scenario_id))
+	challenge["brief"] = str(scenario.get("brief", ""))
+	challenge["seed"] = int(scenario.get("seed", bundle.get("world", {}).get("seed", 1337)))
+	challenge["selection"] = chosen
+	bundle["challenge"] = challenge
+	return bundle
+
+
+## The scenarios a start page can offer, in the file's declared order: `[{id, label, brief}]`.
+static func list_scenarios() -> Array:
+	var parsed: Dictionary = _load_json(SCENARIOS_FILE)
+	var scenarios: Dictionary = parsed.get("scenarios", {})
+	var order: Array = parsed.get("order", [])
+	if order.is_empty():
+		order = scenarios.keys()
+	var listed: Array = []
+	for scenario_id in order:
+		if not scenarios.has(scenario_id):
+			continue
+		var scenario: Dictionary = scenarios[scenario_id]
+		listed.append({"id": str(scenario_id), "label": str(scenario.get("label", scenario_id)),
+			"brief": str(scenario.get("brief", ""))})
+	return listed
 
 
 ## The option groups a setup screen can offer, in application order.

@@ -156,8 +156,22 @@ func _test_bad_orders_are_refused(a) -> void:
 	reasons.append(str(_lead(manager, GOAL).result.get("reason", "")))
 	world.terrain_system._walkable[cell] = 1
 	reasons.append(str(_lead(manager, START + Vector2(2200.0, 1200.0)).result.get("reason", "")))
-	a.equal(reasons, ["not_a_herd", "no_herd", "off_map", "blocked", "too_far"],
-		"a flock, a herd that is not there, off the map, a cliff and too far are refused")
+	var walled: Array = []
+	var terrain = world.terrain_system
+	var goal_cell: Vector2i = terrain.get_cell_coords(cell)
+	for index in range(terrain.get_cell_count()):
+		var coords: Vector2i = terrain.get_cell_coords(index)
+		if maxi(absi(coords.x - goal_cell.x), absi(coords.y - goal_cell.y)) == 2 and terrain.is_walkable_index(index):
+			terrain._walkable[index] = 0
+			walled.append(index)
+	terrain._refresh_navigation_cache()
+	terrain._path_cache.clear()
+	reasons.append(str(_lead(manager, GOAL).result.get("reason", "")))
+	for index in walled:
+		terrain._walkable[index] = 1
+	terrain._refresh_navigation_cache()
+	a.equal(reasons, ["not_a_herd", "no_herd", "off_map", "blocked", "too_far", "no_route"],
+		"a flock, a herd that is not there, off the map, a cliff, too far and a walled-in goal are refused")
 	a.is_true(world.herd_migrations.is_empty() and world.player.led_herds.is_empty(), "and none of them leads anything")
 	Helpers.destroy_manager(manager)
 

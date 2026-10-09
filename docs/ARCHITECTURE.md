@@ -189,7 +189,9 @@ in thirst points: `capacity_seasons` (6) times the thirst of one starting herd i
 the map's thirst per pond if that is more (`WorldState._water_demand_unit()`, so a pond lasts
 as long on every map size and difficulty), scaled by `(R / R̄) ^ capacity_exponent`. A drought
 year - a hash of the year and the world's seed under `drought_chance` (0.25), never the first
-- multiplies the dry seasons by `drought_strength` (1.4).
+- multiplies the dry seasons by `drought_strength` (1.4). A scenario may name drought years
+whatever the hash says, the first among them (`drought_years`), and start the ponds lower than
+full (`initial_level`); with neither the world is as before.
 
 On the large map (radii 180-280, mean 230), left alone, a radius-180 pond falls to about a sixth
 late in summer, a 230 one to about half, a 280 one to two thirds; one a herd drinks from dries
@@ -344,7 +346,10 @@ Current snapshot categories:
   (`no_herd`), a goal on the map (`off_map`) and on open ground (`blocked`), and not further
   than `powers.lead_herd.max_distance` (2400, the migration's own search radius) from the
   herd's centre awake and asleep (`too_far`): dragging hungry animals far is what
-  `exempt_hunger` was added against
+  `exempt_hunger` was added against. And one the herd can find its way to: the order runs the
+  route search its members walk by, from the herd's centre (`TerrainSystem.find_path()`), and a
+  goal past a ridge it finds no way round is refused (`no_route`) - led there, the herd stood
+  facing the ridge until the walk timed out
 - A player's goal is the player's: `_update_herd_migrations()` ends it neither for the herd's
   own patience (`give_up_seconds`) nor for poor grass at the goal - in winter or a drought it
   would fail that within one pass - but only on arrival, when the herd settles to eat as after
@@ -360,6 +365,54 @@ Current snapshot categories:
 - The herds led are shown from `PlayerState.led_herds` (`{species, group_id, goal, since}`, in
   the player block); the feed says «Стадо №3 в пути: цель на Медовом лугу» and «Стадо №3 дошло
   до цели …», or «… не дошло до цели …» when its time ran out
+
+### Scenarios (`scenarios.json`, `ScenarioRunner`)
+
+- A scenario is a world with a goal. `ConfigLoader.load_scenario_bundle(id, selection)` loads
+  the setup options the scenario names over the player's (only the style stays the player's -
+  and the style must not move the ground, so a scenario pins `terrain.height.levels`), merges its
+  `patch` over the bundle, new keys and all (`_apply_options()` passes keys a bundle lacks by),
+  and puts its `challenge` in the bundle with its id, label, brief and seed. A save keeps the
+  bundle, so the goals and powers a world was begun with go on whatever the file says later.
+  `list_scenarios()` is what a start page offers
+- `ScenarioRunner` keeps the score from the world the view is shown - the worker's copy too -
+  after each tick or frame (`update()`) and from the view's events (`hear()`), and changes
+  nothing in the world. The own herd is the herd of `own_herd.species` nearest `own_herd.near`
+  (fractions of the map) when it starts, with every half split off it since (`HerdSplit`); it is
+  counted awake and asleep, as the herd card counts (`HerdReadout`), and its deaths by cause
+  (`AgentDied` carries the group). A goal names what must hold - `share_at_least` of the starting
+  count, `thirst_deaths_at_most`, `thirst_share_at_most` - and when: `at_season_start` of a
+  season, judged by the season ordinal so the tick the season turns is the one that decides, or
+  `days` into it; or `always`. Its `role` is `win` (won or lost at its moment), `lose` (lost the
+  moment it fails) or `bonus`. Once the result is in (`finished`), the score keeps still and the
+  world can be watched on
+- `scripts/dev/scenario_probe.gd` plays a scenario without a window through the real order
+  queue and the runner: the camera kept on the own herd (`herd`, which keeps it awake as a
+  player watching it would) or on the whole map (`overview`), and a fixed rule for the powers -
+  none, dig by the herd, lead to the fullest pond in reach, or both - once the water the herd
+  drinks from runs low or far (`both/0.05/1500`: only when it is all but gone). The rules read
+  the world and draw nothing from its `rng`
+- «Долгая сушь» (`long_drought`): the medium map, seed 7, flat ground; the world begins in
+  summer (`start_season_index` 1) with seasons of three days, so a summer is six minutes and
+  thirst can kill in it; year 0 is a drought (`drought_years`) and the ponds start half full
+  (`initial_level` 0.5). Founders are no older than 0.4 of their span (`founder_age_share`;
+  0.9 as shipped had a herd of 20 lose up to 13 to old age in twelve minutes, whatever the
+  player did). Goals: half the herd at autumn plus a day and a half (`days` 1.5, second 540, when
+  the rains have filled about 30 of the 53 ponds again), lost below a quarter at any time, the
+  bonus no death of thirst. Powers: one waterhole, two leads 60 s apart
+- Tuned on eight seeds with the camera on the herd. With no powers the herd was lost on 8 of 8
+  (a ninth of it left at second 540 on average, 18 of 20 dead of thirst); digging and leading
+  once its water ran low won 8 of 8 (0.72 left, 4 of thirst), and acting only once the water was
+  all but gone 7 of 8 (0.83, 2.6) - the one lost to foxes, which took 15 of that herd. Every pond
+  but the dug one is dry from about second 300 until the rains bring them back from about 480 (7
+  wet at 480, 20 at 510, about 28 at 540), and the deer die from the end of summer into autumn,
+  about 270 s after their last drink: decided at the start of autumn, as first
+  planned, the herd with no powers still had 85 % and lost it in the next two minutes. Ponds
+  starting at 0.7 left the powers no lever (the same with them as without); autumn rains of 0.6
+  instead of 0.2 won 6 of 8 without them; ponds at 0.35 left the dug pond the only water on the
+  map from second 190, every herd came to it, ate the grass round it to nothing and starved
+  there (17 of 20 of the own herd), being too hungry to move pastures. The drought takes the
+  whole species down with it: about 250 deer at second 360, 45-115 at second 600
 
 ## Agent Model
 
@@ -1523,6 +1576,12 @@ millisecond setting squeezed to zero.
   them. A save from before the powers takes them as shipped
   (`ConfigLoader.with_shipped_presentation()`).
 
+### `scenarios.json`
+
+- Each scenario: `label` and `brief` for the start page, `seed`, the setup options it names
+  (`selection`), a `patch` over the bundle and the `challenge` the runner keeps score by (see
+  Scenarios). The order of `order` is the page's.
+
 ### `presets.json`
 
 - The setup screen's option groups, each a patch over the base configs. The map sizes are the
@@ -1622,8 +1681,17 @@ Current suites cover:
   own patience until its time runs out, and arriving ends the walk; members up to hunger 70
   following it and a herd moving by itself leaving one at 60 to eat; its sleeping part going,
   a thirsty one drinking first, where `follow_asleep` keeps a herd moving by itself; both halves
-  of a split led on; a flock, a missing herd, off the map, a cliff and too far refused; the walk
+  of a split led on; a flock, a missing herd, off the map, a cliff, too far and a walled-in goal
+  refused; the walk
   saved; a fed awake herd arriving within half a minute; and the feed telling of it
+- scenarios (`ScenarioTests`): «Долгая сушь» offered and told in Russian; its bundle taking the
+  scenario's map size over the player's, the player's look, the same ground whatever the style,
+  its water merged over the shipped water and its powers over the shipped powers, and a plain
+  world having none of it; the world it begins in summer, in a drought, half full, with its
+  powers; the own herd nearest the middle, a split half still its own, counted asleep; its deaths
+  by cause and another herd's not; the bonus lost to one death of thirst, the scenario lost
+  under a quarter with the open goals settled and `finished` once; the result on the very tick
+  autumn begins, or `days` into it; and the score saved, the starting count not taken again
 - the player's orders (`PlayerCommandTests`): an order carried out on the tick it was handed
   to, with its event and journal entry on that tick; the same order on the worker thread and
   inline leaving the worlds alike; charges and cooldowns in simulated time, kept through a
