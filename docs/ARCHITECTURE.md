@@ -349,7 +349,9 @@ Current snapshot categories:
   `exempt_hunger` was added against. And one the herd can find its way to: the order runs the
   route search its members walk by, from the herd's centre (`TerrainSystem.find_path()`), and a
   goal past a ridge it finds no way round is refused (`no_route`) - led there, the herd stood
-  facing the ridge until the walk timed out
+  facing the ridge until the walk timed out - and so is one it finds only a long way round, the
+  route's cost past `powers.lead_herd.max_route` (3600; `too_far`): a goal 1000 away in a line
+  was 5800 away round a ridge, and the herd walked itself to nothing getting there
 - A player's goal is the player's: `_update_herd_migrations()` ends it neither for the herd's
   own patience (`give_up_seconds`) nor for poor grass at the goal - in winter or a drought it
   would fail that within one pass - but only on arrival, when the herd settles to eat as after
@@ -358,7 +360,9 @@ Current snapshot categories:
   awake (`herd_migration_goal()`) and asleep. Its sleeping parts go too, whatever
   `follow_asleep` says, once they have drunk: arrival is judged by the centre of the whole herd.
   Awake, a led member walks (`Herbivore._follow_player_lead()`) instead of resting, wandering or
-  grazing in place, unless it is drinking or hungry past the threshold - a herd moving on by
+  grazing in place, unless it is drinking or hungry past the threshold, or tired: it rests when it
+  chooses to until it has `LED_REST_SHARE` (0.6) of its strength back - driven past its rest, a
+  herd led 1000 away had no strength left within 40 s - a herd moving on by
   itself only drifts that way when its members have nothing else to do, and a fed led herd
   stood still. A herd that splits while led takes the goal into both halves; one moving on by
   itself lets its new half choose, as it always did
@@ -418,7 +422,9 @@ Current snapshot categories:
 - Tuned on eight seeds with the camera on the herd. With no powers the herd was lost on 8 of 8
   (a ninth of it left at second 540 on average, 18 of 20 dead of thirst); digging and leading
   once its water ran low won 8 of 8 (0.72 left, 4 of thirst), and acting only once the water was
-  all but gone 7 of 8 (0.83, 2.6) - the one lost to foxes, which took 15 of that herd. Every pond
+  all but gone 7 of 8 (0.83, 2.6) - the one lost to foxes, which took 15 of that herd. Once a led
+  herd rested when tired and a lead a long way round was refused, both won 8 of 8 (0.82 left and
+  2.4 of thirst; 0.84 and 1.9), the bonus kept on 4 and 3 of the eight. Every pond
   but the dug one is dry from about second 300 until the rains bring them back from about 480 (7
   wet at 480, 20 at 510, about 28 at 540), and the deer die from the end of summer into autumn,
   about 270 s after their last drink: decided at the start of autumn, as first
@@ -1726,8 +1732,8 @@ Current suites cover:
   own patience until its time runs out, and arriving ends the walk; members up to hunger 70
   following it and a herd moving by itself leaving one at 60 to eat; its sleeping part going,
   a thirsty one drinking first, where `follow_asleep` keeps a herd moving by itself; both halves
-  of a split led on; a flock, a missing herd, off the map, a cliff, too far and a walled-in goal
-  refused; the walk
+  of a split led on; a flock, a missing herd, off the map, a cliff, too far, a walled-in goal and
+  one only a long way round refused; a tired member resting and walking on once rested; the walk
   saved; a fed awake herd arriving within half a minute; and the feed telling of it
 - the steward's interface (`StewardUiTests`): the buttons' charges, wait and greying, the power
   aimed pressed and the line above it, the sandbox's buttons without charges; aiming a waterhole

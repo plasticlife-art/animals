@@ -159,7 +159,10 @@ func _open_scenario_brief() -> void:
 	var herd := PowerAim.herd_to_lead(simulation_manager)
 	if not herd.is_empty():
 		var center: Vector2 = herd["center"]
+		# The herd right of the brief, where the screen is free; «Начать» brings it to the middle.
 		world_camera.frame_world_rect(Rect2(center - SCENARIO_FRAME * 0.5, SCENARIO_FRAME))
+		var aside := Vector2(world_camera.get_visible_screen_rect().size.x * 0.3, 0.0)
+		world_camera.move_to_world_position(WorldProjection.to_world(world_camera.global_position - aside))
 		var nearest = null
 		for agent in simulation_manager.world_state.get_living_agents():
 			if agent.is_alive and agent.species_type == runner.species and runner.groups.has(int(agent.group_id)) \
@@ -179,8 +182,13 @@ func _on_scenario_finished(won: bool, summary: Dictionary) -> void:
 
 
 func _close_result_window() -> void:
+	var was_brief: bool = result_window.mode() == "brief"
 	result_window.close()
 	_sync_result_window()
+	if was_brief:
+		var herd := PowerAim.herd_to_lead(simulation_manager)
+		if not herd.is_empty():
+			world_camera.move_to_world_position(herd["center"])
 
 
 ## The game stands still under the brief and the result, and the season card waits; closing

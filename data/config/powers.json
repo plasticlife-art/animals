@@ -1,5 +1,5 @@
 {
-  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them.",
+  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost).",
   "powers": {
     "dig_pond": {
       "charges": -1,
@@ -11,6 +11,7 @@
       "charges": -1,
       "cooldown_seconds": 60.0,
       "max_distance": 2400.0,
+      "max_route": 3600.0,
       "timeout_seconds": 300.0,
       "exempt_hunger": 70.0
     }

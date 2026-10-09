@@ -4,6 +4,8 @@ extends AgentBase
 const AgentAIState := preload("res://scripts/agents/ai/agent_ai_state.gd")
 const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
 const HerbivoreAIScript := preload("res://scripts/agents/ai/herbivore_ai.gd")
+## The share of its strength a tired member the player leads rests back to before walking on.
+const LED_REST_SHARE := 0.6
 
 var _ai_controller
 var _escape_target_tick: int = -1
@@ -113,12 +115,16 @@ func tick(world, delta: float) -> void:
 
 
 ## Led by the player (`WorldState.is_led_by_player()`), a member walks to its herd's goal whatever
-## else it would do - rest, wander, graze in place - unless it is drinking, or hunger past
-## `powers.lead_herd.exempt_hunger` sends it to grass (`herd_migration_goal()` is null then).
-## A herd moving on by itself only drifts that way, when its members have nothing else to do.
+## else it would do - rest, wander, graze in place - unless it is drinking, hunger past
+## `powers.lead_herd.exempt_hunger` sends it to grass (`herd_migration_goal()` is null then), or it
+## is tired: it rests when it chooses to, until it has `LED_REST_SHARE` of its strength back, and
+## walks on. Driven past its rest, a led herd walked itself to nothing. A herd moving on by itself
+## only drifts that way, when its members have nothing else to do.
 func _follow_player_lead(world, delta: float, neighbors: Array) -> bool:
 	if ai_state != AgentAIState.ALIVE or current_action == AgentAction.DRINK \
 			or not world.is_led_by_player(species_type, group_id):
+		return false
+	if current_action == AgentAction.REST and energy < float(metabolism.get("max_energy", 100.0)) * LED_REST_SHARE:
 		return false
 	return _migrate(world, delta, neighbors)
 

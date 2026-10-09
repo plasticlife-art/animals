@@ -15,6 +15,12 @@ extends SceneTree
 ## the original had cached and some animals reach grass sooner. Measured at a
 ## 200-tick save: hunger drifts about 6 points over ten ticks, then converges.
 ## Populations, deaths and carcasses track throughout.
+##
+##   Godot --headless --path . --script res://scripts/dev/check_save.gd -- [ticks] [after] [lod|off] [scenario_id]
+##
+## With a scenario, the world is the scenario's; half way the player digs a waterhole by the own
+## herd and leads it off, and the load must bring back the score, the player's state - the pond,
+## the charges, the walk - and every pond's level exactly.
 
 const WALL_CLOCK_FIELDS := [
 	"action_select_ms", "ai_context_build_ms", "grass_search_ms", "pathfind_ms",
@@ -31,10 +37,16 @@ func _initialize() -> void:
 	var ticks := int(args[0]) if args.size() > 0 else 400
 	var after := int(args[1]) if args.size() > 1 else 200
 	var lod_enabled := args.size() > 2 and args[2] == "lod"
+	var scenario_id := str(args[3]) if args.size() > 3 else ""
 
 	var selection := ConfigLoader.default_selection()
-	var original = _make_manager(selection, lod_enabled)
-	for _i in range(ticks):
+	var original = _make_manager(selection, lod_enabled, scenario_id)
+	if scenario_id != "":
+		selection = original.config_bundle["challenge"]["selection"]
+	var halfway := int(float(ticks) * 0.5)
+	for tick in range(ticks):
+		if scenario_id != "" and tick == halfway:
+			_use_powers(original)
 		original.step_once()
 
 	var path := "user://saves/check.dat"
@@ -48,7 +60,7 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	var restored = _make_manager(selection, lod_enabled)
+	var restored = _make_manager(selection, lod_enabled, "")
 	if not SaveSystem.restore(restored, data):
 		print("FAIL restore rejected the save")
 		quit(1)
@@ -63,6 +75,8 @@ func _initialize() -> void:
 	for key in left_metrics.keys():
 		if str(left_metrics[key]) != str(right_metrics.get(key)):
 			raw_mismatch.append("%s: %s vs %s" % [key, left_metrics[key], right_metrics.get(key)])
+	if scenario_id != "":
+		raw_mismatch.append_array(_compare_player(original, restored))
 	if raw_mismatch.is_empty():
 		print("PASS agent state at load (%d metrics)" % left_metrics.size())
 	else:
@@ -102,13 +116,60 @@ func _initialize() -> void:
 	quit(1 if failures > 0 else 0)
 
 
-func _make_manager(selection: Dictionary, lod_enabled: bool):
-	var bundle := ConfigLoader.load_config_bundle(selection)
+func _make_manager(selection: Dictionary, lod_enabled: bool, scenario_id: String):
+	var bundle := ConfigLoader.load_scenario_bundle(scenario_id) if scenario_id != "" \
+		else ConfigLoader.load_config_bundle(selection)
 	bundle["debug"]["lod"]["enabled"] = lod_enabled
 	var manager = preload("res://scripts/core/simulation_manager.gd").new()
 	root.add_child(manager)
-	manager.initialize(bundle, int(bundle["world"].get("seed", 3)))
+	var seed_value := int(bundle["challenge"]["seed"]) if bundle.has("challenge") else int(bundle["world"].get("seed", 3))
+	manager.initialize(bundle, seed_value)
 	return manager
+
+
+## A waterhole dug beside the own herd and the herd led off, as a player would.
+func _use_powers(manager) -> void:
+	var world = manager.world_state
+	var herd := PowerAim.herd_to_lead(manager)
+	if herd.is_empty():
+		print("  no herd to use the powers on")
+		return
+	var center: Vector2 = herd["center"]
+	var aim := PowerAim.new()
+	aim.power = "dig_pond"
+	for ring in range(1, 12):
+		var placed := false
+		for index in range(ring * 6):
+			var spot: Vector2 = center + Vector2.from_angle(TAU * float(index) / float(ring * 6)) * world.player_pond_radius() * 1.5 * float(ring)
+			if world.dig_pond_refusal(spot) == "":
+				manager.enqueue_command("dig_pond", {"position": spot})
+				placed = true
+				break
+		if placed:
+			break
+	aim.power = "lead_herd"
+	for index in range(12):
+		var goal: Vector2 = center + Vector2.from_angle(TAU * float(index) / 12.0) * 700.0
+		if str(aim.preview(manager, goal).get("reason", "x")) == "":
+			manager.enqueue_command("lead_herd", {"species": herd["species"], "group_id": herd["group_id"], "position": goal})
+			break
+
+
+## The score, the player's state and every pond's level, which must come back exactly.
+func _compare_player(a, b) -> Array:
+	var mismatches: Array = []
+	var pairs := {
+		"scenario": [a.scenario.export_state(), b.scenario.export_state()],
+		"player": [a.world_state.player.export_state(), b.world_state.player.export_state()],
+		"water": [a.world_state.water.export_state(), b.world_state.water.export_state()],
+	}
+	for key in pairs:
+		if var_to_str(pairs[key][0]) != var_to_str(pairs[key][1]):
+			mismatches.append("%s differs after load" % key)
+	print("  player: %d ponds, journal %s, scenario %s (baseline %d)" % [b.world_state.player.ponds.size(),
+		b.world_state.player.journal.map(func(entry: Dictionary) -> String: return "%s %s" % [entry["type"], entry["result"].get("ok", false)]),
+		b.scenario.result if b.scenario.result != "" else "running", b.scenario.baseline])
+	return mismatches
 
 
 ## Populations after a long run-on, with a tolerance rather than an equality.

@@ -17,6 +17,9 @@ const CIRCLE_POINTS := 48
 var simulation_manager = null
 var aim := PowerAim.new()
 var input_enabled: bool = true
+## Where the aim is drawn instead of the pointer, in canvas space: for a capture that must not
+## move the player's cursor. INF follows the pointer.
+var pointer_override := Vector2.INF
 
 
 func bind_manager(manager) -> void:
@@ -70,7 +73,8 @@ func _process(_delta: float) -> void:
 func _draw() -> void:
 	if not aim.is_armed() or simulation_manager == null or simulation_manager.world_state == null:
 		return
-	var shown := aim.preview(simulation_manager, WorldProjection.to_world(get_global_mouse_position()))
+	var pointer := pointer_override if pointer_override.is_finite() else get_global_mouse_position()
+	var shown := aim.preview(simulation_manager, WorldProjection.to_world(pointer))
 	if shown.is_empty():
 		return
 	var color := OK_COLOR if str(shown["reason"]) == "" else BAD_COLOR

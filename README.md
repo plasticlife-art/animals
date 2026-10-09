@@ -537,6 +537,18 @@ The arguments are the scenario, the rule (`none`, `dig`, `lead`, `both`, with an
 `overview`), the seed (-1 for the scenario's own), how many seconds to watch on after the
 result, the report, and any `key=value` overrides of the scenario's bundle.
 
+Three more checks of a scenario, from the real code paths:
+
+- `check_save.gd -- 600 200 lod long_drought` digs a waterhole by the own herd and leads it off
+  half way, saves, loads into a second manager, and requires the score, the player's state and
+  every pond's level back exactly (populations after a run-on within tolerance)
+- `check_autosave.gd -- write scenario`, then `-- resume scenario`, starts «Долгая сушь» from
+  the start page, waits for the autosave in a scenario slot, and resumes it with its score and
+  without its brief. The write mode deletes every slot, so keep a copy of the player's saves
+- `steward_capture.gd -- OUTDIR` (windowed, kept on top) photographs the brief, play, aiming a
+  waterhole and a lead, the walk (also as a GIF), the result and the interface at 125 %; its
+  saves go to a scratch directory and the player's settings come back as they were
+
 ## Current Limitations
 
 - Heredity is four multipliers with fixed costs, not a genome; in sleeping sectors it decides

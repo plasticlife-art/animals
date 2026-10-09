@@ -39,6 +39,7 @@ var message: String = ""
 ## runs once per cell the pointer enters, not every frame.
 var _route_cells := Vector2i(-1, -1)
 var _route_found := false
+var _route_cost := 0.0
 
 
 func is_armed() -> bool:
@@ -153,5 +154,9 @@ func _lead_refusal(manager, herd: Dictionary, goal: Vector2) -> String:
 	var cells := Vector2i(world.terrain_system.get_index_from_position(start), world.terrain_system.get_index_from_position(goal))
 	if cells != _route_cells:
 		_route_cells = cells
-		_route_found = bool(world.terrain_system.find_path(start, goal).get("reachable", false))
-	return "" if _route_found else "no_route"
+		var route: Dictionary = world.terrain_system.find_path(start, goal)
+		_route_found = bool(route.get("reachable", false))
+		_route_cost = float(route.get("cost", 0.0))
+	if not _route_found:
+		return "no_route"
+	return "too_far" if _route_cost > float(world.player.settings("lead_herd").get("max_route", INF)) else ""

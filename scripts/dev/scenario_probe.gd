@@ -128,7 +128,7 @@ func _play(manager, runner, herd: Dictionary, policy: String) -> Dictionary:
 				"water": drinking}
 	if policy in ["lead", "both"] and world.player.refusal("lead_herd", now) == "" \
 			and not world.is_led_by_player(runner.species, int(herd["group"])):
-		var goal := _lead_goal(world, center)
+		var goal := _lead_goal(manager, center)
 		if goal.is_finite():
 			manager.enqueue_command("lead_herd", {"species": runner.species, "group_id": int(herd["group"]), "position": goal})
 			return {"time": snappedf(now, 0.1), "type": "lead_herd", "group": int(herd["group"]),
@@ -200,29 +200,27 @@ func _dig_spot(world, center: Vector2) -> Vector2:
 	return Vector2.INF
 
 
-## The shore, on the herd's side, of the fullest wet pond within reach of a lead; INF with none.
-func _lead_goal(world, center: Vector2) -> Vector2:
+## The shore, on the herd's side, of the fullest wet pond a lead would be accepted to - in reach,
+## and with a way there not too long (`PowerAim`, as the player's aim asks); INF with none.
+func _lead_goal(manager, center: Vector2) -> Vector2:
+	var world = manager.world_state
 	var reach := float(world.player.settings("lead_herd").get("max_distance", 2400.0))
-	var best: Dictionary = {}
-	var best_level := -1.0
+	var ponds: Array = []
 	for pond in world.water_sources:
 		var index := int(pond.get("index", -1))
-		if world.water.is_dry(index):
+		if world.water.is_dry(index) or center.distance_to(pond["position"]) > reach:
 			continue
-		var position: Vector2 = pond["position"]
-		if center.distance_to(position) > reach * 0.9:
-			continue
-		var level := float(world.water.levels[index]) * pow(float(pond.get("bank_radius", 1.0)), 2.0)
-		if level > best_level:
-			best_level = level
-			best = pond
-	if best.is_empty():
-		return Vector2.INF
-	var shore: Vector2 = best["position"] + (center - Vector2(best["position"])).normalized() * float(best.get("bank_radius", 0.0)) * 1.2
-	for step in range(6):
-		var goal := shore.lerp(center, float(step) * 0.08)
-		if world.terrain_system.is_walkable_position(goal) and world.bounds.has_point(goal):
-			return goal
+		ponds.append([float(world.water.levels[index]) * pow(float(pond.get("bank_radius", 1.0)), 2.0), index, pond])
+	ponds.sort_custom(func(a, b) -> bool: return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	var aim := PowerAim.new()
+	aim.power = "lead_herd"
+	for entry in ponds.slice(0, 6):
+		var pond: Dictionary = entry[2]
+		var shore: Vector2 = pond["position"] + (center - Vector2(pond["position"])).normalized() * float(pond.get("bank_radius", 0.0)) * 1.2
+		for step in range(6):
+			var goal := shore.lerp(center, float(step) * 0.08)
+			if str(aim.preview(manager, goal).get("reason", "x")) == "":
+				return goal
 	return Vector2.INF
 
 

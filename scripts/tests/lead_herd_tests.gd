@@ -21,6 +21,7 @@ func run(a) -> void:
 	_test_the_sleeping_part_follows(a)
 	_test_a_split_takes_the_goal_along(a)
 	_test_bad_orders_are_refused(a)
+	_test_a_tired_member_rests(a)
 	_test_the_walk_is_saved(a)
 	_test_awake_deer_walk_there(a)
 	_test_the_feed_tells_of_it(a)
@@ -170,9 +171,40 @@ func _test_bad_orders_are_refused(a) -> void:
 	for index in walled:
 		terrain._walkable[index] = 1
 	terrain._refresh_navigation_cache()
-	a.equal(reasons, ["not_a_herd", "no_herd", "off_map", "blocked", "too_far", "no_route"],
-		"a flock, a herd that is not there, off the map, a cliff, too far and a walled-in goal are refused")
+	# A ridge across the map with its gap far to the south: the goal is near, the way round is not.
+	var ridge: Array = []
+	var ridge_column: int = terrain.get_cell_coords(terrain.get_index_from_position(START.lerp(GOAL, 0.5))).x
+	for row in range(terrain.rows - 2):
+		var index: int = row * terrain.cols + ridge_column
+		if terrain.is_walkable_index(index):
+			terrain._walkable[index] = 0
+			ridge.append(index)
+	terrain._refresh_navigation_cache()
+	terrain._path_cache.clear()
+	reasons.append(str(_lead(manager, GOAL).result.get("reason", "")))
+	for index in ridge:
+		terrain._walkable[index] = 1
+	terrain._refresh_navigation_cache()
+	terrain._path_cache.clear()
+	a.equal(reasons, ["not_a_herd", "no_herd", "off_map", "blocked", "too_far", "no_route", "too_far"],
+		"a flock, a herd that is not there, off the map, a cliff, too far, a walled-in goal and one a long way round are refused")
 	a.is_true(world.herd_migrations.is_empty() and world.player.led_herds.is_empty(), "and none of them leads anything")
+	Helpers.destroy_manager(manager)
+
+
+## A tired led member rests when it chooses to and walks on once rested: driven past its rest,
+## a led herd walked itself to nothing.
+func _test_a_tired_member_rests(a) -> void:
+	var manager = _world(9910)
+	var world = manager.world_state
+	var herd: Array = Helpers.spawn_herd(world, START, 4, 0)
+	_lead(manager, GOAL)
+	var deer = herd[0]
+	deer.current_action = &"rest"
+	deer.energy = 20.0
+	a.is_true(not deer._follow_player_lead(world, manager.tick_duration, []), "tired and resting: it rests")
+	deer.energy = 80.0
+	a.is_true(deer._follow_player_lead(world, manager.tick_duration, []), "rested: it walks on")
 	Helpers.destroy_manager(manager)
 
 
