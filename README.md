@@ -551,6 +551,10 @@ Three more checks of a scenario, from the real code paths:
 
 ## Current Limitations
 
+- The speeds above x3 are not reached in play. The game steps one tick a frame on the worker
+  thread (60 ticks a second at 60 frames, about 3.3 times real time), and a tick of «Долгая сушь»
+  takes 16.6 ms on average (p95 23.4) on the reference MacBook Air, the default large map 13.8 ms:
+  x4 and x10 both run at about x3.3
 - Heredity is four multipliers with fixed costs, not a genome; in sleeping sectors it decides
   only who dies, not how many.
 - Terrain and shadow art are placeholders, and the isometric style has no real terrain art. The

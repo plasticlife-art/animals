@@ -418,13 +418,17 @@ Current snapshot categories:
   0.9 as shipped had a herd of 20 lose up to 13 to old age in twelve minutes, whatever the
   player did). Goals: half the herd at autumn plus a day and a half (`days` 1.5, second 540, when
   the rains have filled about 30 of the 53 ponds again), lost below a quarter at any time, the
-  bonus no death of thirst. Powers: one waterhole, two leads 60 s apart
+  bonus no death of thirst. Powers: one waterhole, filled only half (`start_level` 0.5, against
+  0.8 in the sandbox), two leads 60 s apart
 - Tuned on eight seeds with the camera on the herd. With no powers the herd was lost on 8 of 8
   (a ninth of it left at second 540 on average, 18 of 20 dead of thirst); digging and leading
   once its water ran low won 8 of 8 (0.72 left, 4 of thirst), and acting only once the water was
   all but gone 7 of 8 (0.83, 2.6) - the one lost to foxes, which took 15 of that herd. Once a led
   herd rested when tired and a lead a long way round was refused, both won 8 of 8 (0.82 left and
-  2.4 of thirst; 0.84 and 1.9), the bonus kept on 4 and 3 of the eight. Every pond
+  2.4 of thirst; 0.84 and 1.9), the bonus kept on 4 and 3 of the eight - when to dig did not
+  matter. With the waterhole filled to half, acting early won 4 of 8 (0.44 left, 11.4 of thirst):
+  dug at second 126 on average it was drunk dry by the end of summer; acting late (dug at 173)
+  won 7 of 8 (0.77, 5.0). Filled to 0.6, 6 and 7 of 8. Every pond
   but the dug one is dry from about second 300 until the rains bring them back from about 480 (7
   wet at 480, 20 at 510, about 28 at 540), and the deer die from the end of summer into autumn,
   about 270 s after their last drink: decided at the start of autumn, as first
@@ -1074,7 +1078,9 @@ Utility actions inside `alive`:
   mode. A paused game aims nothing
 - `GoalChips`, above the powers: a chip a goal with its numbers - «Ваше стадо: 17 из 20, нужно 10
   · ещё 2:15», «Не меньше 5 голов», «Ни одной смерти от жажды» - in ink while open, amber while
-  it would fail if decided now, green met, red failed; the scenario's own words in the tooltip
+  it would fail if decided now, green met, red failed; the scenario's own words in the tooltip.
+  Last, the own herd's water, its members' mean awake and asleep («Вода стада: 64»), amber below
+  60 and red below 30: when to act is read off it
 - `ResultWindow`, in the middle: before play the brief - the scenario, what it asks, its goals,
   «Начать» - over a paused game, with the camera framing the player's herd
   (`GameCamera.frame_world_rect()`, near enough that it is awake) and one of it selected; at the
@@ -1208,7 +1214,9 @@ Utility actions inside `alive`:
   names between `district_zoom_min` and `district_zoom_max`, each faded over a band rather than
   popped. Constant size on screen, outlined, unshaded so night leaves them legible, placed through
   `WorldProjection` at the ground's height. Redraws when the camera moves, and once a second
-  while ponds have levels: a dry pond's name is dimmed (`DRY_DIM`)
+  while ponds have levels: a pond's name then says how full it is («Тихая заводь · 35 %»,
+  `pond_text()`), so where to lead a herd and when to dig is read off the map, and a dry pond's
+  name is dimmed (`DRY_DIM`) and says so («· сухо»)
 
 ### `EcologyStrip`
 

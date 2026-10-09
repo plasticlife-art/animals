@@ -6,8 +6,9 @@ extends Node2D
 ## band of zoom rather than popping. The text keeps its size on screen whatever the zoom, has
 ## a dark outline so it reads on grass and on water, and is drawn unshaded so the night tint
 ## leaves it legible. Placed through `WorldProjection`, so in the isometric view a name stands
-## at its ground's height. Hidden in photo mode. A pond that has dried (`WaterSystem`) keeps its
-## name, dimmed (`DRY_DIM`).
+## at its ground's height. Hidden in photo mode. With levels on (`WaterSystem`) a pond's name says
+## how full it is - «Тихая заводь · 35 %», where to lead a herd and when to dig is read off the
+## map - and one that has dried keeps its name, dimmed (`DRY_DIM`), «· сухо».
 
 ## Zoom is the camera's magnification: larger is closer. Ponds fade in from `pond_zoom` and
 ## are full at 1.25 times it; districts are full between their two bounds and fade over a
@@ -113,7 +114,7 @@ func _draw() -> void:
 				var shade := colour
 				if dry:
 					shade.a *= DRY_DIM
-				_label(pond["position"], int(pond["level"]), str(pond["name"]), int(_config["pond_font_size"]), shade,
+				_label(pond["position"], int(pond["level"]), pond_text(str(pond["name"]), water, index), int(_config["pond_font_size"]), shade,
 					float(strength[0]) * (DRY_DIM if dry else 1.0), zoom)
 	if float(strength[1]) > 0.01:
 		var colour := _colour("district_color")
@@ -122,6 +123,15 @@ func _draw() -> void:
 			if view.has_point(district["center"]):
 				_label(district["center"], int(district["level"]), str(district["name"]),
 					int(_config["district_font_size"]), colour, float(strength[1]), zoom)
+
+
+## A pond's name with how full it is, while ponds have levels.
+static func pond_text(name: String, water, index: int) -> String:
+	if water == null or not water.enabled or index < 0 or index >= water.levels.size():
+		return name
+	if water.is_dry(index):
+		return "%s · сухо" % name
+	return "%s · %d %%" % [name, roundi(float(water.levels[index]) * 100.0)]
 
 
 func _label(position: Vector2, level: int, text: String, font_size: int, colour: Color, strength: float,

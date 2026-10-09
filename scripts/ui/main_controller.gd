@@ -221,7 +221,7 @@ func _refresh_powers() -> void:
 	if world == null or powers_bar == null:
 		return
 	powers_bar.refresh(world.player, simulation_manager.simulation_time, power_targeting.aim.power, power_targeting.aim.message)
-	goal_chips.refresh(simulation_manager.scenario, simulation_manager.simulation_time)
+	goal_chips.refresh(simulation_manager.scenario, simulation_manager.simulation_time, world)
 
 
 func _enter_photo_mode() -> void:

@@ -87,6 +87,8 @@ func _test_the_scenario_bundle(a) -> void:
 	var powers: Dictionary = top.powers.powers
 	a.is_true(int(powers.dig_pond.charges) == 1 and int(powers.lead_herd.charges) == 2, "one waterhole, two walks")
 	a.near(float(powers.dig_pond.radius_of_mean), 1.0, 0.0001, "the powers' own settings kept")
+	a.is_true(float(powers.dig_pond.start_level) < float(ConfigLoaderScript.load_config_bundle().powers.powers.dig_pond.start_level),
+		"its waterhole filled less than the sandbox's")
 	a.is_true(float(top.balance.lifecycle.founder_age_share) < 0.9 and top.balance.lifecycle.size() > 1,
 		"younger founders, the rest of the lifecycle as shipped")
 	var plain: Dictionary = ConfigLoaderScript.load_config_bundle()

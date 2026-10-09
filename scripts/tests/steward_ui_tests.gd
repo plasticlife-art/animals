@@ -32,6 +32,7 @@ func run(a) -> void:
 	_test_aiming_a_waterhole(a)
 	_test_aiming_a_herd(a)
 	_test_the_goals_chips(a)
+	_test_ponds_say_how_full(a)
 	_test_the_brief_and_the_result(a)
 	_test_the_scenarios_page(a)
 	_test_every_word_is_russian(a)
@@ -159,8 +160,32 @@ func _test_the_goals_chips(a) -> void:
 	var chips = GoalChips.new()
 	chips.refresh(runner, manager.simulation_time)
 	a.equal(chips.get_child_count(), 3, "a chip a goal")
+	for index in range(6, 10):
+		herd[index].thirst = 70.0
+	var water := GoalChips.herd_water(manager.world_state, runner)
+	a.near(water, 30.0, 0.5, "the herd's water: the mean of the four left (%.1f)" % water)
+	chips.refresh(runner, manager.simulation_time, manager.world_state)
+	a.equal(chips.get_child_count(), 4, "and a chip for it")
+	a.is_true(str(GoalChips.water_chip(64.0)["text"]) == "Вода стада: 64" and str(GoalChips.water_chip(64.0)["state"]) == "pending",
+		"enough water: ink")
+	a.is_true(str(GoalChips.water_chip(45.0)["state"]) == "warning" and str(GoalChips.water_chip(20.0)["state"]) == "failed",
+		"low: amber, critical: red")
 	chips.free()
 	Helpers.destroy_manager(manager)
+
+
+## A pond's name on the map says how full it is while ponds have levels, and that it is dry.
+func _test_ponds_say_how_full(a) -> void:
+	var water = WaterSystem.new()
+	var sources := [{"position": Vector2(0.0, 0.0), "radius": 100.0}, {"position": Vector2(500.0, 0.0), "radius": 100.0}]
+	water.initialize({"enabled": true, "initial_level": 0.35}, sources, 840.0, 120.0, true, 1)
+	a.equal(PlaceLabels.pond_text("Тихая заводь", water, 0), "Тихая заводь · 35 %", "how full")
+	water.levels[1] = 0.0
+	water._settle(1)
+	a.equal(PlaceLabels.pond_text("Тёмный плёс", water, 1), "Тёмный плёс · сухо", "dry")
+	var still = WaterSystem.new()
+	still.initialize({"enabled": false}, [{"position": Vector2.ZERO, "radius": 100.0}], 840.0, 120.0, true, 1)
+	a.equal(PlaceLabels.pond_text("Тихая заводь", still, 0), "Тихая заводь", "the name alone while ponds never change")
 
 
 func _test_the_brief_and_the_result(a) -> void:
@@ -235,6 +260,9 @@ func _test_every_word_is_russian(a) -> void:
 	words.append_array(PowersBar.DESCRIPTIONS.values())
 	words.append_array(ResultWindow.DEFAULT_TITLES.values())
 	words.append(GoalChips.heads_genitive(21))
+	words.append(str(GoalChips.water_chip(50.0)["text"]))
+	words.append(str(GoalChips.water_chip(50.0)["tooltip"]))
+	words.append(PlaceLabels.pond_text("Тихая заводь", null, 0))
 	words.append(GoalChips.heads_genitive(11))
 	var scenarios: Dictionary = ConfigLoaderScript._load_json(ConfigLoaderScript.SCENARIOS_FILE).get("scenarios", {})
 	for scenario in scenarios.values():

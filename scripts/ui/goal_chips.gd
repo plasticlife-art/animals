@@ -5,7 +5,14 @@ extends HBoxContainer
 ## стадо: 17 из 20, нужно 10 · ещё 2:15», «Не меньше 5 голов», «Ни одной смерти от жажды». Ink
 ## while open, amber while it would fail if decided now, green once met, red once failed; the
 ## goal as the scenario words it in the tooltip. Read from the manager's score (`ScenarioRunner`).
+## Last, how much water the own herd has on average, awake and asleep - «Вода стада: 64» - amber
+## below `WATER_LOW`, red below `WATER_CRITICAL`: when to act is read off it.
 
+const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
+## The herd's water, 0 to 100, below which its chip turns amber, then red: the drink floor and the
+## thirst at which the herd is in danger (`balance.state_thresholds`).
+const WATER_LOW := 60.0
+const WATER_CRITICAL := 30.0
 const INK := {
 	"pending": Color(0.2, 0.13, 0.08),
 	"warning": Color(0.72, 0.42, 0.04),
@@ -22,10 +29,16 @@ func _init() -> void:
 	add_theme_constant_override("separation", 6)
 
 
-## The chips for `runner`'s goals at `now`; none for a world without a scenario.
-func refresh(runner, now: float) -> void:
+## The chips for `runner`'s goals at `now`, and the own herd's water in `world`; none for a world
+## without a scenario.
+func refresh(runner, now: float, world = null) -> void:
 	var goals: Array = runner.challenge.get("goals", []) if runner != null and runner.is_active() else []
-	while _chips.size() < goals.size():
+	var shown: Array = []
+	for goal in goals:
+		shown.append(chip(goal, runner, now))
+	if not goals.is_empty() and world != null:
+		shown.append(water_chip(herd_water(world, runner)))
+	while _chips.size() < shown.size():
 		var panel := PanelContainer.new()
 		panel.mouse_filter = Control.MOUSE_FILTER_PASS
 		var label := Label.new()
@@ -34,14 +47,13 @@ func refresh(runner, now: float) -> void:
 		_chips.append(panel)
 	for index in range(_chips.size()):
 		var panel: PanelContainer = _chips[index]
-		panel.visible = index < goals.size()
+		panel.visible = index < shown.size()
 		if not panel.visible:
 			continue
-		var shown := chip(goals[index], runner, now)
 		var label: Label = panel.get_child(0)
-		label.text = str(shown["text"])
-		label.add_theme_color_override("font_color", INK.get(str(shown["state"]), INK["pending"]))
-		panel.tooltip_text = str(shown["tooltip"])
+		label.text = str(shown[index]["text"])
+		label.add_theme_color_override("font_color", INK.get(str(shown[index]["state"]), INK["pending"]))
+		panel.tooltip_text = str(shown[index]["tooltip"])
 
 
 ## What one goal's chip says: `{text, state, tooltip}`, `state` one of `INK`'s keys.
@@ -79,6 +91,28 @@ static func chip(goal: Dictionary, runner, now: float) -> Dictionary:
 ## «голов» after «не меньше»: genitive, «головы» only after a one that is not eleven.
 static func heads_genitive(count: int) -> String:
 	return "головы" if count % 10 == 1 and count % 100 != 11 else "голов"
+
+
+## The own herd's water, 0 to 100, its members' mean awake and asleep; -1 with none of it left.
+static func herd_water(world, runner) -> float:
+	var thirst := 0.0
+	var members := 0
+	for group_id in runner.groups.keys():
+		var summary: Dictionary = HerdReadoutScript.summarize(world, runner.species, int(group_id))
+		thirst += float(summary["thirst"]) * float(summary["total"])
+		members += int(summary["total"])
+	return 100.0 - thirst / float(members) if members > 0 else -1.0
+
+
+static func water_chip(water: float) -> Dictionary:
+	var state := "pending"
+	if water >= 0.0 and water < WATER_CRITICAL:
+		state = "failed"
+	elif water >= 0.0 and water < WATER_LOW:
+		state = "warning"
+	return {"text": "Вода стада: %s" % ("—" if water < 0.0 else str(roundi(water))), "state": state,
+		"tooltip": "Сколько в среднем воды у вашего стада — и рядом, и вдали.
+Когда вода падает, пора к пруду: олени гибнут от жажды, когда она кончается."}
 
 
 ## «2:15»; «0:00» once past.
