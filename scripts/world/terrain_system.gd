@@ -337,7 +337,10 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 		var current_node: Vector2 = _heap_pop(open_heap)
 		var current_index: int = int(current_node.x)
 		var queued_priority: float = current_node.y
-		var current_priority: float = float(f_score.get(current_index, INF))
+		# Rounded as the heap holds it: a `Vector2` keeps 32-bit floats, `f_score` 64-bit ones.
+		# Compared unrounded, an entry whose priority had rounded up looked stale and was
+		# dropped, and a search short of the nodes it dropped called reachable goals unreachable.
+		var current_priority: float = Vector2(0.0, float(f_score.get(current_index, INF))).y
 		if current_index == -1 or queued_priority > current_priority:
 			continue
 		visited += 1

@@ -28,6 +28,7 @@ func run(a) -> void:
 	_test_static_waypoint_corridor_cache(a)
 	_test_navigation_queue_fairness(a)
 	_test_sliced_global_path_search(a)
+	_test_every_open_route_is_found(a)
 	_test_path_expansion_budget_caps_a_tick(a)
 	_test_overview_dormant_wake_policy(a)
 	_test_window_edge_stays_asleep(a)
@@ -538,6 +539,39 @@ func _test_sliced_global_path_search(a) -> void:
 		"subsequent slices finish the same saved path search")
 	a.is_true(terrain.has_cached_path_between_indices(start_index, goal_index),
 		"a completed sliced path is published through the normal cache")
+	Helpers.destroy_manager(manager)
+
+
+## The open heap holds each priority in a `Vector2`, as a 32-bit float; `f_score` holds it in
+## 64 bits. Compared unrounded, an entry whose priority rounded up was taken for stale and
+## dropped, and about half the searches across open ground - the first node dropped - came
+## back unreachable, as did routes round a ridge that left the search short of nodes.
+func _test_every_open_route_is_found(a) -> void:
+	var bundle := Helpers.build_test_bundle(88)
+	bundle["world"]["world_size"] = {"x": 1024.0, "y": 1024.0}
+	var manager = Helpers.create_manager_with(bundle, 88)
+	var terrain = manager.world_state.terrain_system
+	var asked := 0
+	var found := 0
+	for start_step in range(8):
+		for goal_step in range(8):
+			var start := Vector2(40.0 + 120.0 * start_step, 60.0 + 110.0 * ((start_step * 3) % 8))
+			var goal := Vector2(70.0 + 115.0 * goal_step, 50.0 + 120.0 * ((goal_step * 5 + 1) % 8))
+			if start.distance_to(goal) < 64.0:
+				continue
+			asked += 1
+			if bool(terrain.find_path(start, goal).get("reachable", false)):
+				found += 1
+	a.equal(found, asked, "every route across open ground is found (%d of %d)" % [found, asked])
+	# A ridge from the top to near the bottom: the way round is long, but it is there.
+	var ridge_x := 16
+	for row in range(terrain.rows - 3):
+		terrain._walkable[row * terrain.cols + ridge_x] = 0
+	terrain._refresh_navigation_cache()
+	terrain._path_cache.clear()
+	var around: Dictionary = terrain.find_path(Vector2(480.0, 100.0), Vector2(580.0, 100.0))
+	a.is_true(bool(around.get("reachable", false)) and around.get("cells", []).size() > 50,
+		"and the way round a ridge (%d cells)" % around.get("cells", []).size())
 	Helpers.destroy_manager(manager)
 
 

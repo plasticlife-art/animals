@@ -959,6 +959,8 @@ func _test_dormant_herd_skips_unreachable_water(asserts) -> void:
 			if cell != -1:
 				terrain._set_obstacle(cell, "test_wall")
 	terrain._refresh_cached_values()
+	# The searches walk the cached neighbours: without this the wall is not there for them.
+	terrain._refresh_navigation_cache()
 	var herd_position := walled + Vector2(-0.75, 3.6) * size
 	for index in range(3):
 		var animal = TestHelpers.spawn_herbivore(world, herd_position + Vector2(float(index) * 4.0, 0.0), 0)

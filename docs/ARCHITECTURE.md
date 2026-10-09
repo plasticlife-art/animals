@@ -1358,7 +1358,15 @@ millisecond setting squeezed to zero.
   to `sprint_speed` so a coarse aggregate never outruns a real animal.
 - `navigation.path_expansion_budget_per_tick` caps A* node expansions per tick across all
   global route searches, alongside the count caps `path_budget_per_tick` and
-  `max_new_paths_per_tick`. Searches run in slices of `path_expansions_per_slice` and resume on a
+  `max_new_paths_per_tick`. The open heap keeps each node's priority in a `Vector2`, a 32-bit
+  float, and a popped entry is stale only if its priority, rounded so, exceeds the node's
+  `f_score` rounded the same way: compared with the 64-bit `f_score` as it was, an entry whose
+  priority had rounded up looked stale and was dropped, and about half the searches across open
+  ground lost their first node and came back unreachable (33 of 64 in the test), as did routes
+  round a ridge. Over eight seeds of 48 minutes with LOD, fixing it raised the deer at the end
+  from 149 to 214 and their late low from 108 to 132, cut their deaths of thirst from 85 to 54
+  and herds moved pastures 286 times instead of 245; the slowest ticks did not change (p95 40
+  against 41 ms). Searches run in slices of `path_expansions_per_slice` and resume on a
   later tick, so a lower budget delays routes rather than shortening them. It replaced a
   wall-clock budget that made replays machine-dependent. The shipped 512 (about 5 ms at the
   ~10 µs per expansion measured on the reference MacBook Air) was chosen against that budget on
@@ -1595,6 +1603,8 @@ Current suites cover:
   words (the title three ways, each line, a huntress, signs, a pond's gender, the long list
   cut), the card replacing, waiting while paused, going after eight seconds and opening the
   chronicle, and «Сезоны» keeping its rows until a season closes, and saying so without a clock
+- every route across open ground found, and the long way round a ridge
+  (`P0PerformanceTests`), which the search missed while it dropped nodes to its own rounding
 - targets out of reach (`ReachTests`): navigation saying when its route search found no way to
   a walled-off goal, a deer leaving such a pond and a predator such a carcass for ones they can
   reach, the memory lapsing and keeping to a dozen, and travelling with the animal's state
