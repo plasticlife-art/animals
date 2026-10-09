@@ -17,6 +17,9 @@ var _last_groups: Dictionary = {}
 var presentation_tick: int = 0
 var presentation_time: float = 0.0
 var _grass_was_included: bool = false
+## The `PlayerState.revision` the view last received: a frame carries the player's state when
+## it moved, and a full snapshot always.
+var _sent_player_revision: int = 0
 
 func configure(source_world: WorldState, source_stats: StatsSystem, source_events: EventBus, source_rng: RandomNumberGenerator) -> void:
 	world = source_world
@@ -33,6 +36,8 @@ func configure(source_world: WorldState, source_stats: StatsSystem, source_event
 	_last_sectors = _export_presentation_sectors()
 	_last_groups = world._group_state_cache.duplicate(true)
 	_grass_was_included = false
+	# The view's world is built from this one's `export_state()`, the player's state with it.
+	_sent_player_revision = world.player.revision
 	world.resource_system.track_dirty_cells = false
 	world.resource_system.clear_dirty_cells()
 	events.event_emitted.connect(_collect_event)
@@ -40,7 +45,7 @@ func configure(source_world: WorldState, source_stats: StatsSystem, source_event
 func _collect_event(event: Dictionary) -> void:
 	pending_events.append(event)
 
-func step(delta: float, tick: int, time: float, lod: Dictionary, inspected_id: int, include_grass: bool = false, include_fear: bool = false, ground_interval_ticks: int = 0) -> Dictionary:
+func step(delta: float, tick: int, time: float, lod: Dictionary, inspected_id: int, include_grass: bool = false, include_fear: bool = false, ground_interval_ticks: int = 0, commands: Array = []) -> Dictionary:
 	pending_events.clear()
 	world.inspected_agent_id = inspected_id
 	var full_grass := include_grass and not _grass_was_included
@@ -48,7 +53,7 @@ func step(delta: float, tick: int, time: float, lod: Dictionary, inspected_id: i
 	if not include_grass:
 		world.resource_system.clear_dirty_cells()
 	var start := Time.get_ticks_usec()
-	world.step(delta, tick, time, lod)
+	world.step(delta, tick, time, lod, commands)
 	var elapsed := (Time.get_ticks_usec() - start) / 1000.0
 	stats.record_step_duration(elapsed)
 	var snapshot_started := Time.get_ticks_usec()
@@ -140,6 +145,11 @@ func _presentation_state(inspected_id: int, full: bool, include_grass: bool, ful
 	# each pond at its water's edge, and the ground layer may be off.
 	if world.water.enabled:
 		result["water"] = world.water.export_state()
+	# The player's state (`PlayerState`), whole, when it moved and in every full snapshot: a
+	# frame lost to a sequence gap must not leave the view behind for good.
+	if full or world.player.revision != _sent_player_revision:
+		result["player"] = world.player.presentation_block()
+		_sent_player_revision = world.player.revision
 	result["snapshot_counts"] = {"agents": records.size(),
 		"agent_removals": agent_removals.size(),
 		"carcasses": carcass_delta.upserts.size(),

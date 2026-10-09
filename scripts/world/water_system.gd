@@ -182,12 +182,16 @@ func export_state() -> Dictionary:
 	return {"levels": levels.duplicate(), "dry": dry.duplicate()}
 
 
-## A save's levels; a save from before there were any keeps every pond full.
+## A save's levels, or a worker frame's; a save from before there were any keeps every pond
+## full. Levels for another number of ponds than this world has are not applied, and said so:
+## the ponds the player dug must be in place first (`WorldState._add_pond_source()`).
 func import_state(data: Dictionary) -> void:
 	var saved_levels = data.get("levels", null)
 	var saved_dry = data.get("dry", null)
-	if saved_levels == null or saved_dry == null or saved_levels.size() != levels.size() \
-			or saved_dry.size() != dry.size():
+	if saved_levels == null or saved_dry == null:
+		return
+	if saved_levels.size() != levels.size() or saved_dry.size() != dry.size():
+		push_warning("Water levels for %d ponds, this world has %d; not applied." % [saved_levels.size(), levels.size()])
 		return
 	levels = PackedFloat32Array(saved_levels)
 	dry = PackedByteArray(saved_dry)

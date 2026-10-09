@@ -277,6 +277,38 @@ Current snapshot categories:
 - inherited traits: `trait_<name>_<species>`, each trait's mean over the species' awake and
   sleeping animals (1.0 with none left, or without heredity)
 
+### Player orders (`PlayerCommands`, `PlayerState`)
+
+- The player acts on the world through orders: `SimulationManager.enqueue_command(type,
+  params)` queues `{seq, type, params}` (`PlayerCommands.make()`, the params deep-copied) on
+  the main thread and returns its number. The queue goes to the tick being launched - into
+  `step_once()`, or into the worker's job under its mutex and from there as an argument to
+  `SimulationWorker.step()` - and `WorldState.step(..., commands)` carries the orders out
+  first thing: after the clock and `_reset_performance_counters()`, before anything moves, so
+  their events carry that tick and come back in its frame. On a paused game an order waits for
+  the first tick after it; `initialize()` and `shutdown()` drop orders given to the last world
+- `WorldState._apply_player_commands()` looks each order's power up in
+  `player_command_handlers` (a Callable taking the order and returning `{ok, reason, ...}`;
+  none means refused as `unknown_power`), asks `PlayerState.refusal()` for its charges and
+  cooldown, and pays for it with `spend()` only when the handler carried it out. A refusal
+  costs nothing and changes nothing else. Every order, carried out or refused, goes into
+  `PlayerState.journal` `{seq, tick, type, params, result}` and raises a `PlayerCommand` event
+  (in `VIEW_EVENT_TYPES`) with `seq`, `power`, `ok` and `reason`. Nothing is drawn from `rng`
+- `PlayerState` lives in the world the simulation steps: each power's `charges` (-1 for no
+  limit) and `cooldown_until` in simulated time, from `data/config/powers.json`. Two orders on
+  one charge cannot both pass, and a headless run keeps the same budget as the game. It is
+  saved with the world (`export_state()` under `"player"`; a save from before it keeps the
+  configured budget and an empty journal)
+- The view follows it by `revision`, which moves with every charge or cooldown spent: a worker
+  frame carries `presentation_block()` when the revision moved and in every full snapshot, so
+  a frame lost to a sequence gap does not leave the view behind; `_apply_worker_frame()` takes
+  it before the water levels, and applying it twice leaves the view as once. The manager
+  raises `player_state_changed` when the view's revision moves, from a frame or an inline tick
+- The journal replays exactly only under the same sequence of camera views (the view decides
+  which sectors sleep, and with that who draws from `rng`): it is a record for the save and for
+  scripted headless runs, not a replay
+- With no orders the world is bit for bit as before (identity audits, off 300 s and LOD 600 s)
+
 ## Agent Model
 
 ### `AgentBase`
@@ -1424,6 +1456,13 @@ millisecond setting squeezed to zero.
   (`pop_seconds`, `pop_from`); `effects.max_active` caps the marks on screen at once.
   Durations are simulated seconds, `*_px` art pixels
 
+### `powers.json`
+
+- The player's powers, each with `charges` (-1 for no limit) and `cooldown_seconds` of
+  simulated time between uses (`PlayerState`), beside its own settings. A scenario overrides
+  them. A save from before the powers takes them as shipped
+  (`ConfigLoader.with_shipped_presentation()`).
+
 ### `presets.json`
 
 - The setup screen's option groups, each a patch over the base configs. The map sizes are the
@@ -1511,6 +1550,12 @@ Current suites cover:
   a fox among grouse passing the last deer far off and taking one close by, a sleeping fox
   gaining on a kill as much slower as the deer's preference, and nothing changed with the
   block off
+- the player's orders (`PlayerCommandTests`): an order carried out on the tick it was handed
+  to, with its event and journal entry on that tick; the same order on the worker thread and
+  inline leaving the worlds alike; charges and cooldowns in simulated time, kept through a
+  save, and a save from before them; refusals changing nothing; a paused game holding orders
+  and a new world forgetting them; and the view's charges following the worker's across a
+  lost frame and a frame applied twice
 
 ## Measuring Balance
 

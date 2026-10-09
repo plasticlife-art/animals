@@ -1,0 +1,13 @@
+{
+  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them.",
+  "powers": {
+    "dig_pond": {
+      "charges": -1,
+      "cooldown_seconds": 480.0
+    },
+    "lead_herd": {
+      "charges": -1,
+      "cooldown_seconds": 60.0
+    }
+  }
+}

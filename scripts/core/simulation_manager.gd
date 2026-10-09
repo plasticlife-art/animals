@@ -10,19 +10,25 @@ signal export_completed(paths: Dictionary)
 ## `event_bus`, which is replaced on every start and load, and whose first instance
 ## moves to the worker thread (see `_watch_event_bus()`).
 signal world_event(event: Dictionary)
+## The player's state the view draws (`PlayerState`) has changed: a power used, a charge spent.
+## Raised on the main thread once the change has reached `world_state`, from a worker frame or
+## an inline tick alike.
+signal player_state_changed
 
 ## The event types `world_event` carries. Everything else stays on the bus: grazing and
 ## drinking alone fire many times a tick.
 ## `AgentReproduced` names both parents of an awake birth, for the family tree; a pond that
 ## dries or fills again (`WaterSystem`) is told in the feed and the season's summary.
+## `PlayerCommand` says what came of an order the player gave (`PlayerCommands`).
 const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true,
-	"PondDried": true, "PondRefilled": true}
+	"PondDried": true, "PondRefilled": true, "PlayerCommand": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")
 const WorldStateScript = preload("res://scripts/world/world_state.gd")
 const StatsSystemScript = preload("res://scripts/stats/stats_system.gd")
 const TelemetryLoggerScript = preload("res://scripts/stats/telemetry_logger.gd")
+const PlayerCommandsScript = preload("res://scripts/core/player_commands.gd")
 
 const MAX_SIMULATION_STEPS_PER_FRAME := 2
 ## Short worker spikes (birth/death batches, sector wakes, OS scheduling) may take
@@ -96,6 +102,11 @@ var actual_speed: float = 0.0
 var dropped_simulation_seconds: float = 0.0
 var _speed_wall: float = 0.0
 var _speed_sim: float = 0.0
+## The player's orders not yet handed to a tick (`enqueue_command()`), main thread only.
+var _command_queue: Array = []
+var _next_command_seq: int = 1
+## The `PlayerState.revision` the view last announced (`player_state_changed`).
+var _seen_player_revision: int = 0
 
 
 func _ready() -> void:
@@ -141,6 +152,10 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	_worker_sequence = 0
 	_worker_started_usec = 0
 	worker_snapshot_counts.clear()
+	# An order given to the last world must not land in this one.
+	_command_queue.clear()
+	_next_command_seq = 1
+	_seen_player_revision = world_state.player.revision
 
 	var debug_config: Dictionary = config_bundle.get("debug", {})
 	debug_flags = debug_config.get("overlays", {}).duplicate(true)
@@ -252,7 +267,7 @@ func step_once() -> void:
 		return
 	var started_at_usec := Time.get_ticks_usec()
 	world_state.inspected_agent_id = selected_agent_id
-	world_state.step(tick_duration, current_tick, simulation_time, _build_lod_context())
+	world_state.step(tick_duration, current_tick, simulation_time, _build_lod_context(), _take_commands())
 	var tick_ms := float(Time.get_ticks_usec() - started_at_usec) / 1000.0
 	stats_system.record_step_duration(tick_ms)
 	tick_times.add(tick_ms)
@@ -263,7 +278,37 @@ func step_once() -> void:
 		selection_changed.emit(selected_agent_id)
 		clear_focus()
 	stats_system.record_sample(world_state, current_tick, simulation_time)
+	_announce_player_state()
 	tick_completed.emit(current_tick, stats_system.get_snapshot_view())
+
+
+## Queues an order for the next tick the simulation runs - on a paused game, the first after
+## it resumes - and returns its number (`PlayerCommands`). What came of it arrives as a
+## `PlayerCommand` event.
+func enqueue_command(type: String, params: Dictionary = {}) -> int:
+	var seq := _next_command_seq
+	_next_command_seq += 1
+	_command_queue.append(PlayerCommandsScript.make(seq, type, params))
+	return seq
+
+
+## The orders given and not yet carried out, oldest first.
+func pending_commands() -> Array:
+	return _command_queue.duplicate(true)
+
+
+## Hands every queued order to the tick being launched.
+func _take_commands() -> Array:
+	var taken := _command_queue
+	_command_queue = []
+	return taken
+
+
+func _announce_player_state() -> void:
+	if world_state == null or world_state.player.revision == _seen_player_revision:
+		return
+	_seen_player_revision = world_state.player.revision
+	player_state_changed.emit()
 
 
 func set_paused(value: bool) -> void:
@@ -481,6 +526,7 @@ func run_headless(total_ticks: int, export_on_finish: bool = true) -> Dictionary
 func shutdown() -> void:
 	_stop_worker_thread()
 	_worker_started_usec = 0
+	_command_queue.clear()
 	if _worker != null:
 		_worker.shutdown()
 		_worker = null
@@ -611,6 +657,7 @@ func enable_interactive_worker() -> void:
 	event_bus.clear()
 	_watch_event_bus(event_bus)
 	stats_system.counters = _worker.stats.counters.duplicate()
+	_seen_player_revision = world_state.player.revision
 	_presentation_alpha = 0.0
 	_worker_stepping = false
 
@@ -673,7 +720,7 @@ func _post_worker_job() -> void:
 		_worker_thread.start(_worker_loop)
 	_worker_mutex.lock()
 	_worker_job = {"delta": tick_duration, "tick": current_tick, "time": simulation_time,
-		"lod": _build_lod_context(), "inspected": selected_agent_id,
+		"lod": _build_lod_context(), "inspected": selected_agent_id, "commands": _take_commands(),
 		"include_grass": bool(debug_flags.get("show_grass_density", false)),
 		"include_fear": bool(debug_flags.get("show_fear", false)),
 		"ground_interval_ticks": ground_update_interval_ticks()}
@@ -697,7 +744,7 @@ func _worker_loop() -> void:
 			continue
 		var result: Dictionary = _worker.step(float(job.delta), int(job.tick), float(job.time),
 			job.lod, int(job.inspected), bool(job.include_grass), bool(job.get("include_fear", false)),
-			int(job.get("ground_interval_ticks", 0)))
+			int(job.get("ground_interval_ticks", 0)), job.get("commands", []))
 		_worker_mutex.lock()
 		_worker_result = result
 		_worker_mutex.unlock()
@@ -811,6 +858,9 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		# After the delta above on purpose: the whole grid is the newer of the two.
 		world_state.resource_system._cells = data.ground.grass
 		world_state.trail_field.import_cells(data.ground.trails)
+	# Before the water: what the player dug changes how many ponds the levels are for.
+	if data.has("player"):
+		world_state.player.apply_presentation_block(data.player)
 	if data.has("water"):
 		world_state.water.import_state(data.water)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes
@@ -848,6 +898,7 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		selected_agent_id = -1
 		selection_changed.emit(-1)
 		clear_focus()
+	_announce_player_state()
 	tick_completed.emit(current_tick, data.metrics)
 
 

@@ -30,6 +30,8 @@ const TrailFieldScript = preload("res://scripts/world/trail_field.gd")
 const GRASS_SCRAP_BIOMASS := 2.0
 const ClimateScript = preload("res://scripts/world/climate.gd")
 const WaterSystemScript = preload("res://scripts/world/water_system.gd")
+const PlayerStateScript = preload("res://scripts/world/player_state.gd")
+const PlayerCommandsScript = preload("res://scripts/core/player_commands.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
 const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
@@ -78,6 +80,11 @@ var herd_migrations: Dictionary = {}
 var climate: Climate
 ## The ponds' levels (`WaterSystem`): they fill and dry with the seasons and as they are drunk.
 var water: WaterSystem
+## The player's powers and the orders given with them (`PlayerState`).
+var player: PlayerState
+## How each power is carried out, by its name in `powers.json`: a Callable taking the order
+## and returning `{ok, reason, ...}`. A power with no handler is refused.
+var player_command_handlers: Dictionary = {}
 var spatial_grid: SpatialGrid
 ## Which species exist and what each one eats, is eaten by, and leaves behind.
 ## Immutable once built, so the worker thread's world and the presentation copy
@@ -214,6 +221,9 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	water.initialize(world_config.get("water_levels", {}), water_sources, _water_demand_unit(),
 		float(ClimateScript.calendar(climate_config)[0]),
 		bool(climate_config.get("enabled", false)) and not climate_config.get("seasons", []).is_empty(), trait_world)
+	player = PlayerStateScript.new()
+	player.configure(config_bundle.get("powers", {}))
+	player_command_handlers.clear()
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -258,7 +268,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_update_lod_assignments({"enabled": false})
 
 
-func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary = {}) -> void:
+func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary = {}, commands: Array = []) -> void:
 	current_tick = tick
 	current_time = time_seconds
 	_reproduction_population_counts.clear()
@@ -266,6 +276,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	climate.sample(current_time)
 	_refresh_breeding_values()
 	_reset_performance_counters()
+	if not commands.is_empty():
+		_apply_player_commands(commands)
 	scenery.visibility_checks = 0
 	scenery.local_searches = 0
 	_prepare_navigation_budget()
@@ -702,6 +714,8 @@ func get_total_carcass_meat_remaining() -> float:
 func shutdown() -> void:
 	for agent in living_agents:
 		agent.clear_decision_cache()
+	# A handler may hold the world it acts on (a lambda capturing it): let go of both.
+	player_command_handlers.clear()
 	agents.clear()
 	carcasses.clear()
 	pending_spawns.clear()
@@ -1529,6 +1543,32 @@ func _resolve_agent_overlap(delta: float) -> void:
 ##
 ## `living_agents` order is saved explicitly. It is the order agents tick in, it
 ## is maintained by swap-removal, and it cannot be recovered from `agents`.
+## The player's orders since the last tick (`SimulationManager.enqueue_command()`), carried out
+## at the start of this one: after the clock, so their events carry this tick and come back in
+## its frame, and before anything moves. Each is refused with a reason or carried out by its
+## power's handler and paid for here, in simulated time (`PlayerState`). Nothing is drawn from
+## `rng`.
+func _apply_player_commands(commands: Array) -> void:
+	for command in commands:
+		var power := str(command.get("type", ""))
+		var params: Dictionary = command.get("params", {})
+		var result := {}
+		var handler: Callable = player_command_handlers.get(power, Callable())
+		var refusal := player.refusal(power, current_time) if handler.is_valid() else PlayerCommandsScript.REFUSED_UNKNOWN
+		if refusal != "":
+			result = {"ok": false, "reason": refusal}
+		else:
+			result = handler.call(command)
+			if bool(result.get("ok", false)):
+				player.spend(power, current_time)
+		player.record(command, current_tick, result)
+		var data := result.duplicate(true)
+		data["seq"] = int(command.get("seq", 0))
+		data["power"] = power
+		emit_population_event("PlayerCommand", str(params.get("species", "")),
+			PlayerCommandsScript.position_of(params, "position", Vector2.ZERO), data)
+
+
 func export_state() -> Dictionary:
 	var agent_records: Array = []
 	for agent in living_agents:
@@ -1550,6 +1590,7 @@ func export_state() -> Dictionary:
 		"trails": trail_field.export_cells(),
 		"water": water.export_state(),
 		"herd_migrations": herd_migrations.duplicate(true),
+		"player": player.export_state(),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
 		# up to `sector_grass_refresh_ticks`, and a loaded world that recomputed
@@ -1601,6 +1642,7 @@ func import_state(data: Dictionary) -> void:
 	# A save from before ponds had levels keeps them full.
 	water.import_state(data.get("water", {}))
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
+	player.import_state(data.get("player", {}))
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))

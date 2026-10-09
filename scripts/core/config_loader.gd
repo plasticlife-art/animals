@@ -7,6 +7,7 @@ const CONFIG_FILES := {
 	"balance": "res://data/config/balance.json",
 	"debug": "res://data/config/debug.json",
 	"visuals": "res://data/config/visuals.json",
+	"powers": "res://data/config/powers.json",
 }
 
 const OPTIONS_FILE := "res://data/config/presets.json"
@@ -52,6 +53,9 @@ static func with_shipped_presentation(saved: Dictionary, shipped: Dictionary) ->
 			bundle["debug"]["developer_mode"] = shipped_debug["developer_mode"]
 		else:
 			bundle["debug"].erase("developer_mode")
+	# A save from before the player had powers takes them as shipped: it never had any.
+	if not bundle.has("powers") and shipped.get("powers") is Dictionary:
+		bundle["powers"] = shipped["powers"].duplicate(true)
 	return bundle
 
 

@@ -276,6 +276,8 @@ The metrics carry, per species, how many animals are at risk of starvation (`sta
   Sprite atlases and animation rows, the projection, the grass ramp and trails on the ground
   (`ground`), the watering holes (`water`) and the event effects (`effects`). The simulation
   reads only `props` from it, to place the scenery
+- `data/config/powers.json`
+  The player's powers: charges and cooldowns, and each power's own settings
 - `data/config/presets.json`
   Setup-screen option groups. Each option is a config patch deep-merged over the base
   configs, so adding a group here adds a row to the setup screen with no code change
