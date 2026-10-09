@@ -1049,6 +1049,36 @@ Utility actions inside `alive`:
 - Up while a world runs with nothing over it; it steps aside for the developer panel, which
   has the same controls, and for the menus
 
+### The steward's interface (`PowersBar`, `PowerTargeting`, `GoalChips`, `ResultWindow`)
+
+- `PowersBar`, at the bottom centre: «Водопой» (Q) and «Повести стадо» (E), each with its charges
+  («×1», none in the sandbox) and, while cooling down, the seconds to wait; a power spent or
+  cooling is greyed. A line above tells how to aim, or why the last try would not do. Its state
+  is the world's (`PlayerState`, from the frames), refreshed on the interface's ticks and on
+  `player_state_changed`. Up with the player bar, and only in a world with powers
+- `PowerAim` is the aiming, apart from any node so it is tested: arming checks the charges and
+  the cooldown (and, to lead, that there is a herd: the selected animal's if it may be led -
+  `WorldState.can_lead()` - else, in a scenario, the biggest part of the player's own); its
+  preview asks the world the view is shown what the simulation will ask - `dig_pond_refusal()`,
+  the herd's reach, the route search, once per cell the pointer enters - and a click gives the
+  order (`enqueue_command()`) or says why not and keeps aiming. `PowerTargeting`, a Node2D after
+  `WorldView`, draws it - the pond green or red, the flag with a line from the herd - and takes
+  the left click before the world's selection does (unhandled input reaches later nodes first);
+  the right click or Esc stops it, and so do a pause, the menus, help, the chronicle and photo
+  mode. A paused game aims nothing
+- `GoalChips`, above the powers: a chip a goal with its numbers - «Ваше стадо: 17 из 20, нужно 10
+  · ещё 2:15», «Не меньше 5 голов», «Ни одной смерти от жажды» - in ink while open, amber while
+  it would fail if decided now, green met, red failed; the scenario's own words in the tooltip
+- `ResultWindow`, in the middle: before play the brief - the scenario, what it asks, its goals,
+  «Начать» - over a paused game, with the camera framing the player's herd
+  (`GameCamera.frame_world_rect()`, near enough that it is awake) and one of it selected; at the
+  end the result - the scenario's own title («Стадо пережило сушь» / «Стадо не пережило сушь»),
+  the herd's curve against its species', what is left and the least there was, the dead by
+  cause, the powers used and the bonus - with «Смотреть дальше», «Заново» and «В меню». The game
+  stands still under either and the season card and epitaphs wait
+- The start page offers «Сценарии» first: each scenario's name, brief and «Играть», played in the
+  style the setup page has (`StartMenu.scenario_requested`); «Новая симуляция» is the sandbox
+
 ### `HudText`
 
 - Every word the interface shows about the world, in Russian: species and the animals in them
@@ -1699,6 +1729,14 @@ Current suites cover:
   of a split led on; a flock, a missing herd, off the map, a cliff, too far and a walled-in goal
   refused; the walk
   saved; a fed awake herd arriving within half a minute; and the feed telling of it
+- the steward's interface (`StewardUiTests`): the buttons' charges, wait and greying, the power
+  aimed pressed and the line above it, the sandbox's buttons without charges; aiming a waterhole
+  green and red, a click at the edge refused with its reason and one in the open giving the order,
+  a cooling power not aimed; leading - no herd chosen, the selected deer's herd named, too far,
+  walled in, the order naming the herd, the own herd with none selected; the goals' chips with
+  their numbers, amber and red; the brief and the result with their words and buttons; the start
+  page's «Сценарии» first and «Долгая сушь» played in the chosen style; and every word of it and
+  of the help it adds in Russian
 - scenarios (`ScenarioTests`): «Долгая сушь» offered and told in Russian; its bundle taking the
   scenario's map size over the player's, the player's look, the same ground whatever the style,
   its water merged over the shipped water and its powers over the shipped powers, and a plain

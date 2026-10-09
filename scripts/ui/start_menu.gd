@@ -3,10 +3,12 @@ extends CenterContainer
 
 ## The screen shown before a simulation runs, in two pages.
 ##
-## The first page is the main menu - new run, continue, help, exit. The setup
+## The first page is the main menu - scenarios, new run, continue, help, exit. The setup
 ## options only appear once "Новая симуляция" is pressed, because a wall of six
 ## dropdowns is the wrong thing to greet someone with: most sessions want the
-## defaults or the last autosave, and neither needs the options at all.
+## defaults or the last autosave, and neither needs the options at all. «Сценарии» lists the
+## worlds with a goal (`ConfigLoader.list_scenarios()`), each with its brief; «Новая симуляция»
+## is the sandbox.
 ##
 ## The setup rows are built at runtime from `ConfigLoader.list_option_groups()`
 ## rather than laid out in the scene, because the groups live in `presets.json`
@@ -17,6 +19,8 @@ extends CenterContainer
 ## are what `PixelUiTheme` styles. An `HSlider` here would render as raw grey.
 
 signal start_requested(selection: Dictionary)
+## A scenario to play, in the style the setup page has chosen (the scenario decides the rest).
+signal scenario_requested(scenario_id: String, style: String)
 signal continue_requested()
 signal help_requested()
 signal settings_requested()
@@ -24,6 +28,7 @@ signal exit_requested()
 
 const TITLE_TEXT := "Engine of Ecosystem"
 const SETUP_TITLE_TEXT := "Новая симуляция"
+const SCENARIOS_TITLE_TEXT := "Сценарии"
 const PAGE_WIDTH := 420.0
 
 var _selection: Dictionary = {}
@@ -31,6 +36,7 @@ var _continue_button: Button = null
 var _seed_option: OptionButton = null
 var _root_page: PanelContainer = null
 var _setup_page: PanelContainer = null
+var _scenarios_page: PanelContainer = null
 
 # Offered as a choice rather than a text field: no themed line edit exists, and
 # a fixed set keeps runs comparable between sessions.
@@ -41,6 +47,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root_page = _build_root_page()
 	_setup_page = _build_setup_page()
+	_scenarios_page = _build_scenarios_page()
 	show_root()
 
 
@@ -51,11 +58,17 @@ func show_root() -> void:
 		return
 	_root_page.visible = true
 	_setup_page.visible = false
+	_scenarios_page.visible = false
 
 
 func _show_setup() -> void:
 	_root_page.visible = false
 	_setup_page.visible = true
+
+
+func show_scenarios() -> void:
+	_root_page.visible = false
+	_scenarios_page.visible = true
 
 
 func _build_root_page() -> PanelContainer:
@@ -67,8 +80,15 @@ func _build_root_page() -> PanelContainer:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
 
+	var scenarios_button := Button.new()
+	scenarios_button.text = SCENARIOS_TITLE_TEXT
+	scenarios_button.tooltip_text = "Мир с целью: сохранить стадо, пока вокруг беда"
+	scenarios_button.pressed.connect(show_scenarios)
+	column.add_child(scenarios_button)
+
 	var new_button := Button.new()
 	new_button.text = SETUP_TITLE_TEXT
+	new_button.tooltip_text = "Песочница: свой мир без целей, силы только с перезарядкой"
 	new_button.pressed.connect(_show_setup)
 	column.add_child(new_button)
 
@@ -126,6 +146,43 @@ func _build_setup_page() -> PanelContainer:
 	column.add_child(back_button)
 
 	return page
+
+
+func _build_scenarios_page() -> PanelContainer:
+	var page := _new_page()
+	var column := _page_body(page)
+
+	var title := Label.new()
+	title.text = SCENARIOS_TITLE_TEXT
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(title)
+
+	for scenario in ConfigLoader.list_scenarios():
+		var name_label := Label.new()
+		name_label.text = str(scenario["label"])
+		column.add_child(name_label)
+		var brief := Label.new()
+		brief.text = str(scenario["brief"])
+		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brief.custom_minimum_size.x = PAGE_WIDTH - 44.0
+		column.add_child(brief)
+		var play := Button.new()
+		play.text = "Играть"
+		var scenario_id := str(scenario["id"])
+		play.pressed.connect(func(): scenario_requested.emit(scenario_id, chosen_style()))
+		column.add_child(play)
+
+	var back_button := Button.new()
+	back_button.text = "Назад"
+	back_button.pressed.connect(show_root)
+	column.add_child(back_button)
+
+	return page
+
+
+## The style the setup page has chosen, the default until it is changed.
+func chosen_style() -> String:
+	return str(_selection.get("style", ConfigLoader.default_selection().get("style", "")))
 
 
 func _new_page() -> PanelContainer:

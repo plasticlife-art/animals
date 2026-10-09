@@ -26,6 +26,10 @@ extends Node2D
 @onready var chronicle_window = $CanvasLayer/ChronicleWindow
 @onready var settings_panel = $CanvasLayer/SettingsPanel
 @onready var photo_mode = $PhotoMode
+@onready var power_targeting = $PowerTargeting
+@onready var powers_bar = $CanvasLayer/HUD/PowersBar
+@onready var goal_chips = $CanvasLayer/HUD/GoalChips
+@onready var result_window = $CanvasLayer/ResultWindow
 @onready var day_night_tint: CanvasModulate = $DayNightTint
 @onready var pause_blur = $CanvasLayer/PauseBlur
 @onready var pause_menu = $CanvasLayer/PauseMenu
@@ -44,6 +48,9 @@ extends Node2D
 const SELECTION_CARD_X := 12.0
 const SELECTION_CARD_GAP := 12.0
 const SELECTION_CARD_WIDTH := 332.0
+## How much of the map a scenario's start shows around the player's herd, in simulation units:
+## close enough that the herd is awake, wide enough to see its water.
+const SCENARIO_FRAME := Vector2(1800.0, 1100.0)
 
 var hud_visible: bool = false;
 var _hud_visible_before_pause: bool = false
@@ -96,7 +103,12 @@ func _ready() -> void:
 	set_hud_visible(false)
 	_set_pause_menu_visible(false)
 	start_menu.start_requested.connect(_on_start_requested)
+	start_menu.scenario_requested.connect(_on_scenario_requested)
 	start_menu.continue_requested.connect(_on_continue_requested)
+	result_window.brief_closed.connect(_close_result_window)
+	result_window.watch_on_requested.connect(_close_result_window)
+	result_window.restart_requested.connect(_restart_scenario)
+	result_window.menu_requested.connect(_result_to_menu)
 	# Help needs no simulation behind it, so unlike the rest of the pause menu it
 	# is wired here rather than in `_bind_view()`, which only runs once a world
 	# exists. That is what lets the setup screen offer it before the first start.
@@ -110,6 +122,103 @@ func _ready() -> void:
 func _on_start_requested(selection: Dictionary) -> void:
 	_selection = selection
 	_start_simulation(selection, start_menu.selected_seed())
+
+
+## A scenario from the start page («Сценарии»), in the style the setup page has: its own world
+## and seed, then its brief over the player's herd.
+func _on_scenario_requested(scenario_id: String, style: String) -> void:
+	var bundle: Dictionary = ConfigLoader.load_scenario_bundle(scenario_id, {"style": style})
+	if bundle.is_empty():
+		return
+	_selection = bundle["challenge"]["selection"]
+	simulation_manager.initialize(bundle, int(bundle["challenge"]["seed"]))
+	_adopt_running_simulation()
+	_open_scenario_brief()
+
+
+## «Заново» on the result: the same scenario from its start, in the same style.
+func _restart_scenario() -> void:
+	var challenge: Dictionary = simulation_manager.config_bundle.get("challenge", {})
+	result_window.close()
+	if not challenge.is_empty():
+		_on_scenario_requested(str(challenge.get("id", "")), str(_selection.get("style", start_menu.chosen_style())))
+
+
+func _result_to_menu() -> void:
+	result_window.close()
+	_sync_result_window()
+	_show_start_menu(true)
+
+
+## The brief, with the camera on the player's herd and one of it selected, the game paused until
+## «Начать».
+func _open_scenario_brief() -> void:
+	var runner = simulation_manager.scenario
+	if not runner.is_active():
+		return
+	var herd := PowerAim.herd_to_lead(simulation_manager)
+	if not herd.is_empty():
+		var center: Vector2 = herd["center"]
+		world_camera.frame_world_rect(Rect2(center - SCENARIO_FRAME * 0.5, SCENARIO_FRAME))
+		var nearest = null
+		for agent in simulation_manager.world_state.get_living_agents():
+			if agent.is_alive and agent.species_type == runner.species and runner.groups.has(int(agent.group_id)) \
+					and (nearest == null or agent.position.distance_squared_to(center) < nearest.position.distance_squared_to(center)):
+				nearest = agent
+		if nearest != null:
+			simulation_manager.select_agent_by_id(nearest.id, false)
+	result_window.show_brief(simulation_manager.config_bundle.get("challenge", {}))
+	_sync_result_window()
+
+
+func _on_scenario_finished(won: bool, summary: Dictionary) -> void:
+	power_targeting.cancel()
+	_refresh_powers()
+	result_window.show_result(won, summary, simulation_manager.scenario, simulation_manager.config_bundle.get("challenge", {}))
+	_sync_result_window()
+
+
+func _close_result_window() -> void:
+	result_window.close()
+	_sync_result_window()
+
+
+## The game stands still under the brief and the result, and the season card waits; closing
+## either lets time go on.
+func _sync_result_window() -> void:
+	_on_pause_toggled(result_window.visible)
+	season_card.set_allowed(not result_window.visible and not hud_visible and not start_menu.visible)
+
+
+## A power's button or key: aimed, or put down if it was the one aimed.
+func _on_power_pressed(power: String) -> void:
+	if power_targeting.aim.power == power:
+		power_targeting.cancel()
+	elif simulation_manager.paused:
+		power_targeting.cancel()
+		power_targeting.aim.message = "Сначала снимите паузу"
+	else:
+		power_targeting.arm(power)
+	_refresh_powers()
+
+
+## Whether a power may be aimed now: a world in play, nothing over it.
+func _powers_available() -> bool:
+	return _bound and powers_bar.visible and not result_window.visible and not chronicle_window.visible \
+		and not photo_mode.active
+
+
+func _refresh_powers() -> void:
+	var world = simulation_manager.world_state
+	if world == null or powers_bar == null:
+		return
+	powers_bar.refresh(world.player, simulation_manager.simulation_time, power_targeting.aim.power, power_targeting.aim.message)
+	goal_chips.refresh(simulation_manager.scenario, simulation_manager.simulation_time)
+
+
+func _enter_photo_mode() -> void:
+	power_targeting.cancel()
+	photo_mode.enter()
 
 
 ## Continue means two different things depending on when it is pressed.
@@ -169,6 +278,8 @@ func _adopt_running_simulation() -> void:
 	chronicle_window.reset()
 	place_labels.configure(simulation_manager.config_bundle.get("visuals", {}))
 	_pending_focus_id = -1
+	power_targeting.cancel()
+	result_window.close()
 	_apply_debug_configuration()
 	debug_panel.set_paused_state(false)
 	world_camera.reset_to_world(simulation_manager.world_state.bounds)
@@ -179,6 +290,7 @@ func _adopt_running_simulation() -> void:
 	_autosave_interval = maxi(0, int(simulation_manager.config_bundle
 		.get("debug", {}).get("autosave_interval_ticks", 0)))
 	_hide_start_menu()
+	_refresh_powers()
 	# Last, once the renderers, themes and atlases above have finished loading.
 	# The worker steps on its own thread and reads the same scripts this bring-up
 	# is still compiling.
@@ -229,7 +341,7 @@ func _hide_start_menu() -> void:
 	selection_card.refresh()
 	herd_card.set_allowed(true)
 	epitaph_card.set_allowed(true)
-	season_card.set_allowed(not hud_visible)
+	season_card.set_allowed(not hud_visible and not result_window.visible)
 	_sync_player_bar()
 	world_view.set_input_enabled(true)
 	world_camera.set_input_enabled(true)
@@ -268,8 +380,14 @@ func _bind_view() -> void:
 	chronicle_window.bind(story_book, simulation_manager)
 	chronicle_window.focus_requested.connect(_focus_animal)
 	player_bar.chronicle_requested.connect(toggle_chronicle)
-	player_bar.photo_requested.connect(photo_mode.enter)
-	photo_mode.bind(simulation_manager, [$CanvasLayer, overlay_renderer, world_view, place_labels], agent_renderer, world_view)
+	player_bar.photo_requested.connect(_enter_photo_mode)
+	power_targeting.bind_manager(simulation_manager)
+	power_targeting.aim_changed.connect(_refresh_powers)
+	powers_bar.power_pressed.connect(_on_power_pressed)
+	simulation_manager.player_state_changed.connect(_refresh_powers)
+	simulation_manager.scenario_goal_changed.connect(func(_goal_id: String, _state: String) -> void: _refresh_powers())
+	simulation_manager.scenario_finished.connect(_on_scenario_finished)
+	photo_mode.bind(simulation_manager, [$CanvasLayer, overlay_renderer, world_view, place_labels, power_targeting], agent_renderer, world_view)
 	photo_mode.set_theme_for_bar(PixelUiTheme.build(true))
 	photo_mode.pause_toggled.connect(_on_pause_toggled)
 	selection_card.tree_requested.connect(open_chronicle)
@@ -334,6 +452,8 @@ func _sync_day_night_tint() -> void:
 
 
 func _on_pause_toggled(is_paused: bool) -> void:
+	if is_paused:
+		power_targeting.cancel()
 	simulation_manager.set_paused(is_paused)
 	debug_panel.set_paused_state(is_paused)
 	player_bar.set_paused_state(is_paused)
@@ -420,7 +540,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _is_key(event, "toggle_photo_mode", KEY_P):
 		if _bound and not start_menu.visible and not _pause_menu_open and not help_screen.visible \
 				and not settings_panel.visible:
-			photo_mode.enter()
+			_enter_photo_mode()
 		get_viewport().set_input_as_handled()
 		return
 	# F11 switches full screen whatever is up.
@@ -443,6 +563,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		if cancel_pressed or toggle_help_pressed:
 			_close_help()
 			get_viewport().set_input_as_handled()
+		return
+
+	# A power being aimed is put down before anything else answers Esc; Q and E aim one.
+	if power_targeting.is_armed() and cancel_pressed:
+		power_targeting.cancel()
+		get_viewport().set_input_as_handled()
+		return
+	var dig_pressed := _is_key(event, "power_dig", KEY_Q)
+	if dig_pressed or _is_key(event, "power_lead", KEY_E):
+		if _powers_available() and not _pause_menu_open and not start_menu.visible:
+			_on_power_pressed("dig_pond" if dig_pressed else "lead_herd")
+		get_viewport().set_input_as_handled()
 		return
 
 	# The chronicle closes before the pause menu opens; L opens and closes it in play.
@@ -497,9 +629,14 @@ func _layout_hud() -> void:
 		climate_indicator.offset_right = _climate_offsets.y + shift
 		ecology_strip.offset_left = _strip_offsets.x + shift
 		ecology_strip.offset_right = _strip_offsets.y + shift
+	# The goals stand just above the powers.
+	var chips_bottom: float = powers_bar.offset_bottom - (powers_bar.size.y + 6.0 if powers_bar.visible else 0.0)
+	if not is_equal_approx(goal_chips.offset_bottom, chips_bottom):
+		goal_chips.offset_top = chips_bottom
+		goal_chips.offset_bottom = chips_bottom
 	# One card at a time in the right column: an epitaph waits, its countdown stopped, while the
 	# season card stands there. Stacked, the two reach down over the event feed.
-	var epitaph_allowed: bool = not start_menu.visible and not season_card.visible
+	var epitaph_allowed: bool = not start_menu.visible and not season_card.visible and not result_window.visible
 	if epitaph_card.is_allowed() != epitaph_allowed:
 		epitaph_card.set_allowed(epitaph_allowed)
 	# The feed keeps below the card standing in that column: fewer rows, the newest kept.
@@ -532,6 +669,7 @@ static func _is_key(event: InputEvent, action: String, key: Key) -> bool:
 
 ## «Летопись» on the player bar, or L: open on the selected animal, or on whoever it showed last.
 func toggle_chronicle() -> void:
+	power_targeting.cancel()
 	if chronicle_window.visible:
 		chronicle_window.close_window()
 		return
@@ -680,7 +818,7 @@ func set_hud_visible(value: bool) -> void:
 	debug_panel.visible = value
 	charts_panel.visible = value
 	# The charts stand where the season card does.
-	season_card.set_allowed(not value and not start_menu.visible)
+	season_card.set_allowed(not value and not start_menu.visible and not (result_window != null and result_window.visible))
 	_sync_player_bar()
 	# The two cards stand in one stack, which steps aside as a whole.
 	card_stack.offset_left = _selection_card_left(value)
@@ -714,7 +852,8 @@ func _apply_ui_theme() -> void:
 	var compact := PixelUiTheme.build(true)
 	var roomy := PixelUiTheme.build(false)
 	for path in ["CanvasLayer/HUD", "CanvasLayer/MiniMap", "CanvasLayer/ClimateIndicator", "CanvasLayer/EcologyStrip",
-			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard", "CanvasLayer/SeasonCard", "CanvasLayer/ChronicleWindow"]:
+			"CanvasLayer/StoryFeed", "CanvasLayer/EpitaphCard", "CanvasLayer/SeasonCard", "CanvasLayer/ChronicleWindow",
+			"CanvasLayer/ResultWindow"]:
 		var hud_node := get_node_or_null(path)
 		if hud_node is Control:
 			hud_node.theme = compact
@@ -763,6 +902,7 @@ func _on_tick_for_story(tick: int, _snapshot: Dictionary) -> void:
 		_pending_focus_id = -1
 	if simulation_manager.should_refresh_ui_on_tick(tick):
 		story_book.tick(simulation_manager.simulation_time)
+		_refresh_powers()
 
 
 ## What the player is looking at, for the feed to tell apart from the rest of the map: the
@@ -801,6 +941,12 @@ func _sync_player_bar() -> void:
 	player_bar.visible = _bound and not hud_visible and not _pause_menu_open \
 		and not start_menu.visible and not help_screen.visible
 	pinned_bar.set_allowed(player_bar.visible)
+	var world = simulation_manager.world_state if simulation_manager != null else null
+	powers_bar.visible = player_bar.visible and world != null and PowersBar.has_powers(world.player)
+	goal_chips.visible = player_bar.visible and simulation_manager.scenario.is_active()
+	power_targeting.input_enabled = player_bar.visible
+	if not player_bar.visible:
+		power_targeting.cancel()
 
 
 func _apply_debug_configuration() -> void:

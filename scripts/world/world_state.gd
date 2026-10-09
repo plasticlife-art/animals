@@ -1654,7 +1654,7 @@ func _command_lead_herd(command: Dictionary) -> Dictionary:
 	var species_key := str(params.get("species", ""))
 	var group_id := int(params.get("group_id", -1))
 	var goal := PlayerCommandsScript.position_of(params)
-	if _migration_config(species_key).is_empty() or species_registry.diet(species_key) != SpeciesRegistryScript.DIET_GRASS:
+	if not can_lead(species_key):
 		return {"ok": false, "reason": "not_a_herd"}
 	var herd := _herd_census(species_key, group_id)
 	if group_id < 0 or int(herd["count"]) == 0:
@@ -1691,6 +1691,11 @@ func _herd_census(species_key: String, group_id: int) -> Dictionary:
 	var herd: Dictionary = herds.get(_get_dormant_aggregate_key(species_key, group_id), {})
 	var count := int(herd.get("count", 0))
 	return {"count": count, "center": Vector2(herd["sum"]) / float(count) if count > 0 else Vector2.INF}
+
+
+## Whether the player may lead a herd of `species_key`: one that moves pastures, on grass.
+func can_lead(species_key: String) -> bool:
+	return not _migration_config(species_key).is_empty() and species_registry.diet(species_key) == SpeciesRegistryScript.DIET_GRASS
 
 
 ## Whether the herd is walking where the player sent it (`_command_lead_herd()`).

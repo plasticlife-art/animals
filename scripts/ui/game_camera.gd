@@ -93,6 +93,22 @@ func set_ui_scale(scale: float) -> void:
 	_set_zoom_factor(chosen / _ui_scale)
 
 
+## Puts `rect` (simulation space) in view, as large as the window and the zoom limits allow: a
+## scenario's start shows the player's herd close enough that it is not asleep.
+func frame_world_rect(rect: Rect2) -> void:
+	if world_bounds.size.is_zero_approx():
+		return
+	_clear_focus_if_active()
+	var screen := Rect2(WorldProjection.to_screen(rect.position), Vector2.ZERO)
+	for corner in [Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]:
+		screen = screen.expand(WorldProjection.to_screen(corner))
+	var viewport_size := get_viewport_rect().size
+	if screen.size.x > 0.0 and screen.size.y > 0.0:
+		_set_zoom_factor(minf(viewport_size.x / screen.size.x, viewport_size.y / screen.size.y))
+	global_position = WorldProjection.to_screen(rect.get_center())
+	_clamp_to_bounds()
+
+
 func move_to_world_position(position: Vector2, clear_focus: bool = true) -> void:
 	if world_bounds.size.is_zero_approx():
 		return

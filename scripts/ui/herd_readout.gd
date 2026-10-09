@@ -75,6 +75,28 @@ static func summarize(world, species: String, group_id: int) -> Dictionary:
 	return summary
 
 
+## Where the herd is and how many: `{center, count}`, its awake members and its sleeping
+## sectors' aggregates weighed by their counts; the centre is INF for a herd with none.
+static func locate(world, species: String, group_id: int) -> Dictionary:
+	var sum := Vector2.ZERO
+	var count := 0
+	if world != null and group_id >= 0:
+		for agent in world.get_living_agents():
+			if agent != null and agent.is_alive and agent.species_type == species and int(agent.group_id) == group_id:
+				sum += agent.position
+				count += 1
+		for sector in world._sector_states.values():
+			if not bool(sector.get("dormant", false)):
+				continue
+			for aggregate in sector.get("dormant_aggregates", []):
+				if str(aggregate.get("species_type", "")) != species or int(aggregate.get("group_id", -1)) != group_id:
+					continue
+				var members := int(aggregate.get("count", 0))
+				sum += Vector2(aggregate.get("center", Vector2.ZERO)) * float(members)
+				count += members
+	return {"center": sum / float(count) if count > 0 else Vector2.INF, "count": count}
+
+
 ## Awake animals of a species that eats `species`, hunting one of `members` (ids) right now.
 static func count_hunters(world, species: String, members: Dictionary) -> int:
 	if members.is_empty():

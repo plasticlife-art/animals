@@ -91,7 +91,8 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 
 1. Open the project in Godot.
 2. Run the project, or open `res://scenes/main/main.tscn`.
-3. The main menu opens first. `Новая симуляция` reveals the setup options,
+3. The main menu opens first. `Сценарии` lists the worlds with a goal («Долгая сушь»), each
+   with its brief; `Новая симуляция` (the sandbox) reveals the setup options,
    `Продолжить` resumes the latest autosave (a scenario's or the sandbox's, whichever was
    written last; each keeps its own two slots), and `Помощь` describes the controls
    and the mechanics. Nothing is simulated until a run is started.
@@ -140,6 +141,8 @@ pipeline instead, which reports success even when tests fail:
   `Esc` or `P` leaves it
 - `F12`: switch developer mode; in it `Tab` shows or hides the developer panel and charts
 - `F`: toggle follow on the selected agent
+- `Q`, `E`: aim «Водопой» or «Повести стадо» (also the buttons at the bottom centre); left click
+  where, right click or `Esc` to stop aiming
 - `Следить за стадом` on the herd card: follow the selected animal's herd
 - `W`, `A`, `S`, `D`: pan camera
 - Mouse wheel / trackpad pinch: zoom
