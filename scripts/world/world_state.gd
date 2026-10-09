@@ -225,6 +225,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player.configure(config_bundle.get("powers", {}))
 	player_command_handlers.clear()
 	player_command_handlers["dig_pond"] = _command_dig_pond
+	player_command_handlers["lead_herd"] = _command_lead_herd
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -1641,6 +1642,56 @@ func _command_dig_pond(command: Dictionary) -> Dictionary:
 	var index := _add_pond_source(position, radius, float(player.settings("dig_pond").get("start_level", 0.8)))
 	player.add_pond(position, radius, index)
 	return {"ok": true, "index": index, "radius": radius}
+
+
+## «Повести стадо»: the herd `{species, group_id}` walks to the order's `position` as a herd moving
+## pastures does (`herd_migrations`), awake and asleep, for as long as `powers.lead_herd.
+## timeout_seconds`, however poor the grass there - the player chose it. Only a herd of a species
+## that moves pastures (`herd.migration`); not further than `max_distance` from its centre, where
+## hungry animals are not dragged.
+func _command_lead_herd(command: Dictionary) -> Dictionary:
+	var params: Dictionary = command.get("params", {})
+	var species_key := str(params.get("species", ""))
+	var group_id := int(params.get("group_id", -1))
+	var goal := PlayerCommandsScript.position_of(params)
+	if _migration_config(species_key).is_empty() or species_registry.diet(species_key) != SpeciesRegistryScript.DIET_GRASS:
+		return {"ok": false, "reason": "not_a_herd"}
+	var herd := _herd_census(species_key, group_id)
+	if group_id < 0 or int(herd["count"]) == 0:
+		return {"ok": false, "reason": "no_herd"}
+	if not goal.is_finite() or not bounds.has_point(goal):
+		return {"ok": false, "reason": "off_map"}
+	if not terrain_system.is_walkable_position(goal):
+		return {"ok": false, "reason": "blocked"}
+	var center: Vector2 = herd["center"]
+	if center.distance_to(goal) > float(player.settings("lead_herd").get("max_distance", 2400.0)):
+		return {"ok": false, "reason": "too_far"}
+	var key := _get_dormant_aggregate_key(species_key, group_id)
+	herd_migrations[key] = {"goal": goal, "since": current_time, "player": true}
+	player.lead(key, species_key, group_id, goal, current_time)
+	return {"ok": true, "group_id": group_id, "size": int(herd["count"]), "from_x": center.x, "from_y": center.y}
+
+
+## How many of a herd there are, awake and asleep, and where their centre is.
+func _herd_census(species_key: String, group_id: int) -> Dictionary:
+	var herds := {}
+	if group_id >= 0:
+		for agent in living_agents:
+			if agent != null and agent.is_alive and agent.group_id == group_id and agent.species_type == species_key:
+				_tally_herd_member(herds, species_key, group_id, agent.position, agent.hunger)
+		for sector_key in _sector_states.keys():
+			for record in _sector_states[sector_key].get("dormant_records", []):
+				if int(record.get("group_id", -1)) == group_id and str(record.get("species_type", "")) == species_key:
+					_tally_herd_member(herds, species_key, group_id, Vector2(record.get("position", Vector2.ZERO)),
+						float(record.get("hunger", 0.0)))
+	var herd: Dictionary = herds.get(_get_dormant_aggregate_key(species_key, group_id), {})
+	var count := int(herd.get("count", 0))
+	return {"count": count, "center": Vector2(herd["sum"]) / float(count) if count > 0 else Vector2.INF}
+
+
+## Whether the herd is walking where the player sent it (`_command_lead_herd()`).
+func is_led_by_player(species_key: String, group_id: int) -> bool:
+	return bool(herd_migrations.get(_get_dormant_aggregate_key(species_key, group_id), {}).get("player", false))
 
 
 func export_state() -> Dictionary:
@@ -3425,6 +3476,14 @@ func _split_oversized_herds() -> void:
 			var b_at: float = b["position"].x if along_x else b["position"].y
 			return a_at < b_at if a_at != b_at else int(a["id"]) < int(b["id"]))
 		highest_group_id += 1
+		# The half that leaves a herd the player leads walks on to the same goal; a herd moving
+		# on by itself lets its new half choose for itself, as it always did.
+		var old_key := str(key)
+		var led: Dictionary = player.led_herds.get(old_key, {})
+		if not led.is_empty() and bool(herd_migrations.get(old_key, {}).get("player", false)):
+			var new_key := _get_dormant_aggregate_key(species_key, highest_group_id)
+			herd_migrations[new_key] = herd_migrations[old_key].duplicate(true)
+			player.lead(new_key, species_key, highest_group_id, Vector2(led.get("goal", Vector2.ZERO)), float(led.get("since", current_time)))
 		@warning_ignore("integer_division")
 		for index in range(members.size() / 2, members.size()):
 			var member: Dictionary = members[index]
@@ -3483,9 +3542,25 @@ func herd_migration_goal(species_key: String, group_id: int, hunger: float = 0.0
 	var migration: Dictionary = herd_migrations.get(_get_dormant_aggregate_key(species_key, group_id), {})
 	if not migration.has("goal"):
 		return null
-	if hunger >= float(_migration_config(species_key).get("exempt_hunger", 50.0)):
+	# Led by the player, a member follows hungrier: the player chose the walk.
+	var exempt := float(player.settings("lead_herd").get("exempt_hunger", 70.0)) if bool(migration.get("player", false)) \
+		else float(_migration_config(species_key).get("exempt_hunger", 50.0))
+	if hunger >= exempt:
 		return null
 	return migration.get("goal", null)
+
+
+## A herd the player led stops being led: `HerdArrived` when it got there, `HerdLeadEnded` when it
+## ran out of time or is gone. Nothing for a herd the player was not leading.
+func _end_player_lead(key: String, reason: String, center: Vector2) -> void:
+	var led: Dictionary = player.led_herds.get(key, {})
+	if led.is_empty():
+		return
+	player.release(key)
+	var goal: Vector2 = led.get("goal", center)
+	var data := {"group_id": int(led.get("group_id", -1)), "reason": reason, "goal_x": goal.x, "goal_y": goal.y}
+	emit_population_event("HerdArrived" if reason == "arrived" else "HerdLeadEnded", str(led.get("species", "")),
+		center if reason != "gone" else goal, data)
 
 
 ## Available grass within `radius` of `center`.
@@ -3511,17 +3586,29 @@ func _update_herd_migrations() -> void:
 	for key in herd_migrations.keys():
 		if not herds.has(key):
 			herd_migrations.erase(key)
+			_end_player_lead(key, "gone", Vector2.ZERO)
 	for key in herds.keys():
 		var herd: Dictionary = herds[key]
 		var species_key: String = herd["species"]
 		var config := _migration_config(species_key)
+		var migration: Dictionary = herd_migrations.get(key, {})
+		var center: Vector2 = herd["sum"] / float(herd["count"])
+		var pasture_radius := _pasture_radius(species_key)
+		if bool(migration.get("player", false)):
+			# The player chose this walk: neither poor grass at the goal nor the herd's own
+			# patience ends it - only arriving, or `timeout_seconds`.
+			var player_goal: Vector2 = migration.get("goal", center)
+			if center.distance_to(player_goal) <= pasture_radius:
+				herd_migrations[key] = {"rest_until": current_time + float(config.get("settle_seconds", 30.0))}
+				_end_player_lead(key, "arrived", center)
+			elif current_time - float(migration.get("since", current_time)) >= float(player.settings("lead_herd").get("timeout_seconds", 300.0)):
+				herd_migrations.erase(key)
+				_end_player_lead(key, "timeout", center)
+			continue
 		if not bool(config.get("enabled", false)) or species_registry.diet(species_key) != SpeciesRegistryScript.DIET_GRASS:
 			herd_migrations.erase(key)
 			continue
-		var center: Vector2 = herd["sum"] / float(herd["count"])
 		var need := float(herd["count"]) * _herd_member_intake(species_key) * float(config.get("horizon_seconds", 30.0))
-		var pasture_radius := _pasture_radius(species_key)
-		var migration: Dictionary = herd_migrations.get(key, {})
 		if migration.has("goal"):
 			var goal: Vector2 = migration.get("goal", center)
 			var arrived := center.distance_to(goal) <= pasture_radius
@@ -4234,7 +4321,8 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 		# Moving on with the herd, as its awake members do (`herd_migration_goal()`), unless
 		# `follow_asleep` is off: a sleeping herd already heads for the grass nearest it.
 		var migration_goal: Variant = herd_migration_goal(species_key, int(aggregate.get("group_id", -1)), hunger) \
-			if bool(_migration_config(species_key).get("follow_asleep", true)) else null
+			if bool(_migration_config(species_key).get("follow_asleep", true)) \
+				or is_led_by_player(species_key, int(aggregate.get("group_id", -1))) else null
 		if migration_goal != null and center.distance_to(migration_goal) > _pasture_radius(species_key):
 			return {
 				"goal_kind": "migrate",

@@ -337,6 +337,29 @@ Current snapshot categories:
   own ponds are named as if none were dug (how many there are sets how often a word repeats),
   so digging renames nothing; and the feed says «Выкопан водопой: Тихий пруд на Медовом лугу»
   wherever the camera is
+- «Повести стадо» (`lead_herd`, `WorldState._command_lead_herd()`): the herd `{species,
+  group_id}` walks to the order's `position` as a herd moving pastures does - its key in
+  `herd_migrations` gets `{goal, since, player: true}` - awake and asleep. Only a species that
+  moves pastures (`herd.migration`; not grouse: `not_a_herd`), a herd that is there
+  (`no_herd`), a goal on the map (`off_map`) and on open ground (`blocked`), and not further
+  than `powers.lead_herd.max_distance` (2400, the migration's own search radius) from the
+  herd's centre awake and asleep (`too_far`): dragging hungry animals far is what
+  `exempt_hunger` was added against
+- A player's goal is the player's: `_update_herd_migrations()` ends it neither for the herd's
+  own patience (`give_up_seconds`) nor for poor grass at the goal - in winter or a drought it
+  would fail that within one pass - but only on arrival, when the herd settles to eat as after
+  any move (`HerdArrived`), or after `timeout_seconds` (300, `HerdLeadEnded`); both are view
+  events. A led member follows up to hunger `powers.lead_herd.exempt_hunger` (70, against 50),
+  awake (`herd_migration_goal()`) and asleep. Its sleeping parts go too, whatever
+  `follow_asleep` says, once they have drunk: arrival is judged by the centre of the whole herd.
+  Awake, a led member walks (`Herbivore._follow_player_lead()`) instead of resting, wandering or
+  grazing in place, unless it is drinking or hungry past the threshold - a herd moving on by
+  itself only drifts that way when its members have nothing else to do, and a fed led herd
+  stood still. A herd that splits while led takes the goal into both halves; one moving on by
+  itself lets its new half choose, as it always did
+- The herds led are shown from `PlayerState.led_herds` (`{species, group_id, goal, since}`, in
+  the player block); the feed says «Стадо №3 в пути: цель на Медовом лугу» and «Стадо №3 дошло
+  до цели …», or «… не дошло до цели …» when its time ran out
 
 ## Agent Model
 
@@ -1585,6 +1608,12 @@ Current suites cover:
   memory of it and no news; the view's world getting it across a lost frame; the map's ponds
   keeping their names at 52 ponds and the dug one taking a new one through a save; the ground
   stamping it; and the feed telling of it
+- «Повести стадо» (`LeadHerdTests`): a led herd going on past bare ground at its goal and its
+  own patience until its time runs out, and arriving ends the walk; members up to hunger 70
+  following it and a herd moving by itself leaving one at 60 to eat; its sleeping part going,
+  a thirsty one drinking first, where `follow_asleep` keeps a herd moving by itself; both halves
+  of a split led on; a flock, a missing herd, off the map, a cliff and too far refused; the walk
+  saved; a fed awake herd arriving within half a minute; and the feed telling of it
 - the player's orders (`PlayerCommandTests`): an order carried out on the tick it was handed
   to, with its event and journal entry on that tick; the same order on the worker thread and
   inline leaving the worlds alike; charges and cooldowns in simulated time, kept through a

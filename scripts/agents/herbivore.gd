@@ -107,7 +107,20 @@ func tick(world, delta: float) -> void:
 		force_current_action(AgentAction.REPRODUCE, "reproduction override", world.current_tick)
 		return
 
+	if _follow_player_lead(world, delta, snapshot.group_neighbors):
+		return
 	_execute_selected_action(world, delta, snapshot.group_neighbors, predators, current_action, snapshot)
+
+
+## Led by the player (`WorldState.is_led_by_player()`), a member walks to its herd's goal whatever
+## else it would do - rest, wander, graze in place - unless it is drinking, or hunger past
+## `powers.lead_herd.exempt_hunger` sends it to grass (`herd_migration_goal()` is null then).
+## A herd moving on by itself only drifts that way, when its members have nothing else to do.
+func _follow_player_lead(world, delta: float, neighbors: Array) -> bool:
+	if ai_state != AgentAIState.ALIVE or current_action == AgentAction.DRINK \
+			or not world.is_led_by_player(species_type, group_id):
+		return false
+	return _migrate(world, delta, neighbors)
 
 
 ## Which perception snapshot this behaviour runs on. The forage loop below is

@@ -69,6 +69,8 @@ func hear(event: Dictionary) -> void:
 				_position_of(event))
 		"PlayerCommand":
 			_hear_player_command(data, time, _position_of(event))
+		"HerdArrived", "HerdLeadEnded":
+			_hear_led_herd(str(event.get("type", "")) == "HerdArrived", str(event.get("species", "")), data, time)
 
 
 ## Closes the minute when it is over: one line for everything that had no line of its own.
@@ -221,6 +223,27 @@ func _hear_player_command(data: Dictionary, time: float, position: Vector2) -> v
 			var where := "" if district < 0 else " " + str(book.places.districts[district]["at"])
 			_add({"time": time, "text": "Выкопан водопой: %s%s" % [book.places.ponds[index]["name"], where],
 				"position": position, "focus_id": -1, "pinned": false, "kind": "player", "key": "", "count": 1})
+		"lead_herd":
+			_add({"time": time, "text": "%s в пути: цель%s" % [HudTextScript.herd_name("herbivore", int(data.get("group_id", -1))),
+				_goal_place(position)], "position": position, "focus_id": -1, "pinned": false, "kind": "player", "key": "",
+				"count": 1})
+
+
+## A herd the player led: «Стадо №3 дошло до цели на Медовом лугу», or, out of time, «Стадо №3 не
+## дошло до цели …». A herd that is gone has its deaths told already.
+func _hear_led_herd(arrived: bool, species: String, data: Dictionary, time: float) -> void:
+	if not arrived and str(data.get("reason", "")) != "timeout":
+		return
+	var goal := Vector2(float(data.get("goal_x", 0.0)), float(data.get("goal_y", 0.0)))
+	_add({"time": time, "text": "%s %s до цели%s" % [HudTextScript.herd_name(species, int(data.get("group_id", -1))),
+		"дошло" if arrived else "не дошло", _goal_place(goal)], "position": goal, "focus_id": -1, "pinned": false,
+		"kind": "player", "key": "", "count": 1})
+
+
+## « на Медовом лугу», « у Тихой заводи», or "" off the named map.
+func _goal_place(position: Vector2) -> String:
+	var place := _place_of(position)
+	return "" if place == "" else " " + place
 
 
 ## «За минуту: хищники — 4 оленя, 1 тетерев · голод — 2 лисы · родились — 6 оленят».

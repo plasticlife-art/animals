@@ -19,9 +19,10 @@ signal player_state_changed
 ## drinking alone fire many times a tick.
 ## `AgentReproduced` names both parents of an awake birth, for the family tree; a pond that
 ## dries or fills again (`WaterSystem`) is told in the feed and the season's summary.
-## `PlayerCommand` says what came of an order the player gave (`PlayerCommands`).
+## `PlayerCommand` says what came of an order the player gave (`PlayerCommands`); a herd the player
+## led arrives (`HerdArrived`) or stops being led (`HerdLeadEnded`).
 const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true,
-	"PondDried": true, "PondRefilled": true, "PlayerCommand": true}
+	"PondDried": true, "PondRefilled": true, "PlayerCommand": true, "HerdArrived": true, "HerdLeadEnded": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")
