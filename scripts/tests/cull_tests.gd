@@ -127,6 +127,9 @@ func _test_the_worker_culls_alike(a) -> void:
 	a.equal("\n".join(Helpers.agent_state_lines(threaded.world_state)), "\n".join(Helpers.agent_state_lines(inline.world_state)),
 		"and the worker's world is where the inline one is")
 	a.equal(threaded.rng.state, inline.rng.state, "with the shared stream untouched alike")
+	a.equal(threaded.world_state.player.used, {"cull": 1}, "and the view's copy counts the cull, for the result")
+	a.equal(threaded.scenario.summary(threaded).get("powers_used", {}), {"cull": 1},
+		"which a scenario's summary reads there, journal or not")
 	Helpers.destroy_manager(threaded)
 	Helpers.destroy_manager(inline)
 

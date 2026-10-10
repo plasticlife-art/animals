@@ -166,12 +166,13 @@ func _dig_spot(world, center: Vector2) -> Vector2:
 	return center
 
 
-## Where, among the foxes on the screen, a cull would take the most - `Vector2.INF` if none are in
-## view.
+## Where, among the foxes in the middle of the screen - clear of the cards, the feed and the map -
+## a cull would take the most; `Vector2.INF` if none are there.
 func _cull_spot(sim, _center: Vector2) -> Vector2:
 	var world = sim.world_state
 	var radius: float = world.cull_radius()
-	var view: Rect2 = root.get_visible_rect().grow(-120.0)
+	var screen: Rect2 = root.get_visible_rect()
+	var view := Rect2(screen.position + screen.size * Vector2(0.3, 0.25), screen.size * Vector2(0.4, 0.45))
 	# `WorldProjection.to_screen` is the world's canvas; the camera puts that on the window.
 	var canvas: Transform2D = _main.get_viewport().get_canvas_transform()
 	var best := Vector2.INF

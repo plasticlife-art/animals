@@ -208,6 +208,9 @@ func _test_the_goals_chips(a) -> void:
 	runner.culled = 5
 	a.equal(str(GoalChips.chip({"id": "c", "role": "bonus", "culled_at_most": 12}, runner, 0.0)["text"]), "Отстреляно: 5 из 12",
 		"the culls against their limit")
+	a.near(GoalChips.fit_width([300.0, 190.0, 190.0], 900.0), 692.0, 0.001, "room for them: one row")
+	a.near(GoalChips.fit_width([300.0, 190.0, 190.0], 600.0), 600.0, 0.001, "too little: the room, and a second row")
+	a.near(GoalChips.fit_width([300.0, 190.0], 200.0), 300.0, 0.001, "never narrower than the widest")
 	chips.free()
 	Helpers.destroy_manager(manager)
 

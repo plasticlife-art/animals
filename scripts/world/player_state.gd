@@ -25,6 +25,9 @@ var ponds: Array = []
 ## The herds the player is leading, by herd key (`"species:group"`): `{species, group_id, goal,
 ## since}`. The world's `herd_migrations` steer them; this is what the view is shown.
 var led_herds: Dictionary = {}
+## How many orders of each power were carried out, by power: what a scenario's result counts.
+## Kept here rather than read from the journal, which the view's copy does not have.
+var used: Dictionary = {}
 var _powers: Dictionary = {}
 
 
@@ -42,6 +45,7 @@ func configure(powers_config: Dictionary) -> void:
 	journal.clear()
 	ponds.clear()
 	led_herds.clear()
+	used.clear()
 	revision = 0
 
 
@@ -68,6 +72,7 @@ func spend(power: String, now: float) -> void:
 	if int(entry.get("charges", UNLIMITED)) > 0:
 		entry["charges"] = int(entry["charges"]) - 1
 	entry["cooldown_until"] = now + float(settings(power).get("cooldown_seconds", 0.0))
+	used[power] = int(used.get(power, 0)) + 1
 	revision += 1
 
 
@@ -96,7 +101,7 @@ func record(command: Dictionary, tick: int, result: Dictionary) -> void:
 ## that brings it twice must leave the view as one that brought it once.
 func presentation_block() -> Dictionary:
 	return {"revision": revision, "budget": budget.duplicate(true), "ponds": ponds.duplicate(true),
-		"led_herds": led_herds.duplicate(true)}
+		"led_herds": led_herds.duplicate(true), "used": used.duplicate()}
 
 
 func apply_presentation_block(block: Dictionary) -> void:
@@ -104,15 +109,16 @@ func apply_presentation_block(block: Dictionary) -> void:
 	budget = block.get("budget", budget).duplicate(true)
 	ponds = block.get("ponds", ponds).duplicate(true)
 	led_herds = block.get("led_herds", led_herds).duplicate(true)
+	used = block.get("used", used).duplicate()
 
 
 func export_state() -> Dictionary:
 	return {"revision": revision, "journal": journal.duplicate(true), "budget": budget.duplicate(true),
-		"ponds": ponds.duplicate(true), "led_herds": led_herds.duplicate(true)}
+		"ponds": ponds.duplicate(true), "led_herds": led_herds.duplicate(true), "used": used.duplicate()}
 
 
 ## A save from before the player had powers carries none of this: the charges stay as
-## configured and the journal empty.
+## configured and the journal empty. One from before `used` has it counted from its journal.
 func import_state(data: Dictionary) -> void:
 	if data.is_empty():
 		return
@@ -120,6 +126,16 @@ func import_state(data: Dictionary) -> void:
 	journal = data.get("journal", []).duplicate(true)
 	ponds = data.get("ponds", []).duplicate(true)
 	led_herds = data.get("led_herds", {}).duplicate(true)
+	used = data["used"].duplicate() if data.has("used") else used_in(journal)
 	var saved: Dictionary = data.get("budget", {})
 	for power in saved.keys():
 		budget[str(power)] = saved[power].duplicate(true)
+
+
+## The orders in `entries` (a journal) carried out, counted by power.
+static func used_in(entries: Array) -> Dictionary:
+	var counts := {}
+	for entry in entries:
+		if bool(entry.get("result", {}).get("ok", false)):
+			counts[str(entry.get("type", ""))] = int(counts.get(str(entry.get("type", "")), 0)) + 1
+	return counts

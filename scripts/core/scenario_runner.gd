@@ -235,11 +235,10 @@ func count_own(world) -> int:
 
 ## What the result window and the probe report: the counts, the deaths, the goals, the powers used.
 func summary(manager = null) -> Dictionary:
+	# The player's own count: in the game this is the view's copy of the world, which has no journal.
 	var used := {}
 	if manager != null and manager.world_state != null and manager.world_state.player != null:
-		for entry in manager.world_state.player.journal:
-			if bool(entry.get("result", {}).get("ok", false)):
-				used[str(entry.get("type", ""))] = int(used.get(str(entry.get("type", "")), 0)) + 1
+		used = manager.world_state.player.used.duplicate()
 	return {"id": str(challenge.get("id", "")), "result": result, "baseline": baseline, "count": count,
 		"lowest": lowest, "share": snappedf(share(), 0.001), "deaths": deaths.duplicate(),
 		"states": states.duplicate(), "decided_at": decided_at, "groups": groups.keys(), "powers_used": used,

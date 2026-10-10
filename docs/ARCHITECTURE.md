@@ -307,7 +307,9 @@ Current snapshot categories:
   limit) and `cooldown_until` in simulated time, from `data/config/powers.json`. Two orders on
   one charge cannot both pass, and a headless run keeps the same budget as the game. It is
   saved with the world (`export_state()` under `"player"`; a save from before it keeps the
-  configured budget and an empty journal)
+  configured budget and an empty journal). `used` counts the orders carried out by power, as
+  `spend()` pays them: the view's copy has no journal, and a scenario's result counts the
+  powers there (a save from before `used` has it counted from its journal)
 - The view follows it by `revision`, which moves with every charge or cooldown spent: a worker
   frame carries `presentation_block()` when the revision moved and in every full snapshot, so
   a frame lost to a sequence gap does not leave the view behind; `_apply_worker_frame()` takes
@@ -1124,7 +1126,10 @@ Utility actions inside `alive`:
   it would fail if decided now, green met, red failed; the scenario's own words in the tooltip.
   A species' floor reads «Лисы: 34, не меньше 20», a limit on culling «Отстреляно: 5 из 12». Last,
   where the challenge asks for it (`chips` with "water"), the own herd's water, its members' mean
-  awake and asleep («Вода стада: 64»), amber below 60 and red below 30: when to act is read off it
+  awake and asleep («Вода стада: 64»), amber below 60 and red below 30: when to act is read off it.
+  An `HFlowContainer`, centred in one row while the room between the cards on the left and the
+  map and feed on the right holds it (`fit()`, from `MainController._layout_hud()`), in two when
+  not - three or four chips at 125 % in a 1600-wide window ran under both
 - `ResultWindow`, in the middle: before play the brief - the scenario, what it asks, its goals,
   «Начать» - over a paused game, with the camera framing the player's herd
   (`GameCamera.frame_world_rect()`, near enough that it is awake) and one of it selected; at the

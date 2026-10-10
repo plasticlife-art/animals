@@ -48,6 +48,8 @@ extends Node2D
 const SELECTION_CARD_X := 12.0
 const SELECTION_CARD_GAP := 12.0
 const SELECTION_CARD_WIDTH := 332.0
+## About a row of goal chips, for what stands beside them (`_layout_hud()`).
+const CHIP_ROW_HEIGHT := 32.0
 ## How much of the map a scenario's start shows around the player's herd, in simulation units:
 ## close enough that the herd is awake, wide enough to see its water.
 const SCENARIO_FRAME := Vector2(1800.0, 1100.0)
@@ -640,11 +642,26 @@ func _layout_hud() -> void:
 		climate_indicator.offset_right = _climate_offsets.y + shift
 		ecology_strip.offset_left = _strip_offsets.x + shift
 		ecology_strip.offset_right = _strip_offsets.y + shift
-	# The goals stand just above the powers.
+	# The goals stand just above the powers, between the cards on the left and the map and the
+	# feed on the right: in two rows rather than under them. What stands beside them is judged
+	# over two rows' height, so taking the second does not change the room it was taken for.
 	var chips_bottom: float = powers_bar.offset_bottom - (powers_bar.size.y + 6.0 if powers_bar.visible else 0.0)
 	if not is_equal_approx(goal_chips.offset_bottom, chips_bottom):
 		goal_chips.offset_top = chips_bottom
 		goal_chips.offset_bottom = chips_bottom
+	if goal_chips.visible:
+		var view_size: Vector2 = get_viewport().get_visible_rect().size
+		var band := Rect2(0.0, goal_chips.get_global_rect().end.y - 2.0 * CHIP_ROW_HEIGHT, view_size.x, 2.0 * CHIP_ROW_HEIGHT)
+		var left := 0.0
+		var right := view_size.x
+		for card in [herd_card, selection_card]:
+			if card.is_visible_in_tree() and card.get_global_rect().intersects(band):
+				left = maxf(left, card.get_global_rect().end.x + 8.0)
+		for column in [minimap, story_feed]:
+			if column.is_visible_in_tree() and column.get_global_rect().intersects(band):
+				right = minf(right, column.get_global_rect().position.x - 8.0)
+		var center := view_size.x * 0.5
+		goal_chips.fit(2.0 * minf(center - left, right - center))
 	# One card at a time in the right column: an epitaph waits, its countdown stopped, while the
 	# season card stands there. Stacked, the two reach down over the event feed.
 	var epitaph_allowed: bool = not start_menu.visible and not season_card.visible and not result_window.visible

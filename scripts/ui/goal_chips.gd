@@ -1,5 +1,5 @@
 class_name GoalChips
-extends HBoxContainer
+extends HFlowContainer
 
 ## A scenario's goals above the powers, one chip each, with the numbers that decide them: «Ваше
 ## стадо: 17 из 20, нужно 10 · ещё 2:15», «Не меньше 5 голов», «Ни одной смерти от жажды». Ink
@@ -8,7 +8,8 @@ extends HBoxContainer
 ## A species' floor reads «Лисы: 34, не меньше 20», a limit on culling «Отстреляно: 5 из 12». Last,
 ## in a scenario that asks for it (`challenge.chips` with "water"), how much water the own herd has
 ## on average, awake and asleep - «Вода стада: 64» - amber below `WATER_LOW`, red below
-## `WATER_CRITICAL`: when to act is read off it.
+## `WATER_CRITICAL`: when to act is read off it. Centred in one row while there is room between the
+## cards and the map (`fit()`), in two or more when there is not - a large interface, a small window.
 
 const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
@@ -16,6 +17,7 @@ const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 ## thirst at which the herd is in danger (`balance.state_thresholds`).
 const WATER_LOW := 60.0
 const WATER_CRITICAL := 30.0
+const SEPARATION := 6.0
 const INK := {
 	"pending": Color(0.2, 0.13, 0.08),
 	"warning": Color(0.72, 0.42, 0.04),
@@ -28,8 +30,34 @@ var _chips: Array = []
 
 func _init() -> void:
 	visible = false
-	alignment = BoxContainer.ALIGNMENT_CENTER
-	add_theme_constant_override("separation", 6)
+	alignment = FlowContainer.ALIGNMENT_CENTER
+	add_theme_constant_override("h_separation", int(SEPARATION))
+	add_theme_constant_override("v_separation", 4)
+
+
+## Centred where they stand, the chips take `room` pixels across at most: one row when it holds
+## them, more when it does not.
+func fit(room: float) -> void:
+	var widths: Array = []
+	for panel in _chips:
+		if panel.visible:
+			widths.append(panel.get_combined_minimum_size().x)
+	var width := fit_width(widths, room)
+	if not is_equal_approx(offset_right - offset_left, width):
+		offset_left = -width * 0.5
+		offset_right = width * 0.5
+
+
+## The width of chips `widths` wide in `room`: their row when it fits, else the room - never
+## narrower than the widest, which would stand out of any row.
+static func fit_width(widths: Array, room: float) -> float:
+	var row := 0.0
+	var widest := 0.0
+	for width in widths:
+		row += float(width)
+		widest = maxf(widest, float(width))
+	row += SEPARATION * float(maxi(0, widths.size() - 1))
+	return minf(row, maxf(room, widest))
 
 
 ## The chips for `runner`'s goals at `now`, and the own herd's water in `world`; none for a world
