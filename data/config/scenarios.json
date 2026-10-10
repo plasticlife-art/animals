@@ -1,5 +1,5 @@
 {
-  "_comment": "Scenarios: a world with a goal (`ConfigLoader.load_scenario_bundle`, `ScenarioRunner`). `selection` picks setup options as the setup screen does (the style stays the player's); `patch` is merged over the bundle after them; `challenge` goes into the bundle as it is and is what the runner keeps score by; its `result` holds the result window's titles. `own_herd.near` is a point in fractions of the map: the herd of `own_herd.species` nearest it at the start is the player's. A goal names what must hold - `share_at_least`, the own herd against its size at the start, `thirst_deaths_at_most`, its deaths of thirst, or `thirst_share_at_most`, those as a share of its size at the start - and when: `form` `at_season_start` on the first tick of `season` (or `days` into it), `always` on every tick. Its `role` says what it decides: `win`, won if it holds at its moment and lost if not; `lose`, lost the moment it stops holding; `bonus`, nothing - it is kept or not.",
+  "_comment": "Scenarios: a world with a goal (`ConfigLoader.load_scenario_bundle`, `ScenarioRunner`). `selection` picks setup options as the setup screen does (the style stays the player's); `patch` is merged over the bundle after them; `challenge` goes into the bundle as it is and is what the runner keeps score by; its `result` holds the result window's titles, `chips` the extra chips shown (\"water\": the own herd's water) and `watch` the species counted into the curve beside the own herd. `own_herd.near` is a point in fractions of the map: the herd of `own_herd.species` nearest it at the start is the player's. A goal names what must hold - `share_at_least`, the own herd against its size at the start, `thirst_deaths_at_most`, its deaths of thirst, `thirst_share_at_most`, those as a share of its size at the start, `species_at_least` or `species_share_at_least`, a species' count or share of its start, or `culled_at_most`, the animals culled - and when: `form` `at_season_start` on the first tick of `season` (or `days` into it; the `years`-th such season), `always` on every tick. Its `role` says what it decides: `win`, won if it holds at its moment and lost if not; `lose`, lost the moment it stops holding; `bonus`, nothing - it is kept or not.",
   "order": ["long_drought", "too_many_foxes"],
   "scenarios": {
     "long_drought": {
@@ -25,6 +25,7 @@
       "challenge": {
         "own_herd": {"species": "herbivore", "near": [0.5, 0.5]},
         "result": {"won": "Стадо пережило сушь", "lost": "Стадо не пережило сушь"},
+        "chips": ["water"],
         "goals": [
           {"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "autumn", "days": 1.5, "share_at_least": 0.5,
             "label": "Сохранить половину стада до осенних дождей"},

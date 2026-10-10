@@ -5,10 +5,13 @@ extends HBoxContainer
 ## стадо: 17 из 20, нужно 10 · ещё 2:15», «Не меньше 5 голов», «Ни одной смерти от жажды». Ink
 ## while open, amber while it would fail if decided now, green once met, red once failed; the
 ## goal as the scenario words it in the tooltip. Read from the manager's score (`ScenarioRunner`).
-## Last, how much water the own herd has on average, awake and asleep - «Вода стада: 64» - amber
-## below `WATER_LOW`, red below `WATER_CRITICAL`: when to act is read off it.
+## A species' floor reads «Лисы: 34, не меньше 20», a limit on culling «Отстреляно: 5 из 12». Last,
+## in a scenario that asks for it (`challenge.chips` with "water"), how much water the own herd has
+## on average, awake and asleep - «Вода стада: 64» - amber below `WATER_LOW`, red below
+## `WATER_CRITICAL`: when to act is read off it.
 
 const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
+const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 ## The herd's water, 0 to 100, below which its chip turns amber, then red: the drink floor and the
 ## thirst at which the herd is in danger (`balance.state_thresholds`).
 const WATER_LOW := 60.0
@@ -36,7 +39,7 @@ func refresh(runner, now: float, world = null) -> void:
 	var shown: Array = []
 	for goal in goals:
 		shown.append(chip(goal, runner, now))
-	if not goals.is_empty() and world != null:
+	if not goals.is_empty() and world != null and runner.challenge.get("chips", []).has("water"):
 		shown.append(water_chip(herd_water(world, runner)))
 	while _chips.size() < shown.size():
 		var panel := PanelContainer.new()
@@ -70,6 +73,18 @@ static func chip(goal: Dictionary, runner, now: float) -> Dictionary:
 				text += " · ещё %s" % clock(float(runner.decide_times[goal_id]) - now)
 		else:
 			text = "Не меньше %d %s" % [needed, heads_genitive(needed)]
+	elif goal.has("species_at_least") or goal.has("species_share_at_least"):
+		var parts: Array = []
+		var floors: Dictionary = goal.get("species_at_least", {})
+		for species_id in floors.keys():
+			parts.append(species_floor_text(str(species_id), int(runner.species_now.get(species_id, 0)), int(floors[species_id])))
+		var shares: Dictionary = goal.get("species_share_at_least", {})
+		for species_id in shares.keys():
+			var needed := ceili(float(shares[species_id]) * float(runner.species_start.get(species_id, 0)) - 0.0001)
+			parts.append(species_floor_text(str(species_id), int(runner.species_now.get(species_id, 0)), needed))
+		text = " · ".join(parts)
+	elif goal.has("culled_at_most"):
+		text = "Отстреляно: %d из %d" % [runner.culled, int(goal["culled_at_most"])]
 	elif goal.has("thirst_deaths_at_most") or goal.has("thirst_share_at_most"):
 		var deaths: int = runner.thirst_deaths()
 		text = "Ни одной смерти от жажды" if deaths == 0 else "Смертей от жажды: %d" % deaths
@@ -91,6 +106,11 @@ static func chip(goal: Dictionary, runner, now: float) -> Dictionary:
 ## «голов» after «не меньше»: genitive, «головы» only after a one that is not eleven.
 static func heads_genitive(count: int) -> String:
 	return "головы" if count % 10 == 1 and count % 100 != 11 else "голов"
+
+
+## «Лисы: 34, не меньше 20».
+static func species_floor_text(species_id: String, count: int, needed: int) -> String:
+	return "%s: %d, не меньше %d" % [HudTextScript.capitalized(HudTextScript.animals_label(species_id)), count, needed]
 
 
 ## The own herd's water, 0 to 100, its members' mean awake and asleep; -1 with none of it left.

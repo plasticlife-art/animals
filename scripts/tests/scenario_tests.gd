@@ -39,6 +39,7 @@ func run(a) -> void:
 	_test_a_scenario_saved_and_loaded(a)
 	_test_its_own_slots(a)
 	_test_the_first_season_seen_whole(a)
+	_test_years_species_and_culls(a)
 
 
 ## A map wide enough for two herds apart, every animal awake unless a test puts a sector to
@@ -356,4 +357,41 @@ func _test_the_first_season_seen_whole(a) -> void:
 	book.begin()
 	a.is_true(int(book.seasons.open.get("ordinal", -1)) == 1 and not bool(book.seasons.open.get("partial", true)),
 		"summer, seen whole")
+	Helpers.destroy_manager(manager)
+
+
+## A goal the `years`-th season from the start; a species counted from its start and held to a floor;
+## the foxes culled counted from the orders carried out; the watched species in the curve; and all
+## of it saved.
+func _test_years_species_and_culls(a) -> void:
+	var manager = _world(9935)
+	var world = manager.world_state
+	Helpers.spawn_herd(world, OWN_AT, 6, 0)
+	for at in [Vector2(2000.0, 2000.0), Vector2(2020.0, 2000.0), Vector2(2600.0, 600.0)]:
+		Helpers.spawn_predator(world, at)
+	manager.config_bundle["challenge"] = {
+		"id": "foxes", "own_herd": {"species": "herbivore", "near": [0.5, 0.5]}, "watch": ["predator"],
+		"goals": [
+			{"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "summer", "years": 2, "share_at_least": 0.5},
+			{"id": "foxes_live", "role": "lose", "form": "always", "species_at_least": {"predator": 2}},
+			{"id": "few_shots", "role": "bonus", "form": "always", "culled_at_most": 1},
+		],
+	}
+	manager._start_scenario()
+	var runner = manager.scenario
+	a.equal(int(runner.decide_ordinals.keep_herd), 9, "begun in summer, decided two summers on")
+	a.near(float(runner.decide_times.keep_herd), 960.0, 0.001, "at second 960")
+	a.equal(int(runner.species_start.get("predator", 0)), 3, "the foxes counted at the start")
+	a.equal(runner.series[0].size(), 4, "and watched in the curve")
+	var saved: Dictionary = {}
+	manager.enqueue_command("cull", {"position": Vector2(2010.0, 2000.0)})
+	manager.step_once()
+	a.equal(runner.culled, 2, "the two culled counted")
+	a.equal(str(runner.states.few_shots), "failed", "past the limit, the bonus is lost")
+	a.is_true(runner.result == "lost" and str(runner.states.foxes_live) == "failed", "one fox left of a floor of two: lost")
+	saved = runner.export_state()
+	var loaded = ScenarioRunnerScript.new()
+	loaded.import_state(manager, JSON.parse_string(JSON.stringify(saved)))
+	a.is_true(loaded.culled == 2 and int(loaded.species_start.get("predator", 0)) == 3 and int(loaded.species_now.get("predator", 0)) == 1,
+		"the culls and the species saved")
 	Helpers.destroy_manager(manager)

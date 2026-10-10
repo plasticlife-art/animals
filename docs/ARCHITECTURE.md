@@ -405,15 +405,18 @@ Current snapshot categories:
   (`AgentDied` carries the group). A goal names what must hold - `share_at_least` of the starting
   count, `thirst_deaths_at_most`, `thirst_share_at_most` - and when: `at_season_start` of a
   season, judged by the season ordinal so the tick the season turns is the one that decides, or
-  `days` into it; or `always`. Its `role` is `win` (won or lost at its moment), `lose` (lost the
-  moment it fails) or `bonus`. Once the result is in (`finished`), the score keeps still and the
+  `days` into it, the `years`-th such season from the start; or `always`. A goal may also hold a
+  species to a floor - a count (`species_at_least`) or a share of its own start
+  (`species_share_at_least`), counted from the world's census while such a goal or `watch` asks -
+  or limit the culls (`culled_at_most`, from the `PlayerCommand` of each cull carried out). Its
+  `role` is `win` (won or lost at its moment), `lose` (lost the moment it fails) or `bonus`. Once the result is in (`finished`), the score keeps still and the
   world can be watched on
 - `SimulationManager.scenario` keeps the score of the world it runs: begun by `initialize()`,
   hearing the view events as they are forwarded and updated after every inline tick and every
   worker frame applied, its changes raised as `scenario_goal_changed` and `scenario_finished`.
   A world without a challenge has an inactive one - the sandbox, whose powers have no charges,
   only their cooldowns (`powers.json`). The runner keeps its own curve, `[time, own herd, its
-  species]` every 5 s and at the result: the stats' series is not saved, and a curve drawn from
+  species, each species the challenge `watch`es]` every 5 s and at the result: the stats' series is not saved, and a curve drawn from
   it after a load would begin at the load
 - A save carries the score under `scenario`, and `SaveSystem.restore()` takes it back after the
   world and its clock (`import_scenario()`): the starting count, the herd, the deaths and the
@@ -1097,8 +1100,9 @@ Utility actions inside `alive`:
 - `GoalChips`, above the powers: a chip a goal with its numbers - «Ваше стадо: 17 из 20, нужно 10
   · ещё 2:15», «Не меньше 5 голов», «Ни одной смерти от жажды» - in ink while open, amber while
   it would fail if decided now, green met, red failed; the scenario's own words in the tooltip.
-  Last, the own herd's water, its members' mean awake and asleep («Вода стада: 64»), amber below
-  60 and red below 30: when to act is read off it
+  A species' floor reads «Лисы: 34, не меньше 20», a limit on culling «Отстреляно: 5 из 12». Last,
+  where the challenge asks for it (`chips` with "water"), the own herd's water, its members' mean
+  awake and asleep («Вода стада: 64»), amber below 60 and red below 30: when to act is read off it
 - `ResultWindow`, in the middle: before play the brief - the scenario, what it asks, its goals,
   «Начать» - over a paused game, with the camera framing the player's herd
   (`GameCamera.frame_world_rect()`, near enough that it is awake) and one of it selected; at the
@@ -1781,7 +1785,9 @@ Current suites cover:
   whose powers have no charges; a save carrying it and a load taking it back, a result to come
   decided at its time and one already in not announced again; a scenario's own slots, Continue
   opening the save written last, a version 3 save without a time the oldest and still loading;
-  and the first season of a world begun in summer seen whole
+  and the first season of a world begun in summer seen whole; a goal two summers on, a species'
+  floor, the culls counted from the orders and past their limit, the watched species in the curve,
+  and all of it saved
 - «Отстрел» (`CullTests`): the nearest foxes taken, as many as the power allows and only foxes,
   each told dead of a cull and no body left, the stats counting it; sleeping foxes taken too and
   the census following; off the map, nobody there and only a deer there refused at no cost; a

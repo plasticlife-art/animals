@@ -77,6 +77,9 @@ func show_result(won: bool, summary: Dictionary, runner, challenge: Dictionary) 
 	_text.text = "\n".join(result_lines(summary, runner, challenge))
 	_curve.series = runner.series.duplicate(true)
 	_curve.species_label = HudTextScript.capitalized(HudTextScript.animals_label(str(runner.species)))
+	_curve.watched_labels = []
+	for watched in challenge.get("watch", []):
+		_curve.watched_labels.append(HudTextScript.capitalized(HudTextScript.animals_label(str(watched))))
 	_curve.visible = _curve.series.size() >= 2
 	_curve.queue_redraw()
 	_set_buttons([["Смотреть дальше", watch_on_requested], ["Заново", restart_requested], ["В меню", menu_requested]])
@@ -132,6 +135,15 @@ static func result_lines(summary: Dictionary, runner, challenge: Dictionary) -> 
 		if int(powers.get(power, 0)) > 0:
 			used.append("%s %d" % [PowerAim.LABELS[power], int(powers[power])])
 	lines.append("Силы: " + ", ".join(used) if not used.is_empty() else "Силы не понадобились")
+	if int(summary.get("culled", 0)) > 0:
+		lines.append("Отстреляно: %d" % int(summary["culled"]))
+	var at_start: Dictionary = summary.get("species_start", {})
+	var at_end: Dictionary = summary.get("species", {})
+	for watched in challenge.get("watch", []):
+		var watched_id := str(watched)
+		if at_end.has(watched_id):
+			lines.append("%s: %d (было %d)" % [HudTextScript.capitalized(HudTextScript.animals_label(watched_id)),
+				int(at_end[watched_id]), int(at_start.get(watched_id, 0))])
 	var states: Dictionary = summary.get("states", {})
 	for goal in challenge.get("goals", []):
 		if str(goal.get("role", "")) == "bonus":
@@ -147,9 +159,11 @@ class ResultCurve:
 
 	const OWN_COLOR := Color(0.16, 0.48, 0.2)
 	const SPECIES_COLOR := Color(0.45, 0.36, 0.26, 0.8)
+	const WATCHED_COLORS := [Color(0.72, 0.3, 0.12), Color(0.38, 0.3, 0.62)]
 
 	var series: Array = []
 	var species_label: String = ""
+	var watched_labels: Array = []
 
 	func _draw() -> void:
 		if series.size() < 2:
@@ -161,7 +175,10 @@ class ResultCurve:
 		draw_rect(rect, Color(0.2, 0.13, 0.08, 0.06), true)
 		var start := float(series[0][0])
 		var span := maxf(1.0, float(series[series.size() - 1][0]) - start)
-		for column in [[1, OWN_COLOR], [2, SPECIES_COLOR]]:
+		var columns: Array = [[1, OWN_COLOR], [2, SPECIES_COLOR]]
+		for index in range(watched_labels.size()):
+			columns.append([3 + index, WATCHED_COLORS[index % WATCHED_COLORS.size()]])
+		for column in columns:
 			var index: int = column[0]
 			var highest := 1.0
 			for row in series:
@@ -176,7 +193,11 @@ class ResultCurve:
 			if points.size() >= 2:
 				draw_polyline(points, column[1], 2.0, true)
 		draw_string(font, Vector2(0.0, float(font_size)), "Ваше стадо", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, OWN_COLOR)
-		draw_string(font, Vector2(size.x * 0.5, float(font_size)), species_label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, SPECIES_COLOR)
+		var slot := size.x / float(2 + watched_labels.size())
+		draw_string(font, Vector2(slot, float(font_size)), species_label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, SPECIES_COLOR)
+		for index in range(watched_labels.size()):
+			draw_string(font, Vector2(slot * float(2 + index), float(font_size)), str(watched_labels[index]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, WATCHED_COLORS[index % WATCHED_COLORS.size()])
 
 
 func _set_buttons(entries: Array) -> void:

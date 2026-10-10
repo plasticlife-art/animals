@@ -14,9 +14,12 @@ extends RefCounted
 ## counts them (`HerdReadout`).
 ##
 ## A goal names what must hold - the own herd's share of its starting count, its deaths of
-## thirst, as a count or a share of that starting count - and when: on the first tick of a season (`at_season_start`), judged by the season
-## ordinal of the world's time so the tick it begins is the one that decides, or `days` into it;
-## or on every tick (`always`). Its `role` says what it decides: `win` won or lost at its moment, `lose` lost the
+## thirst, as a count or a share of that starting count, a species' count (`species_at_least`) or
+## share of its own start (`species_share_at_least`), the animals the player culled
+## (`culled_at_most`) - and when: on the first tick of a season (`at_season_start`), judged by the season
+## ordinal of the world's time so the tick it begins is the one that decides, or `days` into it,
+## the `years`-th such season from the start; or on every tick (`always`). The species a scenario
+## `watch`es are counted with the own herd into its curve. Its `role` says what it decides: `win` won or lost at its moment, `lose` lost the
 ## moment it fails, `bonus` nothing. Once the result is in, the runner keeps still: the world
 ## may be watched on.
 
@@ -48,7 +51,14 @@ var decide_times: Dictionary = {}
 ## "", "won" or "lost".
 var result: String = ""
 var decided_at: float = -1.0
-## `[time, own herd, its whole species]` every `SERIES_SECONDS` and at the result, for the
+## Each species' count when the scenario began and now, for the goals on a species and the curve;
+## kept only while a goal or `watch` asks for them (counting every species costs a walk of the world).
+var species_start: Dictionary = {}
+var species_now: Dictionary = {}
+## Animals the player culled since the start (`PlayerCommand` of «Отстрел», carried out).
+var culled: int = 0
+var _counts_species := false
+## `[time, own herd, its whole species, each watched species...]` every `SERIES_SECONDS` and at the result, for the
 ## result's curves. Kept here and saved with the score: the stats' own series is not saved, and
 ## a curve drawn from it after a load would begin at the load.
 var series: Array = []
@@ -81,6 +91,9 @@ func start(manager) -> void:
 	decide_ordinals.clear()
 	decide_times.clear()
 	series.clear()
+	species_start.clear()
+	species_now.clear()
+	culled = 0
 	result = ""
 	decided_at = -1.0
 	var bundle_challenge = manager.config_bundle.get("challenge", {})
@@ -99,24 +112,39 @@ func start(manager) -> void:
 	baseline = count_own(world)
 	count = baseline
 	lowest = baseline
+	_counts_species = not challenge.get("watch", []).is_empty()
 	var climate_config: Dictionary = manager.config_bundle.get("world", {}).get("climate", {})
+	var season_count := maxi(1, int(ClimateScript.calendar(climate_config)[1]))
 	for goal in challenge.get("goals", []):
 		var goal_id := str(goal.get("id", ""))
 		states[goal_id] = PENDING
+		if goal.has("species_at_least") or goal.has("species_share_at_least"):
+			_counts_species = true
 		if str(goal.get("form", "")) == "at_season_start":
 			var ordinal := next_season_ordinal(climate_config, started_at, str(goal.get("season", "")))
+			if ordinal >= 0:
+				ordinal += (maxi(1, int(goal.get("years", 1))) - 1) * season_count
 			decide_ordinals[goal_id] = ordinal
 			decide_times[goal_id] = season_start_time(climate_config, ordinal) \
 				+ float(goal.get("days", 0.0)) * float(climate_config.get("day_length_seconds", 120.0))
+	if _counts_species:
+		species_start = species_counts(world)
+		species_now = species_start.duplicate()
 	_sample(world, started_at)
 
 
 ## A world event as the view hears it: a split of the own herd adds the half that left to it, a
-## death in it is counted by cause - until the result is in.
+## death in it is counted by cause, a cull carried out by what it took - until the result is in.
 func hear(event: Dictionary) -> void:
-	if not is_active() or is_over() or str(event.get("species", "")) != species:
+	if not is_active() or is_over():
 		return
 	var data: Dictionary = event.get("data", {})
+	if str(event.get("type", "")) == "PlayerCommand":
+		if str(data.get("power", "")) == "cull" and bool(data.get("ok", false)):
+			culled += int(data.get("killed", 0))
+		return
+	if str(event.get("species", "")) != species:
+		return
 	match str(event.get("type", "")):
 		"HerdSplit":
 			if groups.has(int(data.get("group_id", -1))):
@@ -134,6 +162,8 @@ func update(manager) -> void:
 	var now := float(manager.simulation_time)
 	count = count_own(manager.world_state)
 	lowest = mini(lowest, count)
+	if _counts_species:
+		species_now = species_counts(manager.world_state)
 	if series.is_empty() or now - float(series[series.size() - 1][0]) >= SERIES_SECONDS:
 		_sample(manager.world_state, now)
 	var ordinal := ClimateScript.season_ordinal(manager.config_bundle.get("world", {}).get("climate", {}), now)
@@ -166,7 +196,26 @@ func holds(goal: Dictionary) -> bool:
 		return false
 	if goal.has("thirst_share_at_most") and float(thirst_deaths()) > float(goal["thirst_share_at_most"]) * float(baseline):
 		return false
+	var floors: Dictionary = goal.get("species_at_least", {})
+	for species_id in floors.keys():
+		if int(species_now.get(species_id, 0)) < int(floors[species_id]):
+			return false
+	var shares: Dictionary = goal.get("species_share_at_least", {})
+	for species_id in shares.keys():
+		if float(species_now.get(species_id, 0)) < float(shares[species_id]) * float(species_start.get(species_id, 0)):
+			return false
+	if goal.has("culled_at_most") and culled > int(goal["culled_at_most"]):
+		return false
 	return true
+
+
+## Every species' count, awake and asleep.
+static func species_counts(world) -> Dictionary:
+	var metrics: Dictionary = world.get_population_metrics()
+	var counts := {}
+	for species_id in world.species_registry.ids():
+		counts[str(species_id)] = int(metrics.get("%s_count" % species_id, 0))
+	return counts
 
 
 ## The own herd's members now, awake and asleep.
@@ -193,7 +242,8 @@ func summary(manager = null) -> Dictionary:
 				used[str(entry.get("type", ""))] = int(used.get(str(entry.get("type", "")), 0)) + 1
 	return {"id": str(challenge.get("id", "")), "result": result, "baseline": baseline, "count": count,
 		"lowest": lowest, "share": snappedf(share(), 0.001), "deaths": deaths.duplicate(),
-		"states": states.duplicate(), "decided_at": decided_at, "groups": groups.keys(), "powers_used": used}
+		"states": states.duplicate(), "decided_at": decided_at, "groups": groups.keys(), "powers_used": used,
+		"culled": culled, "species_start": species_start.duplicate(), "species": species_now.duplicate()}
 
 
 ## The herd of `species_key` whose centre, awake and asleep, is nearest `point`; -1 if none.
@@ -252,7 +302,8 @@ func export_state() -> Dictionary:
 		"started_at": started_at, "deaths": deaths.duplicate(), "states": states.duplicate(),
 		"decide_ordinals": decide_ordinals.duplicate(), "decide_times": decide_times.duplicate(),
 		"result": result, "decided_at": decided_at,
-		"series": series.duplicate(true)}
+		"series": series.duplicate(true), "culled": culled, "species_start": species_start.duplicate(),
+		"species_now": species_now.duplicate()}
 
 
 ## A saved score over `manager`'s bundle: the starting count and the decided goals are the
@@ -281,10 +332,23 @@ func import_state(manager, data: Dictionary) -> void:
 	result = str(data.get("result", ""))
 	decided_at = float(data.get("decided_at", -1.0))
 	series = data.get("series", []).duplicate(true)
+	culled = int(data.get("culled", 0))
+	for key in ["species_start", "species_now"]:
+		var counts := {}
+		for species_id in data.get(key, {}).keys():
+			counts[str(species_id)] = int(data[key][species_id])
+		if key == "species_start":
+			species_start = counts
+		else:
+			species_now = counts
 
 
 func _sample(world, now: float) -> void:
-	series.append([snappedf(now, 0.01), count, int(world.get_population_metrics().get("%s_count" % species, 0))])
+	var metrics: Dictionary = world.get_population_metrics()
+	var row: Array = [snappedf(now, 0.01), count, int(metrics.get("%s_count" % species, 0))]
+	for watched in challenge.get("watch", []):
+		row.append(int(metrics.get("%s_count" % str(watched), 0)))
+	series.append(row)
 
 
 func _set_state(goal_id: String, state: String) -> void:

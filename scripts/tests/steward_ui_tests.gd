@@ -19,6 +19,7 @@ const CHALLENGE := {
 	"brief": "Пробный сценарий.",
 	"own_herd": {"species": "herbivore", "near": [0.25, 0.25]},
 	"result": {"won": "Стадо пережило сушь", "lost": "Стадо не пережило сушь"},
+	"chips": ["water"],
 	"goals": [
 		{"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "autumn", "share_at_least": 0.5, "label": "Сохранить половину стада"},
 		{"id": "not_wiped", "role": "lose", "form": "always", "share_at_least": 0.25, "label": "Не меньше четверти"},
@@ -170,6 +171,20 @@ func _test_the_goals_chips(a) -> void:
 		"enough water: ink")
 	a.is_true(str(GoalChips.water_chip(45.0)["state"]) == "warning" and str(GoalChips.water_chip(20.0)["state"]) == "failed",
 		"low: amber, critical: red")
+	runner.challenge.erase("chips")
+	chips.refresh(runner, manager.simulation_time, manager.world_state)
+	a.equal(chips.get_children().filter(func(chip: Control) -> bool: return chip.visible).size(), 3,
+		"no water chip where the scenario does not ask for one")
+	runner.challenge["chips"] = ["water"]
+	runner.species_now = {"predator": 34}
+	runner.species_start = {"predator": 60}
+	a.equal(str(GoalChips.chip({"id": "f", "role": "lose", "species_at_least": {"predator": 20}}, runner, 0.0)["text"]),
+		"Лисы: 34, не меньше 20", "a species' floor")
+	a.equal(str(GoalChips.chip({"id": "f", "role": "lose", "species_share_at_least": {"predator": 0.5}}, runner, 0.0)["text"]),
+		"Лисы: 34, не меньше 30", "as a share of its start")
+	runner.culled = 5
+	a.equal(str(GoalChips.chip({"id": "c", "role": "bonus", "culled_at_most": 12}, runner, 0.0)["text"]), "Отстреляно: 5 из 12",
+		"the culls against their limit")
 	chips.free()
 	Helpers.destroy_manager(manager)
 
