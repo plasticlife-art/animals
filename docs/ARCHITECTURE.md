@@ -441,6 +441,25 @@ Current snapshot categories:
   the rains have filled about 30 of the 53 ponds again), lost below a quarter at any time, the
   bonus no death of thirst. Powers: one waterhole, filled only half (`start_level` 0.5, against
   0.8 in the sandbox), two leads 60 s apart
+- «Слишком много лис» (`too_many_foxes`): the medium map, seed 7, flat ground, begun in autumn;
+  sixty foxes (cap 120) that hunt well (`attack.base_success_chance` 0.55 against 0.38), founders
+  young. Goals: the own herd no smaller than at the start two autumns on (`years` 2, second 960),
+  lost below a quarter at any time, the bonus no more than 12 foxes culled. Powers: eight culls
+  and two leads; the foxes' curve is watched beside the herd's
+- Tuned headless (`scenario_probe.gd`, camera on the herd, two years). The outbreak as first
+  planned - more foxes, a higher cap, begun in spring - did not threaten a herd: its fawns outran
+  the foxes (the herd grew on average with 24, 48, 60 or 72 foxes, below half on at most 2 seeds of
+  4), the foxes stood on their cap all two years and never crashed, and the deer as a species
+  ended at 290-320 against 500 with the usual 24 foxes, never below their start. Begun in autumn,
+  no fawns for most of a year, and with foxes that hunt well, the herd with no powers ended at
+  0.31 of its start on 4 seeds (0.87 on 8: the seeds differ more than the variants - one herd
+  grows threefold whatever the foxes, another dies of thirst or hunger). A cull in spring is
+  undone within a minute, litters filling the cap; one in autumn or winter holds to spring. On
+  eight seeds, eight culls: with no powers the herd was no smaller after two years on 2 of 8, culling
+  the foxes gathered by it out of their season on 7 of 8 (16 culled on average; the bonus kept on
+  2), spending every shot at once on 7 of 8 (18; the bonus never), leading it away from them on 3
+  of 8. The foxes cannot be culled out: at their cap whatever was shot, the moderation is the
+  bonus's
 - Tuned on eight seeds with the camera on the herd. With no powers the herd was lost on 8 of 8
   (a ninth of it left at second 540 on average, 18 of 20 dead of thirst); digging and leading
   once its water ran low won 8 of 8 (0.72 left, 4 of thirst), and acting only once the water was
@@ -1791,7 +1810,7 @@ Current suites cover:
   opening the save written last, a version 3 save without a time the oldest and still loading;
   and the first season of a world begun in summer seen whole; a goal two summers on, a species'
   floor, the culls counted from the orders and past their limit, the watched species in the curve,
-  and all of it saved
+  and all of it saved; and «Слишком много лис» as tuned, its powers only the cull and the lead
 - «Отстрел» (`CullTests`): the nearest foxes taken, as many as the power allows and only foxes,
   each told dead of a cull and no body left, the stats counting it; sleeping foxes taken too and
   the census following; off the map, nobody there and only a deer there refused at no cost; a

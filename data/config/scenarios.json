@@ -38,25 +38,36 @@
     },
     "too_many_foxes": {
       "label": "Слишком много лис",
-      "brief": "В заповеднике расплодились лисы: их втрое больше обычного, а весной выводков станет ещё больше. Сохраните своё стадо оленей два года — но не истребите лис: без них заповеднику тоже не жить.",
+      "brief": "За лето в заповеднике расплодились лисы: их вдвое больше обычного, и охотятся они умело. Через два года к осени в вашем стаде оленей должно быть не меньше голов, чем сейчас. Отстрел убирает лис у стада, но весной выводки быстро займут место отстрелянных — берегите выстрелы для осени и зимы.",
       "seed": 7,
       "selection": {"map_size": "medium", "mix": "balanced", "scenario": "normal", "rules": "normal", "difficulty": "normal"},
       "patch": {
         "world": {
+          "climate": {"start_season_index": 2},
           "terrain": {"height": {"levels": 1}},
           "spawns": {"predator_count": 60}
         },
         "balance": {
           "lifecycle": {"founder_age_share": 0.4},
-          "population_regulation": {"capacity_multipliers": {"predator": 2.0}}
+          "population_regulation": {"capacity_multipliers": {"predator": 2.0}},
+          "attack": {"base_success_chance": 0.55}
+        },
+        "powers": {
+          "offered": ["cull", "lead_herd"],
+          "powers": {"cull": {"charges": 8}, "lead_herd": {"charges": 2}}
         }
       },
       "challenge": {
         "own_herd": {"species": "herbivore", "near": [0.5, 0.5]},
-        "result": {"won": "Стадо и лисы пережили вспышку", "lost": "Заповедник не пережил вспышку"},
+        "watch": ["predator"],
+        "result": {"won": "Стадо пережило вспышку", "lost": "Стадо не пережило вспышку"},
         "goals": [
-          {"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "winter", "share_at_least": 0.5,
-            "label": "Сохранить половину стада"}
+          {"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "autumn", "years": 2, "share_at_least": 1.0,
+            "label": "Через два года стадо не меньше, чем сейчас"},
+          {"id": "not_wiped", "role": "lose", "form": "always", "share_at_least": 0.25,
+            "label": "Не дать стаду растаять: не меньше четверти"},
+          {"id": "few_shots", "role": "bonus", "form": "always", "culled_at_most": 12,
+            "label": "Отстрелять не больше 12 лис"}
         ]
       }
     }

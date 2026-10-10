@@ -40,6 +40,7 @@ func run(a) -> void:
 	_test_its_own_slots(a)
 	_test_the_first_season_seen_whole(a)
 	_test_years_species_and_culls(a)
+	_test_the_fox_outbreak_bundle(a)
 
 
 ## A map wide enough for two herds apart, every animal awake unless a test puts a sector to
@@ -395,3 +396,20 @@ func _test_years_species_and_culls(a) -> void:
 	a.is_true(loaded.culled == 2 and int(loaded.species_start.get("predator", 0)) == 3 and int(loaded.species_now.get("predator", 0)) == 1,
 		"the culls and the species saved")
 	Helpers.destroy_manager(manager)
+
+
+## «Слишком много лис»: the outbreak as tuned - autumn, sixty foxes hunting well - the cull and the
+## lead its only powers, and the goal two autumns on.
+func _test_the_fox_outbreak_bundle(a) -> void:
+	var bundle: Dictionary = ConfigLoaderScript.load_scenario_bundle("too_many_foxes")
+	a.is_true(int(bundle.world.climate.start_season_index) == 2 and int(bundle.world.spawns.predator_count) == 60,
+		"autumn, sixty foxes")
+	a.near(float(bundle.balance.attack.base_success_chance), 0.55, 0.0001, "hunting well")
+	a.equal(bundle.powers.offered, ["cull", "lead_herd"], "a cull and a lead to fight them with")
+	a.equal(int(bundle.powers.powers.cull.charges), 8, "eight shots")
+	var shipped: Dictionary = ConfigLoaderScript.load_config_bundle()
+	a.is_true(float(shipped.balance.attack.base_success_chance) < 0.55 and int(shipped.world.spawns.predator_count) == 24,
+		"the sandbox keeps its foxes as they were")
+	var keep: Dictionary = bundle.challenge.goals[0]
+	a.is_true(int(keep.get("years", 1)) == 2 and str(keep.season) == "autumn" and float(keep.share_at_least) >= 1.0,
+		"decided two autumns on, the herd no smaller")
