@@ -122,7 +122,7 @@ static func result_lines(summary: Dictionary, runner, challenge: Dictionary) -> 
 		roundi(100.0 * float(summary.get("share", 0.0))), int(summary.get("lowest", count))]]
 	var dead: Array = []
 	var deaths: Dictionary = summary.get("deaths", {})
-	for cause in ["thirst", "starvation", "predation", "old_age"]:
+	for cause in ["thirst", "starvation", "predation", "old_age", "culled"]:
 		if int(deaths.get(cause, 0)) > 0:
 			dead.append("%s %d" % [HudTextScript.cause_label(cause), int(deaths[cause])])
 	lines.append("Погибли: " + ", ".join(dead) if not dead.is_empty() else "Потерь не было")

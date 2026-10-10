@@ -97,6 +97,9 @@ func clear() -> void:
 
 
 func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
+	# A cull is told once, by the order that made it (`_hear_player_command()`).
+	if str(data.get("cause", "")) == "culled":
+		return
 	var asleep := int(event.get("agent_id", -1)) < 0
 	var victim := int(event.get("agent_id", -1)) if not asleep else int(data.get("record_id", -1))
 	var species := str(event.get("species", ""))
@@ -223,6 +226,10 @@ func _hear_player_command(data: Dictionary, time: float, position: Vector2) -> v
 			var where := "" if district < 0 else " " + str(book.places.districts[district]["at"])
 			_add({"time": time, "text": "Выкопан водопой: %s%s" % [book.places.ponds[index]["name"], where],
 				"position": position, "focus_id": -1, "pinned": false, "kind": "player", "key": "", "count": 1})
+		"cull":
+			_add({"time": time, "text": "Отстрел%s: %s" % [_goal_place(position),
+				HudTextScript.animal_count("predator", int(data.get("killed", 0)))], "position": position, "focus_id": -1,
+				"pinned": false, "kind": "player", "key": "", "count": 1})
 		"lead_herd":
 			_add({"time": time, "text": "%s в пути: цель%s" % [HudTextScript.herd_name("herbivore", int(data.get("group_id", -1))),
 				_goal_place(position)], "position": position, "focus_id": -1, "pinned": false, "kind": "player", "key": "",

@@ -285,11 +285,12 @@ func _refresh_summary(snapshot: Dictionary) -> void:
 		],
 		_species_population_line(snapshot),
 		_species_vital_line(snapshot),
-		"[b]Голод[/b] %d    [b]Жажда[/b] %d    [b]Хищники[/b] %d    [b]Старость[/b] %d" % [
+		"[b]Голод[/b] %d    [b]Жажда[/b] %d    [b]Хищники[/b] %d    [b]Старость[/b] %d    [b]Отстрел[/b] %d" % [
 			int(snapshot.get("deaths_starvation", 0)),
 			int(snapshot.get("deaths_thirst", 0)),
 			int(snapshot.get("deaths_predation", 0)),
 			int(snapshot.get("deaths_old_age", 0)),
+			int(snapshot.get("deaths_culled", 0)),
 		],
 		"[b]Средний голод[/b] %.1f    [b]Средние силы[/b] %.1f    [b]Удачных охот[/b] %.2f" % [
 			float(snapshot.get("average_hunger", 0.0)),

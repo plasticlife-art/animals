@@ -20,9 +20,11 @@ const GROUPS_INSTRUMENTAL := {"herbivore": "Стадом", "scavenger": "Ста�
 const BIOMES := {"meadow": "Луг", "forest": "Лес", "drought": "Засуха", "swamp": "Болото"}
 ## The biomes the strip reports, in the order it reports them.
 const BIOME_ORDER := ["meadow", "forest", "drought", "swamp"]
-const CAUSES := {"starvation": "голод", "thirst": "жажда", "predation": "хищник", "old_age": "старость"}
+const CAUSES := {"starvation": "голод", "thirst": "жажда", "predation": "хищник", "old_age": "старость",
+	"culled": "отстрел"}
 ## «умер от …»: the cause after «от».
-const CAUSES_FROM := {"starvation": "голода", "thirst": "жажды", "predation": "хищника", "old_age": "старости"}
+const CAUSES_FROM := {"starvation": "голода", "thirst": "жажды", "predation": "хищника", "old_age": "старости",
+	"culled": "отстрела"}
 
 ## The animal each species is drawn as, by sex and for a young one, all of them («олени»), and
 ## the forms a count takes: one, two to four, five and more (`plural()`).
@@ -237,8 +239,10 @@ static func traits_brief(values: Array) -> String:
 	return "Черты: " + ", ".join(parts)
 
 
-## «погибла» to a hunter, «умерла» of hunger, thirst or age.
+## «погибла» to a hunter, «отстреляна» by the player's cull, «умерла» of hunger, thirst or age.
 static func died(sex: String, cause: String) -> String:
+	if cause == "culled":
+		return verb(sex, "отстрелян", "отстреляна")
 	return verb(sex, "погиб", "погибла") if cause == "predation" else verb(sex, "умер", "умерла")
 
 

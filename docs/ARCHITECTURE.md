@@ -370,6 +370,24 @@ Current snapshot categories:
   the player block); the feed says «Стадо №3 в пути: цель на Медовом лугу» and «Стадо №3 дошло
   до цели …», or «… не дошло до цели …» when its time ran out
 
+- «Отстрел» (`cull`, `WorldState._command_cull()`): up to `powers.cull.max_kills` (3) animals of
+  `powers.cull.species` (the foxes) nearest the order's point within `cull_radius()` - twice the
+  map's mean pond, so it covers as much on every map size - awake or asleep, nearest first and an
+  id breaking a tie (`cull_candidates()`), so a worker and an inline world take the same animals.
+  The awake die through `kill_agent()`; the sleeping leave their sector's records with a death
+  told where they slept (`_emit_dormant_death()`), the sector rebuilt
+  (`_refresh_dormant_sector_state()`). They die of `culled` and leave no body - "culled" is not
+  among the causes that do (`_maybe_spawn_carcass()`): a fox's carcass would feed the very
+  outbreak culled. Refused off the map and where no one of the species is (`no_target`). Their
+  cause is counted (`deaths_culled`, per species), named («отстрел»; «отстрелян/отстреляна» on a
+  pin or a parent) and kept in the season's summary; the feed tells a cull once, by its order
+  («Отстрел у Лисьего брода: 3 лисы»), with no line a fox and no epitaph - one click would raise as
+  many as it took
+- A world is offered the powers `powers.offered` names (`PlayerState.configure()`): all of them as
+  shipped, the sandbox's; a scenario names its own («Долгая сушь»: the waterhole and the lead). A
+  power not offered has no budget and is refused as `unknown_power`. A bundle from before the list
+  - an old save's - is offered every power it holds
+
 ### Scenarios (`scenarios.json`, `ScenarioRunner`)
 
 - A scenario is a world with a goal. `ConfigLoader.load_scenario_bundle(id, selection)` loads
@@ -1631,8 +1649,8 @@ millisecond setting squeezed to zero.
 ### `powers.json`
 
 - The player's powers, each with `charges` (-1 for no limit) and `cooldown_seconds` of
-  simulated time between uses (`PlayerState`), beside its own settings. A scenario overrides
-  them. A save from before the powers takes them as shipped
+  simulated time between uses (`PlayerState`), beside its own settings, and `offered`, the ones a
+  world has. A scenario overrides them. A save from before the powers takes them as shipped
   (`ConfigLoader.with_shipped_presentation()`).
 
 ### `scenarios.json`
@@ -1764,6 +1782,11 @@ Current suites cover:
   decided at its time and one already in not announced again; a scenario's own slots, Continue
   opening the save written last, a version 3 save without a time the oldest and still loading;
   and the first season of a world begun in summer seen whole
+- «Отстрел» (`CullTests`): the nearest foxes taken, as many as the power allows and only foxes,
+  each told dead of a cull and no body left, the stats counting it; sleeping foxes taken too and
+  the census following; off the map, nobody there and only a deer there refused at no cost; a
+  worker and an inline world culling alike; the powers offered - all in the sandbox, two in «Долгая
+  сушь», all of a bundle without the list; and the feed telling a cull once, with no epitaph
 - the player's orders (`PlayerCommandTests`): an order carried out on the tick it was handed
   to, with its event and journal entry on that tick; the same order on the worker thread and
   inline leaving the worlds alike; charges and cooldowns in simulated time, kept through a

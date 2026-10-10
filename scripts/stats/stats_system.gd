@@ -1,6 +1,9 @@
 class_name StatsSystem
 extends RefCounted
 
+## Every way an animal dies, as the deaths' `cause` names it; the player's cull last.
+const DEATH_CAUSES := ["starvation", "thirst", "predation", "old_age", "culled"]
+
 const TraitsScript := preload("res://scripts/agents/traits.gd")
 
 var event_bus
@@ -15,6 +18,8 @@ var counters := {
 	"deaths_thirst": 0,
 	"deaths_predation": 0,
 	"deaths_old_age": 0,
+	# The player's «Отстрел» (`WorldState._command_cull()`).
+	"deaths_culled": 0,
 	"water_events": 0,
 	"grass_events": 0,
 	# Herds setting out for fresh pasture (`WorldState._update_herd_migrations()`).
@@ -70,7 +75,7 @@ func _seed_species_counters(species_config: Dictionary) -> void:
 	for species_id in _species_ids:
 		counters["births_%s" % species_id] = 0
 		counters["deaths_%s" % species_id] = 0
-		for cause in ["starvation", "thirst", "predation", "old_age"]:
+		for cause in DEATH_CAUSES:
 			counters["deaths_%s_%s" % [cause, species_id]] = 0
 			counters["deaths_%s_%s_dormant" % [cause, species_id]] = 0
 
@@ -158,6 +163,7 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		"deaths_thirst": counters["deaths_thirst"],
 		"deaths_predation": counters["deaths_predation"],
 		"deaths_old_age": counters["deaths_old_age"],
+		"deaths_culled": counters["deaths_culled"],
 		"average_hunger": 0.0 if living_count == 0 else hunger_sum / living_count,
 		"average_energy": 0.0 if living_count == 0 else energy_sum / living_count,
 		"active_herbivore_count": active_herbivore_count,
@@ -242,7 +248,7 @@ func _write_snapshot(world, tick: int, time_seconds: float, perf: Dictionary) ->
 		snapshot["%s_population" % species_id] = int(population_metrics.get("%s_count" % species_id, 0))
 		snapshot["births_%s" % species_id] = counters.get("births_%s" % species_id, 0)
 		snapshot["deaths_%s" % species_id] = counters.get("deaths_%s" % species_id, 0)
-		for cause in ["starvation", "thirst", "predation", "old_age"]:
+		for cause in DEATH_CAUSES:
 			var detail_key: String = "deaths_%s_%s" % [cause, species_id]
 			snapshot[detail_key] = counters.get(detail_key, 0)
 			snapshot["%s_dormant" % detail_key] = counters.get("%s_dormant" % detail_key, 0)
@@ -359,6 +365,8 @@ func _on_event_emitted(event: Dictionary) -> void:
 					counters["deaths_predation"] += 1
 				"old_age":
 					counters["deaths_old_age"] += 1
+				"culled":
+					counters["deaths_culled"] += 1
 			_count_death_detail(cause, species, bool(data.get("dormant", false)))
 		"HerdMigrates":
 			counters["herd_migrations"] += 1

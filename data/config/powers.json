@@ -1,5 +1,6 @@
 {
-  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost).",
+  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost); a cull takes up to `max_kills` of `species` within `radius_of_mean` of the map's mean pond. `offered` lists the powers a world has; a scenario names its own.",
+  "offered": ["dig_pond", "lead_herd", "cull"],
   "powers": {
     "dig_pond": {
       "charges": -1,
@@ -14,6 +15,13 @@
       "max_route": 3600.0,
       "timeout_seconds": 300.0,
       "exempt_hunger": 70.0
+    },
+    "cull": {
+      "charges": -1,
+      "cooldown_seconds": 30.0,
+      "species": ["predator"],
+      "radius_of_mean": 2.0,
+      "max_kills": 3
     }
   }
 }

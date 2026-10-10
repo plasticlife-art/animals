@@ -191,7 +191,8 @@ func hear(event: Dictionary) -> void:
 			lineage.note_death(died, time, str(data.get("cause", "")), killer, position, float(data.get("age", -1.0)))
 			if _outlived_everyone(died, time):
 				held.append("longest")
-			if remembers(died, time) or not held.is_empty():
+			# A cull is told by its order alone: one click would raise as many epitaphs as it took.
+			if str(data.get("cause", "")) != "culled" and (remembers(died, time) or not held.is_empty()):
 				_remember(died, EpitaphScript.compose(self, died, held, calendar()), position)
 			names.release(died)
 			if pins.has(died):

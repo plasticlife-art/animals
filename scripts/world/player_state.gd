@@ -28,11 +28,16 @@ var led_herds: Dictionary = {}
 var _powers: Dictionary = {}
 
 
-## The powers as `powers.json` (or a scenario over it) gives them, all charges full.
+## The powers as `powers.json` (or a scenario over it) gives them, all charges full: those
+## `offered` names, or every one for a bundle without the list (a save from before it). A power not
+## offered has no budget and is refused as unknown; its settings are still read.
 func configure(powers_config: Dictionary) -> void:
 	_powers = powers_config.get("powers", {}).duplicate(true)
 	budget.clear()
+	var offered = powers_config.get("offered", null)
 	for power in _powers.keys():
+		if offered is Array and not offered.has(str(power)):
+			continue
 		budget[str(power)] = {"charges": int(_powers[power].get("charges", UNLIMITED)), "cooldown_until": 0.0}
 	journal.clear()
 	ponds.clear()

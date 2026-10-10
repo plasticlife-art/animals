@@ -62,6 +62,7 @@ func _initialize() -> void:
 	var sample_ticks := maxi(1, int(round(SAMPLE_SECONDS * manager.tick_rate)))
 	var policy_ticks := maxi(1, int(round(POLICY_SECONDS * manager.tick_rate)))
 	var started := Time.get_ticks_usec()
+	var tick_ms: Array[float] = []
 	var tick := 0
 	var ends_at := INF
 	var summary_at_result: Dictionary = {}
@@ -79,7 +80,9 @@ func _initialize() -> void:
 			var issued := _play(manager, runner, herd, policy)
 			if not issued.is_empty():
 				commands.append(issued)
+		var step_started := Time.get_ticks_usec()
 		manager.step_once()
+		tick_ms.append(float(Time.get_ticks_usec() - step_started) / 1000.0)
 		tick += 1
 		if tick % sample_ticks == 0:
 			samples.append(_sample(manager, runner, _herd_state(world, runner)))
@@ -97,6 +100,7 @@ func _initialize() -> void:
 		"journal": world.player.journal.duplicate(true),
 		"samples": samples,
 		"wall_seconds": snappedf((Time.get_ticks_usec() - started) / 1000000.0, 0.1),
+		"tick_ms": _timing(tick_ms),
 	}
 	var encoded := JSON.stringify(report)
 	if output_path != "":
@@ -232,7 +236,30 @@ func _sample(manager, runner, herd: Dictionary) -> Dictionary:
 		"grass": snappedf(world._forage_within(herd["center"], world._pasture_radius(runner.species)), 1.0) if Vector2(herd["center"]).is_finite() else 0.0,
 		"led": world.is_led_by_player(runner.species, int(herd["group"])), "water": _water_near(world, herd["center"]),
 		"wet": world.water.wet_count(), "mean_level": snappedf(world.water.mean_level(), 0.001),
-		"species": _species_count(world, runner.species), "thirst_deaths": runner.thirst_deaths()}
+		"species": _species_count(world, runner.species), "thirst_deaths": runner.thirst_deaths(),
+		"counts": _counts(world)}
+
+
+## Every species' count, awake and asleep.
+func _counts(world) -> Dictionary:
+	var metrics: Dictionary = world.get_population_metrics()
+	var counts := {}
+	for species_id in world.species_registry.ids():
+		counts[str(species_id)] = int(metrics.get("%s_count" % species_id, 0))
+	return counts
+
+
+## Mean, median and 95th percentile of the ticks' cost, in ms.
+func _timing(values: Array[float]) -> Dictionary:
+	if values.is_empty():
+		return {}
+	var sorted := values.duplicate()
+	sorted.sort()
+	var total := 0.0
+	for value in sorted:
+		total += value
+	return {"mean": snappedf(total / float(sorted.size()), 0.01), "p50": snappedf(sorted[sorted.size() / 2], 0.01),
+		"p95": snappedf(sorted[int(float(sorted.size()) * 0.95)], 0.01)}
 
 
 func _species_count(world, species: String) -> int:

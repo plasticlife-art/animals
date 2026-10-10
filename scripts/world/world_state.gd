@@ -226,6 +226,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player_command_handlers.clear()
 	player_command_handlers["dig_pond"] = _command_dig_pond
 	player_command_handlers["lead_herd"] = _command_lead_herd
+	player_command_handlers["cull"] = _command_cull
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -1642,6 +1643,80 @@ func _command_dig_pond(command: Dictionary) -> Dictionary:
 	var index := _add_pond_source(position, radius, float(player.settings("dig_pond").get("start_level", 0.8)))
 	player.add_pond(position, radius, index)
 	return {"ok": true, "index": index, "radius": radius}
+
+
+## «Отстрел»: up to `powers.cull.max_kills` animals of the species the power takes
+## (`powers.cull.species`, the foxes) nearest the order's `position`, within `cull_radius()`, awake
+## or asleep - nearest first and an id breaking a tie, so the same order takes the same animals on
+## the worker and inline. They leave no body: a fox's carcass would feed the very outbreak culled.
+## Refused off the map and where there is no one to take (`no_target`).
+func _command_cull(command: Dictionary) -> Dictionary:
+	var position := PlayerCommandsScript.position_of(command.get("params", {}))
+	if not position.is_finite():
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	if not bounds.has_point(position):
+		return {"ok": false, "reason": "off_map"}
+	var settings: Dictionary = player.settings("cull")
+	var candidates := cull_candidates(position, cull_radius(), settings.get("species", ["predator"]))
+	if candidates.is_empty():
+		return {"ok": false, "reason": "no_target"}
+	var taken: Array = candidates.slice(0, maxi(1, int(settings.get("max_kills", 3))))
+	var ids: Array = []
+	var touched: Array[Vector2i] = []
+	for entry in taken:
+		ids.append(int(entry[1]))
+		if entry[2] != null:
+			kill_agent(entry[2], "culled")
+			continue
+		var sector_key: Vector2i = entry[3]
+		var record: Dictionary = entry[4]
+		var sector_state: Dictionary = _sector_states[sector_key]
+		var records: Array = sector_state.get("dormant_records", [])
+		records.erase(record)
+		sector_state["dormant_records"] = records
+		_emit_dormant_death(str(record.get("species_type", "")), Vector2(record.get("position", position)), "culled",
+			int(record.get("group_id", -1)), int(record.get("id", -1)), {"age": float(record.get("age", 0.0))})
+		if not touched.has(sector_key):
+			touched.append(sector_key)
+	touched.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x or (a.x == b.x and a.y < b.y))
+	for sector_key in touched:
+		_refresh_dormant_sector_state(sector_key, true)
+		# The refresh counts the records alone; whoever is awake there is still there.
+		if _sector_states.has(sector_key):
+			_count_awake_animals(_sector_states[sector_key])
+	return {"ok": true, "killed": ids.size(), "ids": ids}
+
+
+## How far «Отстрел» reaches from its point: `powers.cull.radius_of_mean` of the map's mean pond,
+## so it covers as much of every map size.
+func cull_radius() -> float:
+	return water.mean_radius * float(player.settings("cull").get("radius_of_mean", 2.0))
+
+
+## The animals of `species` within `radius` of `position`, awake and asleep, nearest first:
+## `[distance², id, agent or null, sector key, record or {}]`.
+func cull_candidates(position: Vector2, radius: float, species: Array) -> Array:
+	var wanted := {}
+	for species_id in species:
+		wanted[str(species_id)] = true
+	var radius_sq := radius * radius
+	var found: Array = []
+	for species_id in wanted.keys():
+		for agent in query_agents(position, radius, species_id):
+			if agent != null and agent.is_alive and position.distance_squared_to(agent.position) <= radius_sq:
+				found.append([position.distance_squared_to(agent.position), int(agent.id), agent, Vector2i.ZERO, {}])
+	var reach := Rect2(position - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)
+	for sector_key in _sector_states.keys():
+		if not _sector_key_to_rect(sector_key).intersects(reach):
+			continue
+		for record in _sector_states[sector_key].get("dormant_records", []):
+			if not wanted.has(str(record.get("species_type", ""))):
+				continue
+			var distance_sq := position.distance_squared_to(Vector2(record.get("position", Vector2.INF)))
+			if distance_sq <= radius_sq:
+				found.append([distance_sq, int(record.get("id", -1)), null, sector_key, record])
+	found.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	return found
 
 
 ## «Повести стадо»: the herd `{species, group_id}` walks to the order's `position` as a herd moving
