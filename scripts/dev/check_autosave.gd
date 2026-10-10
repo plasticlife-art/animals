@@ -11,10 +11,11 @@ extends SceneTree
 ## nothing is running yet - pressed during a game it just dismisses the screen -
 ## so resuming can only be tested by quitting and starting the app again.
 ##
-##   Godot --script res://scripts/dev/check_autosave.gd -- write [scenario]
-##   Godot --script res://scripts/dev/check_autosave.gd -- resume [scenario]
+##   Godot --script res://scripts/dev/check_autosave.gd -- write [scenario [id]]
+##   Godot --script res://scripts/dev/check_autosave.gd -- resume [scenario [id]]
 ##
-## With `scenario`, «Долгая сушь» is started from the start page instead, its brief closed, and
+## With `scenario`, a scenario - «Долгая сушь» unless `id` names another - is started from the
+## start page instead, its brief closed, and
 ## the autosave must land in a scenario slot; resuming must bring the scenario back with its score
 ## and without its brief or a result. Write mode deletes every slot: keep a copy of the player's.
 
@@ -26,6 +27,7 @@ var _saved_tick := -1
 
 var _mode := "write"
 var _scenario := false
+var _scenario_id := "long_drought"
 var _saved_baseline := -1
 
 
@@ -34,6 +36,8 @@ func _initialize() -> void:
 	if args.size() > 0:
 		_mode = str(args[0])
 	_scenario = args.size() > 1 and str(args[1]) == "scenario"
+	if _scenario and args.size() > 2:
+		_scenario_id = str(args[2])
 	if _mode == "write":
 		for path in SaveSystem.slot_paths():
 			if FileAccess.file_exists(path):
@@ -57,7 +61,7 @@ func _process(_delta: float) -> bool:
 				quit(1)
 				return true
 			if _scenario:
-				menu.scenario_requested.emit("long_drought", ConfigLoader.default_selection()["style"])
+				menu.scenario_requested.emit(_scenario_id, ConfigLoader.default_selection()["style"])
 				if _main.result_window.mode() != "brief":
 					print("FAIL the scenario opened without its brief")
 					quit(1)
@@ -115,12 +119,14 @@ func _process(_delta: float) -> bool:
 				return true
 			if _scenario:
 				var score = _main.simulation_manager.scenario
-				if not score.is_active() or score.baseline != _saved_baseline or _main.result_window.is_open():
-					print("FAIL resume: scenario active %s, baseline %d (save %d), window %s"
-						% [score.is_active(), score.baseline, _saved_baseline, _main.result_window.mode()])
+				var resumed_id := str(_main.simulation_manager.config_bundle.get("challenge", {}).get("id", ""))
+				if not score.is_active() or score.baseline != _saved_baseline or _main.result_window.is_open() \
+						or resumed_id != _scenario_id:
+					print("FAIL resume: scenario %s active %s, baseline %d (save %d), window %s"
+						% [resumed_id, score.is_active(), score.baseline, _saved_baseline, _main.result_window.mode()])
 					quit(1)
 					return true
-				print("PASS the scenario resumed with its score (baseline %d), no brief" % score.baseline)
+				print("PASS %s resumed with its score (baseline %d), no brief" % [resumed_id, score.baseline])
 			print("PASS resumed at tick %d with %d live agents" % [tick, living])
 			quit(0)
 			return true

@@ -91,8 +91,8 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 
 1. Open the project in Godot.
 2. Run the project, or open `res://scenes/main/main.tscn`.
-3. The main menu opens first. `Сценарии` lists the worlds with a goal («Долгая сушь»), each
-   with its brief; `Новая симуляция` (the sandbox) reveals the setup options,
+3. The main menu opens first. `Сценарии` lists the worlds with a goal («Долгая сушь»,
+   «Слишком много лис»), each with its brief; `Новая симуляция` (the sandbox) reveals the setup options,
    `Продолжить` resumes the latest autosave (a scenario's or the sandbox's, whichever was
    written last; each keeps its own two slots), and `Помощь` describes the controls
    and the mechanics. Nothing is simulated until a run is started.
@@ -141,8 +141,8 @@ pipeline instead, which reports success even when tests fail:
   `Esc` or `P` leaves it
 - `F12`: switch developer mode; in it `Tab` shows or hides the developer panel and charts
 - `F`: toggle follow on the selected agent
-- `Q`, `E`: aim «Водопой» or «Повести стадо» (also the buttons at the bottom centre); left click
-  where, right click or `Esc` to stop aiming
+- `Q`, `E`, `R`: aim «Водопой», «Повести стадо» or «Отстрел» - those the world offers (also the
+  buttons at the bottom centre); left click where, right click or `Esc` to stop aiming
 - `Следить за стадом` on the herd card: follow the selected animal's herd
 - `W`, `A`, `S`, `D`: pan camera
 - Mouse wheel / trackpad pinch: zoom
@@ -533,21 +533,26 @@ writes how the player's herd fared (`docs/ARCHITECTURE.md`, Scenarios):
 ```
 
 The arguments are the scenario, the rule (`none`, `dig`, `lead`, `both`, with an optional
-`/low/far` for when the herd's water counts as running out), the camera (`herd` or
-`overview`), the seed (-1 for the scenario's own), how many seconds to watch on after the
-result, the report, and any `key=value` overrides of the scenario's bundle.
+`/low/far` for when the herd's water counts as running out; against foxes `cull`, `cullhard`,
+`away`, `cullaway`, with an optional `/threshold/reach` for how many foxes how near the herd set
+it off), the camera (`herd` or `overview`), the seed (-1 for the scenario's own), how many
+seconds to watch on after the result, the report, and any `key=value` overrides of the
+scenario's bundle.
 
 Three more checks of a scenario, from the real code paths:
 
-- `check_save.gd -- 600 200 lod long_drought` digs a waterhole by the own herd and leads it off
-  half way, saves, loads into a second manager, and requires the score, the player's state and
-  every pond's level back exactly (populations after a run-on within tolerance)
-- `check_autosave.gd -- write scenario`, then `-- resume scenario`, starts «Долгая сушь» from
-  the start page, waits for the autosave in a scenario slot, and resumes it with its score and
-  without its brief. The write mode deletes every slot, so keep a copy of the player's saves
-- `steward_capture.gd -- OUTDIR` (windowed, kept on top) photographs the brief, play, aiming a
-  waterhole and a lead, the walk (also as a GIF), the result and the interface at 125 %; its
-  saves go to a scratch directory and the player's settings come back as they were
+- `check_save.gd -- 600 200 lod long_drought` (or `too_many_foxes`) uses the powers the scenario
+  offers half way - digs a waterhole by the own herd, culls the fox nearest it, leads it off -
+  saves, loads into a second manager, and requires the score, the player's state and every
+  pond's level back exactly (populations after a run-on within tolerance)
+- `check_autosave.gd -- write scenario`, then `-- resume scenario`, starts «Долгая сушь» (or the
+  scenario named after `scenario`, e.g. `-- write scenario too_many_foxes`) from the start page,
+  waits for the autosave in a scenario slot, and resumes it with its score and without its
+  brief. The write mode deletes every slot, so keep a copy of the player's saves
+- `steward_capture.gd -- OUTDIR [style] [quick|brief|full] [scenario]` (windowed, kept on top)
+  photographs the brief, play, aiming a waterhole (or, in «Слишком много лис», a cull) and a
+  lead, the walk (also as a GIF), the result and the interface at 125 %; its saves go to a
+  scratch directory and the player's settings come back as they were
 
 ## Current Limitations
 

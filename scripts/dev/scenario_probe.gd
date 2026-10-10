@@ -13,8 +13,9 @@ extends SceneTree
 ## culls the foxes nearest the herd once `threshold` of them are within `reach` of it, only out of
 ## the foxes' breeding season (culled in it, a litter takes the place at once); `cullhard` culls
 ## whenever any are near, in any season; `away` leads the herd to the quietest ground in reach once
-## they gather; `cullaway` does both - `cull/threshold/reach`, e.g. `cull/3/600`. `camera`: `herd` keeps the view on the own herd, as a player watching
-## it would - which keeps it awake; `overview` looks at the whole map, which puts it to sleep.
+## they gather; `cullaway` does both - `cull/threshold/reach`, e.g. `cull/3/600`. `camera`: `herd`
+## keeps the view on the own herd, as a player watching it would - which keeps it awake;
+## `overview` looks at the whole map, which puts it to sleep.
 ## `seed` -1 is the scenario's own. The run goes on `after_seconds` past the result, to see what
 ## the season after it does. Trailing `key=value` pairs override the scenario's bundle, as in
 ## `ecology_audit.gd`. The rules read the world and draw nothing from its rng.

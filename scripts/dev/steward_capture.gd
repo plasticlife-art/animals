@@ -1,18 +1,20 @@
 extends SceneTree
 
-## Screenshots of the steward's interface in «Долгая сушь», from the real scene. Not part of the
-## game. Windowed, and the window has to be in front for the captures to show the frame - an
+## Screenshots of the steward's interface in a scenario («Долгая сушь» unless named), from the
+## real scene. Not part of the game. Windowed, and the window has to be in front for the captures to show the frame - an
 ## occluded window stops drawing while the world runs on - so it stays on top for the run and
 ## comes to the front before each capture:
 ##
-##   Godot --path . --script res://scripts/dev/steward_capture.gd -- OUTDIR [style] [quick|brief]
+##   Godot --path . --script res://scripts/dev/steward_capture.gd -- OUTDIR [style] [quick|brief|full] [scenario]
 ##
-## `quick` brings the scenario's deciding moment to fifteen seconds after the walk, so the result
-## window comes without six minutes of play (the score is the view's own; the world is untouched);
-## `brief` stops after the brief.
+## `quick` brings the scenario's deciding moment - its time and its season - to fifteen seconds
+## after the walk, so the result window comes without minutes of play (the score is the view's
+## own; the world is untouched); `brief` stops after the brief.
 ##
-## 01 the brief, 02 play with the powers and the goals, 03 aiming a waterhole, 04 it dug,
-## 05 aiming a lead, 06 the herd walking (and 06_lead.gif), 07 the result, 08 at 125 %. The
+## 01 the brief, 02 play with the powers and the goals, 03 aiming a waterhole, 04 it dug - or,
+## where the scenario offers the cull and not the waterhole, 03 aiming a cull where most foxes
+## near the herd stand, 04 them culled - 05 aiming a lead, 06 the herd walking (and
+## 06_lead.gif), 07 the result, 08 at 125 %. The
 ## saves go to a scratch slot directory and the player's settings come back as they were; the
 ## aim is placed without moving the cursor (`PowerTargeting.pointer_override`).
 
@@ -28,6 +30,7 @@ func _initialize() -> void:
 	_out = str(args[0]) if args.size() > 0 else "/private/tmp/steward-capture"
 	var style := str(args[1]) if args.size() > 1 else "topdown_kenney"
 	var quick := args.size() > 2 and str(args[2]) == "quick"
+	var scenario_id := str(args[3]) if args.size() > 3 else "long_drought"
 	DirAccess.make_dir_recursive_absolute(_out)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
 	SaveSystem.save_dir = "user://capture_saves"
@@ -35,7 +38,7 @@ func _initialize() -> void:
 	_main = load("res://scenes/main/main.tscn").instantiate()
 	root.add_child(_main)
 	await _frames(10)
-	_main.start_menu.scenario_requested.emit("long_drought", style)
+	_main.start_menu.scenario_requested.emit(scenario_id, style)
 	await _frames(30)
 	await _snap("01_brief")
 	if args.size() > 2 and str(args[2]) == "brief":
@@ -49,17 +52,41 @@ func _initialize() -> void:
 	var sim = _main.simulation_manager
 	var herd := PowerAim.herd_to_lead(sim)
 	var center: Vector2 = herd.get("center", sim.world_state.bounds.get_center())
-	var spot := _dig_spot(sim.world_state, center)
-	_main._on_power_pressed("dig_pond")
-	_main.power_targeting.pointer_override = WorldProjection.to_screen(spot)
-	await _frames(6)
-	await _snap("03_aim_pond")
-	print("dig at ", spot, " order ", _main.power_targeting.click(WorldProjection.to_screen(spot)))
-	_main.power_targeting.pointer_override = Vector2.INF
-	await _frames(150)
-	_main._refresh_powers()
-	await _frames(2)
-	await _snap("04_pond_dug")
+	if sim.world_state.player.budget.has("dig_pond"):
+		var spot := _dig_spot(sim.world_state, center)
+		_main._on_power_pressed("dig_pond")
+		_main.power_targeting.pointer_override = WorldProjection.to_screen(spot)
+		await _frames(6)
+		await _snap("03_aim_pond")
+		print("dig at ", spot, " order ", _main.power_targeting.click(WorldProjection.to_screen(spot)))
+		_main.power_targeting.pointer_override = Vector2.INF
+		await _frames(150)
+		_main._refresh_powers()
+		await _frames(2)
+		await _snap("04_pond_dug")
+	elif sim.world_state.player.budget.has("cull"):
+		# Foxes come and go; wait, faster, for some in view.
+		sim.set_speed_multiplier(10.0)
+		var shot := _cull_spot(sim, center)
+		var waiting := 0
+		while not shot.is_finite() and waiting < 3600:
+			await _frames(30)
+			waiting += 30
+			shot = _cull_spot(sim, center)
+		sim.set_speed_multiplier(1.0)
+		print("foxes in view after ", waiting, " frames")
+		if not shot.is_finite():
+			shot = center
+		_main._on_power_pressed("cull")
+		_main.power_targeting.pointer_override = WorldProjection.to_screen(shot)
+		await _frames(6)
+		await _snap("03_aim_cull")
+		print("cull at ", shot, " order ", _main.power_targeting.click(WorldProjection.to_screen(shot)))
+		_main.power_targeting.pointer_override = Vector2.INF
+		await _frames(60)
+		_main._refresh_powers()
+		await _frames(2)
+		await _snap("04_culled")
 	var goal := _lead_goal(sim, center)
 	_main._on_power_pressed("lead_herd")
 	_main.power_targeting.pointer_override = WorldProjection.to_screen(goal)
@@ -72,8 +99,10 @@ func _initialize() -> void:
 	await _snap("06_lead")
 	sim.set_speed_multiplier(10.0)
 	if quick:
+		var climate: Dictionary = sim.config_bundle.get("world", {}).get("climate", {})
 		for goal_id in sim.scenario.decide_times.keys():
 			sim.scenario.decide_times[goal_id] = sim.simulation_time + 15.0
+			sim.scenario.decide_ordinals[goal_id] = Climate.season_ordinal(climate, sim.simulation_time + 15.0)
 	var waited := 0
 	while _main.result_window.mode() != "result" and waited < 120000 and sim.simulation_time < 900.0:
 		await process_frame
@@ -135,6 +164,26 @@ func _dig_spot(world, center: Vector2) -> Vector2:
 			if world.dig_pond_refusal(spot) == "":
 				return spot
 	return center
+
+
+## Where, among the foxes on the screen, a cull would take the most - `Vector2.INF` if none are in
+## view.
+func _cull_spot(sim, _center: Vector2) -> Vector2:
+	var world = sim.world_state
+	var radius: float = world.cull_radius()
+	var view: Rect2 = root.get_visible_rect().grow(-120.0)
+	# `WorldProjection.to_screen` is the world's canvas; the camera puts that on the window.
+	var canvas: Transform2D = _main.get_viewport().get_canvas_transform()
+	var best := Vector2.INF
+	var most := 0
+	for agent in world.get_living_agents():
+		if agent.species_type != "predator" or not view.has_point(canvas * WorldProjection.to_screen(agent.position)):
+			continue
+		var count := PowerAim.cull_count(world, agent.position, radius, ["predator"])
+		if count > most:
+			most = count
+			best = agent.position
+	return best
 
 
 ## A goal the herd can be led to, some way off.

@@ -18,9 +18,10 @@ extends SceneTree
 ##
 ##   Godot --headless --path . --script res://scripts/dev/check_save.gd -- [ticks] [after] [lod|off] [scenario_id]
 ##
-## With a scenario, the world is the scenario's; half way the player digs a waterhole by the own
-## herd and leads it off, and the load must bring back the score, the player's state - the pond,
-## the charges, the walk - and every pond's level exactly.
+## With a scenario, the world is the scenario's; half way the player uses the powers it offers -
+## digs a waterhole by the own herd, culls the foxes nearest it, leads it off - and the load must
+## bring back the score, the player's state - the pond, the charges, the walk - and every pond's
+## level exactly.
 
 const WALL_CLOCK_FIELDS := [
 	"action_select_ms", "ai_context_build_ms", "grass_search_ms", "pathfind_ms",
@@ -127,7 +128,8 @@ func _make_manager(selection: Dictionary, lod_enabled: bool, scenario_id: String
 	return manager
 
 
-## A waterhole dug beside the own herd and the herd led off, as a player would.
+## A waterhole dug beside the own herd, the foxes nearest it culled and the herd led off, as a
+## player would - each only where the world offers it.
 func _use_powers(manager) -> void:
 	var world = manager.world_state
 	var herd := PowerAim.herd_to_lead(manager)
@@ -136,8 +138,14 @@ func _use_powers(manager) -> void:
 		return
 	var center: Vector2 = herd["center"]
 	var aim := PowerAim.new()
+	if world.player.budget.has("cull"):
+		var foxes: Array = world.cull_candidates(center, world.resource_system.world_size.length(), ["predator"])
+		if not foxes.is_empty():
+			var nearest: Array = foxes[0]
+			var at: Vector2 = nearest[2].position if nearest[2] != null else Vector2(nearest[4].get("position", center))
+			manager.enqueue_command("cull", {"position": at})
 	aim.power = "dig_pond"
-	for ring in range(1, 12):
+	for ring in range(1, 12 if world.player.budget.has("dig_pond") else 1):
 		var placed := false
 		for index in range(ring * 6):
 			var spot: Vector2 = center + Vector2.from_angle(TAU * float(index) / float(ring * 6)) * world.player_pond_radius() * 1.5 * float(ring)

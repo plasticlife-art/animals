@@ -1114,8 +1114,8 @@ Utility actions inside `alive`:
   the herd's reach, the route search, once per cell the pointer enters; for a cull the foxes in its
   circle, the sleeping ones by their sectors' groups (`cull_count()`) - and a click gives the
   order (`enqueue_command()`) or says why not and keeps aiming. `PowerTargeting`, a Node2D after
-  `WorldView`, draws it - the pond or the cull's circle green or red («лис в круге: 4» over the
-  latter), the flag with a line from the herd - and takes
+  `WorldView`, draws it - the pond or the cull's circle green or red («лис в круге: 4» beside the
+  pointer: over the circle the species table hid it), the flag with a line from the herd - and takes
   the left click before the world's selection does (unhandled input reaches later nodes first);
   the right click or Esc stops it, and so do a pause, the menus, help, the chronicle and photo
   mode. A paused game aims nothing
