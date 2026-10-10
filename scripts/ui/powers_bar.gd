@@ -17,6 +17,8 @@ const DESCRIPTIONS := {
 		+ "Нельзя у края карты, на скалах, вплотную к другому пруду и среди деревьев или камней.",
 	"lead_herd": "Повести стадо выбранного оленя туда, где щёлкнете, если путь туда есть и он не слишком далёк. "
 		+ "Олени идут, пока не дойдут или не пройдёт пять минут; проголодавшиеся отходят поесть.",
+	"cull": "Отстрелять нескольких лис, ближайших к щелчку, в круге — и бодрствующих, и тех, что вдали. "
+		+ "Туш не остаётся. Весной выводки быстро занимают место отстрелянных: вне сезона отстрел держится дольше.",
 }
 
 var _buttons: Dictionary = {}
@@ -36,6 +38,9 @@ func _init() -> void:
 	margin.add_child(column)
 	_message = Label.new()
 	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Wrapped to the width of the buttons rather than widening the bar past them.
+	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_message.custom_minimum_size.x = 360.0
 	_message.visible = false
 	column.add_child(_message)
 	var row := HBoxContainer.new()

@@ -32,6 +32,7 @@ func run(a) -> void:
 	_test_the_buttons_show_charges_and_cooldowns(a)
 	_test_aiming_a_waterhole(a)
 	_test_aiming_a_herd(a)
+	_test_aiming_a_cull(a)
 	_test_the_goals_chips(a)
 	_test_ponds_say_how_full(a)
 	_test_the_brief_and_the_result(a)
@@ -62,6 +63,9 @@ func _test_the_buttons_show_charges_and_cooldowns(a) -> void:
 	sandbox.configure(ConfigLoaderScript.load_config_bundle()["powers"])
 	bar.refresh(sandbox, 0.0, "", "")
 	a.equal(bar.button("dig_pond").text, "Водопой (Q)", "the sandbox counts no charges")
+	a.is_true(bar.button("cull").visible, "and offers the cull")
+	bar.refresh(player, 0.0, "", "")
+	a.is_true(not bar.button("cull").visible, "a world without it shows no cull button")
 	a.is_true(PowersBar.has_powers(sandbox) and not PowersBar.has_powers(null), "a world with powers shows the bar")
 	bar.free()
 
@@ -121,6 +125,25 @@ func _test_aiming_a_herd(a) -> void:
 	var own := PowerAim.herd_to_lead(manager)
 	a.is_true(int(own.get("group_id", -1)) == 0 and Vector2(own["center"]).distance_to(HERD_AT) < 120.0,
 		"with none selected, in a scenario, the player's own herd")
+	Helpers.destroy_manager(manager)
+
+
+func _test_aiming_a_cull(a) -> void:
+	var manager = Helpers.create_manager_with(Helpers.build_large_sector_bundle(9958), 9958)
+	manager.set_lod_enabled(false)
+	var world = manager.world_state
+	for index in range(4):
+		Helpers.spawn_predator(world, HERD_AT + Vector2(15.0 * index, 0.0))
+	var aim := PowerAim.new()
+	a.is_true(aim.arm(manager, "cull") and aim.message.contains("до 3"), "aimed, with how many it takes")
+	var shown := aim.preview(manager, HERD_AT)
+	a.is_true(str(shown["kind"]) == "cull" and int(shown["count"]) == 4 and str(shown["reason"]) == "", "four foxes in the circle: green")
+	a.equal(str(aim.preview(manager, GOAL + Vector2(600.0, 600.0))["reason"]), "no_target", "none there: red")
+	world._sleep_sector(world._get_sector_key(HERD_AT))
+	a.equal(int(aim.preview(manager, HERD_AT)["count"]), 4, "asleep, still counted")
+	var seq := aim.issue(manager, HERD_AT)
+	var queued: Array = manager.pending_commands()
+	a.is_true(seq > 0 and queued.size() == 1 and str(queued[0]["type"]) == "cull", "a click gives the order")
 	Helpers.destroy_manager(manager)
 
 
@@ -287,8 +310,8 @@ func _test_every_word_is_russian(a) -> void:
 			words.append(str(goal.get("label", "")))
 		words.append_array(scenario.get("challenge", {}).get("result", {}).values())
 	var tags := RegEx.create_from_string("\\[/?b\\]")
-	# Keys keep their own letters: «(Q)», «Esc».
-	var keys := RegEx.create_from_string("\\((Q|E)\\)|Esc")
+	# Keys keep their own letters: «(Q)», «(R)», «Esc».
+	var keys := RegEx.create_from_string("\\((Q|E|R)\\)|Esc")
 	for section in ConfigLoaderScript.list_help_sections():
 		if str(section["id"]) in ["powers", "scenarios"]:
 			words.append(str(section["label"]))

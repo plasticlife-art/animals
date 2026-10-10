@@ -51,6 +51,8 @@ const SELECTION_CARD_WIDTH := 332.0
 ## How much of the map a scenario's start shows around the player's herd, in simulation units:
 ## close enough that the herd is awake, wide enough to see its water.
 const SCENARIO_FRAME := Vector2(1800.0, 1100.0)
+## Each power's input action and its key by place on the keyboard.
+const POWER_KEYS := {"dig_pond": ["power_dig", KEY_Q], "lead_herd": ["power_lead", KEY_E], "cull": ["power_cull", KEY_R]}
 
 var hud_visible: bool = false;
 var _hud_visible_before_pause: bool = false
@@ -578,12 +580,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		power_targeting.cancel()
 		get_viewport().set_input_as_handled()
 		return
-	var dig_pressed := _is_key(event, "power_dig", KEY_Q)
-	if dig_pressed or _is_key(event, "power_lead", KEY_E):
-		if _powers_available() and not _pause_menu_open and not start_menu.visible:
-			_on_power_pressed("dig_pond" if dig_pressed else "lead_herd")
-		get_viewport().set_input_as_handled()
-		return
+	for power in POWER_KEYS:
+		if _is_key(event, str(POWER_KEYS[power][0]), POWER_KEYS[power][1]):
+			if _powers_available() and not _pause_menu_open and not start_menu.visible \
+					and simulation_manager.world_state.player.budget.has(power):
+				_on_power_pressed(str(power))
+			get_viewport().set_input_as_handled()
+			return
 
 	# The chronicle closes before the pause menu opens; L opens and closes it in play.
 	if chronicle_window.visible and cancel_pressed:

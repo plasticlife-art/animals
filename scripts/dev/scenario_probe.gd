@@ -9,7 +9,11 @@ extends SceneTree
 ## `policy`: `none` uses no power; `dig` digs a waterhole by the own herd once the water it
 ## drinks from runs low or far; `lead` leads it to the fullest pond in reach then; `both` digs
 ## first and leads after. `policy/low/far` sets how low (`LOW_LEVEL`) and how far (`FAR_WATER`)
-## that is, e.g. `dig/0.03/1500` digs only when the water is all but gone. `camera`: `herd` keeps the view on the own herd, as a player watching
+## that is, e.g. `dig/0.03/1500` digs only when the water is all but gone. Against foxes: `cull`
+## culls the foxes nearest the herd once `threshold` of them are within `reach` of it, only out of
+## the foxes' breeding season (culled in it, a litter takes the place at once); `cullhard` culls
+## whenever any are near, in any season; `away` leads the herd to the quietest ground in reach once
+## they gather; `cullaway` does both - `cull/threshold/reach`, e.g. `cull/3/600`. `camera`: `herd` keeps the view on the own herd, as a player watching
 ## it would - which keeps it awake; `overview` looks at the whole map, which puts it to sleep.
 ## `seed` -1 is the scenario's own. The run goes on `after_seconds` past the result, to see what
 ## the season after it does. Trailing `key=value` pairs override the scenario's bundle, as in
@@ -23,6 +27,10 @@ const FAR_WATER := 1100.0
 
 var low_level := LOW_LEVEL
 var far_water := FAR_WATER
+## Foxes within `cull_reach` of the herd that set the cull policies off.
+var cull_threshold := 3
+var cull_reach := 600.0
+const FOX_POLICIES := ["cull", "cullhard", "away", "cullaway"]
 
 
 func _initialize() -> void:
@@ -30,10 +38,16 @@ func _initialize() -> void:
 	var scenario_id := str(args[0]) if args.size() > 0 else "long_drought"
 	var policy_spec := (str(args[1]) if args.size() > 1 else "none").split("/")
 	var policy := policy_spec[0]
-	if policy_spec.size() > 1:
-		low_level = float(policy_spec[1])
-	if policy_spec.size() > 2:
-		far_water = float(policy_spec[2])
+	if policy in FOX_POLICIES:
+		if policy_spec.size() > 1:
+			cull_threshold = int(policy_spec[1])
+		if policy_spec.size() > 2:
+			cull_reach = float(policy_spec[2])
+	else:
+		if policy_spec.size() > 1:
+			low_level = float(policy_spec[1])
+		if policy_spec.size() > 2:
+			far_water = float(policy_spec[2])
 	var camera := str(args[2]) if args.size() > 2 else "herd"
 	var seed_arg := int(args[3]) if args.size() > 3 else -1
 	var after_seconds := float(args[4]) if args.size() > 4 else 120.0
@@ -120,6 +134,8 @@ func _play(manager, runner, herd: Dictionary, policy: String) -> Dictionary:
 		return {}
 	var world = manager.world_state
 	var center: Vector2 = herd["center"]
+	if policy in FOX_POLICIES:
+		return _play_foxes(manager, runner, herd, policy)
 	var drinking := _water_near(world, center)
 	if not drinking.is_empty() and float(drinking["level"]) >= low_level and float(drinking["distance"]) <= far_water:
 		return {}
@@ -137,6 +153,40 @@ func _play(manager, runner, herd: Dictionary, policy: String) -> Dictionary:
 			manager.enqueue_command("lead_herd", {"species": runner.species, "group_id": int(herd["group"]), "position": goal})
 			return {"time": snappedf(now, 0.1), "type": "lead_herd", "group": int(herd["group"]),
 				"to": [snappedf(goal.x, 1.0), snappedf(goal.y, 1.0)], "water": drinking}
+	return {}
+
+
+## The fox policies' rule: a cull at the nearest of the foxes gathered by the herd, or a lead to
+## the quietest ground in reach.
+func _play_foxes(manager, runner, herd: Dictionary, policy: String) -> Dictionary:
+	var world = manager.world_state
+	var now: float = manager.simulation_time
+	var center: Vector2 = herd["center"]
+	var reach := cull_reach if policy != "cullhard" else maxf(cull_reach, 1500.0)
+	var near: Array = world.cull_candidates(center, reach, ["predator"])
+	var gathered: bool = near.size() >= cull_threshold or (policy == "cullhard" and not near.is_empty())
+	var out_of_season: bool = policy == "cullhard" or float(world.breeding_value("predator")) <= 0.05
+	if policy in ["cull", "cullhard", "cullaway"] and gathered and out_of_season and world.player.refusal("cull", now) == "":
+		var nearest: Array = near[0]
+		var at: Vector2 = nearest[2].position if nearest[2] != null else Vector2(nearest[4].get("position", center))
+		manager.enqueue_command("cull", {"position": at})
+		return {"time": snappedf(now, 0.1), "type": "cull", "at": [snappedf(at.x, 1.0), snappedf(at.y, 1.0)], "near": near.size()}
+	if policy in ["away", "cullaway"] and near.size() >= cull_threshold and world.player.refusal("lead_herd", now) == "" \
+			and not world.is_led_by_player(runner.species, int(herd["group"])):
+		var aim := PowerAim.new()
+		aim.power = "lead_herd"
+		var best := Vector2.INF
+		var fewest := near.size()
+		for index in range(8):
+			var goal: Vector2 = center + Vector2.from_angle(TAU * float(index) / 8.0) * 1200.0
+			var there: int = world.cull_candidates(goal, cull_reach, ["predator"]).size()
+			if there < fewest and str(aim.preview(manager, goal).get("reason", "x")) == "":
+				fewest = there
+				best = goal
+		if best.is_finite():
+			manager.enqueue_command("lead_herd", {"species": runner.species, "group_id": int(herd["group"]), "position": best})
+			return {"time": snappedf(now, 0.1), "type": "lead_herd", "group": int(herd["group"]),
+				"to": [snappedf(best.x, 1.0), snappedf(best.y, 1.0)], "near": near.size(), "there": fewest}
 	return {}
 
 

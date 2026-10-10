@@ -79,7 +79,7 @@ func _draw() -> void:
 		return
 	var color := OK_COLOR if str(shown["reason"]) == "" else BAD_COLOR
 	var at: Vector2 = shown["position"]
-	if str(shown["kind"]) == "pond":
+	if str(shown["kind"]) in ["pond", "cull"]:
 		var outline := PackedVector2Array()
 		for index in range(CIRCLE_POINTS + 1):
 			var angle := TAU * float(index) / float(CIRCLE_POINTS)
@@ -88,6 +88,14 @@ func _draw() -> void:
 		fill.a = 0.22
 		draw_colored_polygon(outline.slice(0, CIRCLE_POINTS), fill)
 		draw_polyline(outline, color, 2.0)
+		if str(shown["kind"]) == "cull":
+			# How many are in reach, above the circle.
+			var label := "лис в круге: %d" % int(shown.get("count", 0))
+			var font := ThemeDB.fallback_font
+			var top := WorldProjection.to_screen(at - Vector2(0.0, float(shown["radius"])))
+			var width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+			draw_string_outline(font, top + Vector2(-width * 0.5, -8.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 4, Color(0, 0, 0, 0.8))
+			draw_string(font, top + Vector2(-width * 0.5, -8.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, color.lightened(0.3))
 		return
 	var base := WorldProjection.to_screen(at)
 	var from: Vector2 = shown.get("from", Vector2.INF)

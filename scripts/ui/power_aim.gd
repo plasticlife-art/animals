@@ -9,13 +9,14 @@ extends RefCounted
 ##
 ## The herd led is the selected animal's, if it is one the player may lead
 ## (`WorldState.can_lead()`); with none selected, in a scenario, the biggest part of the
-## player's own herd.
+## player's own herd. A cull counts the foxes in its circle (`cull_count()`): the awake, and the
+## sleeping where their sectors' groups hold them - the view's world keeps no sleeping records.
 
 const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
-const POWERS := ["dig_pond", "lead_herd"]
-const LABELS := {"dig_pond": "Водопой", "lead_herd": "Повести стадо"}
-const KEYS := {"dig_pond": "Q", "lead_herd": "E"}
+const POWERS := ["dig_pond", "lead_herd", "cull"]
+const LABELS := {"dig_pond": "Водопой", "lead_herd": "Повести стадо", "cull": "Отстрел"}
+const KEYS := {"dig_pond": "Q", "lead_herd": "E", "cull": "R"}
 const REFUSALS := {
 	"unknown_power": "Такой силы нет",
 	"no_charges": "Эта сила кончилась",
@@ -29,6 +30,7 @@ const REFUSALS := {
 	"no_herd": "Сначала выберите оленя",
 	"too_far": "Слишком далеко для стада",
 	"no_route": "Стадо не найдёт туда дороги",
+	"no_target": "Здесь некого отстреливать",
 }
 
 ## The power aimed, or "".
@@ -60,6 +62,9 @@ func arm(manager, power_id: String) -> bool:
 		var herd := herd_to_lead(manager)
 		message = "Щёлкните, куда вести %s. Правая кнопка или Esc — отмена" \
 			% HudTextScript.herd_name(str(herd["species"]), int(herd["group_id"]))
+	elif power_id == "cull":
+		message = "Щёлкните, где отстрелять лис (до %d). Правая кнопка или Esc — отмена" \
+			% int(manager.world_state.player.settings("cull").get("max_kills", 3))
 	else:
 		message = "Щёлкните, где копать. Правая кнопка или Esc — отмена"
 	return true
@@ -84,6 +89,15 @@ func preview(manager, world_position: Vector2) -> Dictionary:
 			var herd := herd_to_lead(manager)
 			return {"kind": "flag", "position": world_position, "from": herd.get("center", Vector2.INF),
 				"reason": _lead_refusal(manager, herd, world_position)}
+		"cull":
+			var radius: float = world.cull_radius()
+			var count := cull_count(world, world_position, radius, world.player.settings("cull").get("species", ["predator"]))
+			var reason := ""
+			if not world.bounds.has_point(world_position):
+				reason = "off_map"
+			elif count == 0:
+				reason = "no_target"
+			return {"kind": "cull", "position": world_position, "radius": radius, "count": count, "reason": reason}
 	return {}
 
 
@@ -133,6 +147,37 @@ static func herd_to_lead(manager) -> Dictionary:
 	if not center.is_finite():
 		return {}
 	return {"species": species, "group_id": group_id, "center": center}
+
+
+## The animals of `species` a cull at `position` would find within `radius`, awake and asleep, in
+## the world the view is shown: the sleeping by their records where the world holds them, else by
+## their sectors' groups (`record_positions`).
+static func cull_count(world, position: Vector2, radius: float, species: Array) -> int:
+	var count := 0
+	var radius_sq := radius * radius
+	for species_id in species:
+		for agent in world.query_agents(position, radius, str(species_id)):
+			if agent != null and agent.is_alive and position.distance_squared_to(agent.position) <= radius_sq:
+				count += 1
+	var reach := Rect2(position - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)
+	for sector_key in world._sector_states.keys():
+		var sector: Dictionary = world._sector_states[sector_key]
+		if not bool(sector.get("dormant", false)) or not world._sector_key_to_rect(sector_key).intersects(reach):
+			continue
+		var records: Array = sector.get("dormant_records", [])
+		if not records.is_empty():
+			for record in records:
+				if species.has(str(record.get("species_type", ""))) \
+						and position.distance_squared_to(Vector2(record.get("position", Vector2.INF))) <= radius_sq:
+					count += 1
+			continue
+		for aggregate in sector.get("dormant_aggregates", []):
+			if not species.has(str(aggregate.get("species_type", ""))):
+				continue
+			for member in aggregate.get("record_positions", PackedVector2Array()):
+				if position.distance_squared_to(member) <= radius_sq:
+					count += 1
+	return count
 
 
 static func refusal_text(reason: String) -> String:
