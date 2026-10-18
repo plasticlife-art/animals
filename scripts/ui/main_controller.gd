@@ -40,6 +40,9 @@ extends Node2D
 @onready var settings_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/SettingsButton
 @onready var restart_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/RestartButton
 @onready var exit_button = $CanvasLayer/PauseMenu/PausePanel/MarginContainer/PauseVBox/ExitButton
+## A first game's hints (`challenge.hints`), built here rather than in the scene.
+var tutorial_hints: TutorialHints = null
+const ScenarioProgress := preload("res://scripts/core/scenario_progress.gd")
 
 ## Where the selection card sits with the HUD down, and how far it clears the
 ## debug panel when the HUD is up. The panel's width is measured rather than
@@ -113,6 +116,9 @@ func _ready() -> void:
 	result_window.watch_on_requested.connect(_close_result_window)
 	result_window.restart_requested.connect(_restart_scenario)
 	result_window.menu_requested.connect(_result_to_menu)
+	result_window.next_requested.connect(_on_next_scenario)
+	tutorial_hints = TutorialHints.new()
+	$CanvasLayer.add_child(tutorial_hints)
 	# Help needs no simulation behind it, so unlike the rest of the pause menu it
 	# is wired here rather than in `_bind_view()`, which only runs once a world
 	# exists. That is what lets the setup screen offer it before the first start.
@@ -136,8 +142,15 @@ func _on_scenario_requested(scenario_id: String, style: String) -> void:
 		return
 	_selection = bundle["challenge"]["selection"]
 	simulation_manager.initialize(bundle, int(bundle["challenge"]["seed"]))
+	tutorial_hints.start(bundle["challenge"].get("hints", []))
 	_adopt_running_simulation()
 	_open_scenario_brief()
+
+
+## «Следующий сценарий» on a won scenario's result: that one, in the same style.
+func _on_next_scenario(scenario_id: String) -> void:
+	result_window.close()
+	_on_scenario_requested(scenario_id, str(_selection.get("style", start_menu.chosen_style())))
 
 
 ## «Заново» on the result: the same scenario from its start, in the same style.
@@ -181,6 +194,9 @@ func _open_scenario_brief() -> void:
 func _on_scenario_finished(won: bool, summary: Dictionary) -> void:
 	power_targeting.cancel()
 	_refresh_powers()
+	tutorial_hints.stop()
+	if won:
+		ScenarioProgress.record_win(str(summary.get("id", "")))
 	result_window.show_result(won, summary, simulation_manager.scenario, simulation_manager.config_bundle.get("challenge", {}))
 	_sync_result_window()
 
@@ -212,6 +228,22 @@ func _on_power_pressed(power: String) -> void:
 	else:
 		power_targeting.arm(power)
 	_refresh_powers()
+
+
+## What the first game's hints are judged by (`TutorialHints.advance()`).
+func _tutorial_facts() -> Dictionary:
+	var world = simulation_manager.world_state if simulation_manager != null else null
+	return {"selected": int(simulation_manager.selected_agent_id), "following": simulation_manager.focus_mode != "off",
+		"speed": float(simulation_manager.speed_multiplier), "feed_open": bool(story_feed.expanded),
+		"leads": int(world.player.used.get("lead_herd", 0)) if world != null and world.player != null else 0}
+
+
+## Hints show over a world in play, under nothing: not under the brief or the result, a menu,
+## help, the chronicle or photo mode.
+func _hints_allowed() -> bool:
+	return _bound and player_bar.visible and not result_window.visible and not chronicle_window.visible \
+		and not photo_mode.active and not start_menu.visible and not help_screen.visible and not pause_menu.visible \
+		and not settings_panel.visible
 
 
 ## Whether a power may be aimed now: a world in play, nothing over it.
@@ -254,11 +286,14 @@ func _on_continue_requested() -> void:
 	if not SaveSystem.restore(simulation_manager, data):
 		return
 	_pending_story = data.get("story", {})
+	# A first game resumed goes on without its hints: they were for its first minutes.
+	tutorial_hints.stop()
 	_adopt_running_simulation()
 
 
 func _start_simulation(selection: Dictionary, seed_value: int) -> void:
 	simulation_manager.initialize(ConfigLoader.load_config_bundle(selection), seed_value)
+	tutorial_hints.stop()
 	_adopt_running_simulation()
 
 
@@ -431,11 +466,13 @@ func _bind_view() -> void:
 	_sync_lod_focus_rect()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var started := Time.get_ticks_usec()
 	_sync_lod_focus_rect()
 	_sync_day_night_tint()
 	_layout_hud()
+	if tutorial_hints != null and not tutorial_hints.is_done():
+		tutorial_hints.advance(_tutorial_facts(), delta, _hints_allowed())
 	if simulation_manager != null and simulation_manager.world_state != null:
 		simulation_manager.record_render_phase("ui",
 			float(Time.get_ticks_usec() - started) / 1000.0)
@@ -642,6 +679,11 @@ func _layout_hud() -> void:
 		climate_indicator.offset_right = _climate_offsets.y + shift
 		ecology_strip.offset_left = _strip_offsets.x + shift
 		ecology_strip.offset_right = _strip_offsets.y + shift
+	# The first game's hints stand under the species line.
+	if tutorial_hints != null and tutorial_hints.visible:
+		var hints_top: float = (ecology_strip.get_global_rect().end.y if ecology_strip.visible else 100.0) + 10.0
+		if not is_equal_approx(tutorial_hints.offset_top, hints_top):
+			tutorial_hints.offset_top = hints_top
 	# The goals stand just above the powers, between the cards on the left and the map and the
 	# feed on the right: in two rows rather than under them. What stands beside them is judged
 	# over two rows' height, so taking the second does not change the room it was taken for.

@@ -1143,13 +1143,25 @@ Utility actions inside `alive`:
   (`GameCamera.frame_world_rect()`, near enough that it is awake) and one of it selected; at the
   end the result - the scenario's own title («Стадо пережило сушь» / «Стадо не пережило сушь»),
   the herd's curve against its species', what is left and the least there was, the dead by
-  cause, the powers used and the bonus - with «Смотреть дальше», «Заново» and «В меню». The game
-  stands still under either and the season card and epitaphs wait
-- The start page offers «Сценарии» first: a card a scenario - its name, brief and «Играть» - two
-  abreast where the window has the width and scrolling where it is short (`_fit_scenarios()`, a
-  frame after layout, when a wrapped brief knows its height), played in the style the setup
-  page has (`StartMenu.scenario_requested`); «Новая симуляция» is the sandbox. The cards replaced
-  a 420-wide column, which with two briefs ran off the top and bottom of the window
+  cause, the powers used and the bonus - with «Смотреть дальше», «Заново» and «В меню», and after
+  a win «Следующий сценарий» first, the next in the page's order (`ConfigLoader.next_scenario()`,
+  `next_requested`). The game stands still under either and the season card and epitaphs wait
+- The start page offers «Сценарии» first: a card a scenario - its name, brief and «Играть» - up
+  to three abreast where the window has the width and scrolling where it is short
+  (`_fit_scenarios()`, a frame after layout, when a wrapped brief knows its height), played in
+  the style the setup page has (`StartMenu.scenario_requested`); «Новая симуляция» is the
+  sandbox. The cards replaced a 420-wide column, which with two briefs ran off the top and
+  bottom of the window. The first game's card (`tutorial`) says «Начните отсюда», a won one
+  «Пройден»: the wins are kept in `user://progress.cfg` (`scenario_progress.gd`), a mark only,
+  nothing locked; the cards are built again each time the page opens
+- `TutorialHints`, a first game's hints (`challenge.hints`, each `{text, until}`), one at a time
+  on parchment under the species line: a hint goes once the player has done what it asks - another
+  animal chosen (`select`), the camera following (`follow`), time sped up (`speed`), a lead given
+  (`lead`), the feed opened (`feed`) - or after its `seconds` (`time`), or on «Понятно»; one asking
+  for what is already so is passed over unseen, and the next comes after 1.2 s. `MainController`
+  builds it, hands it those facts every frame and lets it show only over a world in play
+  (`_hints_allowed()`: not under the brief, the result, a menu, help, the chronicle or photo
+  mode). A scenario started from the page has them; one resumed from a save goes on without
 
 ### `HudText`
 

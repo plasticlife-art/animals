@@ -8,7 +8,8 @@ extends CenterContainer
 ## dropdowns is the wrong thing to greet someone with: most sessions want the
 ## defaults or the last autosave, and neither needs the options at all. «Сценарии» lists the
 ## worlds with a goal (`ConfigLoader.list_scenarios()`), a card each with its brief and «Играть»,
-## two abreast where the window is wide enough, and scrolling where it is too short; «Новая
+## up to three abreast where the window is wide enough, and scrolling where it is too short; the
+## first game's card says «Начните отсюда», a won one «Пройден» (`ScenarioProgress`). «Новая
 ## симуляция» is the sandbox.
 ##
 ## The setup rows are built at runtime from `ConfigLoader.list_option_groups()`
@@ -38,6 +39,9 @@ const SCENARIO_GAP := 18.0
 const BRIEF_FONT_SIZE := 18
 ## Kept clear above and below a page that would otherwise run off the window.
 const SCREEN_MARGIN := 24.0
+const MARK_TUTORIAL := Color(0.62, 0.38, 0.06)
+const MARK_WON := Color(0.16, 0.48, 0.2)
+const ScenarioProgress := preload("res://scripts/core/scenario_progress.gd")
 
 var _selection: Dictionary = {}
 var _continue_button: Button = null
@@ -83,7 +87,17 @@ func _show_setup() -> void:
 func show_scenarios() -> void:
 	_root_page.visible = false
 	_scenarios_page.visible = true
+	_fill_scenarios()
 	_fit_scenarios()
+
+
+## A card a scenario, built again each time the page opens: a scenario won since is marked.
+func _fill_scenarios() -> void:
+	for card in _scenario_grid.get_children():
+		_scenario_grid.remove_child(card)
+		card.queue_free()
+	for scenario in ConfigLoader.list_scenarios():
+		_scenario_grid.add_child(_scenario_card(scenario))
 
 
 ## Two cards abreast where the window has the width, one where not; the cards scroll where the
@@ -93,8 +107,8 @@ func _fit_scenarios() -> void:
 	if _scenario_grid == null or not is_inside_tree():
 		return
 	var view: Vector2 = get_viewport_rect().size
-	var two_abreast := SCENARIO_CARD_WIDTH * 2.0 + SCENARIO_GAP + 44.0 + SCREEN_MARGIN * 2.0
-	_scenario_grid.columns = 2 if _scenario_grid.get_child_count() > 1 and view.x >= two_abreast else 1
+	var fit := int((view.x - 44.0 - SCREEN_MARGIN * 2.0 + SCENARIO_GAP) / (SCENARIO_CARD_WIDTH + SCENARIO_GAP))
+	_scenario_grid.columns = clampi(mini(fit, 3), 1, maxi(1, _scenario_grid.get_child_count()))
 	await get_tree().process_frame
 	if not is_inside_tree() or not _scenarios_page.visible:
 		return
@@ -198,8 +212,7 @@ func _build_scenarios_page() -> PanelContainer:
 	_scenario_grid.add_theme_constant_override("h_separation", int(SCENARIO_GAP))
 	_scenario_grid.add_theme_constant_override("v_separation", int(SCENARIO_GAP))
 	_scenario_scroll.add_child(_scenario_grid)
-	for scenario in ConfigLoader.list_scenarios():
-		_scenario_grid.add_child(_scenario_card(scenario))
+	_fill_scenarios()
 
 	var back_button := Button.new()
 	back_button.text = "Назад"
@@ -215,9 +228,20 @@ func _scenario_card(scenario: Dictionary) -> VBoxContainer:
 	var card := VBoxContainer.new()
 	card.custom_minimum_size.x = SCENARIO_CARD_WIDTH
 	card.add_theme_constant_override("separation", 8)
+	var heading := HBoxContainer.new()
+	heading.add_theme_constant_override("separation", 10)
+	card.add_child(heading)
 	var name_label := Label.new()
 	name_label.text = str(scenario["label"])
-	card.add_child(name_label)
+	heading.add_child(name_label)
+	var mark := scenario_mark(scenario)
+	if mark != "":
+		var mark_label := Label.new()
+		mark_label.text = mark
+		mark_label.add_theme_font_size_override("font_size", BRIEF_FONT_SIZE)
+		mark_label.add_theme_color_override("font_color", MARK_WON if mark == "Пройден" else MARK_TUTORIAL)
+		mark_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		heading.add_child(mark_label)
 	var brief := Label.new()
 	brief.text = str(scenario["brief"])
 	brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -231,6 +255,13 @@ func _scenario_card(scenario: Dictionary) -> VBoxContainer:
 	play.pressed.connect(func(): scenario_requested.emit(scenario_id, chosen_style()))
 	card.add_child(play)
 	return card
+
+
+## «Пройден» on a won scenario, «Начните отсюда» on the first game not yet won, "" otherwise.
+static func scenario_mark(scenario: Dictionary) -> String:
+	if ScenarioProgress.has_won(str(scenario.get("id", ""))):
+		return "Пройден"
+	return "Начните отсюда" if bool(scenario.get("tutorial", false)) else ""
 
 
 ## The style the setup page has chosen, the default until it is changed.

@@ -91,8 +91,8 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 
 1. Open the project in Godot.
 2. Run the project, or open `res://scenes/main/main.tscn`.
-3. The main menu opens first. `Сценарии` lists the worlds with a goal («Долгая сушь»,
-   «Слишком много лис»), each with its brief; `Новая симуляция` (the sandbox) reveals the setup options,
+3. The main menu opens first. `Сценарии` lists the worlds with a goal («Первая зима», the
+   first game with hints, «Долгая сушь», «Слишком много лис»), each with its brief; `Новая симуляция` (the sandbox) reveals the setup options,
    `Продолжить` resumes the latest autosave (a scenario's or the sandbox's, whichever was
    written last; each keeps its own two slots), and `Помощь` describes the controls
    and the mechanics. Nothing is simulated until a run is started.

@@ -1,7 +1,37 @@
 {
   "_comment": "Scenarios: a world with a goal (`ConfigLoader.load_scenario_bundle`, `ScenarioRunner`). `selection` picks setup options as the setup screen does (the style stays the player's); `patch` is merged over the bundle after them; `challenge` goes into the bundle as it is and is what the runner keeps score by; its `result` holds the result window's titles, `chips` the extra chips shown (\"water\": the own herd's water) and `watch` the species counted into the curve beside the own herd. `own_herd.near` is a point in fractions of the map: the herd of `own_herd.species` nearest it at the start is the player's. A goal names what must hold - `share_at_least`, the own herd against its size at the start, `thirst_deaths_at_most`, its deaths of thirst, `thirst_share_at_most`, those as a share of its size at the start, `species_at_least` or `species_share_at_least`, a species' count or share of its start, or `culled_at_most`, the animals culled - and when: `form` `at_season_start` on the first tick of `season` (or `days` into it; the `years`-th such season), `always` on every tick. Its `role` says what it decides: `win`, won if it holds at its moment and lost if not; `lose`, lost the moment it stops holding; `bonus`, nothing - it is kept or not.",
-  "order": ["long_drought", "too_many_foxes"],
+  "order": ["first_winter", "long_drought", "too_many_foxes"],
   "scenarios": {
+    "first_winter": {
+      "label": "Первая зима",
+      "brief": "Осень. Ваше стадо оленей впервые зимует в заповеднике: травы становится всё меньше, а лисы голодны. Доведите до весны хотя бы три пятых стада. По ходу игры появятся подсказки — как выбрать оленя, следить за ним, ускорить время и повести стадо на сытный луг.",
+      "tutorial": true,
+      "seed": 11,
+      "selection": {"map_size": "medium", "mix": "balanced", "scenario": "normal", "rules": "normal", "difficulty": "normal"},
+      "patch": {
+        "world": {"climate": {"start_season_index": 2, "season_length_days": 1.5}, "terrain": {"height": {"levels": 1}}},
+        "balance": {"lifecycle": {"founder_age_share": 0.4}},
+        "powers": {"offered": ["lead_herd"], "powers": {"lead_herd": {"charges": 2, "cooldown_seconds": 60.0}}}
+      },
+      "challenge": {
+        "own_herd": {"species": "herbivore", "near": [0.5, 0.5]},
+        "result": {"won": "Стадо встретило весну", "lost": "Стадо не дожило до весны"},
+        "hints": [
+          {"until": "select", "text": "Это ваше стадо оленей. Щёлкните по любому оленю — внизу слева появится его карточка, а над ней карточка всего стада."},
+          {"until": "follow", "text": "Полоски на карточке — силы (жёлтая), сытость (зелёная) и вода (синяя); красная — на исходе. Нажмите F, и камера поедет за выбранным оленем."},
+          {"until": "time", "seconds": 14, "text": "Внизу — цели. К весне в стаде должно остаться не меньше трёх пятых голов. Зимой трава почти не растёт, а лисы охотятся чаще."},
+          {"until": "speed", "text": "Зима долгая. Ускорьте время кнопками x2 или x4 вверху слева; «Пауза» там же остановит его."},
+          {"until": "lead", "text": "Когда сытость стада падает, а травы вокруг мало, нажмите E и щёлкните по зелёному лугу — стадо пойдёт туда. Это можно сделать дважды."},
+          {"until": "feed", "text": "Справа над картой — лента событий: кто родился, кого поймали лисы. Щёлкните по «События», чтобы раскрыть её."},
+          {"until": "time", "seconds": 12, "text": "Дальше — ждать весны и следить за стадом. Строка видов вверху раскрывается щелчком, а F1 откроет справку."}
+        ],
+        "goals": [
+          {"id": "keep_herd", "role": "win", "form": "at_season_start", "season": "spring", "share_at_least": 0.6, "label": "Довести до весны три пятых стада"},
+          {"id": "not_wiped", "role": "lose", "form": "always", "share_at_least": 0.25, "label": "Не дать стаду растаять: не меньше четверти"},
+          {"id": "whole_herd", "role": "bonus", "form": "at_season_start", "season": "spring", "share_at_least": 0.9, "label": "Встретить весну почти всем стадом"}
+        ]
+      }
+    },
     "long_drought": {
       "label": "Долгая сушь",
       "brief": "Засушливое лето: пруды с первого дня наполовину пусты, к концу лета пересохнут почти все, а дожди наполнят их только посреди осени. Сохраните хотя бы половину своего стада оленей до осенних дождей. Один раз можно выкопать водопой — он нальётся лишь наполовину, так что выкопанный рано пересохнет к концу лета, — и дважды повести стадо к воде.",

@@ -32,6 +32,8 @@ var far_water := FAR_WATER
 var cull_threshold := 3
 var cull_reach := 600.0
 const FOX_POLICIES := ["cull", "cullhard", "away", "cullaway"]
+## The herd's mean hunger past which `graze` leads it to better grass.
+var graze_hunger := 45.0
 
 
 func _initialize() -> void:
@@ -44,6 +46,9 @@ func _initialize() -> void:
 			cull_threshold = int(policy_spec[1])
 		if policy_spec.size() > 2:
 			cull_reach = float(policy_spec[2])
+	elif policy == "graze":
+		if policy_spec.size() > 1:
+			graze_hunger = float(policy_spec[1])
 	else:
 		if policy_spec.size() > 1:
 			low_level = float(policy_spec[1])
@@ -137,6 +142,8 @@ func _play(manager, runner, herd: Dictionary, policy: String) -> Dictionary:
 	var center: Vector2 = herd["center"]
 	if policy in FOX_POLICIES:
 		return _play_foxes(manager, runner, herd, policy)
+	if policy == "graze":
+		return _play_graze(manager, runner, herd)
 	var drinking := _water_near(world, center)
 	if not drinking.is_empty() and float(drinking["level"]) >= low_level and float(drinking["distance"]) <= far_water:
 		return {}
@@ -189,6 +196,38 @@ func _play_foxes(manager, runner, herd: Dictionary, policy: String) -> Dictionar
 			return {"time": snappedf(now, 0.1), "type": "lead_herd", "group": int(herd["group"]),
 				"to": [snappedf(best.x, 1.0), snappedf(best.y, 1.0)], "near": near.size(), "there": fewest}
 	return {}
+
+
+## The grazing rule: once the herd's mean hunger passes `graze_hunger`, a lead to where, in reach,
+## there is most grass - at least a third more than where it stands.
+func _play_graze(manager, runner, herd: Dictionary) -> Dictionary:
+	var world = manager.world_state
+	var now: float = manager.simulation_time
+	if float(herd["hunger"]) < graze_hunger or world.player.refusal("lead_herd", now) != "" \
+			or world.is_led_by_player(runner.species, int(herd["group"])):
+		return {}
+	var center: Vector2 = herd["center"]
+	var radius: float = world._pasture_radius(runner.species)
+	var here: float = world._forage_within(center, radius)
+	var aim := PowerAim.new()
+	aim.power = "lead_herd"
+	var best := Vector2.INF
+	var most := here * 1.33
+	for distance in [600.0, 1000.0, 1500.0, 2000.0]:
+		for index in range(8):
+			var goal: Vector2 = center + Vector2.from_angle(TAU * float(index) / 8.0) * distance
+			if not world.bounds.has_point(goal):
+				continue
+			var there: float = world._forage_within(goal, radius)
+			if there > most and str(aim.preview(manager, goal).get("reason", "x")) == "":
+				most = there
+				best = goal
+	if not best.is_finite():
+		return {}
+	manager.enqueue_command("lead_herd", {"species": runner.species, "group_id": int(herd["group"]), "position": best})
+	return {"time": snappedf(now, 0.1), "type": "lead_herd", "group": int(herd["group"]),
+		"to": [snappedf(best.x, 1.0), snappedf(best.y, 1.0)], "hunger": snappedf(float(herd["hunger"]), 0.1),
+		"grass": [snappedf(here, 1.0), snappedf(most, 1.0)]}
 
 
 ## The own herd: its count, centre and mean thirst, awake and asleep, and its biggest group.

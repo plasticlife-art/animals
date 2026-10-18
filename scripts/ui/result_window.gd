@@ -5,14 +5,16 @@ extends PanelContainer
 ## the scenario's name, what it asks in a few sentences, its goals, and «Начать». At the end, the
 ## result: «Стадо пережило сушь» or «Стадо не пережило сушь» (the scenario's own words), the herd's
 ## curve against its whole species' (`ScenarioRunner.series`), how many are left and the least
-## there were, the dead by cause, the powers used and the bonus; then «Смотреть дальше» (the
-## world goes on), «Заново» and «В меню». `MainController` pauses the game under either and keeps
+## there were, the dead by cause, the powers used and the bonus; then, after a win with a scenario
+## after it, «Следующий сценарий», and «Смотреть дальше» (the world goes on), «Заново» and «В меню». `MainController` pauses the game under either and keeps
 ## the season card back while one is open.
 
 signal brief_closed
 signal watch_on_requested
 signal restart_requested
 signal menu_requested
+## «Следующий сценарий», after a scenario won that has one after it (`ConfigLoader.next_scenario()`).
+signal next_requested(scenario_id: String)
 
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 const WIDTH := 540.0
@@ -82,7 +84,11 @@ func show_result(won: bool, summary: Dictionary, runner, challenge: Dictionary) 
 		_curve.watched_labels.append(HudTextScript.capitalized(HudTextScript.animals_label(str(watched))))
 	_curve.visible = _curve.series.size() >= 2
 	_curve.queue_redraw()
-	_set_buttons([["Смотреть дальше", watch_on_requested], ["Заново", restart_requested], ["В меню", menu_requested]])
+	var buttons: Array = [["Смотреть дальше", watch_on_requested], ["Заново", restart_requested], ["В меню", menu_requested]]
+	var next_id := ConfigLoader.next_scenario(str(challenge.get("id", ""))) if won else ""
+	if next_id != "":
+		buttons.push_front(["Следующий сценарий", next_requested, next_id])
+	_set_buttons(buttons)
 	visible = true
 
 
@@ -209,5 +215,10 @@ func _set_buttons(entries: Array) -> void:
 		button.text = str(entry[0])
 		button.focus_mode = Control.FOCUS_NONE
 		var announce: Signal = entry[1]
-		button.pressed.connect(func() -> void: announce.emit())
+		# A third element is what the signal carries: the next scenario's id.
+		if entry.size() > 2:
+			var carried = entry[2]
+			button.pressed.connect(func() -> void: announce.emit(carried))
+		else:
+			button.pressed.connect(func() -> void: announce.emit())
 		_buttons.add_child(button)

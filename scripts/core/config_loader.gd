@@ -103,8 +103,18 @@ static func list_scenarios() -> Array:
 			continue
 		var scenario: Dictionary = scenarios[scenario_id]
 		listed.append({"id": str(scenario_id), "label": str(scenario.get("label", scenario_id)),
-			"brief": str(scenario.get("brief", ""))})
+			"brief": str(scenario.get("brief", "")), "tutorial": bool(scenario.get("tutorial", false))})
 	return listed
+
+
+## The scenario after `scenario_id` in the page's order, "" after the last or for one not listed:
+## what the result window offers next.
+static func next_scenario(scenario_id: String) -> String:
+	var listed: Array = list_scenarios()
+	for index in range(listed.size() - 1):
+		if str(listed[index]["id"]) == scenario_id:
+			return str(listed[index + 1]["id"])
+	return ""
 
 
 ## The option groups a setup screen can offer, in application order.

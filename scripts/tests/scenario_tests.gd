@@ -66,8 +66,10 @@ static func _runner(manager):
 
 func _test_the_scenario_bundle(a) -> void:
 	var listed: Array = ConfigLoaderScript.list_scenarios()
-	a.is_true(not listed.is_empty() and str(listed[0].id) == "long_drought" and str(listed[0].label) == "Долгая сушь",
-		"«Долгая сушь» is on offer")
+	var ids: Array = listed.map(func(scenario: Dictionary) -> String: return str(scenario.id))
+	a.equal(ids, ["first_winter", "long_drought", "too_many_foxes"], "the first game first, then «Долгая сушь» and the foxes")
+	a.is_true(bool(listed[0].tutorial) and not bool(listed[1].tutorial) and str(listed[1].label) == "Долгая сушь",
+		"the first marked as the place to start")
 	var latin := RegEx.create_from_string("[A-Za-z]")
 	for scenario in listed:
 		a.is_true(latin.search(str(scenario.label) + str(scenario.brief)) == null, "%s is told in Russian" % scenario.id)

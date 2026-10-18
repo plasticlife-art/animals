@@ -37,6 +37,8 @@ func run(a) -> void:
 	_test_ponds_say_how_full(a)
 	_test_the_brief_and_the_result(a)
 	_test_the_scenarios_page(a)
+	_test_the_first_games_hints(a)
+	_test_the_next_scenario_and_progress(a)
 	_test_every_word_is_russian(a)
 
 
@@ -285,14 +287,91 @@ func _test_the_scenarios_page(a) -> void:
 			play = child
 	a.is_true(texts.has("Долгая сушь") and texts.has("Слишком много лис") and play != null,
 		"each scenario with its brief and a button")
-	a.equal(menu._scenario_grid.get_child_count(), 2, "a card each")
+	a.equal(menu._scenario_grid.get_child_count(), 3, "a card each")
 	var asked: Array = []
 	menu.scenario_requested.connect(func(scenario_id: String, style: String) -> void: asked.append([scenario_id, style]))
 	play.pressed.emit()
-	a.equal(asked, [["long_drought", ConfigLoaderScript.default_selection()["style"]]], "played in the chosen style")
+	a.equal(asked, [["first_winter", ConfigLoaderScript.default_selection()["style"]]], "the first game first, played in the chosen style")
 	menu.show_root()
 	a.is_true(menu._root_page.visible and not menu._scenarios_page.visible, "and back to the front")
 	menu.free()
+
+
+## «Первая зима»'s hints, one at a time: each goes once done - a deer chosen, the camera
+## following, time sped up, the herd led, the feed opened - or after its seconds, or on «Понятно»;
+## one asking for what is already so is passed over; nothing moves under a menu.
+func _test_the_first_games_hints(a) -> void:
+	var bundle: Dictionary = ConfigLoaderScript.load_scenario_bundle("first_winter")
+	a.equal(bundle.powers.offered, ["lead_herd"], "the first game offers only the lead")
+	var hints: Array = bundle.challenge.get("hints", [])
+	a.is_true(hints.size() >= 5 and hints.all(func(hint: Dictionary) -> bool: return TutorialHints.UNTIL.has(str(hint.get("until", "")))),
+		"its hints, each waiting for something it knows (%d)" % hints.size())
+	var facts := {"selected": 5, "following": false, "speed": 1.0, "leads": 0, "feed_open": false}
+	a.is_true(not TutorialHints.hint_done({"until": "select"}, facts, facts, 0.0)
+		and TutorialHints.hint_done({"until": "select"}, facts, facts.merged({"selected": 9}, true), 0.0),
+		"another deer chosen")
+	a.is_true(TutorialHints.hint_done({"until": "lead"}, facts, facts.merged({"leads": 1}, true), 0.0)
+		and TutorialHints.hint_done({"until": "time", "seconds": 3}, facts, facts, 3.0)
+		and not TutorialHints.hint_done({"until": "time", "seconds": 3}, facts, facts, 2.0), "a lead given, the seconds gone")
+	var shown = TutorialHints.new()
+	shown.start([{"until": "select", "text": "Выберите оленя"}, {"until": "speed", "text": "Ускорьте"},
+		{"until": "time", "seconds": 2, "text": "Ждите"}, {"until": "feed", "text": "Откройте ленту"}])
+	shown.advance(facts, 5.0, false)
+	a.is_true(not shown.visible and shown.index == 0, "nothing under a menu")
+	shown.advance(facts, TutorialHints.GAP_SECONDS + 0.1, true)
+	a.is_true(shown.visible and shown.text() == "Выберите оленя", "the first after a pause")
+	shown.advance(facts, 0.1, true)
+	a.is_true(shown.visible, "it stays while not done")
+	shown.advance(facts.merged({"selected": 9}, true), 0.1, true)
+	a.is_true(not shown.visible and shown.index == 1, "and goes once done")
+	var fast := facts.merged({"selected": 9, "speed": 4.0}, true)
+	shown.advance(fast, TutorialHints.GAP_SECONDS + 0.1, true)
+	a.equal(shown.index, 2, "time already sped up: that one is passed over")
+	shown.advance(fast, TutorialHints.GAP_SECONDS + 0.1, true)
+	a.equal(shown.text(), "Ждите", "one that only tells")
+	shown.advance(fast, 2.5, true)
+	a.equal(shown.index, 3, "goes after its seconds")
+	shown.advance(fast, TutorialHints.GAP_SECONDS + 0.1, true)
+	shown.next()
+	a.is_true(shown.is_done() and not shown.visible, "«Понятно» puts one away; then all are done")
+	shown.free()
+
+
+## A won scenario offers the next in the page's order; the last, or a loss, does not. A won one is
+## marked «Пройден» on its card, the first game «Начните отсюда» until then.
+func _test_the_next_scenario_and_progress(a) -> void:
+	a.equal([ConfigLoaderScript.next_scenario("first_winter"), ConfigLoaderScript.next_scenario("long_drought"),
+		ConfigLoaderScript.next_scenario("too_many_foxes")], ["long_drought", "too_many_foxes", ""], "the order of the page")
+	var made: Array = _scenario_world(9955)
+	var manager = made[0]
+	var runner = manager.scenario
+	var window := ResultWindow.new()
+	var first: Dictionary = CHALLENGE.merged({"id": "first_winter"}, true)
+	window.show_result(true, runner.summary(manager), runner, first)
+	a.equal(window.button_labels(), ["Следующий сценарий", "Смотреть дальше", "Заново", "В меню"], "a win offers the next")
+	var asked: Array = []
+	window.next_requested.connect(func(scenario_id: String) -> void: asked.append(scenario_id))
+	window._buttons.get_child(0).pressed.emit()
+	a.equal(asked, ["long_drought"], "which is «Долгая сушь»")
+	window.show_result(false, runner.summary(manager), runner, first)
+	a.equal(window.button_labels(), ["Смотреть дальше", "Заново", "В меню"], "a loss does not")
+	window.show_result(true, runner.summary(manager), runner, CHALLENGE.merged({"id": "too_many_foxes"}, true))
+	a.equal(window.button_labels(), ["Смотреть дальше", "Заново", "В меню"], "nor the last")
+	window.free()
+	Helpers.destroy_manager(manager)
+	var progress = StartMenuScript.ScenarioProgress
+	var kept: String = progress.path
+	progress.path = "user://test_progress.cfg"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(progress.path))
+	var tutorial := {"id": "first_winter", "tutorial": true}
+	a.equal([StartMenuScript.scenario_mark(tutorial), StartMenuScript.scenario_mark({"id": "long_drought"})],
+		["Начните отсюда", ""], "the first game says where to start")
+	progress.record_win("first_winter")
+	progress.record_win("first_winter")
+	a.equal(progress.won_ids(), ["first_winter"], "a win kept once")
+	a.equal(StartMenuScript.scenario_mark(tutorial), "Пройден", "and its card says so")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(progress.path))
+	progress.path = kept
 
 
 func _test_every_word_is_russian(a) -> void:
@@ -314,6 +393,10 @@ func _test_every_word_is_russian(a) -> void:
 		for goal in scenario.get("challenge", {}).get("goals", []):
 			words.append(str(goal.get("label", "")))
 		words.append_array(scenario.get("challenge", {}).get("result", {}).values())
+		# A hint names keys and speeds by their own letters: F, F1, E, x2, x4.
+		var hint_keys := RegEx.create_from_string("F1|\\bF\\b|\\bE\\b|x\\d+")
+		for hint in scenario.get("challenge", {}).get("hints", []):
+			words.append(hint_keys.sub(str(hint.get("text", "")), "", true))
 	var tags := RegEx.create_from_string("\\[/?b\\]")
 	# Keys keep their own letters: «(Q)», «(R)», «Esc».
 	var keys := RegEx.create_from_string("\\((Q|E|R)\\)|Esc")
