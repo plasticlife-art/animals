@@ -405,7 +405,15 @@ func _test_feed_shows_the_newest(a) -> void:
 	for index in range(10):
 		manager.world_state.emit_population_event("HerdSplit", "herbivore", Vector2(100.0, 100.0),
 			{"size": 10, "new_group_id": 20 + index, "group_id": 0, "moved": 5})
-	a.equal(feed._rows.get_child_count(), StoryFeedScript.MAX_ROWS, "the newest few")
+	a.equal(feed._rows.get_child_count(), StoryFeedScript.FOLDED_ROWS, "folded: the newest")
+	a.equal(feed._title.text, "События · ещё %d" % (StoryFeedScript.MAX_ROWS - StoryFeedScript.FOLDED_ROWS),
+		"and how many more there are")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	feed._on_header_input(click)
+	a.equal(feed._rows.get_child_count(), StoryFeedScript.MAX_ROWS, "a click on the title: the newest few")
+	a.equal(feed._title.text, "События", "and no more hidden")
 	a.is_true(not feed._quiet.visible, "no longer quiet")
 	var shown: String = feed._rows.get_child(0).text
 	a.is_true(RegEx.create_from_string("^\\d\\d:\\d\\d  Стадо №1 разделилось").search(shown) != null,

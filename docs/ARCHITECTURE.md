@@ -1048,7 +1048,9 @@ Utility actions inside `alive`:
   заводи снова вода» (`PlaceNames` keeps each pond's gender and its «в/на» locative); several
   within 12 s fold into «Пересохли Тихая заводь и ещё 3 водоёма»; the rest go into the
   minute's summary («пересохли — 5 водоёмов»), as a summer dries dozens
-- `StoryFeed` shows the newest seven above the minimap with the time of day, pinned animals in
+- `StoryFeed` shows the newest seven above the minimap with the time of day - folded by default
+  to its title and the newest line («События · ещё 6 ▾»; a click on the title opens or folds it,
+  `set_expanded()`), since seven lines took much of the right of the screen - pinned animals in
   gold and the summaries dimmer; a click selects the animal the line names while it lives (the
   hunter, the newborn) or sends the camera to where it happened. Dark like the season bar and
   the strip, hidden by the start menu like the minimap. It grows upwards from its bottom edge,
@@ -1081,6 +1083,11 @@ Utility actions inside `alive`:
 ### `GameCamera`
 
 - Supports pan, zoom, zoom-to-cursor, follow smoothing, and bounds clamping
+- The pointer resting `EDGE_DELAY` (0.2 s) within `EDGE_MARGIN` (8 px) of the window's edge pans
+  that way at the keys' speed (`edge_direction()`), only while the pointer is in the window
+  (`NOTIFICATION_WM_MOUSE_ENTER/EXIT`, and not before it first moves - until then its position is
+  the corner) and the window has the focus; the delay keeps a pointer leaving the window from
+  dragging the map
 - Follow mode can target either the selected agent or the selected herd center
 
 ### `DebugPanel`

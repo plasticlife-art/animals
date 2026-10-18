@@ -14,6 +14,7 @@ func run(a) -> void:
 	_test_settings_round_trip(a)
 	_test_settings_panel(a)
 	_test_ui_scale_keeps_the_map(a)
+	_test_the_window_edge_pans(a)
 	_test_wind_sways_plants_only(a)
 
 
@@ -61,6 +62,21 @@ func _test_ui_scale_keeps_the_map(a) -> void:
 	camera.set_ui_scale(1.0)
 	a.is_true(is_equal_approx(camera.zoom.x, chosen), "and comes back")
 	root.remove_child(camera)
+	camera.free()
+
+
+## The pointer at the window's edge points the camera that way, a corner both ways; inside the
+## margin or outside the window it does not; and a camera with the pointer out never pans.
+func _test_the_window_edge_pans(a) -> void:
+	var view := Vector2(1600.0, 900.0)
+	a.equal(GameCameraScript.edge_direction(Vector2(3.0, 450.0), view), Vector2(-1.0, 0.0), "the left edge")
+	a.equal(GameCameraScript.edge_direction(Vector2(1597.0, 896.0), view), Vector2(1.0, 1.0), "a corner both ways")
+	a.equal(GameCameraScript.edge_direction(Vector2(800.0, 2.0), view), Vector2(0.0, -1.0), "the top")
+	a.equal(GameCameraScript.edge_direction(Vector2(800.0, 450.0), view), Vector2.ZERO, "the middle: still")
+	a.equal(GameCameraScript.edge_direction(Vector2(-40.0, 450.0), view), Vector2.ZERO, "outside the window: still")
+	var camera = GameCameraScript.new()
+	a.is_true(not camera._pointer_inside, "out until the pointer first moves")
+	a.equal(camera._edge_pan(1.0), Vector2.ZERO, "so it does not pan")
 	camera.free()
 
 

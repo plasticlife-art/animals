@@ -144,7 +144,7 @@ pipeline instead, which reports success even when tests fail:
 - `Q`, `E`, `R`: aim «Водопой», «Повести стадо» or «Отстрел» - those the world offers (also the
   buttons at the bottom centre); left click where, right click or `Esc` to stop aiming
 - `Следить за стадом` on the herd card: follow the selected animal's herd
-- `W`, `A`, `S`, `D`: pan camera
+- `W`, `A`, `S`, `D`, or the pointer resting at the window's edge: pan camera
 - Mouse wheel / trackpad pinch: zoom
 - Mouse wheel over the developer panel: scroll the panel
 - Middle mouse drag / trackpad pan: pan camera

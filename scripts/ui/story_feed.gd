@@ -8,11 +8,15 @@ extends PanelContainer
 ## and otherwise to where it happened. Drawn dark like the season bar and the strip, so the
 ## readouts about the world read as one family; hidden by the start menu like the minimap.
 ## It grows upwards from its bottom edge, and keeps below a card standing over it in the right
-## column (`fit_below()`): fewer rows, the newest kept.
+## column (`fit_below()`): fewer rows, the newest kept. Folded by default to its title and the
+## newest line - «События · ещё 6 ▾» - since seven lines took much of the right of the screen;
+## a click on the title opens it or folds it.
 
 signal line_clicked(line: Dictionary)
 
 const MAX_ROWS := 7
+## The rows shown while the feed is folded: the newest.
+const FOLDED_ROWS := 1
 const ROW_WIDTH := 336.0
 const FONT_SIZE := 14
 const BACKDROP := Color(0.06, 0.07, 0.08, 0.82)
@@ -24,8 +28,13 @@ const HOVER := Color(1.15, 1.15, 1.15, 1.0)
 
 var story_log = null
 var simulation_manager = null
+## Every row (true), or the newest only (false).
+var expanded: bool = false
 var _rows: VBoxContainer
 var _quiet: Label
+var _header: HBoxContainer
+var _title: Label
+var _mark: FoldMark
 
 
 func _init() -> void:
@@ -38,7 +47,17 @@ func _init() -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	add_child(box)
-	box.add_child(_label("События", INK_DIM))
+	_header = HBoxContainer.new()
+	_header.mouse_filter = Control.MOUSE_FILTER_STOP
+	_header.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_header.gui_input.connect(_on_header_input)
+	box.add_child(_header)
+	_title = _label("События", INK_DIM)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_header.add_child(_title)
+	_mark = FoldMark.new()
+	_header.add_child(_mark)
+	_update_header(0)
 	_rows = VBoxContainer.new()
 	_rows.add_theme_constant_override("separation", 3)
 	box.add_child(_rows)
@@ -54,13 +73,21 @@ func bind(feed_log, manager) -> void:
 	refresh()
 
 
+## Opens the feed to all its rows or folds it to the newest.
+func set_expanded(value: bool) -> void:
+	expanded = value
+	refresh()
+
+
 func refresh() -> void:
 	for child in _rows.get_children():
 		_rows.remove_child(child)
 		child.queue_free()
 	var lines: Array = [] if story_log == null else story_log.lines
 	_quiet.visible = lines.is_empty()
-	for index in range(mini(MAX_ROWS, lines.size())):
+	var shown := mini(MAX_ROWS if expanded else FOLDED_ROWS, lines.size())
+	_update_header(mini(MAX_ROWS, lines.size()) - shown)
+	for index in range(shown):
 		var line: Dictionary = lines[index]
 		var colour := INK
 		if bool(line.get("pinned", false)):
@@ -120,6 +147,20 @@ func shown_rows() -> int:
 	return count
 
 
+## «События», «События · ещё 6» while folded over more, and the mark that opens or folds it.
+func _update_header(hidden: int) -> void:
+	_title.text = "События · ещё %d" % hidden if hidden > 0 else "События"
+	_mark.open = expanded
+	_mark.queue_redraw()
+	_header.tooltip_text = "Щёлкните, чтобы свернуть" if expanded else "Щёлкните, чтобы показать все события"
+
+
+func _on_header_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		set_expanded(not expanded)
+		accept_event()
+
+
 func _on_row_input(event: InputEvent, line: Dictionary) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		line_clicked.emit(line)
@@ -132,3 +173,24 @@ static func _label(text: String, colour: Color) -> Label:
 	label.add_theme_color_override("font_color", colour)
 	label.add_theme_font_size_override("font_size", FONT_SIZE)
 	return label
+
+
+## ▾ where the feed opens, ▴ where it folds.
+class FoldMark:
+	extends Control
+
+	const SIDE := 8.0
+
+	var open: bool = false
+
+	func _init() -> void:
+		custom_minimum_size = Vector2(SIDE + 4.0, SIDE)
+		size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var centre := size * 0.5
+		var half := SIDE * 0.5
+		var tip := -half * 0.6 if open else half * 0.6
+		draw_colored_polygon(PackedVector2Array([centre + Vector2(-half, -tip), centre + Vector2(half, -tip),
+			centre + Vector2(0.0, tip)]), StoryFeed.INK_DIM)

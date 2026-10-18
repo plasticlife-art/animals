@@ -5,6 +5,10 @@ extends Camera2D
 const ZOOM_IN_FACTOR := 1.1
 const ZOOM_OUT_FACTOR := 0.9
 const CAMERA_BOUNDS_PADDING := 16.0
+## The pointer this near the window's edge, in its pixels, pans the camera that way, once it has
+## rested there `EDGE_DELAY` seconds - so one passing out of the window does not drag the map.
+const EDGE_MARGIN := 8.0
+const EDGE_DELAY := 0.2
 
 @export var pan_speed: float = 900.0
 ## Godot's Camera2D.zoom is a magnification: larger means closer. The limits
@@ -29,6 +33,11 @@ var _screen_bounds: Rect2 = Rect2()
 var _agent_renderer = null
 var _dragging: bool = false
 var _last_mouse_position: Vector2 = Vector2.ZERO
+## Whether the pointer is in the window and the window has the focus: an edge pans only then.
+## Out until the pointer first moves, since until then its position is the window's corner.
+var _pointer_inside: bool = false
+var _focused: bool = true
+var _edge_time: float = 0.0
 
 
 func _ready() -> void:
@@ -125,6 +134,10 @@ func _process(delta: float) -> void:
 	var direction := Input.get_vector("camera_left", "camera_right", "camera_up", "camera_down")
 	if direction == Vector2.ZERO:
 		direction = _get_fallback_direction()
+	if direction == Vector2.ZERO:
+		direction = _edge_pan(delta)
+	else:
+		_edge_time = 0.0
 	if direction != Vector2.ZERO:
 		_clear_focus_if_active()
 		global_position += direction.normalized() * pan_speed / zoom.x * delta
@@ -144,6 +157,8 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_pointer_inside = true
 	if not input_enabled or world_bounds.size.is_zero_approx():
 		return
 
@@ -194,6 +209,45 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED and not world_bounds.size.is_zero_approx():
 		_recalculate_zoom_limits()
 		_set_zoom_factor(zoom.x)
+	match what:
+		NOTIFICATION_WM_MOUSE_ENTER:
+			_pointer_inside = true
+		NOTIFICATION_WM_MOUSE_EXIT:
+			_pointer_inside = false
+		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_WM_WINDOW_FOCUS_IN:
+			_focused = true
+		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+			_focused = false
+
+
+## The way the pointer at the window's edge pans the camera, once it has rested there long
+## enough; none while it is outside, the window is not in front, or the map is being dragged.
+func _edge_pan(delta: float) -> Vector2:
+	var direction := Vector2.ZERO
+	if _pointer_inside and _focused and not _dragging:
+		direction = edge_direction(get_viewport().get_mouse_position(), get_viewport().get_visible_rect().size)
+	if direction == Vector2.ZERO:
+		_edge_time = 0.0
+		return Vector2.ZERO
+	_edge_time += delta
+	return direction if _edge_time >= EDGE_DELAY else Vector2.ZERO
+
+
+## Which way a pointer at `pointer` in a window `view_size` across points the camera: toward the
+## edges it is within `margin` of, a corner both ways; none inside them or outside the window.
+static func edge_direction(pointer: Vector2, view_size: Vector2, margin: float = EDGE_MARGIN) -> Vector2:
+	if not Rect2(Vector2.ZERO, view_size).grow(0.5).has_point(pointer):
+		return Vector2.ZERO
+	var direction := Vector2.ZERO
+	if pointer.x <= margin:
+		direction.x = -1.0
+	elif pointer.x >= view_size.x - margin:
+		direction.x = 1.0
+	if pointer.y <= margin:
+		direction.y = -1.0
+	elif pointer.y >= view_size.y - margin:
+		direction.y = 1.0
+	return direction
 
 
 func _get_fallback_direction() -> Vector2:

@@ -362,6 +362,7 @@ func _test_feed_keeps_below_a_card(a) -> void:
 		feed_log.lines.append({"time": float(index), "text": "Строка %d о том, что случилось у водопоя на краю карты" % index,
 			"position": Vector2.INF, "focus_id": -1, "pinned": false, "kind": "summary", "key": "", "count": 1})
 	var feed = StoryFeedScript.new()
+	feed.expanded = true
 	# In the tree: outside it a control's minimum size is never recomputed.
 	Engine.get_main_loop().root.add_child(feed)
 	feed.bind(feed_log, null)
