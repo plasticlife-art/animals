@@ -278,12 +278,14 @@ func _test_the_scenarios_page(a) -> void:
 	a.is_true(menu._scenarios_page.visible and not menu._root_page.visible, "it opens the page")
 	var texts: Array = []
 	var play: Button = null
-	for child in menu._scenarios_page.get_child(0).get_child(0).get_children():
+	for child in menu._scenarios_page.find_children("*", "", true, false):
 		if child is Label:
 			texts.append(child.text)
 		elif child is Button and child.text == "Играть" and play == null:
 			play = child
-	a.is_true(texts.has("Долгая сушь") and play != null, "«Долгая сушь» with its brief and a button")
+	a.is_true(texts.has("Долгая сушь") and texts.has("Слишком много лис") and play != null,
+		"each scenario with its brief and a button")
+	a.equal(menu._scenario_grid.get_child_count(), 2, "a card each")
 	var asked: Array = []
 	menu.scenario_requested.connect(func(scenario_id: String, style: String) -> void: asked.append([scenario_id, style]))
 	play.pressed.emit()

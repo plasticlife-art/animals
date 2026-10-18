@@ -38,11 +38,16 @@ const INK_DIM := Color(0.20, 0.13, 0.08, 0.55)
 const BUTTON_INK := Color(0.10, 0.20, 0.13)
 
 ## Vital bars. Kept here with the rest of the palette rather than in
-## `AgentReadout`, because the same three colours are drawn onto the parchment
-## panel and onto the world behind the overhead tag, and they only stay legible
-## on both if they are picked together with the ink above.
-const BAR_GOOD := Color(0.42, 0.62, 0.28)
-const BAR_LOW := Color(0.76, 0.33, 0.18)
+## `AgentReadout`, because the same colours are drawn onto the parchment panel and
+## onto the world behind the overhead tag, and they only stay legible on both if
+## they are picked together with the ink above. A hue a need - energy gold, food
+## green, water blue - because three bars of one green could only be told apart by
+## their order; red, for any of them, says it is running out.
+const BAR_ENERGY := Color(0.86, 0.66, 0.16)
+const BAR_FOOD := Color(0.42, 0.62, 0.28)
+const BAR_WATER := Color(0.26, 0.52, 0.82)
+const BAR_GOOD := BAR_FOOD
+const BAR_LOW := Color(0.80, 0.22, 0.16)
 const BAR_TRACK := Color(0.20, 0.13, 0.08, 0.24)
 ## The tag has no panel behind it, so it carries its own backdrop - dark, because
 ## it sits over grass and water rather than over the parchment.

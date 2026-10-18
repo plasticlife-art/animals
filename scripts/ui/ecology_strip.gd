@@ -7,6 +7,10 @@ extends Control
 ## biome has left. A number turns amber when it is worth a look and red when it is bad
 ## (`EcologyReadout`). Like `ClimateIndicator` it is drawn, not laid out from labels, and
 ## kept out of the Tab panel so it stays up during play; the start menu hides it.
+##
+## Folded to one line unless opened - «Олени 244 ▲ · Лисы 24 · Тетерева 88 · Трава 48–56% ▾»,
+## each count in the colour of its species' worst column - because the whole table took a
+## good part of the top of the screen. A click on it opens or folds it.
 
 const PADDING := 10.0
 const ROW_GAP := 3.0
@@ -24,6 +28,9 @@ const LEVEL_INK := [INK, Color(0.98, 0.78, 0.36), Color(1.0, 0.47, 0.4)]
 const RISING := Color(0.58, 0.84, 0.46)
 const FALLING := Color(1.0, 0.52, 0.42)
 const HEADERS := ["Всего", "Голодают", "Жаждут", "Убито"]
+## The folded line's height around its text, and the room the fold mark takes.
+const FOLDED_PADDING := 6.0
+const FOLD_MARK := 8.0
 
 const EcologyReadoutScript := preload("res://scripts/ui/ecology_readout.gd")
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
@@ -37,6 +44,40 @@ var _capacity: Dictionary = {}
 ## The world `_capacity` was summed for. A new world, or the copy the worker hands the
 ## view, is another object, and the sum is taken again.
 var _capacity_world: Object = null
+## The whole table (true) or the one line (false).
+var expanded: bool = false
+## Where the folded line was drawn, which is where it takes clicks.
+var _folded_box := Rect2()
+
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	_update_tooltip()
+
+
+func _update_tooltip() -> void:
+	tooltip_text = "Щёлкните, чтобы свернуть" if expanded else "Щёлкните, чтобы увидеть, сколько голодают, жаждут и убито"
+
+
+## Opens the table or folds it to one line.
+func set_expanded(value: bool) -> void:
+	expanded = value
+	_update_tooltip()
+	_fit_height()
+	queue_redraw()
+
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		set_expanded(not expanded)
+		accept_event()
+
+
+## Folded, only the line drawn takes the mouse: the rest of the strip's rect is the world's.
+func _has_point(point: Vector2) -> bool:
+	if expanded:
+		return Rect2(Vector2.ZERO, size).has_point(point)
+	return _folded_box.has_point(point)
 
 
 func bind_manager(manager: SimulationManager) -> void:
@@ -68,6 +109,9 @@ func _fit_height() -> void:
 	if font == null:
 		return
 	var line: float = font.get_height(get_theme_default_font_size())
+	if not expanded:
+		offset_bottom = offset_top + FOLDED_PADDING * 2.0 + line
+		return
 	var lines := float(_species_ids.size() + 2)
 	offset_bottom = offset_top + PADDING * 2.0 + lines * line + (lines - 1.0) * ROW_GAP
 
@@ -104,16 +148,21 @@ func _draw() -> void:
 	if font == null:
 		return
 	var font_size := get_theme_default_font_size()
+	var shown := readout()
+	if not expanded:
+		_draw_folded(font, font_size, shown)
+		return
 	var rect := Rect2(Vector2.ZERO, size)
 	draw_rect(rect, BACKDROP, true)
 	draw_rect(rect, BORDER, false, 1.5)
 	var line: float = font.get_height(font_size)
 	var ascent: float = font.get_ascent(font_size)
-	var shown := readout()
 	if shown.is_empty():
 		draw_string(font, Vector2(0.0, PADDING + ascent), "Нет данных", HORIZONTAL_ALIGNMENT_CENTER,
 			size.x, font_size, INK_DIM)
 		return
+	# The fold mark in the header's swatch column, which is otherwise empty.
+	_draw_fold_mark(Vector2(PADDING + SWATCH * 0.5, PADDING + line * 0.5), true)
 
 	var top := PADDING
 	var name_x := PADDING + SWATCH + 6.0
@@ -128,7 +177,7 @@ func _draw() -> void:
 		var baseline := top + ascent
 		var species_id: String = row["id"]
 		draw_rect(Rect2(PADDING, top + (line - SWATCH) * 0.5, SWATCH, SWATCH), _colors.get(species_id, INK), true)
-		draw_string(font, Vector2(name_x, baseline), HudTextScript.species_label(species_id),
+		draw_string(font, Vector2(name_x, baseline), species_name(species_id),
 			HORIZONTAL_ALIGNMENT_LEFT, NAME_WIDTH, font_size, INK)
 		# The total leaves room on its right for the arrow of where it is going.
 		draw_string(font, Vector2(columns_x, baseline), str(row["population"]), HORIZONTAL_ALIGNMENT_RIGHT,
@@ -174,3 +223,96 @@ func _draw_grass(font: Font, font_size: int, origin: Vector2, grass: Array) -> v
 		draw_string(font, Vector2(x, origin.y), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size,
 			LEVEL_INK[int(entry["level"])])
 		x += font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+
+
+## «Олени», «Лисы», «Тетерева»: the animals, as the cards and the feed call them.
+static func species_name(species_id: String) -> String:
+	return HudTextScript.capitalized(HudTextScript.animals_label(species_id))
+
+
+## The worst of a species' columns, by `EcologyReadout.Level`: its count is drawn in that colour
+## when the table is folded. Kills count only where something hunts it.
+static func row_level(row: Dictionary, hunted := true) -> int:
+	var level := maxi(int(row.get("hungry_level", 0)), int(row.get("thirsty_level", 0)))
+	if hunted:
+		level = maxi(level, int(row.get("kills_level", 0)))
+	return level
+
+
+## «Трава 48–56%», or «Трава 48%» when every biome has as much, and the worst biome's level;
+## `{text, level}`.
+static func grass_summary(grass: Array) -> Dictionary:
+	if grass.is_empty():
+		return {"text": "Трава: нет", "level": 0}
+	var low := 100
+	var high := 0
+	var level := 0
+	for entry in grass:
+		var share := int(round(float(entry["share"]) * 100.0))
+		low = mini(low, share)
+		high = maxi(high, share)
+		level = maxi(level, int(entry["level"]))
+	return {"text": "Трава %d%%" % low if low == high else "Трава %d–%d%%" % [low, high], "level": level}
+
+
+## The folded line as pieces, `[kind, ...]`, laid out from 0: a swatch, a count, a trend, a
+## separator, the grass, the fold mark. Measured before it is drawn, to be centred.
+func _folded_pieces(font: Font, font_size: int, shown: Dictionary) -> Array:
+	var pieces: Array = []
+	var x := 0.0
+	var separator := " · "
+	var separator_width := font.get_string_size(separator, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+	for row in shown.get("rows", []):
+		var species_id: String = row["id"]
+		pieces.append(["swatch", x, _colors.get(species_id, INK)])
+		x += SWATCH + 5.0
+		var text := "%s %d" % [species_name(species_id), int(row["population"])]
+		pieces.append(["text", x, text, LEVEL_INK[row_level(row, _hunted.get(species_id, true))]])
+		x += font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+		if int(row["trend"]) != 0:
+			pieces.append(["trend", x + 4.0 + ARROW * 0.5, int(row["trend"])])
+			x += ARROW + 4.0
+		pieces.append(["text", x, separator, INK_DIM])
+		x += separator_width
+	var grass := grass_summary(shown.get("grass", []))
+	pieces.append(["text", x, str(grass["text"]), LEVEL_INK[int(grass["level"])]])
+	x += font.get_string_size(str(grass["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+	pieces.append(["fold", x + 6.0 + FOLD_MARK * 0.5])
+	x += FOLD_MARK + 6.0
+	pieces.append(["end", x])
+	return pieces
+
+
+func _draw_folded(font: Font, font_size: int, shown: Dictionary) -> void:
+	var line: float = font.get_height(font_size)
+	var ascent: float = font.get_ascent(font_size)
+	if shown.is_empty():
+		_folded_box = Rect2()
+		return
+	var pieces := _folded_pieces(font, font_size, shown)
+	var width: float = float(pieces.back()[1]) + PADDING * 2.0
+	_folded_box = Rect2(Vector2((size.x - width) * 0.5, 0.0), Vector2(width, FOLDED_PADDING * 2.0 + line))
+	draw_rect(_folded_box, BACKDROP, true)
+	draw_rect(_folded_box, BORDER, false, 1.5)
+	var left := _folded_box.position.x + PADDING
+	var middle := FOLDED_PADDING + line * 0.5
+	var baseline := FOLDED_PADDING + ascent
+	for piece in pieces:
+		match str(piece[0]):
+			"swatch":
+				draw_rect(Rect2(left + float(piece[1]), middle - SWATCH * 0.5, SWATCH, SWATCH), piece[2], true)
+			"text":
+				draw_string(font, Vector2(left + float(piece[1]), baseline), str(piece[2]),
+					HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, piece[3])
+			"trend":
+				_draw_trend(Vector2(left + float(piece[1]), middle), int(piece[2]))
+			"fold":
+				_draw_fold_mark(Vector2(left + float(piece[1]), middle), false)
+
+
+## ▾ where the table opens, ▴ where it folds.
+func _draw_fold_mark(centre: Vector2, open: bool) -> void:
+	var half := FOLD_MARK * 0.5
+	var tip := -half * 0.6 if open else half * 0.6
+	draw_colored_polygon(PackedVector2Array([centre + Vector2(-half, -tip), centre + Vector2(half, -tip),
+		centre + Vector2(0.0, tip)]), INK_DIM)

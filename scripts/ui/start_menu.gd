@@ -7,8 +7,9 @@ extends CenterContainer
 ## options only appear once "Новая симуляция" is pressed, because a wall of six
 ## dropdowns is the wrong thing to greet someone with: most sessions want the
 ## defaults or the last autosave, and neither needs the options at all. «Сценарии» lists the
-## worlds with a goal (`ConfigLoader.list_scenarios()`), each with its brief; «Новая симуляция»
-## is the sandbox.
+## worlds with a goal (`ConfigLoader.list_scenarios()`), a card each with its brief and «Играть»,
+## two abreast where the window is wide enough, and scrolling where it is too short; «Новая
+## симуляция» is the sandbox.
 ##
 ## The setup rows are built at runtime from `ConfigLoader.list_option_groups()`
 ## rather than laid out in the scene, because the groups live in `presets.json`
@@ -30,6 +31,13 @@ const TITLE_TEXT := "Engine of Ecosystem"
 const SETUP_TITLE_TEXT := "Новая симуляция"
 const SCENARIOS_TITLE_TEXT := "Сценарии"
 const PAGE_WIDTH := 420.0
+## A scenario's card on the scenarios page, the gap between cards, and its brief's type: smaller
+## than the menu's, which set a brief of a few sentences one word a line.
+const SCENARIO_CARD_WIDTH := 380.0
+const SCENARIO_GAP := 18.0
+const BRIEF_FONT_SIZE := 18
+## Kept clear above and below a page that would otherwise run off the window.
+const SCREEN_MARGIN := 24.0
 
 var _selection: Dictionary = {}
 var _continue_button: Button = null
@@ -37,6 +45,8 @@ var _seed_option: OptionButton = null
 var _root_page: PanelContainer = null
 var _setup_page: PanelContainer = null
 var _scenarios_page: PanelContainer = null
+var _scenario_scroll: ScrollContainer = null
+var _scenario_grid: GridContainer = null
 
 # Offered as a choice rather than a text field: no themed line edit exists, and
 # a fixed set keeps runs comparable between sessions.
@@ -49,6 +59,10 @@ func _ready() -> void:
 	_setup_page = _build_setup_page()
 	_scenarios_page = _build_scenarios_page()
 	show_root()
+	if is_inside_tree():
+		get_viewport().size_changed.connect(func() -> void:
+			if _scenarios_page.visible:
+				_fit_scenarios())
 
 
 ## Both pages live under the same CenterContainer and take turns being visible,
@@ -69,6 +83,25 @@ func _show_setup() -> void:
 func show_scenarios() -> void:
 	_root_page.visible = false
 	_scenarios_page.visible = true
+	_fit_scenarios()
+
+
+## Two cards abreast where the window has the width, one where not; the cards scroll where the
+## window is shorter than they are. Measured a frame after laying them out: a wrapped brief
+## knows its height only once it has its width.
+func _fit_scenarios() -> void:
+	if _scenario_grid == null or not is_inside_tree():
+		return
+	var view: Vector2 = get_viewport_rect().size
+	var two_abreast := SCENARIO_CARD_WIDTH * 2.0 + SCENARIO_GAP + 44.0 + SCREEN_MARGIN * 2.0
+	_scenario_grid.columns = 2 if _scenario_grid.get_child_count() > 1 and view.x >= two_abreast else 1
+	await get_tree().process_frame
+	if not is_inside_tree() or not _scenarios_page.visible:
+		return
+	var content: Vector2 = _scenario_grid.get_combined_minimum_size()
+	var rest: float = _scenarios_page.get_combined_minimum_size().y - _scenario_scroll.custom_minimum_size.y
+	var room := maxf(120.0, view.y - SCREEN_MARGIN * 2.0 - rest)
+	_scenario_scroll.custom_minimum_size = Vector2(content.x, minf(content.y, room))
 
 
 func _build_root_page() -> PanelContainer:
@@ -157,20 +190,16 @@ func _build_scenarios_page() -> PanelContainer:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
 
+	_scenario_scroll = ScrollContainer.new()
+	_scenario_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(_scenario_scroll)
+	_scenario_grid = GridContainer.new()
+	_scenario_grid.columns = 2
+	_scenario_grid.add_theme_constant_override("h_separation", int(SCENARIO_GAP))
+	_scenario_grid.add_theme_constant_override("v_separation", int(SCENARIO_GAP))
+	_scenario_scroll.add_child(_scenario_grid)
 	for scenario in ConfigLoader.list_scenarios():
-		var name_label := Label.new()
-		name_label.text = str(scenario["label"])
-		column.add_child(name_label)
-		var brief := Label.new()
-		brief.text = str(scenario["brief"])
-		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		brief.custom_minimum_size.x = PAGE_WIDTH - 44.0
-		column.add_child(brief)
-		var play := Button.new()
-		play.text = "Играть"
-		var scenario_id := str(scenario["id"])
-		play.pressed.connect(func(): scenario_requested.emit(scenario_id, chosen_style()))
-		column.add_child(play)
+		_scenario_grid.add_child(_scenario_card(scenario))
 
 	var back_button := Button.new()
 	back_button.text = "Назад"
@@ -178,6 +207,30 @@ func _build_scenarios_page() -> PanelContainer:
 	column.add_child(back_button)
 
 	return page
+
+
+## A scenario's card: its name, its brief and «Играть», the button at the foot so cards abreast
+## line theirs up.
+func _scenario_card(scenario: Dictionary) -> VBoxContainer:
+	var card := VBoxContainer.new()
+	card.custom_minimum_size.x = SCENARIO_CARD_WIDTH
+	card.add_theme_constant_override("separation", 8)
+	var name_label := Label.new()
+	name_label.text = str(scenario["label"])
+	card.add_child(name_label)
+	var brief := Label.new()
+	brief.text = str(scenario["brief"])
+	brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	brief.custom_minimum_size.x = SCENARIO_CARD_WIDTH
+	brief.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	brief.add_theme_font_size_override("font_size", BRIEF_FONT_SIZE)
+	card.add_child(brief)
+	var play := Button.new()
+	play.text = "Играть"
+	var scenario_id := str(scenario["id"])
+	play.pressed.connect(func(): scenario_requested.emit(scenario_id, chosen_style()))
+	card.add_child(play)
+	return card
 
 
 ## The style the setup page has chosen, the default until it is changed.

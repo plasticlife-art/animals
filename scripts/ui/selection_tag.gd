@@ -19,7 +19,7 @@ extends Control
 const LIFT_PX := 30.0
 const PADDING := Vector2(8.0, 5.0)
 const BAR_WIDTH := 92.0
-const BAR_HEIGHT := 4.0
+const BAR_HEIGHT := 5.0
 const BAR_SPACING := 2.0
 const LINE_GAP := 3.0
 ## Keeps the tag from being drawn far outside the viewport while the camera is

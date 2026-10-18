@@ -19,6 +19,7 @@ func run(a) -> void:
 	_test_species_rows_count_risk_and_kills(a)
 	_test_grass_is_read_against_what_each_biome_holds(a)
 	_test_strip_reads_the_running_world(a)
+	_test_strip_folds_to_a_line(a)
 	_test_words(a)
 	_test_herd_counts_near_and_far(a)
 	_test_herd_through_the_worker(a)
@@ -142,6 +143,33 @@ func _test_strip_reads_the_running_world(a) -> void:
 	var idle = EcologyStripScript.new()
 	a.is_true(idle.readout().is_empty(), "with no world it says nothing")
 	idle.free()
+
+
+## Folded to one line at first, each count in the colour of its species' worst column, the
+## grass as a range; a click opens the table, and folded only the line takes the mouse.
+func _test_strip_folds_to_a_line(a) -> void:
+	var row := {"hungry_level": 0, "thirsty_level": 1, "kills_level": 2}
+	a.equal([EcologyStripScript.row_level(row), EcologyStripScript.row_level(row, false)], [2, 1],
+		"the worst column, kills only where something hunts it")
+	var grass := [{"id": "meadow", "share": 0.56, "level": 0}, {"id": "drought", "share": 0.48, "level": 1}]
+	a.equal(EcologyStripScript.grass_summary(grass), {"text": "Трава 48–56%", "level": 1}, "the grass as a range")
+	a.equal(str(EcologyStripScript.grass_summary([grass[0]])["text"]), "Трава 56%", "or one share")
+	a.equal([EcologyStripScript.species_name("herbivore"), EcologyStripScript.species_name("scavenger")],
+		["Олени", "Тетерева"], "the animals by name")
+	var strip = EcologyStripScript.new()
+	a.is_true(not strip.expanded, "folded at first")
+	strip.size = Vector2(500.0, 30.0)
+	strip._folded_box = Rect2(150.0, 0.0, 200.0, 30.0)
+	a.is_true(strip._has_point(Vector2(200.0, 10.0)) and not strip._has_point(Vector2(20.0, 10.0)),
+		"only the line takes the mouse")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	strip._gui_input(click)
+	a.is_true(strip.expanded and strip._has_point(Vector2(20.0, 10.0)), "a click opens the table")
+	strip._gui_input(click)
+	a.is_true(not strip.expanded, "another folds it")
+	strip.free()
 
 
 static func _row(shown: Dictionary, species_id: String) -> Dictionary:

@@ -11,11 +11,14 @@ extends RefCounted
 ##
 ## Every bar reads "more is better", which is why hunger and thirst are inverted
 ## into food and water. Three bars that all drain as the animal needs something can
-## be read at a glance; a mix of directions cannot.
+## be read at a glance; a mix of directions cannot. Each has its own colour
+## (`NEED_COLORS`) and turns red when low, so the tag's unlabelled bars read too.
 
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 ## The three needs, in the order the bars stand.
 const NEED_LABELS := ["Силы", "Сытость", "Вода"]
+## Their colours, in the same order.
+const NEED_COLORS := [PixelUiTheme.BAR_ENERGY, PixelUiTheme.BAR_FOOD, PixelUiTheme.BAR_WATER]
 
 
 ## «Ветка ♀ · олениха» with a name, «Олениха ♀ №284» without one.
@@ -55,9 +58,9 @@ static func vitals(agent) -> Array:
 static func need_bars(energy: float, hunger: float, thirst: float, need_max: float, max_energy: float,
 		thresholds: Dictionary, labels: Array = NEED_LABELS) -> Array:
 	return [
-		bar_entry(str(labels[0]), energy, max_energy, energy <= float(thresholds.get("rest_energy", 26.0))),
-		bar_entry(str(labels[1]), need_max - hunger, need_max, hunger >= float(thresholds.get("critical_hunger", 60.0))),
-		bar_entry(str(labels[2]), need_max - thirst, need_max, thirst >= float(thresholds.get("critical_thirst", 50.0))),
+		bar_entry(str(labels[0]), energy, max_energy, energy <= float(thresholds.get("rest_energy", 26.0)), NEED_COLORS[0]),
+		bar_entry(str(labels[1]), need_max - hunger, need_max, hunger >= float(thresholds.get("critical_hunger", 60.0)), NEED_COLORS[1]),
+		bar_entry(str(labels[2]), need_max - thirst, need_max, thirst >= float(thresholds.get("critical_thirst", 50.0)), NEED_COLORS[2]),
 	]
 
 
@@ -84,11 +87,12 @@ static func draw_bars(canvas: CanvasItem, origin: Vector2, width: float,
 	return y - origin.y - spacing
 
 
-static func bar_entry(label: String, value: float, maximum: float, is_low: bool) -> Dictionary:
+static func bar_entry(label: String, value: float, maximum: float, is_low: bool,
+		color: Color = PixelUiTheme.BAR_GOOD) -> Dictionary:
 	return {
 		"label": label,
 		"value": clampf(value, 0.0, maximum),
 		"maximum": maximum,
 		"fill": clampf(value / maximum, 0.0, 1.0),
-		"color": PixelUiTheme.BAR_LOW if is_low else PixelUiTheme.BAR_GOOD,
+		"color": PixelUiTheme.BAR_LOW if is_low else color,
 	}
