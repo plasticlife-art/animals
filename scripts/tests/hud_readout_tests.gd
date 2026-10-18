@@ -358,7 +358,7 @@ func _test_every_action_and_state_has_words(a) -> void:
 	for constant in actions.get_script_constant_map().values():
 		a.is_true(HudTextScript.ACTIONS.has(String(constant)), "a word for the action %s" % constant)
 	for state in ["idle", "wander", "seek_food", "eat", "drink", "seek_water", "rest", "flee", "regroup",
-			"migrate", "reproduce", "seek_prey", "chase", "search_last_seen", "attack", "seek_carcass",
+			"migrate", "led", "reproduce", "seek_prey", "chase", "search_last_seen", "attack", "seek_carcass",
 			"feed_carcass", "investigate_water", "pair_cohesion", "patrol", "dead"]:
 		a.is_true(HudTextScript.STATES.has(state), "a word for the state %s" % state)
 	var labels: Array = []

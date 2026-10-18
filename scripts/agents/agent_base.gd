@@ -7,6 +7,10 @@ const SPECIES_PREDATOR := "predator"
 const SEX_FEMALE := "female"
 const SEX_MALE := "male"
 
+## What walking costs a member of a herd the player leads (`state` "led"), against walking
+## anywhere else. At the full cost a led herd lay down to rest every half minute of its walk.
+const LED_EFFORT := 0.5
+
 var id: int = -1
 var species_type: String = ""
 var position: Vector2 = Vector2.ZERO
@@ -299,6 +303,9 @@ func update_needs(delta: float, metabolism_scale: float = 1.0) -> void:
 	var max_energy := float(metabolism.get("max_energy", 100.0))
 	var rest_recovery := float(metabolism.get("rest_recovery", 6.0))
 	var energy_decay := float(metabolism.get("energy_decay", 2.0)) * metabolism_scale
+	# Led by the player, a herd walks at its own pace along a way it was shown: half the effort.
+	if state == "led":
+		energy_decay *= LED_EFFORT
 	if state in ["rest", "eat", "drink", "reproduce", "feed_carcass"]:
 		energy = minf(max_energy, energy + rest_recovery * delta)
 	else:

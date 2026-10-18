@@ -22,6 +22,7 @@ func run(a) -> void:
 	_test_a_split_takes_the_goal_along(a)
 	_test_bad_orders_are_refused(a)
 	_test_a_tired_member_rests(a)
+	_test_a_hungry_member_grazes_on_the_way(a)
 	_test_the_walk_is_saved(a)
 	_test_awake_deer_walk_there(a)
 	_test_the_feed_tells_of_it(a)
@@ -96,7 +97,8 @@ func _test_hungrier_members_follow(a) -> void:
 	Helpers.spawn_herd(world, START, 4, 0)
 	_lead(manager, GOAL)
 	a.equal(world.herd_migration_goal("herbivore", 0, 60.0), GOAL, "a member at hunger 60 follows the player's walk")
-	a.equal(world.herd_migration_goal("herbivore", 0, 75.0), null, "one past 70 eats first")
+	a.equal(world.herd_migration_goal("herbivore", 0, 75.0), GOAL, "and one at 75")
+	a.equal(world.herd_migration_goal("herbivore", 0, 90.0), null, "one past 85 eats first")
 	world.herd_migrations[KEY] = {"goal": GOAL, "since": world.current_time}
 	a.equal(world.herd_migration_goal("herbivore", 0, 60.0), null, "a herd moving on its own leaves one at 60 to eat")
 	Helpers.destroy_manager(manager)
@@ -205,6 +207,36 @@ func _test_a_tired_member_rests(a) -> void:
 	a.is_true(not deer._follow_player_lead(world, manager.tick_duration, []), "tired and resting: it rests")
 	deer.energy = 80.0
 	a.is_true(deer._follow_player_lead(world, manager.tick_duration, []), "rested: it walks on")
+	Helpers.destroy_manager(manager)
+
+
+## Past `LED_GRAZE_HUNGER`, a led deer standing on grass takes a bite and walks on; below it, or
+## on bare ground, it only walks - at half the effort of walking anywhere else.
+func _test_a_hungry_member_grazes_on_the_way(a) -> void:
+	var manager = _world(9911)
+	var world = manager.world_state
+	var herd: Array = Helpers.spawn_herd(world, START, 4, 0)
+	_lead(manager, GOAL)
+	var deer = herd[0]
+	var underfoot: int = world.terrain_system.get_index_from_position(deer.position)
+	world.resource_system._cells[underfoot] = 300.0
+	deer.hunger = 30.0
+	a.is_true(deer._follow_player_lead(world, manager.tick_duration, []) and deer.state == "led", "fed enough: it walks, led")
+	var walking_energy: float = deer.energy
+	deer.update_needs(1.0)
+	var led_cost: float = walking_energy - deer.energy
+	deer.state = "migrate"
+	walking_energy = deer.energy
+	deer.update_needs(1.0)
+	a.near(led_cost, (walking_energy - deer.energy) * AgentBase.LED_EFFORT, 0.001, "walking led costs half the effort")
+	deer.hunger = 60.0
+	var before: float = deer.hunger
+	a.is_true(deer._follow_player_lead(world, manager.tick_duration, []) and deer.state == "eat" and deer.hunger < before,
+		"hungry on grass: a bite on the way")
+	a.is_true(deer.interaction_timer > 0.0, "and the pause to chew it")
+	deer.interaction_timer = 0.0
+	world.resource_system._cells[underfoot] = 0.0
+	a.is_true(deer._follow_player_lead(world, manager.tick_duration, []) and deer.state == "led", "on bare ground it walks on")
 	Helpers.destroy_manager(manager)
 
 

@@ -64,7 +64,7 @@ const ACTIONS := {
 const STATES := {
 	"idle": "стоит", "wander": "бродит", "seek_food": "ищет корм", "eat": "ест", "drink": "пьёт",
 	"seek_water": "идёт к воде", "rest": "отдыхает", "flee": "убегает", "regroup": "собирается",
-	"migrate": "кочует", "reproduce": "ищет пару", "seek_prey": "высматривает добычу",
+	"migrate": "кочует", "led": "идёт, куда повели", "reproduce": "ищет пару", "seek_prey": "высматривает добычу",
 	"chase": "гонится", "search_last_seen": "ищет след", "attack": "нападает",
 	"seek_carcass": "идёт к туше", "feed_carcass": "ест тушу", "investigate_water": "ищет воду",
 	"pair_cohesion": "держится пары", "patrol": "обходит угодья", "dead": "мёртв",

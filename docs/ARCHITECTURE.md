@@ -358,13 +358,18 @@ Current snapshot categories:
   own patience (`give_up_seconds`) nor for poor grass at the goal - in winter or a drought it
   would fail that within one pass - but only on arrival, when the herd settles to eat as after
   any move (`HerdArrived`), or after `timeout_seconds` (300, `HerdLeadEnded`); both are view
-  events. A led member follows up to hunger `powers.lead_herd.exempt_hunger` (70, against 50),
+  events. A led member follows up to hunger `powers.lead_herd.exempt_hunger` (85, against 50),
   awake (`herd_migration_goal()`) and asleep. Its sleeping parts go too, whatever
   `follow_asleep` says, once they have drunk: arrival is judged by the centre of the whole herd.
   Awake, a led member walks (`Herbivore._follow_player_lead()`) instead of resting, wandering or
   grazing in place, unless it is drinking or hungry past the threshold, or tired: it rests when it
   chooses to until it has `LED_REST_SHARE` (0.6) of its strength back - driven past its rest, a
-  herd led 1000 away had no strength left within 40 s - a herd moving on by
+  herd led 1000 away had no strength left within 40 s. Walking led (`state` "led") costs half the
+  effort of walking anywhere else (`AgentBase.LED_EFFORT`), and past hunger `LED_GRAZE_HUNGER`
+  (40) a led member takes a bite of the grass underfoot as it goes (`_take_bite()`, the same bite
+  as grazing). Before, a herd led 1500 through a hungry winter lay down every half minute, ate
+  nothing on the way, lost its hungriest at 70 and starved before it got there: 58 to 78 hunger
+  in four minutes, 15 of 20 dead on one seed. A herd moving on by
   itself only drifts that way when its members have nothing else to do, and a fed led herd
   stood still. A herd that splits while led takes the goal into both halves; one moving on by
   itself lets its new half choose, as it always did
@@ -1824,7 +1829,7 @@ Current suites cover:
   keeping their names at 52 ponds and the dug one taking a new one through a save; the ground
   stamping it; and the feed telling of it
 - «Повести стадо» (`LeadHerdTests`): a led herd going on past bare ground at its goal and its
-  own patience until its time runs out, and arriving ends the walk; members up to hunger 70
+  own patience until its time runs out, and arriving ends the walk; members up to hunger 85
   following it and a herd moving by itself leaving one at 60 to eat; its sleeping part going,
   a thirsty one drinking first, where `follow_asleep` keeps a herd moving by itself; both halves
   of a split led on; a flock, a missing herd, off the map, a cliff, too far, a walled-in goal and

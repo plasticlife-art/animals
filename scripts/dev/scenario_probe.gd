@@ -14,7 +14,7 @@ extends SceneTree
 ## the foxes' breeding season (culled in it, a litter takes the place at once); `cullhard` culls
 ## whenever any are near, in any season; `away` leads the herd to the quietest ground in reach once
 ## they gather; `cullaway` does both - `cull/threshold/reach`, e.g. `cull/3/600`. `graze/hunger`
-## leads the herd to the most grass in reach once its mean hunger passes `hunger` (45). `camera`: `herd`
+## leads the herd to the most grass in reach, with water near, once its mean hunger passes `hunger` (45). `camera`: `herd`
 ## keeps the view on the own herd, as a player watching it would - which keeps it awake;
 ## `overview` looks at the whole map, which puts it to sleep.
 ## `seed` -1 is the scenario's own. The run goes on `after_seconds` past the result, to see what
@@ -33,8 +33,10 @@ var far_water := FAR_WATER
 var cull_threshold := 3
 var cull_reach := 600.0
 const FOX_POLICIES := ["cull", "cullhard", "away", "cullaway"]
-## The herd's mean hunger past which `graze` leads it to better grass.
+## The herd's mean hunger past which `graze` leads it to better grass, and how near water that
+## grass must be.
 var graze_hunger := 45.0
+const GRAZE_WATER := 700.0
 
 
 func _initialize() -> void:
@@ -220,6 +222,10 @@ func _play_graze(manager, runner, herd: Dictionary) -> Dictionary:
 			if not world.bounds.has_point(goal):
 				continue
 			var there: float = world._forage_within(goal, radius)
+			# Grass the herd can drink beside: a meadow far from water trades hunger for thirst.
+			var drink := _water_near(world, goal)
+			if drink.is_empty() or float(drink["distance"]) > GRAZE_WATER:
+				continue
 			if there > most and str(aim.preview(manager, goal).get("reason", "x")) == "":
 				most = there
 				best = goal

@@ -14,7 +14,7 @@
       "max_distance": 2400.0,
       "max_route": 3600.0,
       "timeout_seconds": 300.0,
-      "exempt_hunger": 70.0
+      "exempt_hunger": 85.0
     },
     "cull": {
       "charges": -1,

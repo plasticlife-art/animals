@@ -6,6 +6,8 @@ const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
 const HerbivoreAIScript := preload("res://scripts/agents/ai/herbivore_ai.gd")
 ## The share of its strength a tired member the player leads rests back to before walking on.
 const LED_REST_SHARE := 0.6
+## The hunger past which a led member takes a bite of the grass underfoot on its way.
+const LED_GRAZE_HUNGER := 40.0
 
 var _ai_controller
 var _escape_target_tick: int = -1
@@ -118,15 +120,23 @@ func tick(world, delta: float) -> void:
 ## else it would do - rest, wander, graze in place - unless it is drinking, hunger past
 ## `powers.lead_herd.exempt_hunger` sends it to grass (`herd_migration_goal()` is null then), or it
 ## is tired: it rests when it chooses to, until it has `LED_REST_SHARE` of its strength back, and
-## walks on. Driven past its rest, a led herd walked itself to nothing. A herd moving on by itself
-## only drifts that way, when its members have nothing else to do.
+## walks on. Driven past its rest, a led herd walked itself to nothing. Past `LED_GRAZE_HUNGER` it
+## takes a bite of the grass underfoot as it goes: led through a winter without one, a hungry
+## herd starved on its way to the meadow. Walking led (`state` "led") costs half the effort
+## (`AgentBase.LED_EFFORT`). A herd moving on by itself only drifts that way, when its members
+## have nothing else to do.
 func _follow_player_lead(world, delta: float, neighbors: Array) -> bool:
 	if ai_state != AgentAIState.ALIVE or current_action == AgentAction.DRINK \
 			or not world.is_led_by_player(species_type, group_id):
 		return false
 	if current_action == AgentAction.REST and energy < float(metabolism.get("max_energy", 100.0)) * LED_REST_SHARE:
 		return false
-	return _migrate(world, delta, neighbors)
+	if hunger >= LED_GRAZE_HUNGER and world.terrain_system != null:
+		var underfoot: int = world.terrain_system.get_index_from_position(position)
+		if underfoot != -1 and world.resource_system.get_available_biomass(underfoot) >= world.underfoot_bite_floor(feeding, metabolism, hunger) \
+				and _take_bite(world, underfoot):
+			return true
+	return _migrate(world, delta, neighbors, true)
 
 
 ## Which perception snapshot this behaviour runs on. The forage loop below is
@@ -214,6 +224,32 @@ func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
 	return _move_to_grass_target(world, delta, neighbors, grass)
 
 
+## A mouthful of cell `eat_index`, if it holds one: the grass taken, the hunger and strength it
+## gives, the pause to chew. False if there was nothing to take.
+func _take_bite(world, eat_index: int) -> bool:
+	var bite: float = world.grazing_bite(feeding, hunger, 1.0, trait_appetite)
+	var consumed := 0.0
+	if world.resource_system.get_available_biomass(eat_index) >= minf(bite, WorldState.GRASS_SCRAP_BIOMASS):
+		consumed = world.consume_grass_cell(eat_index, bite)
+	if consumed <= 0.0:
+		return false
+	set_state("eat", world.current_tick)
+	clear_navigation()
+	interaction_timer = float(feeding.get("eat_duration", 0.55))
+	# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
+	var nourishment := consumed * float(feeding.get("nutrition_gain", 0.8))
+	var hunger_reduction := nourishment * trait_appetite
+	reduce_hunger(hunger_reduction)
+	if world.has_method("record_herbivore_hunger_reduction"):
+		world.record_herbivore_hunger_reduction(hunger_reduction)
+	restore_energy(nourishment * 0.18)
+	world.emit_event("GrassConsumed", self, -1, {
+		"consumed": consumed,
+		"cell_index": eat_index,
+	})
+	return true
+
+
 func _find_grass_target(world) -> Dictionary:
 	return world._find_grass_target_for_agent(self)
 
@@ -252,25 +288,7 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 		# A mouthful or nothing. Crumbs of regrowth on a cell grazed to its stubble used
 		# to count as a meal: the grazer stood `eat_duration`, came back to the same
 		# stale target and nibbled again until it starved, with grass all around it.
-		var bite: float = world.grazing_bite(feeding, hunger, 1.0, trait_appetite)
-		var consumed := 0.0
-		if world.resource_system.get_available_biomass(eat_index) >= minf(bite, WorldState.GRASS_SCRAP_BIOMASS):
-			consumed = world.consume_grass_cell(eat_index, bite)
-		if consumed > 0.0:
-			set_state("eat", world.current_tick)
-			clear_navigation()
-			interaction_timer = float(feeding.get("eat_duration", 0.55))
-			# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
-			var nourishment := consumed * float(feeding.get("nutrition_gain", 0.8))
-			var hunger_reduction := nourishment * trait_appetite
-			reduce_hunger(hunger_reduction)
-			if world.has_method("record_herbivore_hunger_reduction"):
-				world.record_herbivore_hunger_reduction(hunger_reduction)
-			restore_energy(nourishment * 0.18)
-			world.emit_event("GrassConsumed", self, -1, {
-				"consumed": consumed,
-				"cell_index": eat_index,
-			})
+		if _take_bite(world, eat_index):
 			return true
 		clear_targets()
 		grass_target_cache = {}
@@ -516,11 +534,11 @@ func _explore(world, delta: float, neighbors: Array) -> void:
 ## Walks on with the herd towards the pasture it is moving to (`WorldState` herd
 ## migration), keeping its place in the herd. False when the herd is not moving on or
 ## this animal is already there.
-func _migrate(world, delta: float, neighbors: Array) -> bool:
+func _migrate(world, delta: float, neighbors: Array, led := false) -> bool:
 	var goal: Variant = world.herd_migration_goal(species_type, group_id, hunger)
 	if goal == null or position.distance_to(goal) <= world._pasture_radius(species_type):
 		return false
-	set_state("migrate", world.current_tick)
+	set_state("led" if led else "migrate", world.current_tick)
 	target_position = goal
 	var waypoint: Vector2 = world.get_next_waypoint(position, goal, id)
 	var move_vector: Vector2 = Steering.combine_two(
