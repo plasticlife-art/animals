@@ -448,16 +448,28 @@ Current snapshot categories:
   the rains have filled about 30 of the 53 ponds again), lost below a quarter at any time, the
   bonus no death of thirst. Powers: one waterhole, filled only half (`start_level` 0.5, against
   0.8 in the sandbox), two leads 60 s apart
-- «Первая зима» (`first_winter`, `tutorial`), the first game: the medium map, seed 11, flat ground,
-  begun in autumn with seasons of a day and a half, founders young; three fifths of the herd to
-  spring to win, a quarter the floor, nine tenths at spring the bonus; two leads; its `hints`
-  (`TutorialHints`). Kept easy on purpose, its job being to teach: on eight seeds with no powers
-  the herd met spring 7 times of 8, on average 1.14 times its autumn size - fawns come at the end
-  of winter - and lost once, at 0.55 (seed 1: 4 of thirst, 2 of hunger, 3 to foxes); 2 deaths a
-  run to foxes, 0.5 to hunger, 0.6 to thirst. A rule leading the herd to better grass once its
-  mean hunger passed 45 (`scenario_probe.gd` `graze`) never fired: this winter is not a hungry
-  one, so the lead's hint tells what a lead does rather than when it is needed. The scenario's
-  own seed ends at 1.2
+- «Первая зима» (`first_winter`, `tutorial`), the first game: the medium map, seed 19, flat ground,
+  begun in autumn with seasons of two days, founders young; the own herd the one nearest
+  [0.3, 0.72], on poor ground (forest and drought around it, the meadows the scan below found
+  1600-2000 away by water); grass growing at half the usual rate from 0.15-0.4 of its cap, and a
+  hungry deer leaving no pasture by itself past hunger 30 (`herd.migration.exempt_hunger`, 50
+  elsewhere) - the player's lead takes it to 85. Goals: no fewer head at spring than in autumn
+  (fawns born late in winter count), a quarter the floor, the bonus not one starved
+  (`starvation_deaths_at_most`); three leads; its `hints`, one of them pointing at the grass layer
+- Tuned headless on eight such starts - for each seed the herd on the poorest ground with a meadow
+  by water within a lead's reach (`scan_herds`, scratch: pasture within the herd's radius against
+  the best on 16 bearings to 2400) - with the camera on the herd. The winter as first set (seed
+  11, normal grass, herds moving on by themselves) never got hungry: with no powers the herd met
+  spring 7 times of 8, 1.14 its autumn size, mean hunger never past 45, and a rule leading it to
+  grass never fired. Slower grass, less of it and hungrier deer brought starvation (4 a winter)
+  but the lead could not cure it: led deer lay down every half minute, ate nothing on the way
+  and dropped out past hunger 70, so a lead to a meadow 1500 away killed the herd it was meant to
+  feed - which is why the lead was changed (bites on the way, half the effort, followed to 85).
+  With that lead and deer hungrier by 60 % a winter starved a deer in 80 s and any walk over bare
+  ground was fatal; at the usual hunger, long winter and poor ground, no powers met spring at
+  full size 3 times of 8 (0.83 on average; 1.1 deaths of hunger, 2.2 of thirst), leading to the
+  most grass in 1500 by water once hunger passed 30 6 of 8 (0.97). Seed 19 is the clearest of
+  the eight: 0.65 with no powers (5 dead of thirst, 1 of hunger), 1.3 with two leads and none dead
 - «Слишком много лис» (`too_many_foxes`): the medium map, seed 7, flat ground, begun in autumn;
   sixty foxes (cap 120) that hunt well (`attack.base_success_chance` 0.55 against 0.38), founders
   young. Goals: the own herd no smaller than at the start two autumns on (`years` 2, second 960),

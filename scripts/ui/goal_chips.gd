@@ -120,6 +120,9 @@ static func chip(goal: Dictionary, runner, now: float) -> Dictionary:
 		text = "Ни одной смерти от жажды" if deaths == 0 else "Смертей от жажды: %d" % deaths
 		if goal.has("thirst_share_at_most"):
 			text = "Смертей от жажды: %d" % deaths
+	elif goal.has("starvation_deaths_at_most"):
+		var starved: int = runner.starvation_deaths()
+		text = "Ни одного оленя от голода" if starved == 0 else "Смертей от голода: %d" % starved
 	if state == "pending" and not runner.holds(goal):
 		state = "warning"
 	var tooltip := str(goal.get("label", ""))

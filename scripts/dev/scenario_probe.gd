@@ -13,8 +13,9 @@ extends SceneTree
 ## culls the foxes nearest the herd once `threshold` of them are within `reach` of it, only out of
 ## the foxes' breeding season (culled in it, a litter takes the place at once); `cullhard` culls
 ## whenever any are near, in any season; `away` leads the herd to the quietest ground in reach once
-## they gather; `cullaway` does both - `cull/threshold/reach`, e.g. `cull/3/600`. `graze/hunger`
-## leads the herd to the most grass in reach, with water near, once its mean hunger passes `hunger` (45). `camera`: `herd`
+## they gather; `cullaway` does both - `cull/threshold/reach`, e.g. `cull/3/600`.
+## `graze/hunger/reach` leads the herd to the most grass within `reach` (2000), with water near,
+## once its mean hunger passes `hunger` (45). `camera`: `herd`
 ## keeps the view on the own herd, as a player watching it would - which keeps it awake;
 ## `overview` looks at the whole map, which puts it to sleep.
 ## `seed` -1 is the scenario's own. The run goes on `after_seconds` past the result, to see what
@@ -36,6 +37,7 @@ const FOX_POLICIES := ["cull", "cullhard", "away", "cullaway"]
 ## The herd's mean hunger past which `graze` leads it to better grass, and how near water that
 ## grass must be.
 var graze_hunger := 45.0
+var graze_reach := 2000.0
 const GRAZE_WATER := 700.0
 
 
@@ -52,6 +54,8 @@ func _initialize() -> void:
 	elif policy == "graze":
 		if policy_spec.size() > 1:
 			graze_hunger = float(policy_spec[1])
+		if policy_spec.size() > 2:
+			graze_reach = float(policy_spec[2])
 	else:
 		if policy_spec.size() > 1:
 			low_level = float(policy_spec[1])
@@ -217,6 +221,8 @@ func _play_graze(manager, runner, herd: Dictionary) -> Dictionary:
 	var best := Vector2.INF
 	var most := here * 1.33
 	for distance in [600.0, 1000.0, 1500.0, 2000.0]:
+		if distance > graze_reach:
+			continue
 		for index in range(8):
 			var goal: Vector2 = center + Vector2.from_angle(TAU * float(index) / 8.0) * distance
 			if not world.bounds.has_point(goal):

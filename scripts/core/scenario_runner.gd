@@ -76,6 +76,10 @@ func thirst_deaths() -> int:
 	return int(deaths.get("thirst", 0))
 
 
+func starvation_deaths() -> int:
+	return int(deaths.get("starvation", 0))
+
+
 ## The own herd's count against its starting count, 0 to whatever it grew to.
 func share() -> float:
 	return float(count) / float(baseline) if baseline > 0 else 0.0
@@ -193,6 +197,8 @@ func holds(goal: Dictionary) -> bool:
 	if goal.has("share_at_least") and share() < float(goal["share_at_least"]):
 		return false
 	if goal.has("thirst_deaths_at_most") and thirst_deaths() > int(goal["thirst_deaths_at_most"]):
+		return false
+	if goal.has("starvation_deaths_at_most") and starvation_deaths() > int(goal["starvation_deaths_at_most"]):
 		return false
 	if goal.has("thirst_share_at_most") and float(thirst_deaths()) > float(goal["thirst_share_at_most"]) * float(baseline):
 		return false
