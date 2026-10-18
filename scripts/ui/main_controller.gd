@@ -118,6 +118,8 @@ func _ready() -> void:
 	result_window.menu_requested.connect(_result_to_menu)
 	result_window.next_requested.connect(_on_next_scenario)
 	tutorial_hints = TutorialHints.new()
+	# Made after `_apply_ui_theme()`: the result window's parchment.
+	tutorial_hints.theme = result_window.theme
 	$CanvasLayer.add_child(tutorial_hints)
 	# Help needs no simulation behind it, so unlike the rest of the pause menu it
 	# is wired here rather than in `_bind_view()`, which only runs once a world

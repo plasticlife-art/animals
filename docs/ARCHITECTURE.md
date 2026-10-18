@@ -443,6 +443,16 @@ Current snapshot categories:
   the rains have filled about 30 of the 53 ponds again), lost below a quarter at any time, the
   bonus no death of thirst. Powers: one waterhole, filled only half (`start_level` 0.5, against
   0.8 in the sandbox), two leads 60 s apart
+- «Первая зима» (`first_winter`, `tutorial`), the first game: the medium map, seed 11, flat ground,
+  begun in autumn with seasons of a day and a half, founders young; three fifths of the herd to
+  spring to win, a quarter the floor, nine tenths at spring the bonus; two leads; its `hints`
+  (`TutorialHints`). Kept easy on purpose, its job being to teach: on eight seeds with no powers
+  the herd met spring 7 times of 8, on average 1.14 times its autumn size - fawns come at the end
+  of winter - and lost once, at 0.55 (seed 1: 4 of thirst, 2 of hunger, 3 to foxes); 2 deaths a
+  run to foxes, 0.5 to hunger, 0.6 to thirst. A rule leading the herd to better grass once its
+  mean hunger passed 45 (`scenario_probe.gd` `graze`) never fired: this winter is not a hungry
+  one, so the lead's hint tells what a lead does rather than when it is needed. The scenario's
+  own seed ends at 1.2
 - «Слишком много лис» (`too_many_foxes`): the medium map, seed 7, flat ground, begun in autumn;
   sixty foxes (cap 120) that hunt well (`attack.base_success_chance` 0.55 against 0.38), founders
   young. Goals: the own herd no smaller than at the start two autumns on (`years` 2, second 960),

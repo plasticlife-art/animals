@@ -99,6 +99,8 @@ static func chip(goal: Dictionary, runner, now: float) -> Dictionary:
 			text = "Ваше стадо: %d из %d, нужно %d" % [runner.count, runner.baseline, needed]
 			if state == "pending" and runner.decide_times.has(goal_id):
 				text += " · ещё %s" % clock(float(runner.decide_times[goal_id]) - now)
+		elif role == "bonus":
+			text = "Дополнительно: не меньше %d %s" % [needed, heads_genitive(needed)]
 		else:
 			text = "Не меньше %d %s" % [needed, heads_genitive(needed)]
 	elif goal.has("species_at_least") or goal.has("species_share_at_least"):

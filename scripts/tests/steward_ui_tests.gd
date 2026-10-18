@@ -174,6 +174,8 @@ func _test_the_goals_chips(a) -> void:
 	a.is_true(str(keep["text"]) == "Ваше стадо: 10 из 10, нужно 5 · ещё 2:00" and str(keep["state"]) == "pending",
 		"the herd, what it needs and the time left (%s)" % keep["text"])
 	a.equal(str(GoalChips.chip(goals[1], runner, 0.0)["text"]), "Не меньше 3 голов", "the floor in heads")
+	a.equal(str(GoalChips.chip({"id": "b", "role": "bonus", "share_at_least": 0.9}, runner, 0.0)["text"]),
+		"Дополнительно: не меньше 9 голов", "a bonus in heads, told from the floor")
 	a.equal(str(GoalChips.chip(goals[2], runner, 0.0)["text"]), "Ни одной смерти от жажды", "the bonus")
 	manager.world_state.kill_agent(herd[0], "thirst")
 	for index in range(1, 6):
