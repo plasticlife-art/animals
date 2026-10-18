@@ -85,7 +85,12 @@ func _p(world_position: Vector2) -> Vector2:
 ## abutting polygons show hairline seams where filled rects do not.
 func _draw_world_cell(rect: Rect2, fill: Color, filled: bool = true, width: float = 1.0) -> void:
 	if WorldProjection.is_identity():
-		draw_rect(rect, fill, filled, width)
+		# A width only for an outline: Godot 4.6 warns, with a backtrace, for every filled cell that
+		# passes one - thousands of lines a frame with the grass overlay on.
+		if filled:
+			draw_rect(rect, fill, true)
+		else:
+			draw_rect(rect, fill, false, width)
 		return
 	var level := _height_at(rect.get_center())
 	var corners := PackedVector2Array([
