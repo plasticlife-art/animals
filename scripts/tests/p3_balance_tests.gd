@@ -21,6 +21,7 @@ func run(a) -> void:
 	_test_critical_thirst_expands_water_search(a)
 	_test_founders_start_at_spread_ages(a)
 	_test_map_sizes_scale_the_large_map(a)
+	_test_difficulty_scales_the_deers_needs(a)
 
 
 ## Comfortably past the species' `maturity_age`, whatever a rebalance makes it.
@@ -352,6 +353,21 @@ func _test_map_sizes_scale_the_large_map(a) -> void:
 		var search := float(bundle["species"]["herbivore"]["perception"]["water_search_radius"])
 		a.is_true(search >= furthest, "%s: a deer anywhere looks far enough to find a pond (%.0f against %.0f)"
 			% [size, search, furthest])
+
+
+## «Лёгкая» and «Суровая» set a deer's hunger and thirst to 0.7 and 1.4 times «Обычная»'s. They
+## were written as numbers when hunger was 2.0 and thirst 1.5, and kept when those fell to 0.67
+## and 0.35 - which left «Лёгкая» starving deer twice as fast and parching them three times.
+func _test_difficulty_scales_the_deers_needs(a) -> void:
+	var rates := {}
+	for level in ["easy", "normal", "hard"]:
+		var selection := ConfigLoader.default_selection()
+		selection["difficulty"] = level
+		rates[level] = ConfigLoader.load_config_bundle(selection)["species"]["herbivore"]["metabolism"]
+	for rate in ["hunger_rate", "thirst_rate"]:
+		var normal := float(rates["normal"][rate])
+		a.near(float(rates["easy"][rate]) / normal, 0.7, 0.01, "«Лёгкая»: %s at 0.7 of «Обычная»" % rate)
+		a.near(float(rates["hard"][rate]) / normal, 1.4, 0.01, "«Суровая»: %s at 1.4 of «Обычная»" % rate)
 
 
 ## What `WorldState._generate_water_sources()` places: the density over the area, rounded.

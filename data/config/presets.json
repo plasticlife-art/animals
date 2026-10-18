@@ -615,8 +615,8 @@
             "species": {
               "herbivore": {
                 "metabolism": {
-                  "hunger_rate": 1.4,
-                  "thirst_rate": 1.05
+                  "hunger_rate": 0.4667,
+                  "thirst_rate": 0.245
                 }
               }
             }
@@ -632,8 +632,8 @@
             "species": {
               "herbivore": {
                 "metabolism": {
-                  "hunger_rate": 2.8,
-                  "thirst_rate": 2.1
+                  "hunger_rate": 0.9333,
+                  "thirst_rate": 0.49
                 }
               }
             }
