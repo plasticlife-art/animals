@@ -1061,7 +1061,8 @@ Utility actions inside `alive`:
 - The selected animal's herd, above its own card, in Russian: the herd's name and number
   («Травоядные · Стадо №5»), how many there are with how many sleep far off and how many
   are young, the means of their energy, food and water as the selection card's bars
-  (`AgentReadout.need_bars()`, against the selected animal's own thresholds), how many
+  (`AgentReadout.need_bars()`, against the selected animal's own thresholds; energy gold, food
+  green, water blue, any of them red when low - three greens read only by their order), how many
   hunters are after them now, the last loss with its cause and how long ago, and a toggle that
   follows the herd (`focus_mode` "flock"). The head count's tooltip gives the members' mean
   inherited traits
@@ -1137,8 +1138,11 @@ Utility actions inside `alive`:
   the herd's curve against its species', what is left and the least there was, the dead by
   cause, the powers used and the bonus - with «Смотреть дальше», «Заново» and «В меню». The game
   stands still under either and the season card and epitaphs wait
-- The start page offers «Сценарии» first: each scenario's name, brief and «Играть», played in the
-  style the setup page has (`StartMenu.scenario_requested`); «Новая симуляция» is the sandbox
+- The start page offers «Сценарии» first: a card a scenario - its name, brief and «Играть» - two
+  abreast where the window has the width and scrolling where it is short (`_fit_scenarios()`, a
+  frame after layout, when a wrapped brief knows its height), played in the style the setup
+  page has (`StartMenu.scenario_requested`); «Новая симуляция» is the sandbox. The cards replaced
+  a 420-wide column, which with two briefs ran off the top and bottom of the window
 
 ### `HudText`
 
@@ -1282,6 +1286,11 @@ Utility actions inside `alive`:
   between 0.21 and 0.71, mostly 0.3 to 0.5, and dipped in winter; a world starts at 0.47
 - The capacity is summed once per world object, so the copy the worker hands the view gets
   its own. `HudText` holds the Russian names the strip and the herd card share
+- Folded to one line by default - «Олени 244 ▲ · Лисы 24 · Тетерева 88 · Трава 48–56% ▾», each
+  count in the colour of its species' worst column (`row_level()`), the grass as the range of
+  the biomes' shares in the worst one's (`grass_summary()`) - because the table took a good part
+  of the top of the screen. A click opens it or folds it (`set_expanded()`); folded, only the
+  line takes the mouse (`_has_point()`), so the rest of its rect is the world's
 
 ### `OverlayRenderer`
 
