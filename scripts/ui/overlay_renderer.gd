@@ -309,7 +309,7 @@ func _draw_chase_lines(world, visible_rect: Rect2) -> void:
 	for agent in world.get_living_agents():
 		if world.species_registry.diet(agent.species_type) != "prey":
 			continue
-		if agent.state not in ["seek_prey", "chase", "attack"]:
+		if agent.state not in ["seek_prey", "chase", "attack", "flank"]:
 			continue
 		if agent.target_agent_id == -1:
 			continue
@@ -317,6 +317,10 @@ func _draw_chase_lines(world, visible_rect: Rect2) -> void:
 		if prey == null or not prey.is_alive:
 			continue
 		if not _line_is_visible(agent.position, prey.position, visible_rect):
+			continue
+		# A mate cutting the prey off (`hunt.pair`) runs for a point ahead of it: drawn there, in amber.
+		if agent.state == "flank":
+			_draw_world_line(agent.position, agent.target_position, Color(1.0, 0.78, 0.2, 0.78), 2.0)
 			continue
 		_draw_world_line(agent.position, prey.position, Color(1.0, 0.42, 0.18, 0.78), 2.0)
 

@@ -63,6 +63,13 @@ func tick(world, delta: float) -> void:
 	if not predators.is_empty():
 		last_threat_position = _nearest_threat_position(predators)
 		threat_memory_until = world.current_time + float(perception.get("threat_memory_seconds", 2.0))
+		world.raise_herd_alarm(self, predators)
+	elif world.current_time >= threat_memory_until:
+		# Seeing nothing itself: its herd's alarm, once that has reached it (`herd.flight`).
+		var alarm: Dictionary = world.herd_alarm_for(self)
+		if not alarm.is_empty():
+			last_threat_position = alarm["threat"]
+			threat_memory_until = float(alarm["until"])
 	if not predators.is_empty() or world.current_time < threat_memory_until:
 		interaction_timer = 0.0
 		# The moment of being scared is what marks this ground as risky for the herd.
@@ -335,18 +342,22 @@ func get_escape_destination(world, flee_vector: Vector2, base_distance: float,
 	return _escape_target_position
 
 
-func _flee(world, delta: float, predators: Array, _neighbors: Array) -> void:
+func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 	set_state("flee", world.current_tick)
 	target_agent_id = -1
 	var flee_vector := Vector2.ZERO
 	for predator in predators:
 		var offset: Vector2 = position - predator.position
 		flee_vector += offset / maxf(1.0, offset.length_squared())
+	var sees_one := not flee_vector.is_zero_approx()
 	if flee_vector.is_zero_approx():
 		flee_vector = position - last_threat_position
 	if flee_vector.is_zero_approx():
 		flee_vector = direction
 	flee_vector = flee_vector.normalized()
+	var alarm: Dictionary = world.herd_alarm_for(self)
+	if not alarm.is_empty() and _flee_with_herd(world, delta, alarm, flee_vector if sees_one else Vector2.ZERO, neighbors):
+		return
 	var escape_target := get_escape_destination(world, flee_vector,
 		world.terrain_system.cell_size * float(perception.get("escape_distance_cells", 2.5)), predators)
 	target_position = escape_target
@@ -354,6 +365,33 @@ func _flee(world, delta: float, predators: Array, _neighbors: Array) -> void:
 	move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("sprint_speed", 115.0)), delta)
 	if velocity.length_squared() > 1.0:
 		spend_energy(float(metabolism.get("sprint_energy_cost", 2.0)) * trait_run_cost * delta)
+
+
+## Flight with the herd (`herd.flight`): for the point the alarm set for all of it, kept with the
+## others - closing up and running their way (`_herd_vector()`, no wander, so no `rng`) - and,
+## seeing the threat itself, leaning away from it (`herd_weights.flee`). Where the threat stands
+## the way the herd runs, this one runs its own way instead (false).
+func _flee_with_herd(world, delta: float, alarm: Dictionary, own_flee: Vector2, neighbors: Array) -> bool:
+	var goal: Vector2 = alarm.get("goal", Vector2.INF)
+	if not goal.is_finite():
+		return false
+	var flight: Dictionary = world.herd_flight_config(species_type)
+	var to_goal := goal - position
+	if not own_flee.is_zero_approx() and to_goal.length_squared() > 1.0 \
+			and to_goal.normalized().dot(own_flee) < float(flight.get("own_way_dot", -0.3)):
+		return false
+	target_position = goal
+	var waypoint: Vector2 = world.get_next_waypoint(position, goal, id)
+	var weights: Dictionary = balance.get("herd_weights", {})
+	var move := Steering.seek(position, waypoint) * float(flight.get("goal_weight", 1.0))
+	move += own_flee * float(weights.get("flee", 2.4)) * float(flight.get("own_flee_share", 0.25))
+	move += _herd_vector(world, neighbors, false) * float(flight.get("herd_weight", 0.8))
+	if move.length_squared() <= 0.0001:
+		move = Steering.seek(position, waypoint)
+	move_with_vector(world, move.normalized(), float(movement.get("sprint_speed", 115.0)), delta)
+	if velocity.length_squared() > 1.0:
+		spend_energy(float(metabolism.get("sprint_energy_cost", 2.0)) * trait_run_cost * delta)
+	return true
 
 
 func _nearest_threat_position(predators: Array) -> Vector2:

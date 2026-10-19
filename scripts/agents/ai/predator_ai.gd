@@ -19,6 +19,7 @@ const ENGAGED_EXECUTION_STATES := {
 	"seek_prey": AgentAction.HUNT_PREY,
 	"chase": AgentAction.HUNT_PREY,
 	"attack": AgentAction.HUNT_PREY,
+	"flank": AgentAction.HUNT_PREY,
 	"seek_carcass": AgentAction.SCAVENGE_CARCASS,
 	"feed_carcass": AgentAction.SCAVENGE_CARCASS,
 	"investigate_water": AgentAction.INVESTIGATE_WATER,

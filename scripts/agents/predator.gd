@@ -2,15 +2,22 @@ class_name Predator
 extends AgentBase
 
 ## The states of a hunt under way, from sighting to the blow, and those with a carcass besides:
-## a predator in one follows it on without weighing its other needs (`tick()`).
-const CHASE_STATES := ["seek_prey", "chase", "search_last_seen", "attack"]
-const ENGAGED_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "seek_carcass", "feed_carcass"]
+## a predator in one follows it on without weighing its other needs (`tick()`). "flank" is a
+## mate cutting the prey off while the other drives it (`hunt.pair`).
+const CHASE_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "flank"]
+const ENGAGED_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "flank", "seek_carcass", "feed_carcass"]
+## The states in which a hunter has its prey in sight: what its mate may join and see through.
+const PAIR_SIGHT_STATES := ["seek_prey", "chase", "flank", "attack"]
 const WATER_INVESTIGATION_COOLDOWN_SECONDS := 12.0
 const AgentAIState := preload("res://scripts/agents/ai/agent_ai_state.gd")
 const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
 const PredatorAIScript := preload("res://scripts/agents/ai/predator_ai.gd")
 
 var hunt: Dictionary = {}
+## In a hunt with its mate (`hunt.pair`): the prey the roles were settled for, and this one's -
+## "drive" or "flank" - kept until that hunt ends.
+var _pair_role_prey_id: int = -1
+var _pair_role: String = ""
 var last_seen_prey_position := Vector2.ZERO
 var prey_last_seen_time: float = -1.0
 var search_anchor := Vector2.ZERO
@@ -112,6 +119,8 @@ func clear_targets(world = null) -> void:
 	else:
 		target_carcass_id = -1
 	_reset_search_state()
+	_pair_role_prey_id = -1
+	_pair_role = ""
 	super.clear_targets()
 
 
@@ -126,6 +135,8 @@ func export_runtime_state() -> Dictionary:
 	state_data["abandoned_prey_id"] = abandoned_prey_id
 	state_data["retry_after"] = retry_after
 	state_data["preferred_mate_id"] = preferred_mate_id
+	state_data["pair_role_prey_id"] = _pair_role_prey_id
+	state_data["pair_role"] = _pair_role
 	return state_data
 
 
@@ -154,6 +165,8 @@ func apply_runtime_state(state_data: Dictionary) -> void:
 	abandoned_prey_id = int(state_data.get("abandoned_prey_id", -1))
 	retry_after = float(state_data.get("retry_after", -1.0))
 	preferred_mate_id = int(state_data.get("preferred_mate_id", preferred_mate_id))
+	_pair_role_prey_id = int(state_data.get("pair_role_prey_id", -1))
+	_pair_role = str(state_data.get("pair_role", ""))
 
 
 func _get_debug_target_text() -> String:
@@ -180,7 +193,8 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	var max_chase_duration: float = float(balance.get("hunt_rules", {}).get("max_chase_duration", 9.0))
 	var attack_radius: float = float(perception.get("attack_radius", 18.0))
 	var min_chase_energy: float = float(hunt.get("min_chase_energy", 4.0))
-	var visible: bool = world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0))
+	var visible: bool = world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0)) \
+		or _mate_sees(world, prey)
 	if visible:
 		if search_started_time >= 0.0:
 			world.emit_event("PreyReacquired", self, prey.id, {
@@ -230,7 +244,14 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	if visible and distance <= minf(attack_radius, get_body_radius() + prey.get_body_radius() + float(hunt.get("contact_slack", 5.0))) and world.scenery.segment_clear(position, prey.position, 0.0):
 		return _attack(world, prey, delta)
 
-	set_state("chase" if visible else "search_last_seen", world.current_tick)
+	if visible and _pair_role_for(world, prey) == "flank" and distance > attack_radius * float(hunt.get("pair", {}).get("close_attack_radii", 2.5)):
+		var driver = _pair_mate(world)
+		target_position = flank_point(prey.position, prey.velocity, driver.position, position,
+			float(movement.get("sprint_speed", 128.0)), attack_radius * float(hunt.get("pair", {}).get("lateral_attack_radii", 2.0)),
+			float(hunt.get("pair", {}).get("lead_max_seconds", 1.5)))
+		set_state("flank", world.current_tick)
+	else:
+		set_state("chase" if visible else "search_last_seen", world.current_tick)
 	var chase_waypoint: Vector2 = world.get_next_waypoint(position, target_position, id)
 	move_with_vector(world, Steering.seek(position, chase_waypoint), float(movement.get("sprint_speed", 128.0)), delta)
 	return true
@@ -242,7 +263,7 @@ func _hunt(world, delta: float, prey = null) -> bool:
 		return false
 	if prey == null:
 		prey = _choose_prey(world)
-	if prey == null or not world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0)):
+	if prey == null or not (world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0)) or _mate_sees(world, prey)):
 		return false
 	release_carcass_target(world)
 	# A new target gets a fresh clock. Carrying the previous chase's elapsed time over
@@ -261,6 +282,99 @@ func _hunt(world, delta: float, prey = null) -> bool:
 	move_with_vector(world, Steering.seek(position, prey_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	chase_timer = delta if switched_target else maxf(chase_timer, delta)
 	return true
+
+
+## The mate, alive and bonded back, when hunting as a pair is on (`hunt.pair`); null otherwise.
+func _pair_mate(world):
+	if preferred_mate_id == -1 or hunt.get("pair", {}).is_empty():
+		return null
+	var mate = world.get_agent(preferred_mate_id)
+	if mate == null or not mate.is_alive or mate.preferred_mate_id != id:
+		return null
+	return mate
+
+
+## The prey the mate is after in sight, if this one is within `join_vision_share` of its own
+## sight of it: what a fox joins rather than starting a hunt of its own.
+func _mates_prey(world, vision_radius: float):
+	var mate = _pair_mate(world)
+	if mate == null or mate.target_agent_id == -1 or mate.state not in PAIR_SIGHT_STATES:
+		return null
+	var prey = world.get_agent(mate.target_agent_id)
+	if prey == null or not prey.is_alive:
+		return null
+	var reach := vision_radius * float(hunt.get("pair", {}).get("join_vision_share", 1.5))
+	if position.distance_squared_to(prey.position) > reach * reach:
+		return null
+	return prey
+
+
+## Whether the mate is chasing `prey` in sight of it: the pair's shared eyes.
+func _mate_sees(world, prey) -> bool:
+	var mate = _pair_mate(world)
+	return mate != null and mate.target_agent_id == prey.id and mate.state in PAIR_SIGHT_STATES
+
+
+## Whether the mate is on `prey` too, close enough to strike with this one.
+func _mate_at_the_prey(world, prey) -> bool:
+	var mate = _pair_mate(world)
+	if mate == null or mate.target_agent_id != prey.id or mate.state not in CHASE_STATES:
+		return false
+	var close := float(perception.get("attack_radius", 60.0)) * float(hunt.get("pair", {}).get("close_partner_attack_radii", 1.5))
+	return mate.position.distance_squared_to(prey.position) <= close * close
+
+
+## This one's part in a hunt of `prey` with its mate: the farther from the prey when they first
+## hunt it together cuts it off ("flank"), the nearer drives it ("drive"); "" hunting alone.
+## The higher id flanks on a tie. Settled once per prey and kept, so the two do not swap.
+func _pair_role_for(world, prey) -> String:
+	var mate = _pair_mate(world)
+	if mate == null or mate.target_agent_id != prey.id or mate.state not in CHASE_STATES:
+		return ""
+	if _pair_role_prey_id == prey.id and _pair_role != "":
+		return _pair_role
+	var mine := position.distance_squared_to(prey.position)
+	var theirs: float = mate.position.distance_squared_to(prey.position)
+	_pair_role = "flank" if mine > theirs or (mine == theirs and id > mate.id) else "drive"
+	_pair_role_prey_id = prey.id
+	if _pair_role == "flank":
+		world.emit_event("PairHunt", self, prey.id, {"mate": mate.id})
+	return _pair_role
+
+
+## Where a flanker runs to cut a prey off: ahead of it by the time the flanker needs to get
+## there (the intercept of `prey_pos + prey_velocity * t` at `speed`, no further ahead than
+## `lead_max` seconds), and out to the flanker's side by `lateral`, the offset fading as it
+## closes in - so the prey, running from the driver, runs at it. Pure, with no path search: the
+## way there is found as for any chase target.
+static func flank_point(prey_pos: Vector2, prey_velocity: Vector2, driver_pos: Vector2, flanker_pos: Vector2,
+		speed: float, lateral: float, lead_max: float) -> Vector2:
+	var heading := prey_velocity.normalized() if prey_velocity.length_squared() > 1.0 else (prey_pos - driver_pos).normalized()
+	if heading.length_squared() < 0.0001:
+		heading = Vector2.RIGHT
+	var rel := prey_pos - flanker_pos
+	var a := prey_velocity.dot(prey_velocity) - speed * speed
+	var b := 2.0 * rel.dot(prey_velocity)
+	var c := rel.dot(rel)
+	var t := INF
+	if absf(a) < 0.001:
+		if b < 0.0:
+			t = -c / b
+	else:
+		var disc := b * b - 4.0 * a * c
+		if disc >= 0.0:
+			var root := sqrt(disc)
+			for candidate in [(-b - root) / (2.0 * a), (-b + root) / (2.0 * a)]:
+				if candidate > 0.0 and candidate < t:
+					t = candidate
+	if not is_finite(t):
+		t = rel.length() / maxf(1.0, speed)
+	t = minf(t, lead_max)
+	var side := signf(heading.cross(flanker_pos - prey_pos))
+	if side == 0.0:
+		side = 1.0
+	var fading := clampf(rel.length() / maxf(1.0, lateral * 3.0), 0.0, 1.0)
+	return prey_pos + prey_velocity * t + Vector2(-heading.y, heading.x) * side * lateral * fading
 
 
 func _begin_last_seen_search(world, prey_id: int) -> void:
@@ -329,7 +443,8 @@ func _attack(world, prey, delta: float) -> bool:
 		move_with_vector(world, Steering.seek(position, prey.position), float(movement.get("sprint_speed", 128.0)), delta)
 		return true
 
-	world.emit_event("AttackAttempt", self, prey.id)
+	var with_mate := _mate_at_the_prey(world, prey)
+	world.emit_event("AttackAttempt", self, prey.id, {"pair": true} if with_mate else {})
 	set_state("attack", world.current_tick)
 	attack_cooldown = float(feeding.get("attack_cooldown", 1.0))
 
@@ -343,14 +458,19 @@ func _attack(world, prey, delta: float) -> bool:
 	chance += energy_ratio * float(attack_config.get("predator_energy_bonus", 0.18))
 	chance += isolation * float(attack_config.get("prey_isolation_bonus", 0.2))
 	chance -= prey_speed_ratio * float(attack_config.get("prey_escape_penalty", 0.16))
+	if with_mate:
+		chance += float(hunt.get("pair", {}).get("attack_bonus", 0.12))
 	chance = clampf(chance, 0.08, 0.92)
 
 	if world.rng.randf() <= chance:
-		world.emit_event("PredationSuccess", self, prey.id, {
+		var success_data := {
 			"chance": chance,
 			"isolation": isolation,
 			"chase_time": chase_timer,
-		})
+		}
+		if with_mate:
+			success_data["pair"] = true
+		world.emit_event("PredationSuccess", self, prey.id, success_data)
 		world.kill_agent(prey, "predation", id)
 		var carcass: Dictionary = world.find_carcass_by_source_agent(prey.id)
 		target_agent_id = -1
@@ -606,6 +726,10 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 	# One radius for both the query and the `distance_score` normalizer below.
 	# Scaling only one of them would make edge-of-range prey score zero.
 	var vision_radius: float = world.perception_radius(self, "vision_radius", 240.0)
+	# The mate's prey, seen by it and near enough, before any of its own (`hunt.pair`).
+	var shared = _mates_prey(world, vision_radius)
+	if shared != null:
+		return shared
 	if prey_candidates.is_empty():
 		prey_candidates = world.query_agents_multi(position, vision_radius, world.species_registry.prey_set(species_type), id)
 	if prey_candidates.is_empty():
@@ -868,7 +992,7 @@ func _update_water_memory(world) -> void:
 ## `AgentBase.is_hungry_enough_to_feed()`. A hunt counts: a predator committed to a
 ## chase should not be talked out of it by the hunger it is about to satisfy.
 func can_continue_feeding() -> bool:
-	return current_action in [AgentAction.HUNT_PREY, AgentAction.SCAVENGE_CARCASS] or state in ["seek_prey", "chase", "attack", "seek_carcass", "feed_carcass"]
+	return current_action in [AgentAction.HUNT_PREY, AgentAction.SCAVENGE_CARCASS] or state in ["seek_prey", "chase", "attack", "flank", "seek_carcass", "feed_carcass"]
 
 
 func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> bool:

@@ -45,6 +45,7 @@ const LOD_PRIORITY_STATES := {
 	"chase": true,
 	"search_last_seen": true,
 	"attack": true,
+	"flank": true,
 	"reproduce": true,
 }
 
@@ -77,6 +78,10 @@ var trail_field: TrailField
 ## and when they set out, or - once there - until when they stay. Shared by a herd's
 ## awake and sleeping members, and saved.
 var herd_migrations: Dictionary = {}
+## Herds that took fright, by herd key (`species:group`): where and when the alarm was raised,
+## the threat, the way the whole herd runs and the one point it runs for, until when
+## (`raise_herd_alarm()`). Only for a species whose herds have `herd.flight`; saved.
+var herd_alarms: Dictionary = {}
 var climate: Climate
 ## The ponds' levels (`WaterSystem`): they fill and dry with the seasons and as they are drunk.
 var water: WaterSystem
@@ -331,6 +336,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 		if agent.stuck_timer > 0.75:
 			performance_counters["stuck_agents"] += 1
 
+	if not herd_alarms.is_empty():
+		_forget_herd_alarms()
 	var overlap_started_usec := Time.get_ticks_usec()
 	_resolve_agent_overlap(delta)
 	performance_counters["phase_overlap_ms"] = float(Time.get_ticks_usec() - overlap_started_usec) / 1000.0
@@ -1803,6 +1810,7 @@ func export_state() -> Dictionary:
 		"trails": trail_field.export_cells(),
 		"water": water.export_state(),
 		"herd_migrations": herd_migrations.duplicate(true),
+		"herd_alarms": herd_alarms.duplicate(true),
 		"player": player.export_state(),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
@@ -1859,6 +1867,7 @@ func import_state(data: Dictionary) -> void:
 	# A save from before ponds had levels keeps them full.
 	water.import_state(data.get("water", {}))
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
+	herd_alarms = data.get("herd_alarms", {}).duplicate(true)
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
@@ -3605,6 +3614,95 @@ func _split_oversized_herds() -> void:
 ## it exactly.
 
 
+## A species' herd flight (`species.<id>.herd.flight`): empty where each of its herd flees for
+## itself, as every herd did before.
+func herd_flight_config(species_key: String) -> Dictionary:
+	return config_bundle.get("species", {}).get(species_key, {}).get("herd", {}).get("flight", {})
+
+
+## A member that sees `predators` raises its herd's alarm, or keeps it up. The first sighting
+## sets where the alarm spreads from; while any member sees a threat the alarm lasts
+## `hold_seconds` more, and every `escape_refresh_ticks` the one seeing it sets the way the herd
+## runs - from the threat through the herd's centre, leaning its own way - and one escape point
+## for all of it (`choose_escape_destination()` from the centre, the sighter charged for the
+## search). Nothing for a species without `herd.flight` or an animal of no herd. No `rng`.
+func raise_herd_alarm(agent, predators: Array) -> void:
+	if agent.group_id == -1:
+		return
+	var flight := herd_flight_config(agent.species_type)
+	if flight.is_empty():
+		return
+	var threats: Array[Vector2] = []
+	var nearest := Vector2.INF
+	for predator in predators:
+		if predator == null or not predator.is_alive:
+			continue
+		threats.append(predator.position)
+		if not nearest.is_finite() or agent.position.distance_squared_to(predator.position) < agent.position.distance_squared_to(nearest):
+			nearest = predator.position
+	if threats.is_empty():
+		return
+	var key := _get_dormant_aggregate_key(agent.species_type, agent.group_id)
+	var alarm: Dictionary = herd_alarms.get(key, {})
+	if alarm.is_empty() or current_time > float(alarm.get("until", -1.0)):
+		alarm = {"since": current_time, "source": agent.position, "raiser": agent.id, "goal_tick": -1}
+		emit_population_event("HerdAlarm", agent.species_type, agent.position, {"group_id": agent.group_id})
+	alarm["until"] = current_time + float(flight.get("hold_seconds", 2.5))
+	alarm["threat"] = nearest
+	var refresh_ticks := maxi(1, int(agent.perception.get("escape_refresh_ticks", 12)))
+	if int(alarm["goal_tick"]) < 0 or current_tick - int(alarm["goal_tick"]) >= refresh_ticks:
+		var center: Vector2 = agent.position
+		var group_center = get_group_center(agent.group_id, agent.species_type)
+		if group_center != null:
+			center = group_center
+		var heading := center - nearest
+		if heading.length_squared() < 1.0:
+			heading = agent.position - nearest
+		var own: Vector2 = agent.position - nearest
+		heading = heading.normalized()
+		if own.length_squared() >= 1.0:
+			heading += own.normalized() * float(flight.get("sighter_lean", 0.35))
+		if heading.length_squared() < 0.0001:
+			heading = agent.direction
+		heading = heading.normalized()
+		var distance := terrain_system.cell_size * float(flight.get("escape_distance_cells", 3.5))
+		alarm["heading"] = heading
+		alarm["goal"] = choose_escape_destination(center, heading, distance, agent.id, threats, agent.get_body_radius())
+		alarm["goal_tick"] = current_tick
+	herd_alarms[key] = alarm
+
+
+## The alarm a member of a herd has heard: its herd's, once it has reached this one - within
+## `alarm_radius_cells` of where it was raised, and after that distance at `alarm_speed_cells` a
+## second - and while it lasts. Empty otherwise: the herd ripples into flight, the near first.
+func herd_alarm_for(agent) -> Dictionary:
+	if herd_alarms.is_empty() or agent.group_id == -1:
+		return {}
+	var flight := herd_flight_config(agent.species_type)
+	if flight.is_empty():
+		return {}
+	var alarm: Dictionary = herd_alarms.get(_get_dormant_aggregate_key(agent.species_type, agent.group_id), {})
+	if alarm.is_empty() or current_time > float(alarm.get("until", -1.0)):
+		return {}
+	var cell: float = terrain_system.cell_size
+	var distance: float = agent.position.distance_to(alarm["source"])
+	if distance > cell * float(flight.get("alarm_radius_cells", 4.0)):
+		return {}
+	if current_time < float(alarm["since"]) + distance / maxf(1.0, cell * float(flight.get("alarm_speed_cells", 6.0))):
+		return {}
+	return alarm
+
+
+## Alarms a second past their end are let go.
+func _forget_herd_alarms() -> void:
+	var spent: Array = []
+	for key in herd_alarms.keys():
+		if current_time > float(herd_alarms[key].get("until", -1.0)) + 1.0:
+			spent.append(key)
+	for key in spent:
+		herd_alarms.erase(key)
+
+
 func _migration_config(species_key: String) -> Dictionary:
 	return config_bundle.get("species", {}).get(species_key, {}).get("herd", {}).get("migration", {})
 
@@ -4600,6 +4698,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var catchable_prey: float = 0.0
 	var catchability: Dictionary = dormant_config.get("prey_catchability", {})
 	var hunting_predators: int = 0
+	# Hungry hunters whose mate hunts beside them count for more (`hunt.pair`).
+	var pair_bonus := 0.0
 	var hunter_species: String = ""
 	var hunter_center := Vector2.ZERO
 	var hunted_species: Dictionary = {}
@@ -4621,6 +4721,9 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		if hungry <= 0:
 			continue
 		hunting_predators += hungry
+		var pair_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("hunt", {}).get("pair", {})
+		if not pair_config.is_empty():
+			pair_bonus += float(_dormant_paired_hungry(members)) * float(pair_config.get("dormant_kill_multiplier", 0.3))
 		hunters.append_array(_dormant_hungry_records(members))
 		if hunter_species == "":
 			hunter_species = species_key
@@ -4636,7 +4739,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 				prey_aggregates.append(aggregate)
 				local_prey += count
 				catchable_prey += float(count) * _prey_catchability(catchability, aggregate) \
-					* prey_preference(str(aggregate.get("species_type", "")))
+					* prey_preference(str(aggregate.get("species_type", ""))) \
+					* float(herd_flight_config(str(aggregate.get("species_type", ""))).get("dormant_catchability", 1.0))
 
 	if hunting_predators > 0:
 		performance_counters["dormant_hunting_predator_steps"] += hunting_predators
@@ -4650,7 +4754,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var debt: float = float(sector_state.get("dormant_kill_debt", 0.0))
 	if hunting_predators > 0 and local_prey > 0:
 		var kill_rate: float = float(dormant_config.get("kill_rate_per_prey_per_second", 0.001667))
-		debt += float(hunting_predators) * catchable_prey * kill_rate * elapsed
+		debt += (float(hunting_predators) + pair_bonus) * catchable_prey * kill_rate * elapsed
 		kills = mini(local_prey, int(floor(debt)))
 		debt -= float(kills)
 	else:
@@ -4729,6 +4833,20 @@ func _dormant_hungry_records(members: Array) -> Array:
 			found.append([int(record.get("id", -1)), str(record.get("sex", ""))])
 	found.sort_custom(func(a, b): return int(a[0]) < int(b[0]))
 	return found
+
+
+## Hungry members whose bonded mate is hungry among them too: pairs hunting together.
+func _dormant_paired_hungry(members: Array) -> int:
+	var floor_value := float(config_bundle.get("balance", {}).get("state_thresholds", {}).get("feed_hunger_floor", 28.0))
+	var hungry := {}
+	for record in members:
+		if float(record.get("hunger", 0.0)) >= floor_value:
+			hungry[int(record.get("id", -1))] = true
+	var paired := 0
+	for record in members:
+		if hungry.has(int(record.get("id", -1))) and hungry.has(int(record.get("preferred_mate_id", -1))):
+			paired += 1
+	return paired
 
 
 func _dormant_hungry_count(aggregate: Dictionary, members: Array) -> int:

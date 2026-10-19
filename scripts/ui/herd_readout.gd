@@ -11,7 +11,7 @@ extends RefCounted
 ## members are among the living agents; its sleeping ones only exist as the aggregates
 ## of their sleeping sectors, each a count with means, and are counted from those.
 
-const HUNTING_STATES := ["seek_prey", "chase", "search_last_seen", "attack"]
+const HUNTING_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "flank"]
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 
 
