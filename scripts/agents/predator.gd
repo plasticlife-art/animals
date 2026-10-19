@@ -1,6 +1,10 @@
 class_name Predator
 extends AgentBase
 
+## The states of a hunt under way, from sighting to the blow, and those with a carcass besides:
+## a predator in one follows it on without weighing its other needs (`tick()`).
+const CHASE_STATES := ["seek_prey", "chase", "search_last_seen", "attack"]
+const ENGAGED_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "seek_carcass", "feed_carcass"]
 const WATER_INVESTIGATION_COOLDOWN_SECONDS := 12.0
 const AgentAIState := preload("res://scripts/agents/ai/agent_ai_state.gd")
 const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
@@ -55,7 +59,7 @@ func tick(world, delta: float) -> void:
 		return
 
 	# An engaged animal follows its existing target without building every utility context.
-	if state in ["seek_prey", "chase", "search_last_seen", "attack", "seek_carcass", "feed_carcass"]:
+	if state in ENGAGED_STATES:
 		set_ai_state(AgentAIState.ENGAGED)
 		_ai_controller.sync_engaged_action(self, world.current_tick)
 		if _continue_engaged_flow(world, delta):
@@ -159,7 +163,7 @@ func _get_debug_target_text() -> String:
 
 
 func _continue_or_finish_chase(world, delta: float) -> bool:
-	if state not in ["seek_prey", "chase", "search_last_seen", "attack"]:
+	if state not in CHASE_STATES:
 		return false
 	if not is_hungry_enough_to_feed(can_continue_feeding()):
 		clear_targets(world)
@@ -174,11 +178,8 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 
 	var break_radius: float = float(perception.get("chase_break_radius", 260.0))
 	var max_chase_duration: float = float(balance.get("hunt_rules", {}).get("max_chase_duration", 9.0))
-	var kin_break_radius: float = float(balance.get("hunt_rules", {}).get("kin_chase_break_radius", 220.0))
-	var critical_hunger_multiplier: float = float(balance.get("hunt_rules", {}).get("critical_hunger_kin_break_multiplier", 1.75))
 	var attack_radius: float = float(perception.get("attack_radius", 18.0))
 	var min_chase_energy: float = float(hunt.get("min_chase_energy", 4.0))
-	var critical_hunger: float = float(balance.get("state_thresholds", {}).get("critical_hunger", 65.0))
 	var visible: bool = world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0))
 	if visible:
 		if search_started_time >= 0.0:
@@ -202,16 +203,9 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		fail_reason = "timeout"
 	elif energy <= min_chase_energy and distance > attack_radius * 1.5:
 		fail_reason = "low_energy"
-	elif last_known_kin_center != null and not is_hungry_enough_to_feed(true):
-		# The leash only applies to a predator that does not need the meal. Every predator
-		# carries a kin centre from the initial pairing, so applying it while hungry made the
-		# mate's position abort chases outright - it was one of the largest single causes of
-		# lost hunts. Feeding first, reuniting after, matches the evaluator veto.
-		var allowed_kin_gap := kin_break_radius
-		if hunger >= critical_hunger:
-			allowed_kin_gap *= critical_hunger_multiplier
-		if position.distance_to(last_known_kin_center) > allowed_kin_gap:
-			fail_reason = "kin_gap"
+	# There was a fifth, "kin_gap": a chase given up for straying from the mate, for a predator
+	# not needing the meal. It could never fire - a chase only goes on while the predator is
+	# hungry enough to feed (above) - and is gone; its counter stays, at zero, for the reports.
 	if fail_reason != "":
 		var failure_data := {
 			"reason": fail_reason,
@@ -219,8 +213,6 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 			"chase_time": chase_timer,
 			"energy": energy,
 		}
-		if fail_reason == "kin_gap" and last_known_kin_center != null:
-			failure_data["kin_distance"] = position.distance_to(last_known_kin_center)
 		if fail_reason == "lost_sight":
 			world.emit_event("PreySearchExpired", self, prey.id, {
 				"search_time": maxf(0.0, world.current_time - search_started_time),
