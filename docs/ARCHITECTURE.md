@@ -911,7 +911,25 @@ Utility actions inside `alive`:
   per world. Top-down the surface is read from the style's terrain atlas in world space (the
   tile map's rotation variant may differ under it); isometric it is the biome's colour, which
   is what the placeholder diamonds' top faces are, and skirts are left alone. Obstacle cells draw
-  above this layer and keep their square edges. Composite: tile, border, grass and trails, water
+  above this layer and keep their square edges. Composite: tile, border, grass and trails, water.
+  That is `visuals.borders.mode` "fray"; the default is now "field", which curves the borders
+  through the cells (`BiomeField`):
+  - `bake()` blurs each biome's one-hot mask over the walkable cells (a separable Gaussian, sigma
+    0.8 cell, normalised by the blurred walkable mask), and `packed_image()` packs per cell three
+    weights (rgb; the fourth is what they leave) with the cell's biome, walkability, height and
+    an "all one biome around" flag (a). It goes in `biome_tex` itself: the ground shader already
+    binds eight textures, and a ninth was never bound in the Compatibility renderer - it read the
+    default white texture, every weight equal, and drew a checker. 0.12 s once per world
+  - The shader (`field_surface()`) reads the weights bilinearly at the art pixel, moved by an
+    integer-hash noise warp (0.3 cell over 1.5 cells, so `BiomeField.sample()` mirrors it bit for
+    bit but float rounding), and draws the biome weighing most; within `dither_band` of a tie the
+    first two are chosen between by a 4x4 Bayer test, a ragged fringe of a pixel or two. A pixel
+    within `core` (0.32 cell) of its cell's centre, the circle shaped by half the warp, keeps its
+    biome, so a lone cell stays a blob (at 0.2 and unshaped it was a perfect coin); a pixel takes
+    only a biome some walkable cell of its 3x3 has on its level. Drawn coarser than the art, the
+    pixel steps and the dither are left out
+  - On an M2 under load the whole large map drew in 12.1-12.9 ms against 11.4-11.7 with "fray",
+    the same up close
 - Refreshes every `ground.update_interval_ticks`. With the worker running, the manager asks
   it for the whole grass and trail grids on exactly those ticks (`ground` in the result),
   independent of the grass debug overlay's dirty-cell delta

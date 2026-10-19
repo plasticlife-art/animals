@@ -72,9 +72,13 @@ const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color
 ## How often a pond's shrink is handed to the shader while ponds have levels: a level moves a
 ## few hundredths a second at most.
 const WATER_REFRESH_TICKS := 18
-## `visuals.borders` defaults: how far into a cell a border may reach and the scale its noise
-## varies over, both in cells.
-const BORDER_DEFAULTS := {"enabled": true, "reach": 0.45, "noise_cells": 0.7}
+## `visuals.borders` defaults. `mode` "fray": how far into a cell a border may reach and the
+## scale its noise varies over, both in cells. "field" (`BiomeField`): curved borders - the warp
+## and the scale it varies over, the core of a cell that keeps its biome (cells), and the band of
+## a near tie that is dithered.
+const BORDER_DEFAULTS := {"enabled": true, "mode": "fray", "reach": 0.45, "noise_cells": 0.7,
+	"warp": 0.3, "warp_scale": 1.5, "core": 0.32, "dither_band": 0.12}
+const BiomeFieldScript := preload("res://scripts/ui/biome_field.gd")
 ## Biome order in the border field, as `surface_uv` and `biome_colors` are indexed.
 const BORDER_BIOMES := ["meadow", "forest", "drought", "swamp"]
 ## Shader uniform each `_px` length becomes, in world units.
@@ -309,7 +313,20 @@ func _apply_borders(terrain: TerrainSystem, visuals: Dictionary, borders: Dictio
 	if borders.is_empty():
 		_material.set_shader_parameter("borders_enabled", 0.0)
 		return
-	_material.set_shader_parameter("biome_tex", ImageTexture.create_from_image(biome_image(terrain)))
+	var field := str(borders.get("mode", "fray")) == "field"
+	_material.set_shader_parameter("border_mode", 1.0 if field else 0.0)
+	if field:
+		# The field takes the biome texture's place: the shader has no texture unit to spare.
+		var started := Time.get_ticks_usec()
+		var grid: Dictionary = BiomeFieldScript.grid_of(terrain)
+		_material.set_shader_parameter("biome_tex",
+			ImageTexture.create_from_image(BiomeFieldScript.packed_image(grid, BiomeFieldScript.bake(grid))))
+		for key in ["warp", "warp_scale", "core"]:
+			_material.set_shader_parameter("field_" + key, float(borders[key]))
+		_material.set_shader_parameter("field_dither", float(borders["dither_band"]))
+		simulation_manager.record_render_phase("field_bake", float(Time.get_ticks_usec() - started) / 1000.0)
+	else:
+		_material.set_shader_parameter("biome_tex", ImageTexture.create_from_image(biome_image(terrain)))
 	_material.set_shader_parameter("cell_size", terrain.cell_size)
 	_material.set_shader_parameter("border_reach", clampf(float(borders["reach"]), 0.0, 0.5))
 	_material.set_shader_parameter("border_noise", maxf(0.05, float(borders["noise_cells"])))

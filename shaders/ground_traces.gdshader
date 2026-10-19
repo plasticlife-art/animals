@@ -74,6 +74,19 @@ uniform vec2 tile_uv = vec2(0.1666, 0.25);
 uniform vec2 surface_uv[4];
 uniform float flat_colors = 0.0;
 uniform vec4 biome_colors[4];
+// Curved borders (`visuals.borders.mode` "field", `BiomeField`): each biome's blurred share of
+// the ground per cell, read at the art pixel moved by a noise warp; the biome weighing most is
+// drawn, the first two dithered within `field_dither` of a tie. A pixel near its cell's centre
+// keeps its biome (`field_core`), and takes only a biome its 3x3 has on its level. In this mode
+// `biome_tex` holds the field packed (`BiomeField.packed_image()`): three weights in rgb, the
+// fourth what they leave of 1, and in a the biome (bits 0-1), walkable (2), "its 3x3 is all its
+// biome" (3) and the height (4-7). No texture of its own: the shader has no unit to spare.
+uniform float border_mode = 0.0;
+uniform float field_warp = 0.3;
+uniform float field_warp_scale = 1.5;
+uniform float field_core = 0.2;
+uniform float field_dither = 0.12;
+const int BAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 
 // Float textures are read texel by texel and blended here, which every GLES3 driver
 // can do; filtering them in hardware is an extension not all of them have.
@@ -126,6 +139,45 @@ float value_noise(vec2 p) {
 		mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
+// An integer hash of a lattice point, 0..1: `BiomeField.ihash()` bit for bit.
+float ihash(ivec2 p) {
+	uint h = (uint(p.x) * 73856093u) ^ (uint(p.y) * 19349663u);
+	h ^= h >> 13u;
+	h *= 1274126177u;
+	h ^= h >> 16u;
+	return float(h & 65535u) / 65535.0;
+}
+
+float inoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	f = f * f * (3.0 - 2.0 * f);
+	ivec2 c = ivec2(i);
+	return mix(mix(ihash(c), ihash(c + ivec2(1, 0)), f.x), mix(ihash(c + ivec2(0, 1)), ihash(c + ivec2(1, 1)), f.x), f.y);
+}
+
+vec4 field_texel(ivec2 cell) {
+	vec3 w = texelFetch(biome_tex, cell, 0).rgb;
+	return vec4(w, max(0.0, 1.0 - w.r - w.g - w.b));
+}
+
+vec4 field_at(vec2 p) {
+	ivec2 size = textureSize(biome_tex, 0);
+	ivec2 i = ivec2(floor(p));
+	vec2 f = p - vec2(i);
+	ivec2 hi = size - ivec2(1);
+	vec4 a = field_texel(clamp(i, ivec2(0), hi));
+	vec4 b = field_texel(clamp(i + ivec2(1, 0), ivec2(0), hi));
+	vec4 c = field_texel(clamp(i + ivec2(0, 1), ivec2(0), hi));
+	vec4 d = field_texel(clamp(i + ivec2(1, 1), ivec2(0), hi));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// The packed cell byte: biome, walkable, uniform 3x3, height.
+int field_bits(ivec2 cell) {
+	return int(round(texelFetch(biome_tex, cell, 0).a * 255.0));
+}
+
 vec4 premultiplied(vec4 c) {
 	return vec4(c.rgb * c.a, c.a);
 }
@@ -157,6 +209,16 @@ vec4 over(vec4 top, vec4 bottom) {
 	return vec4(rgb, alpha);
 }
 
+// A biome's surface at `world`: the terrain atlas's in world space, its colour isometric.
+vec4 surface_of(int biome, vec2 world) {
+	if (flat_colors > 0.5) {
+		return vec4(biome_colors[biome].rgb, 1.0);
+	}
+	vec2 in_tile = fract(world / tile_world);
+	vec4 texel = texture(terrain_atlas, surface_uv[biome] + in_tile * tile_uv);
+	return vec4(texel.rgb, 1.0);
+}
+
 // The surface of the biome a border fragment takes from its neighbour, or no alpha when it
 // keeps its own.
 vec4 border_surface(vec2 world) {
@@ -184,12 +246,78 @@ vec4 border_surface(vec2 world) {
 		return vec4(0.0);
 	}
 	int biome = clamp(int(round(other.r * 255.0)), 0, 3);
-	if (flat_colors > 0.5) {
-		return vec4(biome_colors[biome].rgb, 1.0);
+	return surface_of(biome, world);
+}
+
+// The biome a fragment takes over its own cell's on a curved border, or no alpha keeping its
+// own. `pixel` is the world a screen pixel covers: drawn coarser than the art, the pixel steps
+// and the dither are left out, which would only shimmer.
+vec4 field_surface(vec2 world, float pixel) {
+	if (borders_enabled < 0.5) {
+		return vec4(0.0);
 	}
-	vec2 in_tile = fract(world / tile_world);
-	vec4 texel = texture(terrain_atlas, surface_uv[biome] + in_tile * tile_uv);
-	return vec4(texel.rgb, 1.0);
+	ivec2 grid = textureSize(biome_tex, 0);
+	ivec2 own_cell = clamp(ivec2(floor(world / cell_size)), ivec2(0), grid - ivec2(1));
+	int own = field_bits(own_cell);
+	if ((own & 8) != 0) {
+		return vec4(0.0);
+	}
+	int own_biome = own & 3;
+	int own_level = own >> 4;
+	bool crisp = pixel <= art_px;
+	vec2 q = crisp ? (floor(world / art_px) + 0.5) * art_px : world;
+	float scale = cell_size * field_warp_scale;
+	vec2 warp = vec2(inoise(q / scale), inoise(q / scale + vec2(17.0, 5.0))) - vec2(0.5);
+	// The core, shaped by half the warp: a lone cell of a biome stays a blob, not a coin.
+	vec2 centre = (vec2(own_cell) + 0.5) * cell_size;
+	if (distance(q + warp * field_warp * cell_size, centre) < field_core * cell_size) {
+		return vec4(0.0);
+	}
+	vec4 w = field_at((q + warp * 2.0 * field_warp * cell_size) / cell_size - 0.5);
+	int first = own_biome;
+	int second = own_biome;
+	float best = -1.0;
+	float next = -1.0;
+	for (int k = 0; k < 4; k++) {
+		float weight = w[k];
+		if (weight > best || (weight == best && k == own_biome)) {
+			second = first;
+			next = best;
+			first = k;
+			best = weight;
+		} else if (weight > next) {
+			second = k;
+			next = weight;
+		}
+	}
+	int chosen = first;
+	if (crisp && field_dither > 0.0 && best - next < field_dither) {
+		ivec2 px = ivec2(floor(world / art_px));
+		float threshold = (float(BAYER[(px.y & 3) * 4 + (px.x & 3)]) + 0.5) / 16.0;
+		if (threshold < 0.5 * (1.0 - (best - next) / field_dither)) {
+			chosen = second;
+		}
+	}
+	if (chosen == own_biome) {
+		return vec4(0.0);
+	}
+	bool found = false;
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 c = own_cell + ivec2(dx, dy);
+			if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, grid))) {
+				continue;
+			}
+			int t = field_bits(c);
+			if ((t & 4) != 0 && (t & 3) == chosen && (t >> 4) == own_level) {
+				found = true;
+			}
+		}
+	}
+	if (!found) {
+		return vec4(0.0);
+	}
+	return surface_of(chosen, world);
 }
 
 // A sand shore around each pond and the water over it, laid over `ground`, the grass and
@@ -249,6 +377,7 @@ void fragment() {
 	rgb = (trail_color.rgb * trail_alpha + rgb * alpha * (1.0 - trail_alpha)) / max(out_alpha, 0.0001);
 	float pixel = max(length(fwidth(world)), 0.001);
 	// Tile, then a neighbour's surface where the border reaches in, then the grass and trails.
-	vec4 ground = over(vec4(rgb, out_alpha), border_surface(world));
+	vec4 border = border_mode > 0.5 ? field_surface(world, pixel) : border_surface(world);
+	vec4 ground = over(vec4(rgb, out_alpha), border);
 	COLOR = with_water(ground, world, noise, pixel);
 }

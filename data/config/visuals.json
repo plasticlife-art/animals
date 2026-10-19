@@ -33,8 +33,13 @@
   },
   "borders": {
     "enabled": true,
+    "mode": "field",
     "reach": 0.45,
-    "noise_cells": 0.7
+    "noise_cells": 0.7,
+    "warp": 0.3,
+    "warp_scale": 1.5,
+    "core": 0.32,
+    "dither_band": 0.12
   },
   "wind": {
     "enabled": true,
