@@ -530,7 +530,7 @@ func _test_cards_and_tree_show_traits(a) -> void:
 	var book = StoryBookScript.new()
 	book.bind(manager)
 	book.begin()
-	a.equal(book.heredity_species.size(), 3, "every shipped species inherits")
+	a.equal(book.heredity_species.size(), world.species_registry.ids().size(), "every shipped species inherits")
 	var card: Dictionary = FamilyTreeScript.card(book, animal.id, 0.0)
 	# Kept in single precision, as the family tree stores them.
 	a.equal(str(card.get("traits", "")), HudText.traits_text(Array(PackedFloat32Array(animal.traits()))),

@@ -241,7 +241,43 @@ func _history_row(manager, population: Dictionary, species_ids: Array) -> Dictio
 	row["carcass_meat"] = manager.world_state.get_total_carcass_meat_remaining()
 	row["formation"] = _formation(manager)
 	row["cascade"] = _cascade(manager)
+	# Territories (`territory`), only where a species has them: how they are held, the holders,
+	# the vagrants of age and the young, and the share of the prey off every held one.
+	for species_id in manager.world_state.territories.keys():
+		row["%s_territories" % species_id] = _territories(manager, str(species_id))
 	return row
+
+
+func _territories(manager, species_id: String) -> Dictionary:
+	var world = manager.world_state
+	var registry = world.territory_registry(species_id)
+	var grown := float(world.territory_config(species_id).get("dispersal_age_seconds", 240.0))
+	var counts: Dictionary = registry.census()
+	counts["holders"] = 0
+	counts["vagrants"] = 0
+	counts["young"] = 0
+	var prey := 0
+	var prey_off := 0
+	var animals: Array = []
+	for agent in world.get_living_agents():
+		animals.append({"id": agent.id, "species_type": agent.species_type, "age": agent.age, "position": agent.position})
+	for sector_key in world._sector_states.keys():
+		animals.append_array(world._sector_states[sector_key].get("dormant_records", []))
+	for animal in animals:
+		var species := str(animal.get("species_type", ""))
+		if species == species_id:
+			if registry.territory_of(int(animal.get("id", -1))) != -1:
+				counts["holders"] += 1
+			elif float(animal.get("age", 0.0)) >= grown:
+				counts["vagrants"] += 1
+			else:
+				counts["young"] += 1
+		elif world.species_registry.prey_set(species_id).has(species):
+			prey += 1
+			if registry.held_at(Vector2(animal.get("position", Vector2.ZERO))) == -1:
+				prey_off += 1
+	counts["prey_off_share"] = snappedf(float(prey_off) / float(maxi(1, prey)), 0.001)
+	return counts
 
 
 ## Grass on ground prey fear against grass elsewhere, meadow cells only so that poorer

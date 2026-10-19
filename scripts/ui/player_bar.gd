@@ -2,8 +2,8 @@ class_name PlayerBar
 extends PanelContainer
 
 ## The controls a player needs, at the top left during play, in Russian: pause, the game
-## speeds, three of the map's layers - the grass, where predators have struck, who is
-## chasing whom - and the help screen. Everything else - stepping, LOD, export, the other
+## speeds, the map's layers - the grass, where predators have struck, who is chasing whom and,
+## in a world with them, the territories - and the help screen. Everything else - stepping, LOD, export, the other
 ## layers, the AI inspector - lives in the developer panel, which only developer mode
 ## shows (`debug.developer_mode`, F12 at runtime, then Tab); this bar steps aside while it
 ## is up, since the panel has the same controls.
@@ -23,6 +23,7 @@ const OVERLAYS := [
 	["show_grass_density", "Трава", "Сколько травы в каждой клетке"],
 	["show_fear", "Угроза", "Где хищники недавно охотились - травоядные обходят эти места"],
 	["show_chase_lines", "Погони", "Кто за кем гонится прямо сейчас"],
+	["show_territories", "Участки", "Чьи земли: кольцо вокруг логова - держит пара, один зверь или никто"],
 ]
 
 var _pause: Button
@@ -113,6 +114,12 @@ func set_speed(multiplier: float) -> void:
 func set_overlay_state(flag_name: String, enabled: bool) -> void:
 	if _overlays.has(flag_name):
 		_overlays[flag_name].set_pressed_no_signal(enabled)
+
+
+## Shows or hides a layer's button: «Участки» only where the world has territories.
+func set_overlay_offered(flag_name: String, offered: bool) -> void:
+	if _overlays.has(flag_name):
+		_overlays[flag_name].visible = offered
 
 
 ## The layers this bar switches, for the controller to keep in step.

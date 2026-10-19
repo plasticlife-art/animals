@@ -17,6 +17,11 @@ extends SceneTree
 ## Populations, deaths and carcasses track throughout.
 ##
 ##   Godot --headless --path . --script res://scripts/dev/check_save.gd -- [ticks] [after] [lod|off] [scenario_id]
+##       [selection.<group>=<option> | section.path.to.key=json ...]
+##
+## The trailing pairs pick setup options and override the config as `ecology_audit.gd` does
+## (`-` for no scenario before them), so a world with territories or wolves is checked too; the
+## save keeps the bundle, so the restored side has them as well.
 ##
 ## With a scenario, the world is the scenario's; half way the player uses the powers it offers -
 ## digs a waterhole by the own herd, culls the foxes nearest it, leads it off - and the load must
@@ -38,10 +43,19 @@ func _initialize() -> void:
 	var ticks := int(args[0]) if args.size() > 0 else 400
 	var after := int(args[1]) if args.size() > 1 else 200
 	var lod_enabled := args.size() > 2 and args[2] == "lod"
-	var scenario_id := str(args[3]) if args.size() > 3 else ""
+	var scenario_id := str(args[3]) if args.size() > 3 and str(args[3]) != "-" else ""
 
 	var selection := ConfigLoader.default_selection()
-	var original = _make_manager(selection, lod_enabled, scenario_id)
+	var overrides: Array = []
+	for index in range(4, args.size()):
+		var pair := str(args[index]).split("=", true, 1)
+		if pair.size() != 2:
+			continue
+		if pair[0].begins_with("selection."):
+			selection[pair[0].trim_prefix("selection.")] = pair[1]
+		else:
+			overrides.append(pair)
+	var original = _make_manager(selection, lod_enabled, scenario_id, overrides)
 	if scenario_id != "":
 		selection = original.config_bundle["challenge"]["selection"]
 	var halfway := int(float(ticks) * 0.5)
@@ -78,6 +92,11 @@ func _initialize() -> void:
 			raw_mismatch.append("%s: %s vs %s" % [key, left_metrics[key], right_metrics.get(key)])
 	if scenario_id != "":
 		raw_mismatch.append_array(_compare_player(original, restored))
+	# Who holds which territory, and the herds' pastures: what the foxes and herds go by.
+	if str(original.world_state._export_territories()) != str(restored.world_state._export_territories()):
+		raw_mismatch.append("territories differ")
+	if str(original.world_state.herd_pastures) != str(restored.world_state.herd_pastures):
+		raw_mismatch.append("herd pastures differ")
 	if raw_mismatch.is_empty():
 		print("PASS agent state at load (%d metrics)" % left_metrics.size())
 	else:
@@ -117,10 +136,19 @@ func _initialize() -> void:
 	quit(1 if failures > 0 else 0)
 
 
-func _make_manager(selection: Dictionary, lod_enabled: bool, scenario_id: String):
+func _make_manager(selection: Dictionary, lod_enabled: bool, scenario_id: String, overrides: Array = []):
 	var bundle := ConfigLoader.load_scenario_bundle(scenario_id) if scenario_id != "" \
 		else ConfigLoader.load_config_bundle(selection)
 	bundle["debug"]["lod"]["enabled"] = lod_enabled
+	for pair in overrides:
+		var value: Variant = JSON.parse_string(str(pair[1]))
+		var keys := str(pair[0]).split(".")
+		var node: Dictionary = bundle
+		for index in range(keys.size() - 1):
+			if not (node.get(keys[index]) is Dictionary):
+				node[keys[index]] = {}
+			node = node[keys[index]]
+		node[keys[keys.size() - 1]] = value if value != null else pair[1]
 	var manager = preload("res://scripts/core/simulation_manager.gd").new()
 	root.add_child(manager)
 	var seed_value := int(bundle["challenge"]["seed"]) if bundle.has("challenge") else int(bundle["world"].get("seed", 3))

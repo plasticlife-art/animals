@@ -300,6 +300,8 @@
     "herbivore_group_count": 12,
     "scavenger_count": 72,
     "scavenger_group_count": 12,
+    "wolf_count": 0,
+    "wolf_group_count": 2,
     "initial_carcass_count": 40
   },
   "water_generation": {

@@ -248,7 +248,8 @@
     "capacity_multipliers": {
       "herbivore": 3.0,
       "predator": 2.0,
-      "scavenger": 1.75
+      "scavenger": 1.75,
+      "wolf": 4.0
     }
   }
 }

@@ -26,6 +26,9 @@ const DIET_CARRION := "carrion"
 const SOCIAL_HERD := "herd"
 const SOCIAL_PAIR := "pair"
 const SOCIAL_SOLITARY := "solitary"
+## A pack: a group like a herd (`group_id`) that hunts together, its territory held by the pair
+## that breeds in it (`territory`), the young leaving it at the age they look for their own.
+const SOCIAL_PACK := "pack"
 
 ## Sentinel slot for a species whose `role` block omits one. Sorts last, and
 ## `_assign_slots()` replaces it with a real index.

@@ -31,6 +31,7 @@ const GRASS_SCRAP_BIOMASS := 2.0
 const ClimateScript = preload("res://scripts/world/climate.gd")
 const WaterSystemScript = preload("res://scripts/world/water_system.gd")
 const PlayerStateScript = preload("res://scripts/world/player_state.gd")
+const TerritoryRegistryScript = preload("res://scripts/world/territory_registry.gd")
 const PlayerCommandsScript = preload("res://scripts/core/player_commands.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
@@ -82,11 +83,20 @@ var herd_migrations: Dictionary = {}
 ## the threat, the way the whole herd runs and the one point it runs for, until when
 ## (`raise_herd_alarm()`). Only for a species whose herds have `herd.flight`; saved.
 var herd_alarms: Dictionary = {}
+## Herds' seasonal pastures (`herd.migration.seasonal`), by herd key: `{seen, seasons}` - the
+## season it last weighed a return in (`_season_mark()`), and per season id where it settled
+## best, `{position, forage, year}`. Awake or asleep alike; saved; a new half takes a copy.
+var herd_pastures: Dictionary = {}
+## Moves whenever `herd_pastures` does, for the view's copy (`SimulationWorker`).
+var herd_pastures_revision: int = 0
 var climate: Climate
 ## The ponds' levels (`WaterSystem`): they fill and dry with the seasons and as they are drunk.
 var water: WaterSystem
 ## The player's powers and the orders given with them (`PlayerState`).
 var player: PlayerState
+## Per species with `territory`, its territories and who holds them (`TerritoryRegistry`);
+## empty for a world without them. Saved; the view's copy follows `presentation_block()`.
+var territories: Dictionary = {}
 ## How each power is carried out, by its name in `powers.json`: a Callable taking the order
 ## and returning `{ok, reason, ...}`. A power with no handler is refused.
 var player_command_handlers: Dictionary = {}
@@ -270,6 +280,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_catchable_prey_sectors.clear()
 	_prey_pressure_refresh_tick = -9999
 	_reset_performance_counters()
+	_place_territories()
 	_spawn_initial_agents()
 	_spawn_initial_carcasses()
 	_rebuild_group_state_cache()
@@ -423,16 +434,27 @@ func queue_spawn_agent(species_type: String, position: Vector2, group_id: int, p
 		# Copied now: a parent may be gone by the time the spawn is flushed.
 		"traits_a": [] if parent_a == null else parent_a.traits(),
 		"traits_b": [] if parent_b == null else parent_b.traits(),
+		"natal_territory_id": _natal_territory(species_type, -1 if parent_a == null else parent_a.id,
+			-1 if parent_b == null else parent_b.id),
 	})
 
 
-func kill_agent(agent, cause: String, other_agent_id: int = -1) -> void:
+## Where a young one of `species_key` is born: its parents' territory, the first's or else the
+## second's; -1 without one.
+func _natal_territory(species_key: String, parent_a_id: int, parent_b_id: int) -> int:
+	var territory_id := territory_of(species_key, parent_a_id)
+	return territory_id if territory_id != -1 else territory_of(species_key, parent_b_id)
+
+
+## `extra` goes into the death's event data: `pair` for a kill made by a pair or a pack.
+func kill_agent(agent, cause: String, other_agent_id: int = -1, extra: Dictionary = {}) -> void:
 	if agent == null or not agent.is_alive:
 		return
 	if agent.has_method("release_carcass_target"):
 		agent.call("release_carcass_target", self)
 	agent.is_alive = false
 	pending_removals.append(agent.id)
+	_release_territory(agent.species_type, agent.id)
 	_maybe_spawn_carcass(agent, cause)
 	if cause == "predation":
 		fear_field.deposit(agent.position, fear_field.kill_risk)
@@ -440,6 +462,7 @@ func kill_agent(agent, cause: String, other_agent_id: int = -1) -> void:
 	# The herd it belonged to, so the view can tell a herd what it lost, and the age it died
 	# at, for the family tree's ages: the agent is gone by the time the view hears of it.
 	var death := {"cause": cause, "group_id": int(agent.group_id), "age": float(agent.age)}
+	death.merge(extra)
 	if cause == "starvation":
 		emit_event("AgentStarved", agent, other_agent_id, death)
 	elif cause == "old_age":
@@ -569,8 +592,10 @@ func get_reproductive_capacity(species_type: String) -> int:
 	if initial_count <= 0:
 		return 0
 	var multipliers: Dictionary = regulation.get("capacity_multipliers", {})
-	return maxi(initial_count, int(round(float(initial_count) * float(
-		multipliers.get(species_type, regulation.get("default_capacity_multiplier", 2.0))))))
+	var multiplier := float(multipliers.get(species_type, regulation.get("default_capacity_multiplier", 2.0)))
+	# With territories the land is what holds a species down; the cap stays, far above, as a backstop.
+	multiplier = float(territory_config(species_type).get("capacity_multiplier", multiplier))
+	return maxi(initial_count, int(round(float(initial_count) * multiplier)))
 
 
 func _reproduction_population_count(species_type: String) -> int:
@@ -1811,7 +1836,9 @@ func export_state() -> Dictionary:
 		"water": water.export_state(),
 		"herd_migrations": herd_migrations.duplicate(true),
 		"herd_alarms": herd_alarms.duplicate(true),
+		"herd_pastures": herd_pastures.duplicate(true),
 		"player": player.export_state(),
+		"territories": _export_territories(),
 		"sectors": _export_sector_states(),
 		# A memo, but a behaviourally visible one: it can hold a stale patch for
 		# up to `sector_grass_refresh_ticks`, and a loaded world that recomputed
@@ -1868,6 +1895,10 @@ func import_state(data: Dictionary) -> void:
 	water.import_state(data.get("water", {}))
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
 	herd_alarms = data.get("herd_alarms", {}).duplicate(true)
+	herd_pastures = data.get("herd_pastures", {}).duplicate(true)
+	var saved_territories: Dictionary = data.get("territories", {})
+	for species_key in territories.keys():
+		territories[species_key].import_state(saved_territories.get(species_key, {}))
 	_import_sector_states(data.get("sectors", {}))
 	_rebuild_carcass_sector_index()
 	_sector_grass_cache = _import_keyed(data.get("sector_grass", []))
@@ -2333,6 +2364,7 @@ func _emit_dormant_death(species_type: String, position: Vector2, cause: String,
 		record_id: int = -1, extra: Dictionary = {}) -> void:
 	var death := {"cause": cause, "dormant": true, "group_id": group_id, "record_id": record_id}
 	death.merge(extra)
+	_release_territory(species_type, record_id)
 	if cause == "starvation":
 		emit_population_event("AgentStarved", species_type, position, death)
 	elif cause == "old_age":
@@ -2466,6 +2498,8 @@ func _spawn_initial_agents() -> void:
 				_spawn_initial_pairs(species_id, count)
 			SpeciesRegistryScript.SOCIAL_SOLITARY:
 				_spawn_initial_solitary(species_id, count)
+			SpeciesRegistryScript.SOCIAL_PACK:
+				_spawn_initial_packs(species_id, count, maxi(1, int(spawn_config.get("%s_group_count" % species_id, 2))))
 			_:
 				_spawn_initial_herd(species_id, count, maxi(1, int(spawn_config.get("%s_group_count" % species_id, 8))))
 
@@ -2483,6 +2517,50 @@ func _spawn_initial_herd(species_id: String, count: int, group_count: int) -> vo
 		_stagger_initial_agent(spawn_agent(species_id, spawn_position, index % group_count, "", {"reason": "initial"}))
 
 
+## `role.social == "pack"`: packs dealt round-robin as herds are, at the dens best first when
+## the species has territories. The first male and female of each lead it: mature, mates, and
+## holding the den's territory. The rest are its young, born there and not yet of the age to
+## leave (`territory.dispersal_age_seconds`).
+func _spawn_initial_packs(species_id: String, count: int, group_count: int) -> void:
+	var centers: Array = []
+	for _index in range(group_count):
+		centers.append(random_point())
+	var registry := territory_registry(species_id)
+	if registry != null:
+		for pack in range(mini(group_count, registry.size())):
+			centers[pack] = registry.get_territory(pack)["den"]
+	var species_config: Dictionary = config_bundle.get("species", {}).get(species_id, {})
+	var mature := float(species_config.get("reproduction", {}).get("maturity_age", 0.0))
+	var grown := float(territory_config(species_id).get("dispersal_age_seconds", 480.0))
+	var leaders: Dictionary = {}
+	for index in range(count):
+		@warning_ignore("integer_division")
+		var rank: int = index / group_count
+		var pack: int = index % group_count
+		var sex := AgentBaseScript.SEX_MALE if rank % 2 == 0 else AgentBaseScript.SEX_FEMALE
+		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(
+			Vector2(centers[pack]) + Vector2(rng.randf_range(-60.0, 60.0), rng.randf_range(-60.0, 60.0))))
+		var agent = spawn_agent(species_id, spawn_position, pack, sex, {"reason": "initial"})
+		_stagger_initial_agent(agent)
+		if agent == null:
+			continue
+		var holds := registry != null and pack < registry.size()
+		if rank < 2:
+			agent.age = maxf(agent.age, mature)
+			if holds:
+				claim_territory(agent, pack)
+			leaders.get_or_add(pack, []).append(agent)
+		else:
+			agent.age = minf(agent.age, grown * 0.8)
+			if holds and "natal_territory_id" in agent:
+				agent.natal_territory_id = pack
+	for pack in leaders.keys():
+		var pair: Array = leaders[pack]
+		if pair.size() == 2:
+			pair[0].set_preferred_mate_id(pair[1].id)
+			pair[1].set_preferred_mate_id(pair[0].id)
+
+
 ## `role.social == "pair"`: a male and a female per centre, pointed at each other
 ## so the pair-cohesion flow has someone to hold from tick zero.
 func _spawn_initial_pairs(species_id: String, count: int) -> void:
@@ -2490,6 +2568,12 @@ func _spawn_initial_pairs(species_id: String, count: int) -> void:
 	var pair_centers: Array = []
 	for _index in range(pair_count):
 		pair_centers.append(random_point())
+	# With territories the first pairs start at the dens, best first, and hold them; the rest are
+	# vagrants. The points are still drawn, so the world's stream goes on as without.
+	var registry: TerritoryRegistry = territories.get(species_id, null)
+	if registry != null:
+		for pair_index in range(mini(pair_count, registry.size())):
+			pair_centers[pair_index] = registry.get_territory(pair_index)["den"]
 
 	for pair_index in range(pair_count):
 		var pair_center: Vector2 = pair_centers[pair_index]
@@ -2525,6 +2609,10 @@ func _spawn_initial_pairs(species_id: String, count: int) -> void:
 				male.call("set_preferred_mate_id", female.id)
 			if female.has_method("set_preferred_mate_id"):
 				female.call("set_preferred_mate_id", male.id)
+		if registry != null and pair_index < registry.size():
+			for founder in [male, female]:
+				if founder != null:
+					claim_territory(founder, pair_index)
 
 
 ## Carrion the world starts with.
@@ -3576,6 +3664,10 @@ func _split_oversized_herds() -> void:
 		# The half that leaves a herd the player leads walks on to the same goal; a herd moving
 		# on by itself lets its new half choose for itself, as it always did.
 		var old_key := str(key)
+		# Both halves remember the pastures the herd knew.
+		if herd_pastures.has(old_key):
+			herd_pastures[_get_dormant_aggregate_key(species_key, highest_group_id)] = herd_pastures[old_key].duplicate(true)
+			herd_pastures_revision += 1
 		var led: Dictionary = player.led_herds.get(old_key, {})
 		if not led.is_empty() and bool(herd_migrations.get(old_key, {}).get("player", false)):
 			var new_key := _get_dormant_aggregate_key(species_key, highest_group_id)
@@ -3616,6 +3708,139 @@ func _split_oversized_herds() -> void:
 
 ## A species' herd flight (`species.<id>.herd.flight`): empty where each of its herd flees for
 ## itself, as every herd did before.
+## `species.<id>.territory`: empty for a species without territories.
+func territory_config(species_key: String) -> Dictionary:
+	return config_bundle.get("species", {}).get(species_key, {}).get("territory", {})
+
+
+## The species' territories, or null for one without them.
+func territory_registry(species_key: String) -> TerritoryRegistry:
+	return territories.get(species_key, null)
+
+
+## The dens of every species with `territory`, placed from the map with nothing drawn from
+## `rng` (`TerritoryRegistry.place_dens()`).
+func _place_territories() -> void:
+	territories.clear()
+	for species_id in species_registry.ids():
+		var config := territory_config(species_id)
+		if config.is_empty():
+			continue
+		var walkable := PackedByteArray()
+		walkable.resize(resource_system.cols * resource_system.rows)
+		for index in range(walkable.size()):
+			walkable[index] = 1 if terrain_system.is_walkable_index(index) else 0
+		var dens: Array = TerritoryRegistryScript.place_dens(resource_system.export_caps(), walkable,
+			resource_system.cols, resource_system.rows, resource_system.cell_size, water_sources, config, trait_world)
+		var registry := TerritoryRegistryScript.new()
+		registry.configure(dens, resource_system.cell_size * float(config.get("radius_cells", 10.0)), current_time)
+		territories[species_id] = registry
+
+
+## The territory `agent_id` of `species_key` holds, or -1 (none, or no territories).
+func territory_of(species_key: String, agent_id: int) -> int:
+	var registry := territory_registry(species_key)
+	return -1 if registry == null else registry.territory_of(agent_id)
+
+
+## `agent` takes its sex's slot of `territory_id`: `TerritoryClaimed`. False when it is taken.
+func claim_territory(agent, territory_id: int) -> bool:
+	var registry := territory_registry(agent.species_type)
+	if registry == null or not registry.claim(territory_id, agent.id, agent.sex):
+		return false
+	if species_registry.social(agent.species_type) == SpeciesRegistryScript.SOCIAL_PACK:
+		var group := _pack_for(agent.species_type, territory_id, agent.group_id,
+			registry.partner_of(agent.id))
+		if agent.group_id != group:
+			agent.group_id = group
+			_rebuild_group_state_cache()
+	emit_event("TerritoryClaimed", agent, -1, {"territory_id": territory_id,
+		"partner_id": registry.partner_of(agent.id)})
+	return true
+
+
+## The pack one taking `territory_id` lives in: the pack already on it, else its mate's there,
+## else its own, else a new one. Recorded on the territory.
+func _pack_for(species_key: String, territory_id: int, own_group: int, partner_id: int) -> int:
+	var territory := territory_registry(species_key).get_territory(territory_id)
+	var group := int(territory.get("group", -1))
+	if group < 0:
+		var partner = get_agent(partner_id)
+		if partner != null and partner.is_alive and partner.group_id >= 0:
+			group = partner.group_id
+	if group < 0:
+		group = own_group if own_group >= 0 else _next_group_id(species_key)
+	territory["group"] = group
+	return group
+
+
+## One of a pack goes its own way (`territory.dispersal_age_seconds`): `PackLeft`.
+func leave_pack(agent) -> void:
+	if agent.group_id < 0:
+		return
+	var group: int = agent.group_id
+	agent.group_id = -1
+	_rebuild_group_state_cache()
+	emit_event("PackLeft", agent, -1, {"group_id": group})
+
+
+## A group id no animal of `species_key`, awake or asleep, nor any territory, uses yet.
+func _next_group_id(species_key: String) -> int:
+	var highest := -1
+	for agent in living_agents:
+		if agent != null and agent.species_type == species_key:
+			highest = maxi(highest, agent.group_id)
+	for sector_key in _sector_states.keys():
+		for record in _sector_states[sector_key].get("dormant_records", []):
+			if str(record.get("species_type", "")) == species_key:
+				highest = maxi(highest, int(record.get("group_id", -1)))
+	var registry := territory_registry(species_key)
+	if registry != null:
+		for territory in registry.territories:
+			highest = maxi(highest, int(territory.get("group", -1)))
+	return highest + 1
+
+
+## A holder of `species_key` is gone: its slot is open, and `TerritoryVacated` when the
+## territory is left with no one.
+func _release_territory(species_key: String, agent_id: int) -> void:
+	var registry := territory_registry(species_key)
+	if registry == null or agent_id < 0:
+		return
+	var territory_id := registry.release(agent_id, current_time)
+	if territory_id != -1 and registry.is_vacant(territory_id):
+		emit_population_event("TerritoryVacated", species_key, registry.get_territory(territory_id)["den"],
+			{"territory_id": territory_id})
+
+
+func _export_territories() -> Dictionary:
+	var saved := {}
+	for species_key in territories.keys():
+		saved[species_key] = territories[species_key].export_state()
+	return saved
+
+
+## Every species' territories as the view needs them, with one revision for them all: the sum.
+func territories_revision() -> int:
+	var total := 0
+	for species_key in territories.keys():
+		total += territories[species_key].revision
+	return total
+
+
+func territories_presentation_block() -> Dictionary:
+	var block := {}
+	for species_key in territories.keys():
+		block[species_key] = territories[species_key].presentation_block()
+	return block
+
+
+func apply_territories_block(block: Dictionary) -> void:
+	for species_key in block.keys():
+		if territories.has(species_key):
+			territories[species_key].apply_presentation_block(block[species_key])
+
+
 func herd_flight_config(species_key: String) -> Dictionary:
 	return config_bundle.get("species", {}).get(species_key, {}).get("herd", {}).get("flight", {})
 
@@ -3683,6 +3908,10 @@ func herd_alarm_for(agent) -> Dictionary:
 		return {}
 	var alarm: Dictionary = herd_alarms.get(_get_dormant_aggregate_key(agent.species_type, agent.group_id), {})
 	if alarm.is_empty() or current_time > float(alarm.get("until", -1.0)):
+		return {}
+	# One near the end of its thirst or hunger keeps to the water or grass for an alarm it has
+	# only heard; a threat it sees itself it still runs from.
+	if agent.thirst >= float(flight.get("exempt_thirst", INF)) or agent.hunger >= float(flight.get("exempt_hunger", INF)):
 		return {}
 	var cell: float = terrain_system.cell_size
 	var distance: float = agent.position.distance_to(alarm["source"])
@@ -3773,6 +4002,10 @@ func _update_herd_migrations() -> void:
 		if not herds.has(key):
 			herd_migrations.erase(key)
 			_end_player_lead(key, "gone", Vector2.ZERO)
+	for key in herd_pastures.keys():
+		if not herds.has(key):
+			herd_pastures.erase(key)
+			herd_pastures_revision += 1
 	for key in herds.keys():
 		var herd: Dictionary = herds[key]
 		var species_key: String = herd["species"]
@@ -3787,6 +4020,7 @@ func _update_herd_migrations() -> void:
 			if center.distance_to(player_goal) <= pasture_radius:
 				herd_migrations[key] = {"rest_until": current_time + float(config.get("settle_seconds", 30.0))}
 				_end_player_lead(key, "arrived", center)
+				_remember_pasture(key, species_key, center)
 			elif current_time - float(migration.get("since", current_time)) >= float(player.settings("lead_herd").get("timeout_seconds", 300.0)):
 				herd_migrations.erase(key)
 				_end_player_lead(key, "timeout", center)
@@ -3809,11 +4043,14 @@ func _update_herd_migrations() -> void:
 				# little off the destination, sent herds on after five seconds, over and
 				# over: they walked all day and starved with the map three-quarters green.
 				herd_migrations[key] = {"rest_until": current_time + float(config.get("settle_seconds", 30.0))}
+				_remember_pasture(key, species_key, center)
 				continue
 		elif migration.has("rest_until"):
 			if current_time < float(migration["rest_until"]):
 				continue
 			herd_migrations.erase(key)
+		if _seasonal_return(key, species_key, center, need, int(herd["count"])):
+			continue
 		# Leave at `leave_fraction` of the need, arrive only where the whole need is: the
 		# gap is what lets a herd eat a pasture down before it moves on. And leave ground whose
 		# water has all dried, however green (`WaterSystem`).
@@ -3893,7 +4130,95 @@ func _find_migration_pasture(key: String, species_key: String, center: Vector2, 
 				continue
 			best = destination
 			best_score = score
+	# The pasture it remembers for this season, if still good, counts for more than its grass.
+	var known := _remembered_pasture(key, species_key)
+	if not known.is_empty():
+		var spot: Vector2 = known["position"]
+		var distance := center.distance_to(spot)
+		if distance <= search_radius and distance > pasture_radius and _pasture_fit(species_key, spot, need):
+			var forage := _forage_within(spot, pasture_radius)
+			for goal in claims:
+				if spot.distance_to(goal) < pasture_radius * 2.0:
+					forage -= need
+			var score := minf(forage, need) / (horizon + distance / speed) \
+				* float(_seasonal_config(species_key).get("memory_bonus", 1.5))
+			if score > best_score:
+				best = get_nearest_walkable_position(spot)
 	return best
+
+
+func _seasonal_config(species_key: String) -> Dictionary:
+	return _migration_config(species_key).get("seasonal", {})
+
+
+## This season's remembered pasture of the herd `key`, or empty: none, or no seasons.
+func _remembered_pasture(key: String, species_key: String) -> Dictionary:
+	if _seasonal_config(species_key).is_empty() or not climate.enabled:
+		return {}
+	return herd_pastures.get(key, {}).get("seasons", {}).get(climate.season_id, {})
+
+
+## A count of seasons since the start, one a season.
+func _season_mark() -> int:
+	return climate.year * 64 + climate.season_index
+
+
+## The herd settled at `center` after a walk: remembered as this season's pasture when the grass
+## round it is more than `replace_share` of what it remembers, or that is `forget_years` old.
+func _remember_pasture(key: String, species_key: String, center: Vector2) -> void:
+	var seasonal := _seasonal_config(species_key)
+	if seasonal.is_empty() or not climate.enabled:
+		return
+	var memory: Dictionary = herd_pastures.get(key, {"seen": _season_mark(), "seasons": {}})
+	var seasons: Dictionary = memory["seasons"]
+	var forage := _forage_within(center, _pasture_radius(species_key))
+	var known: Dictionary = seasons.get(climate.season_id, {})
+	if known.is_empty() or forage > float(known["forage"]) * float(seasonal.get("replace_share", 0.8)) \
+			or climate.year - int(known["year"]) >= int(seasonal.get("forget_years", 2)):
+		seasons[climate.season_id] = {"position": center, "forage": forage, "year": climate.year}
+		herd_pastures_revision += 1
+	herd_pastures[key] = memory
+
+
+## Whether `spot` still feeds a herd that needs `need`: grass for `leave_fraction` of it, water
+## within reach and ground within its risk tolerance. A remembered pasture may have dried.
+func _pasture_fit(species_key: String, spot: Vector2, need: float) -> bool:
+	var perception: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("perception", {})
+	if _forage_within(spot, _pasture_radius(species_key)) < need * float(_migration_config(species_key).get("leave_fraction", 0.5)):
+		return false
+	if fear_field.risk_at(spot) > float(perception.get("risk_tolerance", INF)):
+		return false
+	return not _resolve_water_source(spot, float(perception.get("water_search_radius", 1920.0))).is_empty()
+
+
+## On its first look in a new season a herd that remembers a pasture for it - farther than its
+## own, within `search_radius`, still good (`_pasture_fit()`) and with `switch_ratio` times the
+## grass it has here - sets out for it: `HerdMigrates` with `remembered`. False otherwise.
+func _seasonal_return(key: String, species_key: String, center: Vector2, need: float, size: int) -> bool:
+	var seasonal := _seasonal_config(species_key)
+	if seasonal.is_empty() or not climate.enabled or not herd_pastures.has(key):
+		return false
+	var memory: Dictionary = herd_pastures[key]
+	if int(memory.get("seen", -1)) == _season_mark():
+		return false
+	memory["seen"] = _season_mark()
+	var known: Dictionary = memory.get("seasons", {}).get(climate.season_id, {})
+	if known.is_empty():
+		return false
+	var spot: Vector2 = known["position"]
+	var pasture_radius := _pasture_radius(species_key)
+	var distance := center.distance_to(spot)
+	if distance <= pasture_radius or distance > float(_migration_config(species_key).get("search_radius", 2400.0)):
+		return false
+	if not _pasture_fit(species_key, spot, need) \
+			or _forage_within(spot, pasture_radius) < _forage_within(center, pasture_radius) * float(seasonal.get("switch_ratio", 1.3)):
+		return false
+	var destination := get_nearest_walkable_position(spot)
+	herd_migrations[key] = {"goal": destination, "since": current_time, "remembered": true}
+	performance_counters["herd_migrations_started"] += 1
+	emit_population_event("HerdMigrates", species_key, center, {"to_x": destination.x, "to_y": destination.y,
+		"size": size, "remembered": true, "season": climate.season_id, "group_id": int(key.get_slice(":", 1))})
+	return true
 
 
 ## A herd whose members sit in two sectors is two aggregates, each stepping on its own.
@@ -4066,18 +4391,44 @@ func _build_dormant_species_state(records: Array) -> Dictionary:
 	return species_state
 
 
-func _get_dormant_aggregate_key(species_key: String, group_id: int) -> String:
-	return "%s:%d" % [species_key, group_id]
+## A sleeping group's key: `species:group`, and `species:-1:t<territory>` for the holders of a
+## territory (`territory`), who sleep apart from the vagrants and from the holders of another.
+func _get_dormant_aggregate_key(species_key: String, group_id: int, territory_id: int = -1) -> String:
+	if territory_id < 0:
+		return "%s:%d" % [species_key, group_id]
+	return "%s:%d:t%d" % [species_key, group_id, territory_id]
 
 
 func _get_dormant_record_aggregate_key(record: Dictionary) -> String:
-	return _get_dormant_aggregate_key(str(record.get("species_type", "")), int(record.get("group_id", -1)))
+	return _get_dormant_aggregate_key(str(record.get("species_type", "")), int(record.get("group_id", -1)),
+		_record_territory(record))
+
+
+## The key of a built group (`_build_dormant_aggregates()`).
+func _aggregate_key(aggregate: Dictionary) -> String:
+	return _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)),
+		int(aggregate.get("territory_id", -1)))
+
+
+## The territory a sleeping animal of no herd sleeps on: the one it holds, or - young, before
+## the age it leaves (`territory.dispersal_age_seconds`) - the one it was born on, with its
+## parents; -1 for a vagrant.
+func _record_territory(record: Dictionary) -> int:
+	if territories.is_empty() or int(record.get("group_id", -1)) != -1:
+		return -1
+	var species_key := str(record.get("species_type", ""))
+	var held := territory_of(species_key, int(record.get("id", -1)))
+	if held != -1:
+		return held
+	if float(record.get("age", 0.0)) < float(territory_config(species_key).get("dispersal_age_seconds", 240.0)):
+		return int(record.get("natal_territory_id", -1))
+	return -1
 
 
 func _build_dormant_aggregate_previous_map(aggregates: Array) -> Dictionary:
 	var previous_map: Dictionary = {}
 	for aggregate in aggregates:
-		previous_map[_get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)))] = aggregate
+		previous_map[_aggregate_key(aggregate)] = aggregate
 	return previous_map
 
 
@@ -4120,6 +4471,9 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 		var record_positions: PackedVector2Array = aggregate["record_positions"]
 		record_positions.append(Vector2(record.get("position", bounds.get_center())))
 		aggregate["record_positions"] = record_positions
+		var territory_id := _record_territory(record)
+		if territory_id >= 0:
+			aggregate["territory_id"] = territory_id
 		grouped[aggregate_key] = aggregate
 	var aggregates: Array = []
 	for aggregate_key in grouped.keys():
@@ -4326,13 +4680,18 @@ func _refresh_prey_pressure_sectors() -> void:
 ## how readily it catches them (`catchable`, see `_sector_catchable_prey()`); a live one
 ## counts heads and finds out for itself which of them get away. The goal carries its
 ## `score`: ten points for each head of prey, less one for every ten units of distance.
-func find_prey_pressure_goal(position: Vector2, radius: float, catchable: bool = false) -> Dictionary:
+##
+## `keep`, when given, is asked of each sector's centre: a fox keeping to its territory, or
+## off everyone else's (`Predator._resolve_patrol_goal()`).
+func find_prey_pressure_goal(position: Vector2, radius: float, catchable: bool = false, keep: Callable = Callable()) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score: float = -INF
 	for entry in (_catchable_prey_sectors if catchable else _prey_pressure_sectors):
 		var center: Vector2 = entry["center"]
 		var distance: float = position.distance_to(center)
 		if distance > radius:
+			continue
+		if keep.is_valid() and not keep.call(center):
 			continue
 		var score: float = float(entry["catchable" if catchable else "pressure"]) * 10.0 - distance * 0.1
 		if score <= best_score:
@@ -4345,10 +4704,6 @@ func find_prey_pressure_goal(position: Vector2, radius: float, catchable: bool =
 			"score": score,
 		}
 	return best
-
-
-func _find_dormant_prey_goal(position: Vector2, radius: float) -> Dictionary:
-	return find_prey_pressure_goal(position, radius, true)
 
 
 ## `max_age` mirrors `AgentBase.accepts_carcass()`, so a sleeping aggregate is
@@ -4552,8 +4907,28 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	# even the grazing floor, so sleeping predators spent their lives heading for bodies
 	# near the camera that were too old to eat on arrival, and never hunted.
 	var feed_hunger_floor := float(thresholds.get("feed_hunger_floor", graze_hunger_floor))
+	# With territories (`territory`) a sleeping pair keeps to its ground as a waking one does
+	# (`Predator._resolve_patrol_goal()`), and vagrants off everyone's, until hunger lifts it.
+	var territory_settings := territory_config(species_key)
+	var ground := {}
+	var keep := Callable()
+	if not territory_settings.is_empty() and predator_hunger < float(territory_settings.get("trespass_hunger", 70.0)):
+		var registry := territory_registry(species_key)
+		var territory_id := int(aggregate.get("territory_id", -1))
+		if territory_id < 0:
+			territory_id = registry.territory_of_group(int(aggregate.get("group_id", -1)))
+		ground = registry.get_territory(territory_id)
+		var border := float(territory_settings.get("border_slack", 1.15))
+		if not ground.is_empty():
+			keep = func(point: Vector2) -> bool: return registry.inside(int(ground["id"]), point, border)
+		else:
+			keep = func(point: Vector2) -> bool: return registry.held_at(point) == -1
 	if predator_hunger < feed_hunger_floor:
-		return _resolve_dormant_wander_goal(sector_key, aggregate)
+		# Fed, one of age with no territory makes for an open one (`_settle_dormant_vagrants()`).
+		if aggregate.has("disperse_den") and ground.is_empty():
+			var den: Vector2 = aggregate["disperse_den"]
+			return {"goal_kind": "disperse", "goal_position": den, "goal_sector": _get_sector_key(den)}
+		return _dormant_ground_wander_goal(sector_key, aggregate, ground, territory_settings)
 	var carcass_goal: Dictionary = _find_dormant_carcass_goal(
 		sector_key, center, carcass_search_radius_for(predator_hunger, perception),
 		species_registry.carrion_max_age(species_key), travel_speed)
@@ -4562,14 +4937,14 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 	# A carrion eater takes the same water-then-carcass route above and stops there:
 	# it has no hunt to fall through to, so it wanders on to the next body instead.
 	if diet != SpeciesRegistryScript.DIET_PREY:
-		return _resolve_dormant_wander_goal(sector_key, aggregate)
+		return _dormant_ground_wander_goal(sector_key, aggregate, ground, territory_settings)
 	if predator_hunger >= feed_hunger_floor:
 		var hunger_headroom := maxf(1.0, 98.0 - predator_hunger) / maxf(0.01, float(species_config.get("metabolism", {}).get("hunger_rate", 1.6)))
 		# The 0.6 covers terrain move cost, water detours and prey that keeps moving. The
 		# floor matters as much as the cap: heading for prey it may not reach still beats
 		# wandering, so a nearly starved aggregate must not fall back to a random walk.
 		var prey_reach := maxf(hunger_headroom * travel_speed * 0.6, _sector_size * 1.5)
-		var prey_goal: Dictionary = _find_dormant_prey_goal(center, prey_reach)
+		var prey_goal: Dictionary = find_prey_pressure_goal(center, prey_reach, true, keep)
 		# Hunt where it stands while that is as good a hunt as any within reach, scored as
 		# the sectors are (`find_prey_pressure_goal()`) with no way to go. Without staying,
 		# the goal refresh that fires on arrival could send the aggregate off to another
@@ -4580,7 +4955,7 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 		# predators' kills were made with no herbivore within 768 units, against a fifth
 		# of live ones'.
 		var here_score := _get_sector_prey_pressure(sector_key) * 10.0
-		if here_score > 0.0 and here_score >= float(prey_goal.get("score", -INF)):
+		if here_score > 0.0 and here_score >= float(prey_goal.get("score", -INF)) and (not keep.is_valid() or keep.call(center)):
 			return {
 				"goal_kind": "hunt",
 				"goal_position": center,
@@ -4592,7 +4967,8 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 		# aggregate dither its whole travel budget away.
 		if str(aggregate.get("goal_kind", "")) == "hunt" \
 				and not _dormant_aggregate_reached_goal(sector_key, aggregate) \
-				and _get_sector_prey_pressure(Vector2i(aggregate.get("goal_sector", sector_key))) > 0:
+				and _get_sector_prey_pressure(Vector2i(aggregate.get("goal_sector", sector_key))) > 0 \
+				and (not keep.is_valid() or keep.call(Vector2(aggregate.get("goal_position", center)))):
 			return {
 				"goal_kind": "hunt",
 				"goal_position": aggregate.get("goal_position", center),
@@ -4600,7 +4976,66 @@ func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictio
 			}
 		if not prey_goal.is_empty():
 			return prey_goal
-	return _resolve_dormant_wander_goal(sector_key, aggregate)
+	return _dormant_ground_wander_goal(sector_key, aggregate, ground, territory_settings)
+
+
+## Sleeping vagrants of age (`territory.dispersal_age_seconds`) look for a territory as waking
+## ones do (`Predator._seek_ground()`): one within `claim_radii` of the den of the nearest with
+## its slot open - not where it was born - takes it, and its group makes for the first
+## such den of the rest (`disperse_den`, `_select_dormant_goal()`). Nothing is drawn.
+func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
+	aggregate.erase("disperse_den")
+	var species_key := str(aggregate.get("species_type", ""))
+	var registry := territory_registry(species_key)
+	var settings := territory_config(species_key)
+	if registry == null or settings.is_empty():
+		return
+	var grown := float(settings.get("dispersal_age_seconds", 240.0))
+	var pack: bool = species_registry.social(species_key) == SpeciesRegistryScript.SOCIAL_PACK
+	# A pack's grown young leave it asleep as awake (`Predator._seek_ground()`), to look next step.
+	if pack and int(aggregate.get("group_id", -1)) >= 0:
+		for record in members:
+			if float(record.get("age", 0.0)) >= grown and registry.territory_of(int(record.get("id", -1))) == -1:
+				var group := int(record.get("group_id", -1))
+				record["group_id"] = -1
+				emit_population_event("PackLeft", species_key, Vector2(record.get("position", Vector2.ZERO)),
+					{"group_id": group, "record_id": int(record.get("id", -1)), "dormant": true})
+		return
+	if int(aggregate.get("territory_id", -1)) >= 0 or int(aggregate.get("group_id", -1)) != -1:
+		return
+	var claim_reach := float(settings.get("claim_radii", 0.5))
+	for record in members:
+		if float(record.get("age", 0.0)) < grown or registry.territory_of(int(record.get("id", -1))) != -1:
+			continue
+		var position: Vector2 = record.get("position", aggregate.get("center", Vector2.ZERO))
+		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
+		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)))
+		if territory_id == -1:
+			continue
+		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex):
+			var partner := registry.partner_of(int(record.get("id", -1)))
+			if partner != -1:
+				record["preferred_mate_id"] = partner
+			if pack:
+				record["group_id"] = _pack_for(species_key, territory_id, -1, partner)
+			emit_population_event("TerritoryClaimed", species_key, position,
+				{"territory_id": territory_id, "record_id": int(record.get("id", -1)), "partner_id": partner, "dormant": true})
+		elif not aggregate.has("disperse_den"):
+			aggregate["disperse_den"] = registry.get_territory(territory_id)["den"]
+
+
+## A sleeping group's wander: round its den on a ring (`territory.ring_radii`), by a hash of
+## the territory and the time, for a pair keeping to its `ground`; as without territories for
+## anyone else.
+func _dormant_ground_wander_goal(sector_key: Vector2i, aggregate: Dictionary, ground: Dictionary,
+		settings: Dictionary) -> Dictionary:
+	if ground.is_empty():
+		return _resolve_dormant_wander_goal(sector_key, aggregate)
+	var turn := int(floor(current_time / maxf(1.0, _dormant_goal_refresh_seconds * 4.0)))
+	var angle := TAU * _dormant_hash_unit(int(ground["id"]) + 0x7E77, turn)
+	var goal: Vector2 = get_nearest_walkable_position(clamp_position(Vector2(ground["den"])
+		+ Vector2.from_angle(angle) * float(ground["radius"]) * float(settings.get("ring_radii", 0.7))))
+	return {"goal_kind": "wander", "goal_position": goal, "goal_sector": _get_sector_key(goal)}
 
 
 ## Energy ceiling recovery may reach in the aggregate's current mode, or a negative value
@@ -4716,13 +5151,18 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		# Only a hungry hunter makes a kill. A live predator stops hunting once fed, and
 		# its hunger takes minutes to climb back to `feed_hunger_floor`; without this a
 		# sated group went on killing every few seconds for as long as it sat among prey.
-		var members: Array = buckets.get(_get_dormant_aggregate_key(species_key, int(aggregate.get("group_id", -1))), [])
+		var members: Array = buckets.get(_aggregate_key(aggregate), [])
 		var hungry := _dormant_hungry_count(aggregate, members)
 		if hungry <= 0:
 			continue
 		hunting_predators += hungry
-		var pair_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("hunt", {}).get("pair", {})
-		if not pair_config.is_empty():
+		var hunt_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("hunt", {})
+		var pair_config: Dictionary = hunt_config.get("pair", {})
+		var pack_config: Dictionary = hunt_config.get("pack", {})
+		if not pack_config.is_empty() and int(aggregate.get("group_id", -1)) >= 0:
+			# A pack hunting together: each hungry one past the first counts for more.
+			pair_bonus += float(maxi(0, hungry - 1)) * float(pack_config.get("dormant_kill_multiplier", 0.25))
+		elif not pair_config.is_empty():
 			pair_bonus += float(_dormant_paired_hungry(members)) * float(pair_config.get("dormant_kill_multiplier", 0.3))
 		hunters.append_array(_dormant_hungry_records(members))
 		if hunter_species == "":
@@ -4775,8 +5215,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 				* prey_preference(str(b.get("species_type", "")))
 			if count_a != count_b:
 				return count_a > count_b
-			return _get_dormant_aggregate_key(str(a.get("species_type", "")), int(a.get("group_id", -1))) \
-				< _get_dormant_aggregate_key(str(b.get("species_type", "")), int(b.get("group_id", -1))))
+			return _aggregate_key(a) < _aggregate_key(b))
 		for aggregate in prey_aggregates:
 			if remaining <= 0:
 				break
@@ -4981,11 +5420,25 @@ func _compute_dormant_births_for_aggregate(aggregate: Dictionary, _elapsed: floa
 		return 0
 	females.sort_custom(func(a, b): return int(a.get("id", 0)) < int(b.get("id", 0)))
 	var pairs: Array = []
+	# With territories only the two holding one breed, wherever on it they sleep; vagrants not.
+	var registry := territory_registry(species_key)
 	for female in females:
 		var female_position: Vector2 = female.get("position", Vector2.ZERO)
 		var bonded_id := int(female.get("preferred_mate_id", -1))
 		var chosen := -1
 		var chosen_distance_sq := INF
+		if registry != null:
+			var holder := registry.partner_of(int(female.get("id", -1)))
+			for index in range(males.size()):
+				if holder != -1 and int(males[index].get("id", -1)) == holder:
+					chosen = index
+			if chosen < 0:
+				continue
+			pairs.append([males[chosen], female])
+			males.remove_at(chosen)
+			if males.is_empty():
+				break
+			continue
 		for index in range(males.size()):
 			var male: Dictionary = males[index]
 			var distance_sq := female_position.distance_squared_to(Vector2(male.get("position", Vector2.ZERO)))
@@ -5079,7 +5532,7 @@ func _advance_dormant_herd(sector_key: Vector2i, aggregate: Dictionary, members:
 	var species_config: Dictionary = config_bundle.get("species", {}).get(str(aggregate.get("species_type", "")), {})
 	var movement: Dictionary = species_config.get("movement", {})
 	var body_radius := float(movement.get("body_radius", 0.0))
-	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass", "migrate"]
+	var is_directed: bool = str(aggregate.get("goal_kind", "wander")) in ["water", "hunt", "seek_carcass", "migrate", "disperse"]
 	# The group walks at its members' mean speed (`avg_traits`).
 	var speed_trait := _aggregate_trait(aggregate, TraitsScript.SPEED)
 	var base_speed: float = _get_dormant_travel_speed(species_config, is_directed, speed_trait)
@@ -5326,7 +5779,7 @@ func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, 
 	for aggregate in sector_state.get("dormant_aggregates", []):
 		var species_key := str(aggregate.get("species_type", ""))
 		var group_id := int(aggregate.get("group_id", -1))
-		var aggregate_key := _get_dormant_aggregate_key(species_key, group_id)
+		var aggregate_key := _aggregate_key(aggregate)
 		claimed[aggregate_key] = true
 		var bucket: Array = buckets.get(aggregate_key, [])
 		var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
@@ -5607,6 +6060,8 @@ func _make_dormant_newborn(species_type: String, group_id: int, mother_position:
 		group_id
 	)
 	agent.lod_tier = LOD_TIER_2
+	if "natal_territory_id" in agent:
+		agent.natal_territory_id = _natal_territory(species_type, int(mother.get("id", -1)), int(father.get("id", -1)))
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_type, {})
 	if TraitsScript.enabled(species_config):
 		agent.set_traits(TraitsScript.inherit(newborn_id, TraitsScript.of_record(mother) if not mother.is_empty() else [],
@@ -5870,7 +6325,7 @@ func _apply_dormant_resource_interactions(sector_key: Vector2i, sector_state: Di
 			# fully simulated population had zero starvation deaths.
 			var graze_floor := float(config_bundle.get("balance", {}).get(
 				"state_thresholds", {}).get("graze_hunger_floor", 12.0))
-			var grazers: Array = buckets.get(_get_dormant_aggregate_key(species_key, int(aggregate.get("group_id", -1))), [])
+			var grazers: Array = buckets.get(_aggregate_key(aggregate), [])
 			if float(aggregate.get("avg_hunger", 0.0)) >= graze_floor and not grazers.is_empty():
 				_graze_dormant_members(aggregate, grazers, feeding, species_config, elapsed)
 			elif float(aggregate.get("avg_hunger", 0.0)) >= graze_floor:
@@ -5955,10 +6410,12 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 	_resolve_dormant_predation(sector_key, sector_state, aggregates, elapsed, buckets)
 	for aggregate in aggregates:
 		_apply_dormant_metabolism_to_aggregate(sector_key, aggregate, elapsed,
-			buckets.get(_get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1))), []))
+			buckets.get(_aggregate_key(aggregate), []))
 		# An emptied group stays listed until the reconcile, which reports its deaths.
 		if int(aggregate.get("count", 0)) <= 0:
 			continue
+		if not territories.is_empty():
+			_settle_dormant_vagrants(aggregate, buckets.get(_aggregate_key(aggregate), []))
 		var shared_goal := _dormant_shared_goal(sector_key, aggregate)
 		if not shared_goal.is_empty():
 			aggregate.erase("carcass_id")
@@ -5985,7 +6442,7 @@ func _apply_dormant_sector_step(sector_key: Vector2i, sector_state: Dictionary, 
 				performance_counters["dormant_goal_refreshes"] += 1
 				if str(aggregate.get("goal_kind", "wander")) != previous_goal_kind or aggregate.get("goal_sector", sector_key) != previous_goal_sector:
 					aggregate["stale_time"] = 0.0
-		var aggregate_key := _get_dormant_aggregate_key(str(aggregate.get("species_type", "")), int(aggregate.get("group_id", -1)))
+		var aggregate_key := _aggregate_key(aggregate)
 		_advance_dormant_herd(sector_key, aggregate, buckets.get(aggregate_key, []), elapsed)
 		var dormant_births := _compute_dormant_births_for_aggregate(aggregate, elapsed, buckets.get(aggregate_key, []))
 		if dormant_births > 0:
@@ -6086,6 +6543,8 @@ func _flush_spawns() -> void:
 		)
 		if child == null:
 			continue
+		if int(request.get("natal_territory_id", -1)) != -1 and "natal_territory_id" in child:
+			child.natal_territory_id = int(request["natal_territory_id"])
 		# Kin links are what the pair-cohesion flow and the chase leash read, so they
 		# belong to any species that lives in pairs rather than to predators by name.
 		if species_registry.social(child.species_type) == SpeciesRegistryScript.SOCIAL_PAIR:

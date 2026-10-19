@@ -7,16 +7,16 @@ extends RefCounted
 ## the cards, the tag, the event feed and the developer panel all name things through
 ## here, so they name them the same way, and as the help screen does.
 
-const SPECIES := {"herbivore": "Травоядные", "predator": "Хищники", "scavenger": "Падальщики"}
-## What a group of each species is called; predators keep to pairs and have none.
-const GROUPS := {"herbivore": "Стадо", "scavenger": "Стая"}
+const SPECIES := {"herbivore": "Травоядные", "predator": "Хищники", "scavenger": "Падальщики", "wolf": "Волки"}
+## What a group of each species is called; foxes keep to pairs and have none.
+const GROUPS := {"herbivore": "Стадо", "scavenger": "Стая", "wolf": "Волчья стая"}
 ## The same nouns after «за», for the button that follows one.
-const GROUPS_FOLLOWED := {"herbivore": "стадом", "scavenger": "стаей"}
+const GROUPS_FOLLOWED := {"herbivore": "стадом", "scavenger": "стаей", "wolf": "волчьей стаей"}
 ## After «из» / «в»: «из Стада №3», «в Стае №2».
-const GROUPS_GENITIVE := {"herbivore": "Стада", "scavenger": "Стаи"}
-const GROUPS_PREPOSITIONAL := {"herbivore": "Стаде", "scavenger": "Стае"}
+const GROUPS_GENITIVE := {"herbivore": "Стада", "scavenger": "Стаи", "wolf": "Волчьей стаи"}
+const GROUPS_PREPOSITIONAL := {"herbivore": "Стаде", "scavenger": "Стае", "wolf": "Волчьей стае"}
 ## After «стали»: «стали Стадом №8».
-const GROUPS_INSTRUMENTAL := {"herbivore": "Стадом", "scavenger": "Стаей"}
+const GROUPS_INSTRUMENTAL := {"herbivore": "Стадом", "scavenger": "Стаей", "wolf": "Волчьей стаей"}
 const BIOMES := {"meadow": "Луг", "forest": "Лес", "drought": "Засуха", "swamp": "Болото"}
 ## The biomes the strip reports, in the order it reports them.
 const BIOME_ORDER := ["meadow", "forest", "drought", "swamp"]
@@ -35,6 +35,8 @@ const ANIMALS := {
 		"count": ["лиса", "лисы", "лис"], "young_count": ["лисёнок", "лисёнка", "лисят"]},
 	"scavenger": {"male": "тетерев", "female": "тетёрка", "young": "птенец", "all": "тетерева",
 		"count": ["тетерев", "тетерева", "тетеревов"], "young_count": ["птенец", "птенца", "птенцов"]},
+	"wolf": {"male": "волк", "female": "волчица", "young": "волчонок", "all": "волки",
+		"count": ["волк", "волка", "волков"], "young_count": ["волчонок", "волчонка", "волчат"]},
 }
 ## After «итоги»: «итоги лета». Keyed by the climate's season ids.
 const SEASONS_GENITIVE := {"spring": "весны", "summer": "лета", "autumn": "осени", "winter": "зимы"}
@@ -67,7 +69,7 @@ const STATES := {
 	"migrate": "кочует", "led": "идёт, куда повели", "reproduce": "ищет пару", "seek_prey": "высматривает добычу",
 	"chase": "гонится", "flank": "заходит наперерез", "search_last_seen": "ищет след", "attack": "нападает",
 	"seek_carcass": "идёт к туше", "feed_carcass": "ест тушу", "investigate_water": "ищет воду",
-	"pair_cohesion": "держится пары", "patrol": "обходит угодья", "dead": "мёртв",
+	"pair_cohesion": "держится пары", "patrol": "обходит угодья", "disperse": "ищет свой участок", "dead": "мёртв",
 }
 
 

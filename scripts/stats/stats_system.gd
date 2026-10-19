@@ -24,11 +24,16 @@ var counters := {
 	"grass_events": 0,
 	# Herds setting out for fresh pasture (`WorldState._update_herd_migrations()`).
 	"herd_migrations": 0,
+	# Of those, herds going back to a pasture they remember for the season (`herd.migration.seasonal`).
+	"herd_returns": 0,
 	"herd_alarms": 0,
 	# Hunts a mate joined, blows struck with it at the prey, and kills made so (`hunt.pair`).
 	"pair_hunts": 0,
 	"pair_attacks": 0,
 	"pair_kills": 0,
+	# Territories taken and left empty (`territory`).
+	"territory_claims": 0,
+	"territories_vacated": 0,
 	"hunt_success": 0,
 	"hunt_fail": 0,
 	# Why chases end. `PredationFailed` already carries the reason; without the split, a low
@@ -39,6 +44,8 @@ var counters := {
 	"hunt_fail_low_energy": 0,
 	"hunt_fail_kin_gap": 0,
 	"hunt_fail_miss": 0,
+	# A holder not hungry enough to cross its territory's edge (`territory.border_slack`).
+	"hunt_fail_border": 0,
 	"search_started": 0,
 	"prey_reacquired": 0,
 	"search_expired": 0,
@@ -375,6 +382,8 @@ func _on_event_emitted(event: Dictionary) -> void:
 			_count_death_detail(cause, species, bool(data.get("dormant", false)))
 		"HerdMigrates":
 			counters["herd_migrations"] += 1
+			if bool(data.get("remembered", false)):
+				counters["herd_returns"] += 1
 		"HerdAlarm":
 			counters["herd_alarms"] += 1
 		"HuntStarted":
@@ -385,6 +394,10 @@ func _on_event_emitted(event: Dictionary) -> void:
 				counters["pair_attacks"] += 1
 		"PairHunt":
 			counters["pair_hunts"] += 1
+		"TerritoryClaimed":
+			counters["territory_claims"] += 1
+		"TerritoryVacated":
+			counters["territories_vacated"] += 1
 		"PredationSuccess":
 			counters["hunt_success"] += 1
 			if bool(data.get("pair", false)):

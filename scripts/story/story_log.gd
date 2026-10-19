@@ -26,6 +26,8 @@ const COALESCE_SECONDS := 12.0
 const SUMMARY_SECONDS := 60.0
 ## Accusative of a new herd: «в новое Стадо №8», «в новую Стаю №2».
 const NEW_GROUP := {"herbivore": "новое Стадо", "scavenger": "новую Стаю"}
+## The seasons' pastures after «на»: «на летние угодья».
+const SEASON_PASTURES := {"spring": "весенние", "summer": "летние", "autumn": "осенние", "winter": "зимние"}
 ## Who leaves a group that divides: «5 голов» of a herd, «12 птиц» of a flock.
 const MOVED_NOUNS := {"herbivore": ["голова", "головы", "голов"], "scavenger": ["птица", "птицы", "птиц"]}
 
@@ -71,6 +73,18 @@ func hear(event: Dictionary) -> void:
 			_hear_player_command(data, time, _position_of(event))
 		"HerdArrived", "HerdLeadEnded":
 			_hear_led_herd(str(event.get("type", "")) == "HerdArrived", str(event.get("species", "")), data, time)
+		"TerritoryClaimed":
+			_hear_claim(event, data, time, context)
+		"TerritoryVacated":
+			var den := _position_of(event)
+			if _in_view(context, den):
+				_add({"time": time, "text": "Участок%s опустел" % _goal_place(den), "position": den, "focus_id": -1,
+					"pinned": false, "kind": "territory", "key": "", "count": 1})
+		"DispersalStarted", "PackLeft":
+			_hear_leaving(event, data, time, context)
+		"HerdMigrates":
+			if bool(data.get("remembered", false)):
+				_hear_return(event, data, time, context)
 
 
 ## Closes the minute when it is over: one line for everything that had no line of its own.
@@ -120,7 +134,12 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 	# Where it happened; out of view with no name for the place, just «вдали».
 	var where := " " + place if place != "" else (" вдали" if asleep else "")
 	var text := ""
-	if cause == "predation" and killer >= 0:
+	if cause == "predation" and bool(data.get("pair", false)):
+		# Driven down by a pair or a pack (`hunt.pair`, `hunt.pack`): told as theirs.
+		var hunters_species := str(book.lineage.entry(killer).get("species", "predator")) if book != null and killer >= 0 else "predator"
+		var hunters := "Волчья стая" if hunters_species == "wolf" else "Пара лис"
+		text = "%s загнала %s%s: %s" % [hunters, _prey_accusative(species), where, who]
+	elif cause == "predation" and killer >= 0:
 		var killer_entry: Dictionary = book.lineage.entry(killer) if book != null else {}
 		var killer_sex := str(killer_entry.get("sex", ""))
 		var killer_species := str(killer_entry.get("species", "predator"))
@@ -247,6 +266,67 @@ func _hear_led_herd(arrived: bool, species: String, data: Dictionary, time: floa
 		"kind": "player", "key": "", "count": 1})
 
 
+## «Лис Рыжик и лиса Ветка заняли участок у Тихой заводи»: a pair formed on a territory
+## (`territory`), for an animal pinned or in view. One that takes a slot alone is not told.
+func _hear_claim(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
+	var holder := int(event.get("agent_id", -1))
+	if holder < 0:
+		holder = int(data.get("record_id", -1))
+	var partner := int(data.get("partner_id", -1))
+	var position := _position_of(event)
+	var pinned: bool = book != null and (book.is_pinned(holder) or book.is_pinned(partner))
+	if holder < 0 or partner < 0 or not (pinned or _in_view(context, position)):
+		return
+	var species := str(event.get("species", ""))
+	var text := "%s %s и %s %s заняли участок%s" % [HudTextScript.animal_noun(species, _sex_of(holder)), _name(holder),
+		HudTextScript.animal_noun(species, _sex_of(partner)), _name(partner), _goal_place(position)]
+	_add({"time": time, "text": text, "position": position, "focus_id": holder, "pinned": pinned,
+		"kind": "territory", "key": "", "count": 1})
+
+
+## «Молодая лиса Ветка ушла искать свой участок», «… ушёл из стаи искать свой участок» for a wolf.
+func _hear_leaving(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
+	var who := int(event.get("agent_id", -1))
+	if who < 0:
+		who = int(data.get("record_id", -1))
+	var position := _position_of(event)
+	var pinned: bool = book != null and book.is_pinned(who)
+	if who < 0 or not (pinned or _in_view(context, position)):
+		return
+	var species := str(event.get("species", ""))
+	var sex := _sex_of(who)
+	var text := "%s %s %s %s%s искать свой участок" % [HudTextScript.verb(sex, "Молодой", "Молодая"),
+		HudTextScript.animal_noun(species, sex), _name(who), HudTextScript.verb(sex, "ушёл", "ушла"),
+		" из стаи" if str(event.get("type", "")) == "PackLeft" else ""]
+	_add({"time": time, "text": text, "position": position, "focus_id": who, "pinned": pinned,
+		"kind": "territory", "key": "", "count": 1})
+
+
+## «Стадо №3 идёт на летние угодья у Ольхового бора» (`herd.migration.seasonal`), for the selected
+## herd or one in view.
+func _hear_return(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
+	var species := str(event.get("species", ""))
+	var group := int(data.get("group_id", -1))
+	var position := _position_of(event)
+	if not (_in_herd(context, species, group) or _in_view(context, position)):
+		return
+	var goal := Vector2(float(data.get("to_x", 0.0)), float(data.get("to_y", 0.0)))
+	var season := str(SEASON_PASTURES.get(str(data.get("season", "")), "свои"))
+	var text := "%s идёт на %s угодья%s" % [HudTextScript.herd_name(species, group), season, _goal_place(goal)]
+	_add({"time": time, "text": text, "position": goal, "focus_id": -1, "pinned": false,
+		"kind": "migration", "key": "", "count": 1})
+
+
+## «оленя», «тетерева»: the prey after «загнала», its count's second form.
+static func _prey_accusative(species: String) -> String:
+	var forms: Array = HudTextScript.ANIMALS.get(species, {}).get("count", [species, species, species])
+	return str(forms[1])
+
+
+func _sex_of(agent_id: int) -> String:
+	return str(book.lineage.entry(agent_id).get("sex", "")) if book != null else ""
+
+
 ## « на Медовом лугу», « у Тихой заводи», or "" off the named map.
 func _goal_place(position: Vector2) -> String:
 	var place := _place_of(position)
@@ -258,7 +338,7 @@ static func summary_text(tally: Dictionary) -> String:
 	var parts: Array = []
 	for cause in ["predation", "starvation", "thirst", "old_age"]:
 		var counts: Array = []
-		for species in ["herbivore", "scavenger", "predator"]:
+		for species in ["herbivore", "scavenger", "predator", "wolf"]:
 			var count := int(tally.get("deaths:%s:%s" % [cause, species], 0))
 			if count > 0:
 				counts.append(HudTextScript.animal_count(species, count))
@@ -266,7 +346,7 @@ static func summary_text(tally: Dictionary) -> String:
 			var label := "хищники" if cause == "predation" else HudTextScript.cause_label(cause)
 			parts.append("%s — %s" % [label, ", ".join(counts)])
 	var born: Array = []
-	for species in ["herbivore", "scavenger", "predator"]:
+	for species in ["herbivore", "scavenger", "predator", "wolf"]:
 		var count := int(tally.get("births:%s" % species, 0))
 		if count > 0:
 			born.append(HudTextScript.animal_count(species, count, true))

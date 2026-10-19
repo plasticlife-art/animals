@@ -413,6 +413,7 @@ func _bind_view() -> void:
 	selection_tag.bind_agent_renderer(agent_renderer)
 	selection_card.bind_manager(simulation_manager)
 	selection_card.story = story_book
+	herd_card.places = story_book.places
 	selection_tag.story = story_book
 	pinned_bar.bind(story_book, simulation_manager)
 	story_feed.bind(story_book.feed, simulation_manager)
@@ -1015,10 +1016,20 @@ func _sync_player_bar() -> void:
 	pinned_bar.set_allowed(player_bar.visible)
 	var world = simulation_manager.world_state if simulation_manager != null else null
 	powers_bar.visible = player_bar.visible and world != null and PowersBar.has_powers(world.player)
+	player_bar.set_overlay_offered("show_territories", world != null and _has_territories(world))
 	goal_chips.visible = player_bar.visible and simulation_manager.scenario.is_active()
 	power_targeting.input_enabled = player_bar.visible
 	if not player_bar.visible:
 		power_targeting.cancel()
+
+
+## Whether some species of the world keeps territories and lives in it.
+func _has_territories(world) -> bool:
+	for species_key in world.territories.keys():
+		var count := int(world.config_bundle.get("world", {}).get("spawns", {}).get("%s_count" % species_key, 0))
+		if count > 0 or world.territories[species_key].census()["vacant"] < world.territories[species_key].size():
+			return true
+	return false
 
 
 func _apply_debug_configuration() -> void:

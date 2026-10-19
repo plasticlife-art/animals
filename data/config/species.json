@@ -299,5 +299,130 @@
       "litter_max": 6,
       "curve": [[0, 1], [1.2, 1], [2, 0], [3.5, 0]]
     }
+  },
+  "wolf": {
+    "role": {
+      "label": "Wolf",
+      "slot": 3,
+      "diet": "prey",
+      "eats_species": [
+        "herbivore"
+      ],
+      "is_threat": true,
+      "leaves_carcass": true,
+      "carcass_meat_multiplier": 0.8,
+      "social": "pack",
+      "script": "res://scripts/agents/predator.gd",
+      "ai": "res://scripts/agents/ai/predator_ai.gd",
+      "carrion_max_age_seconds": 60.0
+    },
+    "movement": {
+      "max_speed": 102.0,
+      "sprint_speed": 138.0,
+      "acceleration": 220.0,
+      "drag": 3.1,
+      "wander_jitter": 0.7,
+      "max_turn_rate_degrees": 240.0,
+      "body_radius": 18.6,
+      "patrol_wander_jitter": 0.05,
+      "fatigue_energy_ratio": 0.25,
+      "exhausted_speed_ratio": 0.55
+    },
+    "perception": {
+      "vision_radius": 560.0,
+      "water_search_radius": 1600.0,
+      "water_memory_duration_seconds": 180.0,
+      "attack_radius": 70.0,
+      "chase_break_radius": 640.0,
+      "mate_search_radius": 560.0,
+      "prey_evaluation_limit": 10
+    },
+    "metabolism": {
+      "max_energy": 180.0,
+      "energy_decay": 2.0,
+      "rest_recovery": 8.0,
+      "rest_energy": 45.0,
+      "rest_energy_resume": 65.0,
+      "hunger_rate": 0.22,
+      "thirst_rate": 0.18,
+      "dehydration_energy_penalty": 3.5,
+      "chase_energy_cost": 2.4
+    },
+    "feeding": {
+      "food_restore": 70.0,
+      "attack_cooldown": 1.0,
+      "feed_distance": 26.0,
+      "carcass_consume_rate": 30.0,
+      "carcass_nutrition_gain": 1.0,
+      "carcass_energy_gain": 1.2,
+      "drink_distance": 76.0,
+      "drink_restore": 50.0,
+      "gorge_below_energy_threshold": true
+    },
+    "hunt": {
+      "min_chase_energy": 22.0,
+      "lost_sight_search_seconds": 3.5,
+      "search_radius_cells": 0.75,
+      "retry_cooldown_seconds": 2.0,
+      "contact_slack": 6.0,
+      "pack": {
+        "join_vision_share": 1.6,
+        "lateral_attack_radii": 2.2,
+        "close_attack_radii": 2.5,
+        "lead_max_seconds": 1.6,
+        "attack_bonus": 0.08,
+        "max_helpers": 3,
+        "close_partner_attack_radii": 1.6,
+        "dormant_kill_multiplier": 0.25
+      }
+    },
+    "reproduction": {
+      "maturity_age": 240.0,
+      "energy_threshold": 75.0,
+      "male_energy_threshold": 0.0,
+      "cooldown": 400.0,
+      "birth_energy_cost": 20.0,
+      "max_hunger": 55.0,
+      "max_thirst": 60.0,
+      "mate_contact_slack": 5.0,
+      "preferred_mate_follow_radius": 220.0,
+      "preferred_mate_break_radius": 900.0,
+      "preferred_mate_seek_weight": 0.75,
+      "safe_radius": 100.0,
+      "offspring_spawn_radius": 70.0
+    },
+    "aging": {
+      "max_age": 1920.0,
+      "old_age_start": 1600.0,
+      "old_age_death_chance_per_second": 0.003
+    },
+    "traits": {
+      "enabled": true,
+      "founder_spread": 0.08,
+      "mutation": 0.04,
+      "clamp": 0.25,
+      "longevity_clamp": 0.1,
+      "run_cost_exponent": 2.0,
+      "speed_hunger": 0.5,
+      "vision_hunger": 0.3
+    },
+    "breeding": {
+      "enabled": true,
+      "litter_mean": 3.5,
+      "litter_max": 6
+    },
+    "territory": {
+      "radius_cells": 22.0,
+      "spacing": 1.8,
+      "step_cells": 3,
+      "water_cells": 8.0,
+      "capacity_multiplier": 4.0,
+      "trespass_hunger": 70.0,
+      "border_slack": 1.15,
+      "dispersal_age_seconds": 480.0,
+      "look_seconds": 2.0,
+      "claim_radii": 0.5,
+      "ring_radii": 0.6
+    }
   }
 }

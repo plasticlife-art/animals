@@ -260,6 +260,50 @@
       ],
       "minimap_radius": 2.0
     },
+    "wolf": {
+      "atlas": "res://assets/sprites/wolf_atlas.png",
+      "carcass_atlas": "res://assets/sprites/wolf_carcass_atlas.png",
+      "frame_px": 32,
+      "sprite_scale": 0.92,
+      "stride_length": 36.0,
+      "directions": 4,
+      "animations": {
+        "idle": {
+          "row": 0,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "walk": {
+          "row": 4,
+          "frames": 6,
+          "fps": 8.0
+        },
+        "run": {
+          "row": 8,
+          "frames": 6,
+          "fps": 13.0
+        },
+        "eat": {
+          "row": 12,
+          "frames": 4,
+          "fps": 4.0
+        },
+        "dead": {
+          "row": 16,
+          "frames": 6,
+          "fps": 0.0,
+          "kill_frames": [0, 1, 2, 3, 4],
+          "fall_frames": [0, 1, 5]
+        }
+      },
+      "z": 2,
+      "ui_color": [
+        0.62,
+        0.62,
+        0.68
+      ],
+      "minimap_radius": 2.4
+    },
     "scavenger": {
       "atlas": "res://assets/sprites/scavenger_atlas.png",
       "carcass_atlas": "res://assets/sprites/scavenger_carcass_atlas.png",

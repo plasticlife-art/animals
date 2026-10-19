@@ -17,7 +17,7 @@ extends RefCounted
 
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
 ## Species in this order, any other after them in the summary's own.
-const SPECIES_ORDER := ["herbivore", "predator", "scavenger"]
+const SPECIES_ORDER := ["herbivore", "predator", "scavenger", "wolf"]
 const CAUSE_ORDER := ["predation", "starvation", "thirst", "old_age", "culled"]
 ## Ponds named before «и ещё …»; one more than this is named in full.
 const PONDS_NAMED := 2

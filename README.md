@@ -25,8 +25,9 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - Obstacle generation and terrain-aware pathfinding
 - Renewable grass resource grid linked to terrain productivity
 - Spatial grid acceleration for proximity queries
-- Herbivore behavior: `alive/panic/dead` AI states with utility-driven graze, drink, rest, explore, herd join, and flee actions
-- Predator behavior: `alive/engaged/dead` AI states with utility-driven hunt, scavenge, drink, rest, investigate water, pair cohesion, and patrol actions
+- Herbivore behavior: `alive/panic/dead` AI states with utility-driven graze, drink, rest, explore, herd join, and flee actions; a herd takes fright together and runs for one point (`herd.flight`), and remembers its pastures season by season (`herd.migration.seasonal`)
+- Predator behavior: `alive/engaged/dead` AI states with utility-driven hunt, scavenge, drink, rest, investigate water, pair cohesion, and patrol actions; mates hunt as a pair, one driving and one cutting the prey off (`hunt.pair`), and pairs hold territories round their dens (`territory`)
+- Wolves, off unless the setup asks: packs on large territories that hunt together, fanning out to both sides of the prey (`hunt.pack`)
 - Lifecycle rules: hunger, thirst, energy depletion, predation, old age
 - Carcass lifecycle with feeder reservation and meat depletion
 - Runtime telemetry, charts, event log, agent inspector with utility scores, overlays, minimap
@@ -158,7 +159,7 @@ The interface is in Russian throughout. From the bar at the top left you can:
 
 - pause or resume the simulation
 - switch speed between the configured speeds
-- switch on three layers of the map: grass, danger (where predators have struck) and chases
+- switch on the layers of the map: grass, danger (where predators have struck), chases and, in a world with them, territories (each den's ring: held by a pair, by one, or by none)
 - open the help screen
 
 Every animal has a name, from a list for its species and sex («Ветка», «Рыжик»), and a family:
@@ -195,7 +196,9 @@ charts behind `Tab`, in place of the bar. From there you can also:
 
 Above the minimap an event feed tells what happens to the animals you are looking at, in short
 lines with the time of day and the place: a kill in view with both names, a calf born in the
-selected herd, the death of a pinned animal far away, a herd splitting. Everything else on the
+selected herd, the death of a pinned animal far away, a herd splitting, a kill by a pair of foxes
+or a pack of wolves, a pair taking a territory and a young one setting out to find its own, a
+herd going back to its season's pasture. Everything else on the
 map is summed up once a minute; a click on a line takes the camera there.
 
 «Летопись» (L, or the button on the bar) shows an animal's family three generations deep -

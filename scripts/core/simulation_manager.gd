@@ -887,6 +887,10 @@ func _apply_worker_frame(data: Dictionary) -> void:
 	# Before the water: what the player dug changes how many ponds the levels are for.
 	if data.has("player"):
 		world_state.apply_player_block(data.player)
+	if data.has("territories"):
+		world_state.apply_territories_block(data.territories)
+	if data.has("herd_pastures"):
+		world_state.herd_pastures = data.herd_pastures.duplicate(true)
 	if data.has("water"):
 		world_state.water.import_state(data.water)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes

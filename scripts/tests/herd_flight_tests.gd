@@ -123,6 +123,13 @@ func _test_no_rng_and_the_alarm_is_saved(a) -> void:
 		far._flee(world, manager.tick_duration, [], made[1])
 		a.equal(world.rng.state, state_before, "runs with the herd drawing nothing from the shared stream")
 		a.equal(far.target_position, Vector2(world.herd_alarm_for(far)["goal"]), "for the herd's point")
+		# Near the end of its thirst it keeps to the water for what it only heard.
+		world.config_bundle["species"]["herbivore"]["herd"]["flight"]["exempt_thirst"] = 60.0
+		far.thirst = 70.0
+		a.is_true(world.herd_alarm_for(far).is_empty(), "the thirsty one does not take the heard alarm")
+		far.thirst = 10.0
+		a.is_true(not world.herd_alarm_for(far).is_empty(), "the watered one does")
+		world.config_bundle["species"]["herbivore"]["herd"]["flight"].erase("exempt_thirst")
 	var saved: Dictionary = world.export_state()
 	var other = Helpers.create_manager_with(_bundle(9973, true), 9973)
 	other.world_state.import_state(saved)

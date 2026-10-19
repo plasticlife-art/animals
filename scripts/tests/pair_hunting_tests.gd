@@ -82,6 +82,13 @@ func _test_a_mate_joins_and_the_roles_hold(a) -> void:
 	a.equal(int(manager.stats_system.counters.get("pair_hunts", 0)), 1, "one hunt as a pair, counted")
 	flanker.clear_targets(world)
 	a.equal(flanker._pair_role, "", "a hunt over, its part is let go")
+	# Past its own chase's leash (`chase_break_radius`) but within the pair's sight: it hunts on.
+	flanker.position = DEER_AT + Vector2(0.0, 640.0)
+	flanker.target_agent_id = deer.id
+	flanker.state = "chase"
+	flanker.hunger = 60.0
+	flanker._continue_or_finish_chase(world, manager.tick_duration)
+	a.equal(flanker.target_agent_id, deer.id, "a mate's prey is not lost for the fox's own leash")
 	var alone = _world(9981, false)
 	var solo := _pair(alone.world_state, DEER_AT + Vector2(-200.0, 0.0), DEER_AT + Vector2(0.0, 600.0))
 	var other_deer = Helpers.spawn_herbivore(alone.world_state, DEER_AT, 0)

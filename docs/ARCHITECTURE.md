@@ -792,6 +792,51 @@ ground it had eaten until the weakest starved, with fresh pasture a few cells aw
 - No randomness: ties go to the first candidate on the lattice and the check runs on
   the tick.
 
+### Seasonal pastures (`herd.migration.seasonal`)
+
+A herd remembers where it settled best in each season (`WorldState.herd_pastures`, by herd
+key: `{seen, seasons: {season_id: {position, forage, year}}}`, saved, copied to both halves of
+a split, sent to the view when `herd_pastures_revision` moves).
+
+- Written on arrival after a walk, its own or the player's (`_remember_pasture()`): the grass
+  within the pasture radius, kept when more than `replace_share` of what it remembers, or
+  when that is `forget_years` old.
+- On its first weighing in a new season (`seen`) a herd that remembers a pasture for it sets
+  out for it (`_seasonal_return()`, `HerdMigrates` with `remembered`) when the place is still
+  good - grass for `leave_fraction` of its need, water within `water_search_radius`, ground
+  within its `risk_tolerance` (`_pasture_fit()`) - farther than its own pasture, within
+  `search_radius`, and with `switch_ratio` times the grass it has where it stands. A dried
+  pond or a grazed-out meadow is not gone back to.
+- When it moves on for want of grass, the remembered place scores `memory_bonus` times its
+  grass in `_find_migration_pasture()`, if it is still good.
+- The herd card names the season's pasture («Летние угодья у Ольхового бора»), the feed a
+  return for the selected herd or one in view. Asleep or awake alike, with nothing drawn.
+
+### Herd flight (`herd.flight`)
+
+A threat seen by one member alarms its herd (`WorldState.herd_alarms`, by herd key: `{since,
+until, source, raiser, threat, heading, goal, goal_tick}`, saved).
+
+- `raise_herd_alarm()`: a member that sees predators raises the alarm or keeps it up
+  (`hold_seconds` past the last sighting); every `escape_refresh_ticks` the one seeing the
+  threat sets the herd's way - from the nearest threat through the herd's centre, leaning
+  `sighter_lean` towards its own flight - and one goal for all of it,
+  `choose_escape_destination()` at `escape_distance_cells`.
+- `herd_alarm_for()`: a member hears it within `alarm_radius_cells` of where it was raised,
+  `distance / alarm_speed_cells` seconds after - the herd ripples into flight, the near first,
+  with no chains of hearing and no spatial query. One at `exempt_thirst` or `exempt_hunger`
+  does not take an alarm it only heard: it keeps to its water or grass until it sees a
+  threat itself. Without that, thirsty deer were run off the ponds by alarms raised elsewhere
+  in the herd and deaths of thirst rose by two thirds.
+- `Herbivore._flee_with_herd()`: for the goal, kept with the others (`_herd_vector()` with no
+  wander, so no `rng`) and, seeing the threat itself, leaning away from it
+  (`herd_weights.flee * own_flee_share`); where the threat stands the way the herd runs, the
+  member runs its own way.
+- Asleep there are no alarms: `dormant_catchability` scales the prey a sleeping hunter can
+  catch, for the share of kills flight costs awake.
+- `HerdAlarm` is counted (`herd_alarms`), not told in the feed. Grouse (`Scavenger` is a
+  `Herbivore`) flee as a flock with their own `species.scavenger.herd.flight`.
+
 ### Predator
 
 High-level states:
@@ -811,6 +856,84 @@ Utility actions inside `alive`:
 - patrol
 
 `engaged` keeps existing locked flows such as chase, attack, carcass feeding, water investigation, and reproduction instead of re-scoring every tick.
+
+### Hunting together (`hunt.pair`, `hunt.pack`)
+
+A hunter's companions (`Predator._companions()`) are its mate, bonded back, with `hunt.pair`,
+or the other members of its pack (`world.herd_members()`) with `hunt.pack`; their settings come
+from `_party_config()`.
+
+- A companion's prey, in sight of it and within `join_vision_share` of this one's sight, is
+  taken first (`_mates_prey()`), and is not lost while a companion sees it (`_mate_sees()`);
+  the chase's leash (`chase_break_radius`) stretches to the party's sight meanwhile.
+- Roles are settled once per prey (`_pair_role_for()`): the nearest to it drives, the others
+  flank (`flank`, «заходит наперерез»), ties to the lower id; `_pair_rank` is how many were
+  nearer. A flanker runs for `flank_point()` - the intercept of the prey's run at its own
+  sprint, no more than `lead_max_seconds` ahead, out to the side by
+  `lateral_attack_radii` x attack radius, the offset fading as it closes. A fox takes its own
+  side; a pack's flankers fan out by rank, odd to one side, even to the other, each pair
+  farther out (`_flank_target()`). No path search of its own: the point is a chase target.
+- A blow struck with companions at the prey (`close_partner_attack_radii`) gains
+  `attack_bonus` for each, up to `max_helpers`; the kill's death event carries `pair`, which
+  the feed tells as «Пара лис загнала оленя», «Волчья стая загнала оленя».
+- Asleep: each hungry fox whose mate is hungry too, and each hungry wolf of a pack past the
+  first, adds `dormant_kill_multiplier` of a hunter to the sector's kill rate.
+- Counted: `pair_hunts` (a flanker taking its part), `pair_attacks`, `pair_kills`.
+
+### Territories (`territory`, `TerritoryRegistry`)
+
+A species with `territory` holds land (`scripts/world/territory_registry.gd`, one registry per
+species in `WorldState.territories`, saved, the view's copy sent when its revision moves).
+
+- Dens are placed once, from the map, with nothing drawn from `rng`
+  (`TerritoryRegistry.place_dens()`): candidate cells every `step_cells`, each moved within its
+  step by a hash of the seed, walkable, half a radius from the edge and within `water_cells`
+  of a pond; taken best first by the grass the cells within half a radius can hold
+  (a summed-area table over `ResourceSystem.export_caps()`), and none within `spacing` radii
+  of another. On the large map, `radius_cells` 10 and `spacing` 1.8 give 23-26 dens; the
+  gaps between are ground no one holds.
+- A territory has a male's slot and a female's (`claim()`, `release()`, `partner_of()`,
+  `open_slot_near()` by distance then id, `held_at()`); the registry is what is true. The
+  founding pairs take the best dens (`_spawn_initial_pairs()` still draws the points, so the
+  world's stream runs on as without); any death lets a slot go (`kill_agent()`,
+  `_emit_dormant_death()`), and `TerritoryVacated` when the last goes.
+- A holder not hungrier than `trespass_hunger` patrols and hunts its own ground only
+  (`_home_ground()`, `find_prey_pressure_goal()` with a `keep` test), sweeping a ring at
+  `ring_radii` round the den where it holds no prey, and gives up a chase past
+  `border_slack` radii (`hunt_fail_border`); one without a territory keeps off everyone's.
+- Mates are the two holding a territory (`_ground_to_share()`): a holder and a stranger with
+  its slot open - not born there - pair and the stranger takes the slot; two vagrants do not
+  breed; co-holders stay mates however far apart (`preferred_mate_break_radius` does not
+  apply). Asleep, only co-holders breed. The breeding cap stays, `capacity_multiplier` times
+  the start, as a backstop.
+- At `dispersal_age_seconds` one without a territory looks every `look_seconds` for the
+  nearest open slot not on its birthplace (`natal_territory_id`), walks there («ищет свой
+  участок», `disperse`) and takes it within `claim_radii`; with none open it is a vagrant.
+  Past that age kin cohesion keeps only to the mate.
+- Asleep, holders sleep as their territory's group (`predator:-1:t<id>`, young with their
+  parents until they are of age) and keep to its ground as awake ones do
+  (`_select_dormant_goal()`); vagrants of age settle by the nearest open den
+  (`_settle_dormant_vagrants()`), their group making for it.
+- The «Участки» layer draws each den's ring: bright held by a pair, faint by one, grey by
+  none; the card says «Участок у …», «Ищет свой участок», «Своего участка нет»; the feed a
+  pair taking a territory, one emptied, a young one setting out, in view or pinned.
+
+### Wolves (`species.wolf`, `role.social` "pack")
+
+A second hunter, off unless the setup asks for it («Волки — две стаи»: ten in two packs).
+
+- A pack is a group (`group_id`) like a herd, spawned at the dens best first
+  (`_spawn_initial_packs()`): its first male and female lead it - mature, mates, holding the
+  den's territory - and the rest are its young, born there. The territory records its pack
+  (`group`); one taking a slot joins the pack there, or its mate's, or founds one
+  (`_pack_for()`).
+- Members keep with the pack's centre (`_update_kin_state()`), hunt its ground
+  (`territory_of_group()`) and hunt together (`hunt.pack`, above); at
+  `dispersal_age_seconds` a member that does not lead leaves (`leave_pack()`, `PackLeft`),
+  looks for a territory and founds a pack on it. Asleep a pack sleeps as one group and its
+  grown young leave it asleep too.
+- Wolves eat deer only. Their art is the fox's atlas recoloured dun grey
+  (`tools/build_wolf_atlas.py`) and drawn larger, until they have their own.
 
 ### Rare prey (`prey_preference`)
 

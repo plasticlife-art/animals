@@ -7,18 +7,20 @@ extends RefCounted
 ## them right now. Read-only, from the world the view is shown - the worker's copy too.
 ##
 ## A herd is a `group_id` within a species whose `role.social` is `herd` (the grazers'
-## herds, the scavengers' flocks); predators keep to pairs and have none. Its awake
+## herds, the scavengers' flocks) or `pack` (the wolves'); foxes keep to pairs and have none. Its awake
 ## members are among the living agents; its sleeping ones only exist as the aggregates
 ## of their sleeping sectors, each a count with means, and are counted from those.
 
 const HUNTING_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "flank"]
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
+## The seasons' adjectives for a herd's pastures, by the climate's season ids.
+const PASTURE_SEASONS := {"spring": "Весенние", "summer": "Летние", "autumn": "Осенние", "winter": "Зимние"}
 
 
 static func has_herd(world, agent) -> bool:
 	if world == null or agent == null or int(agent.group_id) < 0:
 		return false
-	return world.species_registry.social(agent.species_type) == "herd"
+	return world.species_registry.social(agent.species_type) in ["herd", "pack"]
 
 
 ## `{awake, sleeping, total, young, hunger, thirst, energy, hunters, traits}` for `group_id` of
@@ -140,6 +142,19 @@ static func loss_text(loss: Dictionary, now: float) -> String:
 		return "Потерь пока нет"
 	return "Последняя потеря: %s, %s" % [HudTextScript.cause_label(str(loss.get("cause", ""))),
 		HudTextScript.ago_text(maxf(0.0, now - float(loss.get("time", now))))]
+
+
+## The pasture the herd remembers for this season (`herd.migration.seasonal`): «Летние угодья у
+## Ольхового бора»; "" with none, or without seasons.
+static func pasture_text(world, places, species: String, group_id: int) -> String:
+	if world == null or not world.climate.enabled:
+		return ""
+	var known: Dictionary = world.herd_pastures.get("%s:%d" % [species, group_id], {}).get("seasons", {}).get(world.climate.season_id, {})
+	if known.is_empty():
+		return ""
+	var place := "" if places == null else str(places.at(Vector2(known["position"])))
+	var season := str(PASTURE_SEASONS.get(world.climate.season_id, "Свои"))
+	return "%s угодья%s" % [season, (" " + place) if place != "" else ""]
 
 
 static func follow_text(species: String) -> String:

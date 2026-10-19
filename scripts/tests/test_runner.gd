@@ -38,6 +38,9 @@ const SUITES := [
 	{"name": "HerdFlightTests", "script": preload("res://scripts/tests/herd_flight_tests.gd")},
 	{"name": "PairHuntingTests", "script": preload("res://scripts/tests/pair_hunting_tests.gd")},
 	{"name": "BiomeFieldTests", "script": preload("res://scripts/tests/biome_field_tests.gd")},
+	{"name": "TerritoryTests", "script": preload("res://scripts/tests/territory_tests.gd")},
+	{"name": "SeasonalPastureTests", "script": preload("res://scripts/tests/seasonal_pasture_tests.gd")},
+	{"name": "WolfPackTests", "script": preload("res://scripts/tests/wolf_pack_tests.gd")},
 ]
 
 

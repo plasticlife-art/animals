@@ -134,6 +134,32 @@ static func family_line(story_book, agent) -> String:
 	return "\n".join(lines)
 
 
+## Where the animal lives, for a species with territories (`TerritoryRegistry`): «Участок у
+## Ольхового пруда», its pack's for one of a pack, «Ищет свой участок» on its way to one,
+## «Растёт на родительском участке» while young, «Своего участка нет» for a vagrant. Empty for a
+## species without.
+static func territory_line(world, story_book, agent) -> String:
+	if world == null or agent == null:
+		return ""
+	var registry = world.territory_registry(agent.species_type)
+	if registry == null:
+		return ""
+	var held: int = registry.territory_of(agent.id)
+	var own := held != -1
+	if not own and agent.group_id >= 0:
+		held = registry.territory_of_group(agent.group_id)
+	if held != -1:
+		var place := "" if story_book == null else str(story_book.places.at(Vector2(registry.get_territory(held)["den"])))
+		var where := (" " + place) if place != "" else ""
+		return ("Участок%s" if own else "Участок стаи%s") % where
+	if "_making_for" in agent and int(agent._making_for) != -1:
+		return "Ищет свой участок"
+	var grown := float(world.territory_config(agent.species_type).get("dispersal_age_seconds", 240.0))
+	if agent.age < grown and "natal_territory_id" in agent and int(agent.natal_territory_id) != -1:
+		return "Растёт на родительском участке"
+	return "Своего участка нет"
+
+
 ## What the animal inherited, the two traits it differs in most (`HudText.traits_brief()`): one
 ## line, since a line more pushes the herd card out with two pins up. Empty for a species without
 ## heredity.
@@ -214,6 +240,9 @@ func refresh() -> void:
 		title_label.text = AgentReadout.title(agent, "" if story == null else story.name_of(agent))
 	if family_text != null:
 		family_text.text = "" if story == null else family_line(story, agent)
+		var ground := territory_line(simulation_manager.world_state, story, agent)
+		if ground != "":
+			family_text.text += ("\n" if family_text.text != "" else "") + ground
 	if traits_label != null:
 		traits_label.text = traits_line(agent)
 		traits_label.visible = traits_label.text != ""

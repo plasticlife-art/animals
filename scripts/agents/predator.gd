@@ -14,10 +14,20 @@ const AgentAction := preload("res://scripts/agents/ai/agent_action.gd")
 const PredatorAIScript := preload("res://scripts/agents/ai/predator_ai.gd")
 
 var hunt: Dictionary = {}
+## `territory` from species.json: empty without territories.
+var territory: Dictionary = {}
+## Without a territory and of age to look for one: the territory it is making for, or -1, and
+## when it last looked (`_seek_ground()`).
+var _making_for: int = -1
+var _looked_for_ground_at: float = -INF
+## Whether it has set out for a territory of its own yet: told once.
+var _set_out: bool = false
 ## In a hunt with its mate (`hunt.pair`): the prey the roles were settled for, and this one's -
 ## "drive" or "flank" - kept until that hunt ends.
 var _pair_role_prey_id: int = -1
 var _pair_role: String = ""
+## Of those on the prey, how many were nearer it when the roles were settled: 0 drives.
+var _pair_rank: int = 0
 var last_seen_prey_position := Vector2.ZERO
 var prey_last_seen_time: float = -1.0
 var search_anchor := Vector2.ZERO
@@ -27,6 +37,9 @@ var search_last_confirmed_position := Vector2.ZERO
 var abandoned_prey_id: int = -1
 var retry_after: float = -1.0
 var preferred_mate_id: int = -1
+## The territory it was born on (`TerritoryRegistry`), which it may never hold; -1 for a founder
+## or without territories.
+var natal_territory_id: int = -1
 var _ai_controller
 var _cached_isolation_prey_id: int = -1
 var _cached_prey_isolation: float = 0.0
@@ -47,7 +60,12 @@ func configure(
 ) -> void:
 	super.configure(agent_id, new_species_type, spawn_position, new_sex, species_config, balance_config, rng, new_group_id)
 	hunt = species_config.get("hunt", {})
+	territory = species_config.get("territory", {})
+	_making_for = -1
+	_looked_for_ground_at = -INF
+	_set_out = false
 	preferred_mate_id = -1
+	natal_territory_id = -1
 	target_carcass_id = -1
 	_ai_controller = PredatorAIScript.new(balance_config)
 	debug_color = Color(0.93, 0.47, 0.32)
@@ -60,6 +78,7 @@ func tick(world, delta: float) -> void:
 		set_ai_state(AgentAIState.DEAD)
 		return
 	_update_kin_state(world)
+	_seek_ground(world)
 
 	if interaction_timer > 0.0:
 		stop_motion(delta)
@@ -121,6 +140,7 @@ func clear_targets(world = null) -> void:
 	_reset_search_state()
 	_pair_role_prey_id = -1
 	_pair_role = ""
+	_pair_rank = 0
 	super.clear_targets()
 
 
@@ -137,6 +157,11 @@ func export_runtime_state() -> Dictionary:
 	state_data["preferred_mate_id"] = preferred_mate_id
 	state_data["pair_role_prey_id"] = _pair_role_prey_id
 	state_data["pair_role"] = _pair_role
+	state_data["pair_rank"] = _pair_rank
+	state_data["natal_territory_id"] = natal_territory_id
+	state_data["making_for"] = _making_for
+	state_data["looked_for_ground_at"] = _looked_for_ground_at
+	state_data["set_out"] = _set_out
 	return state_data
 
 
@@ -167,6 +192,11 @@ func apply_runtime_state(state_data: Dictionary) -> void:
 	preferred_mate_id = int(state_data.get("preferred_mate_id", preferred_mate_id))
 	_pair_role_prey_id = int(state_data.get("pair_role_prey_id", -1))
 	_pair_role = str(state_data.get("pair_role", ""))
+	_pair_rank = int(state_data.get("pair_rank", 0))
+	natal_territory_id = int(state_data.get("natal_territory_id", -1))
+	_making_for = int(state_data.get("making_for", -1))
+	_looked_for_ground_at = float(state_data.get("looked_for_ground_at", -INF))
+	_set_out = bool(state_data.get("set_out", false))
 
 
 func _get_debug_target_text() -> String:
@@ -193,8 +223,12 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	var max_chase_duration: float = float(balance.get("hunt_rules", {}).get("max_chase_duration", 9.0))
 	var attack_radius: float = float(perception.get("attack_radius", 18.0))
 	var min_chase_energy: float = float(hunt.get("min_chase_energy", 4.0))
-	var visible: bool = world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0)) \
-		or _mate_sees(world, prey)
+	var vision: float = world.perception_radius(self, "vision_radius", 480.0)
+	var mate_sees := _mate_sees(world, prey)
+	var visible: bool = world.can_see(self, prey, vision) or mate_sees
+	# A fox joins its mate's hunt from as far as the pair's sight, past its own chase's leash.
+	if mate_sees:
+		break_radius = maxf(break_radius, vision * float(_party_config().get("join_vision_share", 1.5)))
 	if visible:
 		if search_started_time >= 0.0:
 			world.emit_event("PreyReacquired", self, prey.id, {
@@ -215,6 +249,8 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		fail_reason = "out_of_range"
 	elif chase_timer >= max_chase_duration:
 		fail_reason = "timeout"
+	elif _past_border(_home_ground(world), last_seen_prey_position):
+		fail_reason = "border"
 	elif energy <= min_chase_energy and distance > attack_radius * 1.5:
 		fail_reason = "low_energy"
 	# There was a fifth, "kin_gap": a chase given up for straying from the mate, for a predator
@@ -244,11 +280,8 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 	if visible and distance <= minf(attack_radius, get_body_radius() + prey.get_body_radius() + float(hunt.get("contact_slack", 5.0))) and world.scenery.segment_clear(position, prey.position, 0.0):
 		return _attack(world, prey, delta)
 
-	if visible and _pair_role_for(world, prey) == "flank" and distance > attack_radius * float(hunt.get("pair", {}).get("close_attack_radii", 2.5)):
-		var driver = _pair_mate(world)
-		target_position = flank_point(prey.position, prey.velocity, driver.position, position,
-			float(movement.get("sprint_speed", 128.0)), attack_radius * float(hunt.get("pair", {}).get("lateral_attack_radii", 2.0)),
-			float(hunt.get("pair", {}).get("lead_max_seconds", 1.5)))
+	if visible and _pair_role_for(world, prey) == "flank" and distance > attack_radius * float(_party_config().get("close_attack_radii", 2.5)):
+		target_position = _flank_target(world, prey)
 		set_state("flank", world.current_tick)
 	else:
 		set_state("chase" if visible else "search_last_seen", world.current_tick)
@@ -294,61 +327,127 @@ func _pair_mate(world):
 	return mate
 
 
-## The prey the mate is after in sight, if this one is within `join_vision_share` of its own
-## sight of it: what a fox joins rather than starting a hunt of its own.
+## How it hunts with others: `hunt.pack` for a pack's member, else `hunt.pair`; empty alone.
+func _party_config() -> Dictionary:
+	if group_id >= 0 and not hunt.get("pack", {}).is_empty():
+		return hunt["pack"]
+	return hunt.get("pair", {})
+
+
+## Those it hunts with: the others of its pack (`hunt.pack`), or its mate (`hunt.pair`), in
+## the order the world keeps them; empty for one that hunts alone.
+func _companions(world) -> Array:
+	if group_id >= 0 and not hunt.get("pack", {}).is_empty():
+		var members: Array = []
+		for member in world.herd_members(self):
+			if member != self and member.is_alive:
+				members.append(member)
+		return members
+	var mate = _pair_mate(world)
+	return [] if mate == null else [mate]
+
+
+## Its companions on `prey`, in `states`: those hunting it with this one.
+func _party_on(world, prey, states: Array) -> Array:
+	var party: Array = []
+	for companion in _companions(world):
+		if companion.target_agent_id == prey.id and companion.state in states:
+			party.append(companion)
+	return party
+
+
+## The prey a companion is after in sight, if this one is within `join_vision_share` of its own
+## sight of it: what a fox joins rather than starting a hunt of its own, the first companion's
+## in the world's order.
 func _mates_prey(world, vision_radius: float):
-	var mate = _pair_mate(world)
-	if mate == null or mate.target_agent_id == -1 or mate.state not in PAIR_SIGHT_STATES:
-		return null
-	var prey = world.get_agent(mate.target_agent_id)
-	if prey == null or not prey.is_alive:
-		return null
-	var reach := vision_radius * float(hunt.get("pair", {}).get("join_vision_share", 1.5))
-	if position.distance_squared_to(prey.position) > reach * reach:
-		return null
-	return prey
+	var reach := vision_radius * float(_party_config().get("join_vision_share", 1.5))
+	for companion in _companions(world):
+		if companion.target_agent_id == -1 or companion.state not in PAIR_SIGHT_STATES:
+			continue
+		var prey = world.get_agent(companion.target_agent_id)
+		if prey == null or not prey.is_alive:
+			continue
+		if position.distance_squared_to(prey.position) <= reach * reach:
+			return prey
+	return null
 
 
-## Whether the mate is chasing `prey` in sight of it: the pair's shared eyes.
+## Whether a companion is chasing `prey` in sight of it: the party's shared eyes.
 func _mate_sees(world, prey) -> bool:
-	var mate = _pair_mate(world)
-	return mate != null and mate.target_agent_id == prey.id and mate.state in PAIR_SIGHT_STATES
+	return not _party_on(world, prey, PAIR_SIGHT_STATES).is_empty()
 
 
-## Whether the mate is on `prey` too, close enough to strike with this one.
+## How many companions are on `prey` too, close enough to strike with this one.
+func _helpers_at_the_prey(world, prey) -> int:
+	var close := float(perception.get("attack_radius", 60.0)) * float(_party_config().get("close_partner_attack_radii", 1.5))
+	var helpers := 0
+	for companion in _party_on(world, prey, CHASE_STATES):
+		if companion.position.distance_squared_to(prey.position) <= close * close:
+			helpers += 1
+	return helpers
+
+
+## Whether the mate (or one of the pack) is on `prey` too, close enough to strike with this one.
 func _mate_at_the_prey(world, prey) -> bool:
-	var mate = _pair_mate(world)
-	if mate == null or mate.target_agent_id != prey.id or mate.state not in CHASE_STATES:
-		return false
-	var close := float(perception.get("attack_radius", 60.0)) * float(hunt.get("pair", {}).get("close_partner_attack_radii", 1.5))
-	return mate.position.distance_squared_to(prey.position) <= close * close
+	return _helpers_at_the_prey(world, prey) > 0
 
 
-## This one's part in a hunt of `prey` with its mate: the farther from the prey when they first
-## hunt it together cuts it off ("flank"), the nearer drives it ("drive"); "" hunting alone.
-## The higher id flanks on a tie. Settled once per prey and kept, so the two do not swap.
+## This one's part in a hunt of `prey` with its companions: the nearest to the prey when they
+## first hunt it together drives it ("drive"), the others cut it off ("flank"); "" hunting
+## alone. Its rank - how many of them were nearer, the lower id first on a tie - is kept in
+## `_pair_rank`: a pack's flankers fan out by it (`_flank_target()`). Settled once per prey and
+## kept, so they do not swap.
 func _pair_role_for(world, prey) -> String:
-	var mate = _pair_mate(world)
-	if mate == null or mate.target_agent_id != prey.id or mate.state not in CHASE_STATES:
+	var party := _party_on(world, prey, CHASE_STATES)
+	if party.is_empty():
 		return ""
 	if _pair_role_prey_id == prey.id and _pair_role != "":
 		return _pair_role
 	var mine := position.distance_squared_to(prey.position)
-	var theirs: float = mate.position.distance_squared_to(prey.position)
-	_pair_role = "flank" if mine > theirs or (mine == theirs and id > mate.id) else "drive"
+	var rank := 0
+	for companion in party:
+		var theirs: float = companion.position.distance_squared_to(prey.position)
+		if theirs < mine or (theirs == mine and companion.id < id):
+			rank += 1
+	_pair_role = "flank" if rank > 0 else "drive"
+	_pair_rank = rank
 	_pair_role_prey_id = prey.id
 	if _pair_role == "flank":
-		world.emit_event("PairHunt", self, prey.id, {"mate": mate.id})
+		var data := {"mate": party[0].id} if group_id < 0 or hunt.get("pack", {}).is_empty() \
+			else {"pack": group_id, "rank": rank}
+		world.emit_event("PairHunt", self, prey.id, data)
 	return _pair_role
+
+
+## Where a flanker of `prey` runs (`flank_point()`): the driver the companion nearest the prey;
+## a fox to its own side, a pack's flankers fanned out by rank - the odd ones to one side, the
+## even to the other, each pair farther out.
+func _flank_target(world, prey) -> Vector2:
+	var config := _party_config()
+	var attack_radius := float(perception.get("attack_radius", 60.0))
+	var driver_position: Vector2 = prey.position
+	var nearest := INF
+	for companion in _party_on(world, prey, CHASE_STATES):
+		var distance: float = companion.position.distance_squared_to(prey.position)
+		if distance < nearest:
+			nearest = distance
+			driver_position = companion.position
+	var lateral := attack_radius * float(config.get("lateral_attack_radii", 2.0))
+	var side := 0.0
+	if group_id >= 0 and not hunt.get("pack", {}).is_empty():
+		lateral *= ceilf(float(_pair_rank) / 2.0)
+		side = 1.0 if _pair_rank % 2 == 1 else -1.0
+	return flank_point(prey.position, prey.velocity, driver_position, position,
+		float(movement.get("sprint_speed", 128.0)), lateral, float(config.get("lead_max_seconds", 1.5)), side)
 
 
 ## Where a flanker runs to cut a prey off: ahead of it by the time the flanker needs to get
 ## there (the intercept of `prey_pos + prey_velocity * t` at `speed`, no further ahead than
-## `lead_max` seconds), and out to the flanker's side by `lateral`, the offset fading as it
-## closes in - so the prey, running from the driver, runs at it. Pure, with no path search: the
-## way there is found as for any chase target.
+## `lead_max` seconds), and out to the flanker's side - or `side_given`, 1 or -1 - by `lateral`,
+## the offset fading as it closes in - so the prey, running from the driver, runs at it. Pure,
+## with no path search: the way there is found as for any chase target.
 static func flank_point(prey_pos: Vector2, prey_velocity: Vector2, driver_pos: Vector2, flanker_pos: Vector2,
-		speed: float, lateral: float, lead_max: float) -> Vector2:
+		speed: float, lateral: float, lead_max: float, side_given: float = 0.0) -> Vector2:
 	var heading := prey_velocity.normalized() if prey_velocity.length_squared() > 1.0 else (prey_pos - driver_pos).normalized()
 	if heading.length_squared() < 0.0001:
 		heading = Vector2.RIGHT
@@ -370,7 +469,7 @@ static func flank_point(prey_pos: Vector2, prey_velocity: Vector2, driver_pos: V
 	if not is_finite(t):
 		t = rel.length() / maxf(1.0, speed)
 	t = minf(t, lead_max)
-	var side := signf(heading.cross(flanker_pos - prey_pos))
+	var side := side_given if side_given != 0.0 else signf(heading.cross(flanker_pos - prey_pos))
 	if side == 0.0:
 		side = 1.0
 	var fading := clampf(rel.length() / maxf(1.0, lateral * 3.0), 0.0, 1.0)
@@ -443,7 +542,9 @@ func _attack(world, prey, delta: float) -> bool:
 		move_with_vector(world, Steering.seek(position, prey.position), float(movement.get("sprint_speed", 128.0)), delta)
 		return true
 
-	var with_mate := _mate_at_the_prey(world, prey)
+	# A pack's blow is surer for every one of it at the prey, up to `max_helpers` (one for a pair).
+	var helpers := mini(_helpers_at_the_prey(world, prey), int(_party_config().get("max_helpers", 1)))
+	var with_mate := helpers > 0
 	world.emit_event("AttackAttempt", self, prey.id, {"pair": true} if with_mate else {})
 	set_state("attack", world.current_tick)
 	attack_cooldown = float(feeding.get("attack_cooldown", 1.0))
@@ -459,7 +560,7 @@ func _attack(world, prey, delta: float) -> bool:
 	chance += isolation * float(attack_config.get("prey_isolation_bonus", 0.2))
 	chance -= prey_speed_ratio * float(attack_config.get("prey_escape_penalty", 0.16))
 	if with_mate:
-		chance += float(hunt.get("pair", {}).get("attack_bonus", 0.12))
+		chance += float(_party_config().get("attack_bonus", 0.12)) * float(helpers)
 	chance = clampf(chance, 0.08, 0.92)
 
 	if world.rng.randf() <= chance:
@@ -471,7 +572,7 @@ func _attack(world, prey, delta: float) -> bool:
 		if with_mate:
 			success_data["pair"] = true
 		world.emit_event("PredationSuccess", self, prey.id, success_data)
-		world.kill_agent(prey, "predation", id)
+		world.kill_agent(prey, "predation", id, {"pair": true} if with_mate else {})
 		var carcass: Dictionary = world.find_carcass_by_source_agent(prey.id)
 		target_agent_id = -1
 		_reset_search_state()
@@ -564,7 +665,8 @@ func _attempt_reproduce(world, delta: float) -> bool:
 	var center: Vector2 = position.lerp(chosen_mate.position, 0.5)
 	for young in range(granted):
 		var child_position: Vector2 = world.clamp_position(center + world.random_unit_vector() * float(reproduction.get("offspring_spawn_radius", 20.0)))
-		world.queue_spawn_agent(species_type, child_position, -1, self, chosen_mate, young)
+		# Into its parents' pack, for a species in packs; a fox's group is none.
+		world.queue_spawn_agent(species_type, child_position, group_id, self, chosen_mate, young)
 
 	set_state("reproduce", world.current_tick)
 	chosen_mate.set_state("reproduce", world.current_tick)
@@ -629,8 +731,10 @@ func _execute_selected_action(world, delta: float, action_name: StringName, snap
 
 
 func _patrol(world, delta: float) -> void:
-	var entering_patrol: bool = state != "patrol"
-	set_state("patrol", world.current_tick)
+	# Making for a territory of its own (`_seek_ground()`) is a patrol with that for its goal.
+	var patrol_state := "disperse" if _making_for != -1 else "patrol"
+	var entering_patrol: bool = state != patrol_state
+	set_state(patrol_state, world.current_tick)
 	# Keep the static patrol route across ticks. Clearing it here forced the same
 	# scenery and terrain checks to be rebuilt eighteen times per second.
 	if entering_patrol or target_agent_id != -1 or target_carcass_id != -1:
@@ -671,11 +775,33 @@ func _resolve_patrol_goal(world) -> Variant:
 		return _patrol_goal
 	_patrol_goal_tick = world.current_tick
 	_patrol_goal = null
+	if _making_for != -1:
+		var den: Vector2 = world.territory_registry(species_type).get_territory(_making_for)["den"]
+		if not is_unreachable(place_key(den), world.current_time):
+			_patrol_goal = den
+			return _patrol_goal
 	var starvation_threshold := float(balance.get("lifecycle", {}).get("starvation_death_threshold", need_max))
 	var hunger_headroom := maxf(1.0, starvation_threshold - hunger) / maxf(0.01, float(metabolism.get("hunger_rate", 1.6)) * trait_hunger)
 	var reach := maxf(hunger_headroom * float(movement.get("max_speed", 84.0)) * trait_speed * 0.6,
 		float(perception.get("vision_radius", 240.0)) * trait_vision * 2.0)
-	var goal: Dictionary = world.find_prey_pressure_goal(position, reach)
+	# A holder keeps to its territory, sweeping it by a ring round the den where it holds no prey;
+	# one without keeps off everyone's. Hunger past `trespass_hunger` lifts both.
+	var ground := _home_ground(world)
+	var keep := Callable()
+	if not ground.is_empty():
+		keep = func(center: Vector2) -> bool: return not _past_border(ground, center)
+	elif not territory.is_empty() and hunger < float(territory.get("trespass_hunger", 70.0)) \
+			and world.territory_registry(species_type) != null:
+		var registry: TerritoryRegistry = world.territory_registry(species_type)
+		keep = func(center: Vector2) -> bool: return registry.held_at(center) == -1
+	var goal: Dictionary = world.find_prey_pressure_goal(position, reach, false, keep)
+	if goal.is_empty() and not ground.is_empty():
+		var angle: float = TAU * world._dormant_hash_unit(id, world.current_tick / refresh_ticks)
+		_patrol_goal = Vector2(ground["den"]) + Vector2.from_angle(angle) * float(ground["radius"]) \
+			* float(territory.get("ring_radii", 0.7))
+		return _patrol_goal
+	if goal.is_empty() and keep.is_valid():
+		goal = world.find_prey_pressure_goal(position, INF, false, keep)
 	if goal.is_empty():
 		# Nothing inside the hunger budget, so aim at the best prey concentration
 		# on the map regardless of whether the clock can pay for it. Letting the
@@ -728,7 +854,8 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 	var vision_radius: float = world.perception_radius(self, "vision_radius", 240.0)
 	# The mate's prey, seen by it and near enough, before any of its own (`hunt.pair`).
 	var shared = _mates_prey(world, vision_radius)
-	if shared != null:
+	var ground := _home_ground(world)
+	if shared != null and not _past_border(ground, shared.position):
 		return shared
 	if prey_candidates.is_empty():
 		prey_candidates = world.query_agents_multi(position, vision_radius, world.species_registry.prey_set(species_type), id)
@@ -751,6 +878,8 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 	var best_prey: AgentBase = null
 	for prey in prey_candidates:
 		if (prey.id == abandoned_prey_id and world.current_time < retry_after) or not world.can_see(self, prey, vision_radius):
+			continue
+		if _past_border(ground, prey.position):
 			continue
 		var distance_sq: float = position.distance_squared_to(prey.position)
 		# A rare prey is looked for less (`WorldState.prey_preference()`): noticed only within
@@ -836,6 +965,7 @@ func _regroup_with_kin(world, delta: float) -> bool:
 func _find_viable_mate(world, require_reproduction_ready: bool, mates: Array = []) -> AgentBase:
 	var preferred_mate: AgentBase = _get_preferred_mate(world)
 	if _is_valid_mate_candidate(world, preferred_mate, require_reproduction_ready):
+		_settle_with(world, preferred_mate)
 		return preferred_mate
 
 	if mates.is_empty():
@@ -858,6 +988,7 @@ func _find_viable_mate(world, require_reproduction_ready: bool, mates: Array = [
 
 	if chosen_mate != null:
 		_set_mutual_preferred_mate(chosen_mate)
+		_settle_with(world, chosen_mate)
 	return chosen_mate
 
 
@@ -869,7 +1000,10 @@ func _get_preferred_mate(world) -> AgentBase:
 		clear_preferred_mate()
 		return null
 	var break_radius: float = float(reproduction.get("preferred_mate_break_radius", 640.0))
-	if position.distance_squared_to(mate.position) > break_radius * break_radius:
+	# Two holding one territory stay mates however far apart they range over it.
+	var co_holders: bool = not territory.is_empty() and world.territory_of(species_type, id) != -1 \
+		and world.territory_registry(species_type).partner_of(id) == mate.id
+	if not co_holders and position.distance_squared_to(mate.position) > break_radius * break_radius:
 		clear_preferred_mate()
 		return null
 	return mate
@@ -882,7 +1016,43 @@ func _is_valid_mate_candidate(world, candidate, require_reproduction_ready: bool
 		return false
 	if require_reproduction_ready and not world.can_breed(candidate):
 		return false
+	if not territory.is_empty() and _ground_to_share(world, candidate) == -1:
+		return false
 	return true
+
+
+## With territories, mates are the two holding one: the territory `candidate` and this one would
+## hold together - the one they hold, or the one either holds with the other's slot open and
+## the other not born on it - or -1, as for two with none (vagrants do not breed).
+func _ground_to_share(world, candidate) -> int:
+	var registry: TerritoryRegistry = world.territory_registry(species_type)
+	if registry == null:
+		return -1
+	var mine := registry.territory_of(id)
+	var theirs := registry.territory_of(candidate.id)
+	if mine != -1 and mine == theirs:
+		return mine
+	if mine != -1 and theirs == -1 and candidate.natal_territory_id != mine \
+			and int(registry.get_territory(mine)[TerritoryRegistry._slot(candidate.sex)]) == TerritoryRegistry.NOBODY:
+		return mine
+	if mine == -1 and theirs != -1 and natal_territory_id != theirs \
+			and int(registry.get_territory(theirs)[TerritoryRegistry._slot(sex)]) == TerritoryRegistry.NOBODY:
+		return theirs
+	return -1
+
+
+## A mate chosen with territories: the one of the two without a territory takes its slot in the
+## other's.
+func _settle_with(world, mate) -> void:
+	if territory.is_empty() or mate == null:
+		return
+	var shared := _ground_to_share(world, mate)
+	if shared == -1:
+		return
+	for partner in [self, mate]:
+		if world.territory_of(species_type, partner.id) == -1:
+			world.claim_territory(partner, shared)
+			partner._making_for = -1
 
 
 func _set_mutual_preferred_mate(mate: AgentBase) -> void:
@@ -1070,16 +1240,86 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 	return not herbivores.is_empty()
 
 
+## Without a territory and old enough to leave its parents' (`territory.dispersal_age_seconds`):
+## every `look_seconds` it picks the nearest territory with its slot open - not the one it was
+## born on - and makes for it ("disperse", `_resolve_patrol_goal()`); within `claim_radii` of
+## the den it takes the slot, and the one holding the other is its mate. With none open it is
+## a vagrant, and looks again.
+func _seek_ground(world) -> void:
+	if territory.is_empty() or age < float(territory.get("dispersal_age_seconds", 240.0)):
+		return
+	var registry: TerritoryRegistry = world.territory_registry(species_type)
+	if registry == null or registry.territory_of(id) != -1:
+		_making_for = -1
+		return
+	# Grown, one of a pack that does not lead it leaves to find its own.
+	if group_id >= 0 and world.species_registry.social(species_type) == SpeciesRegistry.SOCIAL_PACK:
+		world.leave_pack(self)
+	if _making_for != -1:
+		if int(registry.get_territory(_making_for)[TerritoryRegistry._slot(sex)]) != TerritoryRegistry.NOBODY:
+			_making_for = -1
+		elif registry.inside(_making_for, position, float(territory.get("claim_radii", 0.5))) \
+				and world.claim_territory(self, _making_for):
+			_making_for = -1
+			var partner = world.get_agent(registry.partner_of(id))
+			if partner != null and partner.is_alive:
+				_set_mutual_preferred_mate(partner)
+			return
+	if _making_for == -1 and world.current_time - _looked_for_ground_at >= float(territory.get("look_seconds", 2.0)):
+		_looked_for_ground_at = world.current_time
+		_making_for = registry.open_slot_near(position, sex, natal_territory_id)
+		# The first time it sets out: what the feed tells (`DispersalStarted`).
+		if _making_for != -1 and not _set_out:
+			_set_out = true
+			world.emit_event("DispersalStarted", self, -1, {"territory_id": _making_for})
+
+
+## The territory it holds, or lives on, while not hungry enough to leave it
+## (`territory.trespass_hunger`): the ground it hunts and patrols. Empty without one, or hungry.
+func _home_ground(world) -> Dictionary:
+	if territory.is_empty() or hunger >= float(territory.get("trespass_hunger", 70.0)):
+		return {}
+	var registry: TerritoryRegistry = world.territory_registry(species_type)
+	if registry == null:
+		return {}
+	var held := registry.territory_of(id)
+	# One of a pack keeps to the pack's ground, though it is its leaders who hold it; a young one
+	# to its birthplace until it is of age to leave, as it does asleep (`_record_territory()`).
+	if held == -1 and group_id >= 0:
+		held = registry.territory_of_group(group_id)
+	if held == -1 and age < float(territory.get("dispersal_age_seconds", 240.0)):
+		held = natal_territory_id
+	return registry.get_territory(held)
+
+
+## Whether `point` is past the edge of the ground it keeps to (`territory.border_slack` radii
+## of the den); never without a home ground.
+func _past_border(ground: Dictionary, point: Vector2) -> bool:
+	if ground.is_empty():
+		return false
+	var reach: float = float(ground["radius"]) * float(territory.get("border_slack", 1.15))
+	return point.distance_squared_to(ground["den"]) > reach * reach
+
+
 func _update_kin_state(world) -> void:
 	var live_kin: Array = []
 	var kin_center := Vector2.ZERO
+	# With territories a young one leaves its parents' at the age it looks for its own, and they
+	# it: past that, of its kin only its mate counts.
+	var grown := -1.0 if territory.is_empty() else float(territory.get("dispersal_age_seconds", 240.0))
 	for kin_id in kin_ids:
 		var kin_agent: AgentBase = world.get_agent(int(kin_id))
 		if kin_agent == null or not kin_agent.is_alive or kin_agent.species_type != species_type:
 			continue
+		if grown >= 0.0 and kin_agent.id != preferred_mate_id and age >= grown and kin_agent.age >= grown:
+			continue
 		live_kin.append(kin_agent.id)
 		kin_center += kin_agent.position
 	kin_ids = live_kin
+	# One of a pack keeps with its pack, the others' centre.
+	if group_id >= 0:
+		last_known_kin_center = world.get_group_center(group_id, species_type, id)
+		return
 	if kin_ids.is_empty():
 		last_known_kin_center = null
 		return

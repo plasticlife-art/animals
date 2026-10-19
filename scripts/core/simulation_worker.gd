@@ -20,6 +20,10 @@ var _grass_was_included: bool = false
 ## The `PlayerState.revision` the view last received: a frame carries the player's state when
 ## it moved, and a full snapshot always.
 var _sent_player_revision: int = 0
+## The same for the territories (`WorldState.territories_revision()`).
+var _sent_territories_revision: int = 0
+## And for the herds' seasonal pastures (`WorldState.herd_pastures_revision`).
+var _sent_pastures_revision: int = 0
 
 func configure(source_world: WorldState, source_stats: StatsSystem, source_events: EventBus, source_rng: RandomNumberGenerator) -> void:
 	world = source_world
@@ -38,6 +42,8 @@ func configure(source_world: WorldState, source_stats: StatsSystem, source_event
 	_grass_was_included = false
 	# The view's world is built from this one's `export_state()`, the player's state with it.
 	_sent_player_revision = world.player.revision
+	_sent_territories_revision = world.territories_revision()
+	_sent_pastures_revision = world.herd_pastures_revision
 	world.resource_system.track_dirty_cells = false
 	world.resource_system.clear_dirty_cells()
 	events.event_emitted.connect(_collect_event)
@@ -150,6 +156,13 @@ func _presentation_state(inspected_id: int, full: bool, include_grass: bool, ful
 	if full or world.player.revision != _sent_player_revision:
 		result["player"] = world.player.presentation_block()
 		_sent_player_revision = world.player.revision
+	# The territories (`TerritoryRegistry`), whole, the same way.
+	if not world.territories.is_empty() and (full or world.territories_revision() != _sent_territories_revision):
+		result["territories"] = world.territories_presentation_block()
+		_sent_territories_revision = world.territories_revision()
+	if full or world.herd_pastures_revision != _sent_pastures_revision:
+		result["herd_pastures"] = world.herd_pastures.duplicate(true)
+		_sent_pastures_revision = world.herd_pastures_revision
 	result["snapshot_counts"] = {"agents": records.size(),
 		"agent_removals": agent_removals.size(),
 		"carcasses": carcass_delta.upserts.size(),

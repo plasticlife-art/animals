@@ -22,6 +22,8 @@ const VALUE_COLUMN := 74.0
 const BAR_LABELS := ["Силы", "Сытость", "Вода"]
 
 var simulation_manager: SimulationManager
+## The world's place names (`StoryBook.places`), for where the herd's pastures are.
+var places = null
 var losses = HerdLossLogScript.new()
 ## What the card shows now (`HerdReadout.summarize()`), empty while hidden.
 var summary: Dictionary = {}
@@ -33,6 +35,7 @@ var _counts: Label
 var _bars_view: Control
 var _hunt: Label
 var _loss: Label
+var _pasture: Label
 var _follow: Button
 
 
@@ -60,6 +63,10 @@ func _init() -> void:
 	box.add_child(_hunt)
 	_loss = Label.new()
 	box.add_child(_loss)
+	# Only for a herd that remembers a pasture for the season (`herd.migration.seasonal`).
+	_pasture = Label.new()
+	_pasture.visible = false
+	box.add_child(_pasture)
 	_follow = Button.new()
 	_follow.toggle_mode = true
 	_follow.pressed.connect(_on_follow_pressed)
@@ -147,6 +154,8 @@ func refresh() -> void:
 	_hunt.text = HerdReadoutScript.hunters_text(int(summary["hunters"]))
 	_loss.text = HerdReadoutScript.loss_text(losses.last_loss(species, group_id), simulation_manager.simulation_time)
 	_follow.text = HerdReadoutScript.follow_text(species)
+	_pasture.text = HerdReadoutScript.pasture_text(world, places, species, group_id)
+	_pasture.visible = _pasture.text != ""
 	_counts.tooltip_text = HerdReadoutScript.traits_tooltip(summary) \
 		if bool(agent.trait_settings.get("enabled", false)) else ""
 	# The herd's means against the selected animal's own limits: one species, one set.

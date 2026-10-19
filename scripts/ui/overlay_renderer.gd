@@ -43,6 +43,8 @@ func _draw() -> void:
 		_draw_grass_density(world, visible_rect)
 	if bool(debug_flags.get("show_fear", false)):
 		_draw_fear(world, visible_rect)
+	if bool(debug_flags.get("show_territories", false)):
+		_draw_territories(world, visible_rect)
 	if bool(debug_flags.get("show_water_overlay", true)):
 		_draw_water(world, visible_rect)
 	if bool(debug_flags.get("show_carcasses", false)):
@@ -168,6 +170,27 @@ func _draw_fear(world, visible_rect: Rect2) -> void:
 		if not rect.intersects(visible_rect):
 			continue
 		_draw_world_cell(rect, Color(0.78, 0.16, 0.12, clampf(risk, 0.0, 1.0) * 0.4))
+
+
+## Each territory (`TerritoryRegistry`) as a ring round its den in its species' colour: full
+## where a pair holds it, faint where one does, grey and thin where none does; the den a dot.
+func _draw_territories(world, visible_rect: Rect2) -> void:
+	var visuals: Dictionary = world.config_bundle.get("visuals", {}).get("species", {})
+	# Two screen pixels wide however far out the camera is.
+	var camera := _get_game_camera()
+	var pixel := 1.0 / maxf(0.01, camera.zoom.x) if camera != null else 1.0
+	for species_key in world.territories.keys():
+		var colour_values: Array = visuals.get(species_key, {}).get("ui_color", [0.9, 0.5, 0.3])
+		var colour := Color(float(colour_values[0]), float(colour_values[1]), float(colour_values[2]))
+		for territory in world.territories[species_key].territories:
+			var den: Vector2 = territory["den"]
+			var radius := float(territory["radius"])
+			if not Rect2(den - Vector2.ONE * radius, Vector2.ONE * radius * 2.0).intersects(visible_rect):
+				continue
+			var holders := int(int(territory["male"]) != -1) + int(int(territory["female"]) != -1)
+			var ring := colour if holders == 2 else (Color(colour, 0.5) if holders == 1 else Color(0.6, 0.6, 0.6, 0.35))
+			_draw_world_ring(den, radius, ring, pixel * (2.0 if holders > 0 else 1.0), 48)
+			_draw_world_disc(den, pixel * 4.0, ring)
 
 
 func _draw_biomes(world, visible_rect: Rect2) -> void:
