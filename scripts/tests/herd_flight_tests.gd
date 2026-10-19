@@ -2,8 +2,9 @@ extends RefCounted
 
 ## Herd flight (`species.herbivore.herd.flight`, `WorldState.raise_herd_alarm()`): a fox seen by one
 ## deer alarms its herd, the near first; the herd runs together for one point; no `rng` is drawn;
-## the alarm is saved; the worker steps it as an inline tick does; and without the block every
-## deer flees for itself, as before.
+## the alarm is saved; the worker steps it as an inline tick does; with `raised_by` "hunting"
+## only a hunter on the hunt alarms the herd; and without the block every deer flees for itself,
+## as before.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const AT := Vector2(1500.0, 1500.0)
@@ -22,6 +23,7 @@ func run(a) -> void:
 	_test_the_herd_runs_together(a)
 	_test_no_rng_and_the_alarm_is_saved(a)
 	_test_the_worker_runs_it_alike(a)
+	_test_only_a_hunter_alarms_the_herd(a)
 
 
 static func _bundle(seed: int, flight: bool) -> Dictionary:
@@ -153,3 +155,19 @@ func _test_the_worker_runs_it_alike(a) -> void:
 	a.equal(threaded[0].rng.state, inline[0].rng.state, "with the shared stream drawn alike")
 	Helpers.destroy_manager(threaded[0])
 	Helpers.destroy_manager(inline[0])
+
+
+## `raised_by` "hunting": a fox walking by alarms no herd; one on the hunt does.
+func _test_only_a_hunter_alarms_the_herd(a) -> void:
+	var made: Array = _world(9975, true)
+	var world = made[0].world_state
+	world.config_bundle["species"]["herbivore"]["herd"]["flight"]["raised_by"] = "hunting"
+	var deer = made[1][0]
+	var fox = made[2]
+	fox.state = "patrol"
+	world.raise_herd_alarm(deer, [fox])
+	a.is_true(world.herd_alarms.is_empty(), "a fox walking by alarms no one but who sees it")
+	fox.state = "chase"
+	world.raise_herd_alarm(deer, [fox])
+	a.equal(world.herd_alarms.size(), 1, "a fox on the hunt alarms the herd")
+	Helpers.destroy_manager(made[0])

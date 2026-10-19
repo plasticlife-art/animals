@@ -3859,8 +3859,14 @@ func raise_herd_alarm(agent, predators: Array) -> void:
 		return
 	var threats: Array[Vector2] = []
 	var nearest := Vector2.INF
+	# `raised_by` "hunting": only a hunter on the hunt alarms the herd. A fed fox walking by is run
+	# from by those who see it, as every herd did; alarmed by every one, whole herds stood in
+	# flight instead of grazing and drinking, and died of thirst and hunger.
+	var hunting_only := str(flight.get("raised_by", "any")) == "hunting"
 	for predator in predators:
 		if predator == null or not predator.is_alive:
+			continue
+		if hunting_only and predator.state not in Predator.CHASE_STATES:
 			continue
 		threats.append(predator.position)
 		if not nearest.is_finite() or agent.position.distance_squared_to(predator.position) < agent.position.distance_squared_to(nearest):
