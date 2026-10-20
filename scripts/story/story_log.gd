@@ -148,6 +148,9 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 			_name(killer)]
 	elif cause == "predation":
 		text = "%s, %s от хищника%s" % [who, HudTextScript.verb(sex, "погиб", "погибла"), where]
+	elif cause == "emigrated":
+		text = "%s, не %s своего участка и %s с карты%s" % [who, HudTextScript.verb(sex, "нашёл", "нашла"),
+			HudTextScript.verb(sex, "ушёл", "ушла"), where]
 	else:
 		text = "%s, %s от %s%s" % [who, HudTextScript.verb(sex, "умер", "умерла"),
 			str(HudTextScript.CAUSES_FROM.get(cause, cause)), where]

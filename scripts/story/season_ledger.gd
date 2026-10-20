@@ -15,7 +15,7 @@ extends RefCounted
 const ClimateScript := preload("res://scripts/world/climate.gd")
 ## Closed seasons kept: fifty years.
 const MAX_SEASONS := 200
-const CAUSES := ["predation", "starvation", "thirst", "old_age", "culled"]
+const CAUSES := ["predation", "starvation", "thirst", "old_age", "culled", "emigrated"]
 
 ## The season being counted: `{ordinal, start, partial, populations, births, deaths, kills,
 ## dried, refilled}`; empty before the first `observe()` or with the clock off.

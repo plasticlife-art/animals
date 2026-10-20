@@ -2,7 +2,7 @@ class_name StatsSystem
 extends RefCounted
 
 ## Every way an animal dies, as the deaths' `cause` names it; the player's cull last.
-const DEATH_CAUSES := ["starvation", "thirst", "predation", "old_age", "culled"]
+const DEATH_CAUSES := ["starvation", "thirst", "predation", "old_age", "culled", "emigrated"]
 
 const TraitsScript := preload("res://scripts/agents/traits.gd")
 
@@ -20,6 +20,8 @@ var counters := {
 	"deaths_old_age": 0,
 	# The player's «Отстрел» (`WorldState._command_cull()`).
 	"deaths_culled": 0,
+	# A vagrant that found no territory and left the map (`territory.emigrate_after_seconds`).
+	"deaths_emigrated": 0,
 	"water_events": 0,
 	"grass_events": 0,
 	# Herds setting out for fresh pasture (`WorldState._update_herd_migrations()`).
@@ -379,6 +381,8 @@ func _on_event_emitted(event: Dictionary) -> void:
 					counters["deaths_old_age"] += 1
 				"culled":
 					counters["deaths_culled"] += 1
+				"emigrated":
+					counters["deaths_emigrated"] += 1
 			_count_death_detail(cause, species, bool(data.get("dormant", false)))
 		"HerdMigrates":
 			counters["herd_migrations"] += 1

@@ -139,7 +139,9 @@ METRICS = [
     ("tick_p95", "tick p95, ms", lambda r: r["tick_ms"]["p95"]),
     ("tick_p95_spring", "tick p95 per minute in spring, ms", lambda r: season_tick_p95(r, "spring")),
     ("tick_p95_autumn", "tick p95 per minute in autumn, ms", lambda r: season_tick_p95(r, "autumn")),
-    ("species_lost", "species lost", lambda r: sum(1 for count in r["population"].values() if int(count) == 0)),
+    # A species that was never there (wolves, unless the setup asks for them) is not lost.
+    ("species_lost", "species lost", lambda r: sum(1 for species, count in r["population"].items()
+        if int(count) == 0 and int(r.get("initial_population", {}).get(species, 1)) > 0)),
     ("herbivore_min", "herbivores, lowest", lambda r: r["population_min"]["herbivore"]),
     ("predator_min", "predators, lowest", lambda r: r["population_min"]["predator"]),
     ("scavenger_min", "scavengers, lowest", lambda r: r["population_min"]["scavenger"]),

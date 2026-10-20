@@ -8,7 +8,8 @@ extends RefCounted
 ## edge; mates are the two holding one territory, and vagrants do not breed; a young one of
 ## age makes for an open territory not its birthplace and takes it. Asleep the same: a pair
 ## sleeps as its territory's group and keeps to it, drawing nothing from the stream; only
-## holders breed; and a vagrant of age settles where a slot is open. The feed tells, in view: a
+## holders breed; and a vagrant of age settles where a slot is open. One that finds none open
+## for `emigrate_after_seconds` leaves the map, awake or asleep, with no body. The feed tells, in view: a
 ## pair taking a territory, a young one setting out, a kill by a pair, a herd going back to its
 ## season's pasture - and not one fox taking a slot alone.
 
@@ -31,6 +32,7 @@ func run(a) -> void:
 	_test_only_holders_breed_asleep(a)
 	_test_a_sleeping_vagrant_settles(a)
 	_test_the_feed_tells_it(a)
+	_test_a_vagrant_with_nowhere_leaves(a)
 
 
 static func _shipped(seed: int, territory: bool):
@@ -378,3 +380,30 @@ func _test_the_feed_tells_it(a) -> void:
 	log.hear(_event("HerdMigrates", -1, "herbivore", {"to_x": 900.0, "to_y": 900.0, "size": 9, "remembered": true,
 		"season": "summer", "group_id": 2}))
 	a.is_true(str(log.lines[0]["text"]).contains("идёт на летние угодья"), "a herd going back to its pasture (%s)" % str(log.lines[0]["text"]))
+
+
+func _test_a_vagrant_with_nowhere_leaves(a) -> void:
+	for asleep in [false, true]:
+		var manager = _small(9998 + int(asleep), true)
+		var world = manager.world_state
+		world.config_bundle["species"]["predator"]["territory"]["emigrate_after_seconds"] = 10.0
+		var registry: TerritoryRegistry = world.territory_registry("predator")
+		for territory in registry.territories:
+			registry.claim(int(territory["id"]), 50000 + int(territory["id"]), AgentBaseScript.SEX_FEMALE)
+		var den: Vector2 = registry.get_territory(0)["den"]
+		var vagrant = _fox(world, den, AgentBaseScript.SEX_FEMALE)
+		vagrant.territory["emigrate_after_seconds"] = 10.0
+		var carcasses: int = world.carcasses.size()
+		if asleep:
+			var sector_key: Vector2i = world._get_sector_key(den)
+			world._sleep_sector(sector_key)
+			_coarse_steps(world, sector_key, 20)
+			a.is_true(not _records(world, sector_key).has(vagrant.id), "asleep, with nowhere open it leaves after a while")
+		else:
+			for step in range(20):
+				world.current_time += 1.0
+				vagrant._seek_ground(world)
+			a.is_true(not vagrant.is_alive, "with nowhere open it leaves the map after a while")
+		a.equal([int(manager.stats_system.counters.get("deaths_emigrated", 0)), world.carcasses.size()], [1, carcasses],
+			"counted as gone, with no body%s" % (" (asleep)" if asleep else ""))
+		Helpers.destroy_manager(manager)

@@ -21,10 +21,10 @@ const BIOMES := {"meadow": "Луг", "forest": "Лес", "drought": "Засух�
 ## The biomes the strip reports, in the order it reports them.
 const BIOME_ORDER := ["meadow", "forest", "drought", "swamp"]
 const CAUSES := {"starvation": "голод", "thirst": "жажда", "predation": "хищник", "old_age": "старость",
-	"culled": "отстрел"}
+	"culled": "отстрел", "emigrated": "ушли"}
 ## «умер от …»: the cause after «от».
 const CAUSES_FROM := {"starvation": "голода", "thirst": "жажды", "predation": "хищника", "old_age": "старости",
-	"culled": "отстрела"}
+	"culled": "отстрела", "emigrated": "скитаний"}
 
 ## The animal each species is drawn as, by sex and for a young one, all of them («олени»), and
 ## the forms a count takes: one, two to four, five and more (`plural()`).
@@ -245,6 +245,8 @@ static func traits_brief(values: Array) -> String:
 static func died(sex: String, cause: String) -> String:
 	if cause == "culled":
 		return verb(sex, "отстрелян", "отстреляна")
+	if cause == "emigrated":
+		return verb(sex, "ушёл", "ушла")
 	return verb(sex, "погиб", "погибла") if cause == "predation" else verb(sex, "умер", "умерла")
 
 

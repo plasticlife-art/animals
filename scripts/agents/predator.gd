@@ -22,6 +22,8 @@ var _making_for: int = -1
 var _looked_for_ground_at: float = -INF
 ## Whether it has set out for a territory of its own yet: told once.
 var _set_out: bool = false
+## Since when it has looked for a territory and found none open, or -1 (`emigrate_after_seconds`).
+var _homeless_since: float = -1.0
 ## In a hunt with its mate (`hunt.pair`): the prey the roles were settled for, and this one's -
 ## "drive" or "flank" - kept until that hunt ends.
 var _pair_role_prey_id: int = -1
@@ -64,6 +66,7 @@ func configure(
 	_making_for = -1
 	_looked_for_ground_at = -INF
 	_set_out = false
+	_homeless_since = -1.0
 	preferred_mate_id = -1
 	natal_territory_id = -1
 	target_carcass_id = -1
@@ -78,7 +81,9 @@ func tick(world, delta: float) -> void:
 		set_ai_state(AgentAIState.DEAD)
 		return
 	_update_kin_state(world)
-	_seek_ground(world)
+	if _seek_ground(world):
+		set_ai_state(AgentAIState.DEAD)
+		return
 
 	if interaction_timer > 0.0:
 		stop_motion(delta)
@@ -162,6 +167,7 @@ func export_runtime_state() -> Dictionary:
 	state_data["making_for"] = _making_for
 	state_data["looked_for_ground_at"] = _looked_for_ground_at
 	state_data["set_out"] = _set_out
+	state_data["homeless_since"] = _homeless_since
 	return state_data
 
 
@@ -197,6 +203,7 @@ func apply_runtime_state(state_data: Dictionary) -> void:
 	_making_for = int(state_data.get("making_for", -1))
 	_looked_for_ground_at = float(state_data.get("looked_for_ground_at", -INF))
 	_set_out = bool(state_data.get("set_out", false))
+	_homeless_since = float(state_data.get("homeless_since", -1.0))
 
 
 func _get_debug_target_text() -> String:
@@ -1244,14 +1251,16 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 ## every `look_seconds` it picks the nearest territory with its slot open - not the one it was
 ## born on - and makes for it ("disperse", `_resolve_patrol_goal()`); within `claim_radii` of
 ## the den it takes the slot, and the one holding the other is its mate. With none open it is
-## a vagrant, and looks again.
-func _seek_ground(world) -> void:
+## a vagrant, and looks again - until `emigrate_after_seconds` without one open, when it leaves
+## the map (true: gone, as a death of cause `emigrated`, with no body).
+func _seek_ground(world) -> bool:
 	if territory.is_empty() or age < float(territory.get("dispersal_age_seconds", 240.0)):
-		return
+		return false
 	var registry: TerritoryRegistry = world.territory_registry(species_type)
 	if registry == null or registry.territory_of(id) != -1:
 		_making_for = -1
-		return
+		_homeless_since = -1.0
+		return false
 	# Grown, one of a pack that does not lead it leaves to find its own.
 	if group_id >= 0 and world.species_registry.social(species_type) == SpeciesRegistry.SOCIAL_PACK:
 		world.leave_pack(self)
@@ -1264,7 +1273,7 @@ func _seek_ground(world) -> void:
 			var partner = world.get_agent(registry.partner_of(id))
 			if partner != null and partner.is_alive:
 				_set_mutual_preferred_mate(partner)
-			return
+			return false
 	if _making_for == -1 and world.current_time - _looked_for_ground_at >= float(territory.get("look_seconds", 2.0)):
 		_looked_for_ground_at = world.current_time
 		_making_for = registry.open_slot_near(position, sex, natal_territory_id)
@@ -1272,6 +1281,15 @@ func _seek_ground(world) -> void:
 		if _making_for != -1 and not _set_out:
 			_set_out = true
 			world.emit_event("DispersalStarted", self, -1, {"territory_id": _making_for})
+		if _making_for != -1:
+			_homeless_since = -1.0
+		elif _homeless_since < 0.0:
+			_homeless_since = world.current_time
+		elif territory.has("emigrate_after_seconds") \
+				and world.current_time - _homeless_since >= float(territory["emigrate_after_seconds"]):
+			world.kill_agent(self, "emigrated")
+			return true
+	return false
 
 
 ## The territory it holds, or lives on, while not hungry enough to leave it

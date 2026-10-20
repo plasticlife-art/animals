@@ -5010,6 +5010,7 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 	if int(aggregate.get("territory_id", -1)) >= 0 or int(aggregate.get("group_id", -1)) != -1:
 		return
 	var claim_reach := float(settings.get("claim_radii", 0.5))
+	var leaving := 0
 	for record in members:
 		if float(record.get("age", 0.0)) < grown or registry.territory_of(int(record.get("id", -1))) != -1:
 			continue
@@ -5017,7 +5018,16 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
 		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)))
 		if territory_id == -1:
+			# None open: it leaves the map after `emigrate_after_seconds`, as one awake does.
+			var since := float(record.get("homeless_since", -1.0))
+			if since < 0.0:
+				record["homeless_since"] = current_time
+			elif settings.has("emigrate_after_seconds") and not bool(record.get("emigrate", false)) \
+					and current_time - since >= float(settings["emigrate_after_seconds"]):
+				record["emigrate"] = true
+				leaving += 1
 			continue
+		record["homeless_since"] = -1.0
 		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex):
 			var partner := registry.partner_of(int(record.get("id", -1)))
 			if partner != -1:
@@ -5028,6 +5038,9 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 				{"territory_id": territory_id, "record_id": int(record.get("id", -1)), "partner_id": partner, "dormant": true})
 		elif not aggregate.has("disperse_den"):
 			aggregate["disperse_den"] = registry.get_territory(territory_id)["den"]
+	if leaving > 0:
+		aggregate["count"] = int(aggregate.get("count", 0)) - leaving
+		_queue_dormant_deaths(aggregate, "emigrated", leaving)
 
 
 ## A sleeping group's wander: round its den on a ring (`territory.ring_radii`), by a hash of
@@ -5962,7 +5975,8 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 
 
 ## The record a death of `cause` takes: nearest the hunters for predation, the
-## hungriest for starvation, the thirstiest for thirst, the oldest for old age. Ties
+## hungriest for starvation, the thirstiest for thirst, the oldest for old age, one marked
+## to leave for `emigrated`. Ties
 ## go to the lower id, so the choice never depends on array order or float noise.
 func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -> int:
 	var best_index := -1
@@ -5971,6 +5985,9 @@ func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -
 	var near: Vector2 = entry.get("near", Vector2.ZERO)
 	for index in range(candidates.size()):
 		var record: Dictionary = candidates[index]
+		# Leaving the map is the ones that gave up looking (`_settle_dormant_vagrants()`), no other.
+		if cause == "emigrated" and not bool(record.get("emigrate", false)):
+			continue
 		# Inherited traits weigh the choice, not the count: a slow, short-sighted animal is
 		# caught as if nearer and a short life ages first. Starvation needs nothing here: what
 		# traits cost is already in each record's hunger (`_dormant_trait_weigh()`).
