@@ -5016,20 +5016,21 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 			continue
 		var position: Vector2 = record.get("position", aggregate.get("center", Vector2.ZERO))
 		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
-		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)))
-		if territory_id == -1:
-			# None open: it leaves the map after `emigrate_after_seconds`, as one awake does.
-			var since := float(record.get("homeless_since", -1.0))
-			if since < 0.0:
-				record["homeless_since"] = current_time
-			elif settings.has("emigrate_after_seconds") and not bool(record.get("emigrate", false)) \
-					and current_time - since >= float(settings["emigrate_after_seconds"]):
+		# Looking for `emigrate_after_seconds` in all, it leaves the map, as one awake does.
+		var since := float(record.get("homeless_since", -1.0))
+		if since < 0.0:
+			record["homeless_since"] = current_time
+		elif settings.has("emigrate_after_seconds") and current_time - since >= float(settings["emigrate_after_seconds"]):
+			if not bool(record.get("emigrate", false)):
 				record["emigrate"] = true
 				leaving += 1
 			continue
-		record["homeless_since"] = -1.0
+		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)))
+		if territory_id == -1:
+			continue
 		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex):
 			var partner := registry.partner_of(int(record.get("id", -1)))
+			record["homeless_since"] = -1.0
 			if partner != -1:
 				record["preferred_mate_id"] = partner
 			if pack:

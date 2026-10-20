@@ -22,7 +22,7 @@ var _making_for: int = -1
 var _looked_for_ground_at: float = -INF
 ## Whether it has set out for a territory of its own yet: told once.
 var _set_out: bool = false
-## Since when it has looked for a territory and found none open, or -1 (`emigrate_after_seconds`).
+## Since when it has been looking for a territory of its own, or -1 (`emigrate_after_seconds`).
 var _homeless_since: float = -1.0
 ## In a hunt with its mate (`hunt.pair`): the prey the roles were settled for, and this one's -
 ## "drive" or "flank" - kept until that hunt ends.
@@ -1251,8 +1251,10 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 ## every `look_seconds` it picks the nearest territory with its slot open - not the one it was
 ## born on - and makes for it ("disperse", `_resolve_patrol_goal()`); within `claim_radii` of
 ## the den it takes the slot, and the one holding the other is its mate. With none open it is
-## a vagrant, and looks again - until `emigrate_after_seconds` without one open, when it leaves
-## the map (true: gone, as a death of cause `emigrated`, with no body).
+## a vagrant, and looks again - for `emigrate_after_seconds` in all, after which it leaves the map
+## (true: gone, as a death of cause `emigrated`, with no body). The clock runs from when it
+## began to look, open slots or not: one open slot drew a crowd of vagrants and only one took
+## it, so a clock that stopped while there was one to make for hardly ever ran out.
 func _seek_ground(world) -> bool:
 	if territory.is_empty() or age < float(territory.get("dispersal_age_seconds", 240.0)):
 		return false
@@ -1264,6 +1266,12 @@ func _seek_ground(world) -> bool:
 	# Grown, one of a pack that does not lead it leaves to find its own.
 	if group_id >= 0 and world.species_registry.social(species_type) == SpeciesRegistry.SOCIAL_PACK:
 		world.leave_pack(self)
+	if _homeless_since < 0.0:
+		_homeless_since = world.current_time
+	elif territory.has("emigrate_after_seconds") \
+			and world.current_time - _homeless_since >= float(territory["emigrate_after_seconds"]):
+		world.kill_agent(self, "emigrated")
+		return true
 	if _making_for != -1:
 		if int(registry.get_territory(_making_for)[TerritoryRegistry._slot(sex)]) != TerritoryRegistry.NOBODY:
 			_making_for = -1
@@ -1281,14 +1289,6 @@ func _seek_ground(world) -> bool:
 		if _making_for != -1 and not _set_out:
 			_set_out = true
 			world.emit_event("DispersalStarted", self, -1, {"territory_id": _making_for})
-		if _making_for != -1:
-			_homeless_since = -1.0
-		elif _homeless_since < 0.0:
-			_homeless_since = world.current_time
-		elif territory.has("emigrate_after_seconds") \
-				and world.current_time - _homeless_since >= float(territory["emigrate_after_seconds"]):
-			world.kill_agent(self, "emigrated")
-			return true
 	return false
 
 

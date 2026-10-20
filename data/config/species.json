@@ -422,7 +422,8 @@
       "dispersal_age_seconds": 480.0,
       "look_seconds": 2.0,
       "claim_radii": 0.5,
-      "ring_radii": 0.6
+      "ring_radii": 0.6,
+      "emigrate_after_seconds": 180.0
     }
   }
 }
