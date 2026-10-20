@@ -28,6 +28,8 @@ func run(a) -> void:
 
 static func _bundle(seed: int, flight: bool) -> Dictionary:
 	var bundle := Helpers.build_large_sector_bundle(seed)
+	# The shipped herds have flight; a test of the switch sets it as it needs.
+	bundle["species"]["herbivore"]["herd"].erase("flight")
 	if flight:
 		bundle["species"]["herbivore"]["herd"]["flight"] = FLIGHT.duplicate(true)
 	return bundle

@@ -29,6 +29,8 @@ func run(a) -> void:
 
 static func _world(seed: int, pair: bool):
 	var bundle := Helpers.build_large_sector_bundle(seed)
+	# The shipped foxes hunt as pairs; a test of the switch sets it as it needs.
+	bundle["species"]["predator"]["hunt"].erase("pair")
 	if pair:
 		bundle["species"]["predator"]["hunt"]["pair"] = PAIR.duplicate(true)
 	var manager = Helpers.create_manager_with(bundle, seed)

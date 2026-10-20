@@ -24,6 +24,16 @@
         "settle_seconds": 30.0,
         "exempt_hunger": 50.0,
         "follow_asleep": false
+      },
+      "flight": {
+        "alarm_radius_cells": 4.0,
+        "alarm_speed_cells": 6.0,
+        "hold_seconds": 2.5,
+        "escape_distance_cells": 3.5,
+        "exempt_thirst": 50.0,
+        "exempt_hunger": 60.0,
+        "raised_by": "hunting",
+        "dormant_catchability": 0.9
       }
     },
     "movement": {
@@ -168,7 +178,16 @@
       "lost_sight_search_seconds": 3.0,
       "search_radius_cells": 0.75,
       "retry_cooldown_seconds": 2.0,
-      "contact_slack": 5.0
+      "contact_slack": 5.0,
+      "pair": {
+        "join_vision_share": 1.5,
+        "lateral_attack_radii": 2.0,
+        "close_attack_radii": 2.5,
+        "lead_max_seconds": 1.5,
+        "attack_bonus": 0.12,
+        "close_partner_attack_radii": 1.5,
+        "dormant_kill_multiplier": 0.1
+      }
     },
     "reproduction": {
       "maturity_age": 20.0,
@@ -263,7 +282,16 @@
       "gorge_below_energy_threshold": true
     },
     "herd": {
-      "split_size": 20
+      "split_size": 20,
+      "flight": {
+        "alarm_radius_cells": 4.0,
+        "alarm_speed_cells": 6.0,
+        "hold_seconds": 2.5,
+        "escape_distance_cells": 3.5,
+        "exempt_thirst": 50.0,
+        "exempt_hunger": 60.0,
+        "raised_by": "hunting"
+      }
     },
     "reproduction": {
       "maturity_age": 18.0,
