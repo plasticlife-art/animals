@@ -5153,6 +5153,8 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var catchable_prey: float = 0.0
 	var catchability: Dictionary = dormant_config.get("prey_catchability", {})
 	var hunting_predators: int = 0
+	# The hunters as the kill rate counts them: holders of a territory by `territory.dormant_kill_scale`.
+	var hunting_weight := 0.0
 	# Hungry hunters whose mate hunts beside them count for more (`hunt.pair`).
 	var pair_bonus := 0.0
 	var hunter_species: String = ""
@@ -5176,14 +5178,24 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		if hungry <= 0:
 			continue
 		hunting_predators += hungry
+		# A sleeping group keeping to its territory sits with the prey of its ground nearly all
+		# the time, where one ranging the map travels between herds; the sleeping kill rate was
+		# set for the second. Holders hunting asleep killed 76 % more each than without
+		# territories, against 27 % more awake: `dormant_kill_scale` brings the two together.
+		var scale := 1.0
+		if int(aggregate.get("territory_id", -1)) >= 0 or (int(aggregate.get("group_id", -1)) >= 0 \
+				and territory_registry(species_key) != null \
+				and territory_registry(species_key).territory_of_group(int(aggregate.get("group_id", -1))) >= 0):
+			scale = float(territory_config(species_key).get("dormant_kill_scale", 1.0))
+		hunting_weight += float(hungry) * scale
 		var hunt_config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("hunt", {})
 		var pair_config: Dictionary = hunt_config.get("pair", {})
 		var pack_config: Dictionary = hunt_config.get("pack", {})
 		if not pack_config.is_empty() and int(aggregate.get("group_id", -1)) >= 0:
 			# A pack hunting together: each hungry one past the first counts for more.
-			pair_bonus += float(maxi(0, hungry - 1)) * float(pack_config.get("dormant_kill_multiplier", 0.25))
+			pair_bonus += float(maxi(0, hungry - 1)) * float(pack_config.get("dormant_kill_multiplier", 0.25)) * scale
 		elif not pair_config.is_empty():
-			pair_bonus += float(_dormant_paired_hungry(members)) * float(pair_config.get("dormant_kill_multiplier", 0.3))
+			pair_bonus += float(_dormant_paired_hungry(members)) * float(pair_config.get("dormant_kill_multiplier", 0.3)) * scale
 		hunters.append_array(_dormant_hungry_records(members))
 		if hunter_species == "":
 			hunter_species = species_key
@@ -5214,7 +5226,7 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 	var debt: float = float(sector_state.get("dormant_kill_debt", 0.0))
 	if hunting_predators > 0 and local_prey > 0:
 		var kill_rate: float = float(dormant_config.get("kill_rate_per_prey_per_second", 0.001667))
-		debt += (float(hunting_predators) + pair_bonus) * catchable_prey * kill_rate * elapsed
+		debt += (hunting_weight + pair_bonus) * catchable_prey * kill_rate * elapsed
 		kills = mini(local_prey, int(floor(debt)))
 		debt -= float(kills)
 	else:

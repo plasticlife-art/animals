@@ -9,7 +9,8 @@ extends RefCounted
 ## age makes for an open territory not its birthplace and takes it. Asleep the same: a pair
 ## sleeps as its territory's group and keeps to it, drawing nothing from the stream; only
 ## holders breed; and a vagrant of age settles where a slot is open. One that has looked for
-## `emigrate_after_seconds` leaves the map, awake or asleep, with no body. The feed tells, in view: a
+## `emigrate_after_seconds` leaves the map, awake or asleep, with no body. Holders hunting asleep
+## count by `dormant_kill_scale`. The feed tells, in view: a
 ## pair taking a territory, a young one setting out, a kill by a pair, a herd going back to its
 ## season's pasture - and not one fox taking a slot alone.
 
@@ -33,6 +34,7 @@ func run(a) -> void:
 	_test_a_sleeping_vagrant_settles(a)
 	_test_the_feed_tells_it(a)
 	_test_a_vagrant_with_nowhere_leaves(a)
+	_test_sleeping_holders_kill_by_the_scale(a)
 
 
 static func _shipped(seed: int, territory: bool):
@@ -413,3 +415,35 @@ func _test_a_vagrant_with_nowhere_leaves(a) -> void:
 		a.equal([int(manager.stats_system.counters.get("deaths_emigrated", 0)), world.carcasses.size()], [1, carcasses],
 			"counted as gone, with no body%s" % (" (asleep)" if asleep else ""))
 		Helpers.destroy_manager(manager)
+
+
+## The kill debt a sleeping pair of holders runs up among deer, at `scale`.
+static func _sleeping_debt(scale: float) -> float:
+	var manager = _small(9990, true)
+	var world = manager.world_state
+	world.config_bundle["species"]["predator"]["territory"]["dormant_kill_scale"] = scale
+	var registry: TerritoryRegistry = world.territory_registry("predator")
+	var den: Vector2 = registry.get_territory(0)["den"]
+	for sex in [AgentBaseScript.SEX_MALE, AgentBaseScript.SEX_FEMALE]:
+		var fox = _fox(world, den, sex)
+		world.claim_territory(fox, 0)
+		fox.hunger = 60.0
+	Helpers.spawn_herd(world, den + Vector2(60.0, 0.0), 6, 0)
+	var sector_key: Vector2i = world._get_sector_key(den)
+	world._sleep_sector(sector_key)
+	var state: Dictionary = world._sector_states[sector_key]
+	for aggregate in state["dormant_aggregates"]:
+		if str(aggregate["species_type"]) == "predator":
+			aggregate["goal_kind"] = "hunt"
+	world._resolve_dormant_predation(sector_key, state, state["dormant_aggregates"], 0.5,
+		world._group_dormant_records(state["dormant_records"]))
+	var debt := float(state.get("dormant_kill_debt", 0.0))
+	Helpers.destroy_manager(manager)
+	return debt
+
+
+func _test_sleeping_holders_kill_by_the_scale(a) -> void:
+	var full := _sleeping_debt(1.0)
+	var half := _sleeping_debt(0.5)
+	a.is_true(full > 0.0 and absf(half - full * 0.5) < full * 0.01,
+		"holders asleep run up half the kill debt at half the scale (%.5f against %.5f)" % [half, full])
