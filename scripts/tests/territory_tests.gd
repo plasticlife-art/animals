@@ -40,6 +40,7 @@ func run(a) -> void:
 
 static func _shipped(seed: int, territory: bool):
 	var bundle: Dictionary = ConfigLoaderScript.load_config_bundle().duplicate(true)
+	bundle["species"]["predator"].erase("territory")
 	if territory:
 		bundle["species"]["predator"]["territory"] = TERRITORY.duplicate(true)
 	var manager = SimulationManagerScript.new()

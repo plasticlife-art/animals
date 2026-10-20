@@ -23,7 +23,13 @@
         "leave_fraction": 0.5,
         "settle_seconds": 30.0,
         "exempt_hunger": 50.0,
-        "follow_asleep": false
+        "follow_asleep": false,
+        "seasonal": {
+          "memory_bonus": 1.5,
+          "switch_ratio": 1.3,
+          "replace_share": 0.8,
+          "forget_years": 2
+        }
       },
       "flight": {
         "alarm_radius_cells": 4.0,
@@ -188,6 +194,21 @@
         "close_partner_attack_radii": 1.5,
         "dormant_kill_multiplier": 0.1
       }
+    },
+    "territory": {
+      "radius_cells": 12.5,
+      "spacing": 1.8,
+      "step_cells": 2,
+      "water_cells": 6.0,
+      "capacity_multiplier": 4.0,
+      "trespass_hunger": 70.0,
+      "border_slack": 1.15,
+      "dispersal_age_seconds": 240.0,
+      "look_seconds": 2.0,
+      "claim_radii": 0.5,
+      "ring_radii": 0.7,
+      "emigrate_after_seconds": 180.0,
+      "dormant_kill_scale": 0.5
     },
     "reproduction": {
       "maturity_age": 20.0,

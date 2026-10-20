@@ -58,6 +58,11 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# Ponds that never change: the fixtures' two ponds are 18 units across and a climate
 	# switched on to watch the grass would dry them in a season. `WaterTests` switches it on.
 	bundle["world"]["water_levels"] = {"enabled": false}
+	# Off as well: the fixtures place their own foxes and herds, and assume a fox pairs with any fox
+	# and a herd weighs its pastures afresh. `TerritoryTests` and `SeasonalPastureTests` switch
+	# them on; wolves keep theirs, and come only where a test spawns them.
+	bundle["species"]["predator"].erase("territory")
+	bundle["species"]["herbivore"]["herd"]["migration"].erase("seasonal")
 	# And hunters turning from rare prey: a fixture with one deer among a flock must not find
 	# its fox blind to it. `PreySwitchingTests` switches it on.
 	bundle["balance"]["prey_switching"] = {"enabled": false}
