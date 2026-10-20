@@ -35,6 +35,7 @@ func run(a) -> void:
 	_test_the_feed_tells_it(a)
 	_test_a_vagrant_with_nowhere_leaves(a)
 	_test_sleeping_holders_kill_by_the_scale(a)
+	_test_dens_in_cover(a)
 
 
 static func _shipped(seed: int, territory: bool):
@@ -417,10 +418,13 @@ func _test_a_vagrant_with_nowhere_leaves(a) -> void:
 		Helpers.destroy_manager(manager)
 
 
-## The kill debt a sleeping pair of holders runs up among deer, at `scale`.
-static func _sleeping_debt(scale: float) -> float:
+## The kill debt a sleeping pair of holders runs up among deer, at `scale`, and the fear it leaves
+## where the herd stands: `[debt, fear]`.
+static func _sleeping_debt(scale: float) -> Array:
 	var manager = _small(9990, true)
 	var world = manager.world_state
+	world.config_bundle["world"]["fear"] = {"enabled": true}
+	world.fear_field.initialize(world.config_bundle["world"], world.resource_system.world_size, world.resource_system.cell_size)
 	world.config_bundle["species"]["predator"]["territory"]["dormant_kill_scale"] = scale
 	var registry: TerritoryRegistry = world.territory_registry("predator")
 	var den: Vector2 = registry.get_territory(0)["den"]
@@ -435,15 +439,39 @@ static func _sleeping_debt(scale: float) -> float:
 	for aggregate in state["dormant_aggregates"]:
 		if str(aggregate["species_type"]) == "predator":
 			aggregate["goal_kind"] = "hunt"
+	var herd_at := den + Vector2(60.0, 0.0)
+	var before: float = world.fear_field.risk_at(herd_at)
 	world._resolve_dormant_predation(sector_key, state, state["dormant_aggregates"], 0.5,
 		world._group_dormant_records(state["dormant_records"]))
-	var debt := float(state.get("dormant_kill_debt", 0.0))
+	var result := [float(state.get("dormant_kill_debt", 0.0)), world.fear_field.risk_at(herd_at) - before]
 	Helpers.destroy_manager(manager)
-	return debt
+	return result
 
 
 func _test_sleeping_holders_kill_by_the_scale(a) -> void:
 	var full := _sleeping_debt(1.0)
 	var half := _sleeping_debt(0.5)
-	a.is_true(full > 0.0 and absf(half - full * 0.5) < full * 0.01,
-		"holders asleep run up half the kill debt at half the scale (%.5f against %.5f)" % [half, full])
+	a.is_true(full[0] > 0.0 and absf(half[0] - full[0] * 0.5) < full[0] * 0.01,
+		"holders asleep run up half the kill debt at half the scale (%.5f against %.5f)" % [half[0], full[0]])
+	a.is_true(full[1] > 0.0 and half[1] < full[1] * 0.75,
+		"and leave less fear on the herd's ground (%.4f against %.4f)" % [half[1], full[1]])
+
+
+func _test_dens_in_cover(a) -> void:
+	# A 40 x 20 map, grass everywhere, a wood on its right half; water all over.
+	var cols := 40
+	var rows := 20
+	var caps := PackedFloat32Array()
+	var walkable := PackedByteArray()
+	var cover := PackedFloat32Array()
+	for index in range(cols * rows):
+		caps.append(100.0 if index % cols < 20 else 60.0)
+		walkable.append(1)
+		cover.append(1.0 if index % cols >= 20 else 0.0)
+	var water := [{"position": Vector2(640.0, 320.0), "radius": 2000.0}]
+	var config := {"radius_cells": 4.0, "spacing": 1.8, "step_cells": 2, "water_cells": 30.0}
+	var by_grass: Array = TerritoryRegistry.place_dens(caps, walkable, cols, rows, 32.0, water, config, 7, cover)
+	config["den_score"] = "cover"
+	var by_cover: Array = TerritoryRegistry.place_dens(caps, walkable, cols, rows, 32.0, water, config, 7, cover)
+	a.is_true(Vector2(by_grass[0]).x < 20.0 * 32.0, "by grass the best den is on the meadow")
+	a.is_true(Vector2(by_cover[0]).x >= 20.0 * 32.0, "by cover it is in the wood")

@@ -3728,10 +3728,13 @@ func _place_territories() -> void:
 			continue
 		var walkable := PackedByteArray()
 		walkable.resize(resource_system.cols * resource_system.rows)
+		var cover := PackedFloat32Array()
+		cover.resize(walkable.size())
 		for index in range(walkable.size()):
 			walkable[index] = 1 if terrain_system.is_walkable_index(index) else 0
+			cover[index] = 1.0 if walkable[index] == 1 and terrain_system.get_biome_at_index(index) == "forest" else 0.0
 		var dens: Array = TerritoryRegistryScript.place_dens(resource_system.export_caps(), walkable,
-			resource_system.cols, resource_system.rows, resource_system.cell_size, water_sources, config, trait_world)
+			resource_system.cols, resource_system.rows, resource_system.cell_size, water_sources, config, trait_world, cover)
 		var registry := TerritoryRegistryScript.new()
 		registry.configure(dens, resource_system.cell_size * float(config.get("radius_cells", 10.0)), current_time)
 		territories[species_id] = registry
@@ -5219,9 +5222,13 @@ func _resolve_dormant_predation(sector_key: Vector2i, sector_state: Dictionary, 
 		if local_prey > 0:
 			performance_counters["dormant_hunt_colocated_steps"] += hunting_predators
 			# A sleeping herd with hungry hunters in its sector is being stalked: the
-			# coarse stand-in for the scares a live herd would log.
+			# coarse stand-in for the scares a live herd would log. Holders sitting on their
+			# ground beside it all the time stalk by `dormant_kill_scale` as they kill: at full
+			# weight the feared ground grew threefold, the herds left the best grass and bred
+			# less, and deer fell by a third with no more kills.
+			var stalking := hunting_weight / float(hunting_predators)
 			for aggregate in prey_aggregates:
-				fear_field.deposit(Vector2(aggregate.get("center", Vector2.ZERO)), fear_field.hunt_pressure_risk * elapsed)
+				fear_field.deposit(Vector2(aggregate.get("center", Vector2.ZERO)), fear_field.hunt_pressure_risk * elapsed * stalking)
 	var kills: int = 0
 	var debt: float = float(sector_state.get("dormant_kill_debt", 0.0))
 	if hunting_predators > 0 and local_prey > 0:
