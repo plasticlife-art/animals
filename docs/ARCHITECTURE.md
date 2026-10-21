@@ -833,7 +833,13 @@ until, source, raiser, threat, heading, goal, goal_tick}`, saved).
   (`herd_weights.flee * own_flee_share`); where the threat stands the way the herd runs, the
   member runs its own way.
 - Asleep there are no alarms: `dormant_catchability` scales the prey a sleeping hunter can
-  catch, for the share of kills flight costs awake.
+  catch, for the share of kills flight costs awake (0.9 for deer: at 0.85 sleeping foxes took
+  grouse for deer, at 0.95 the shares matched awake ones).
+- `raised_by` "hunting": only a predator on the hunt alarms the herd; a fed fox walking by is
+  run from by those who see it. Alarmed by every fox patrolling among them, herds stood in
+  flight instead of grazing and drinking.
+- Calibrated with pair hunting (LOD 2880 s, seeds 1-8): deer -6 % to -15 %, foxes -1 %,
+  grouse -1 %; every animal awake (720 s, seeds 1-4): deer +4 %.
 - `HerdAlarm` is counted (`herd_alarms`), not told in the feed. Grouse (`Scavenger` is a
   `Herbivore`) flee as a flock with their own `species.scavenger.herd.flight`.
 
@@ -889,9 +895,11 @@ species in `WorldState.territories`, saved, the view's copy sent when its revisi
   (`TerritoryRegistry.place_dens()`): candidate cells every `step_cells`, each moved within its
   step by a hash of the seed, walkable, half a radius from the edge and within `water_cells`
   of a pond; taken best first by the grass the cells within half a radius can hold
-  (a summed-area table over `ResourceSystem.export_caps()`), and none within `spacing` radii
-  of another. On the large map, `radius_cells` 10 and `spacing` 1.8 give 23-26 dens; the
-  gaps between are ground no one holds.
+  (a summed-area table over `ResourceSystem.export_caps()`; `den_score` "cover" takes the
+  wood instead, which changed nothing measured and is off), and none within `spacing` radii
+  of another. On the large map `radius_cells` 12.5 and `spacing` 1.8 give about 17 dens
+  (10 cells, 23-26); the gaps between are ground no one holds. `enabled` false switches the
+  block off, the only way a scenario's patch can («Слишком много лис»).
 - A territory has a male's slot and a female's (`claim()`, `release()`, `partner_of()`,
   `open_slot_near()` by distance then id, `held_at()`); the registry is what is true. The
   founding pairs take the best dens (`_spawn_initial_pairs()` still draws the points, so the
@@ -907,9 +915,21 @@ species in `WorldState.territories`, saved, the view's copy sent when its revisi
   apply). Asleep, only co-holders breed. The breeding cap stays, `capacity_multiplier` times
   the start, as a backstop.
 - At `dispersal_age_seconds` one without a territory looks every `look_seconds` for the
-  nearest open slot not on its birthplace (`natal_territory_id`), walks there («ищет свой
-  участок», `disperse`) and takes it within `claim_radii`; with none open it is a vagrant.
-  Past that age kin cohesion keeps only to the mate.
+  nearest open slot not on its birthplace (`natal_territory_id`) - one where a mate already
+  waits counting `mate_pull` times nearer - walks there («ищет свой участок», `disperse`) and
+  takes it within `claim_radii`; with none open it is a vagrant. Past that age kin cohesion
+  keeps only to the mate. After `emigrate_after_seconds` of looking, from the moment it began
+  whether a slot was open or not, it leaves the map (cause `emigrated`, no body, «не нашла
+  своего участка и ушла с карты»). Without that sink the young the land could not hold piled
+  up as vagrants for years - foxes do not starve while there are grouse and carcasses - and
+  with the cap lifted the foxes doubled (47 -> 87) and the deer halved.
+- Asleep, a group keeping to a territory kills and stalks by `dormant_kill_scale`: it sits
+  beside the prey of its ground 2-4 times as many hunter-steps as a pack ranging the map, for
+  which the sleeping kill rate was set; at full weight holders killed 76 % more each asleep
+  (27 % awake) and trebled the feared ground, and the herds left the best grass and bred less.
+- Calibrated (LOD 2880 s, seeds 1-8, with herd flight and pair hunting, against the world
+  before them): foxes 42 (-9 %), deer 197 (-17 %, the interval [-45..+10]) and steadier from
+  seed to seed, grouse -1 %, no species lost; about 110 leave the map a run.
 - Asleep, holders sleep as their territory's group (`predator:-1:t<id>`, young with their
   parents until they are of age) and keep to its ground as awake ones do
   (`_select_dormant_goal()`); vagrants of age settle by the nearest open den
@@ -932,6 +952,9 @@ A second hunter, off unless the setup asks for it («Волки — две ст�
   `dispersal_age_seconds` a member that does not lead leaves (`leave_pack()`, `PackLeft`),
   looks for a territory and founds a pack on it. Asleep a pack sleeps as one group and its
   grown young leave it asleep too.
+- Calibrated in the sandbox («Две стаи», LOD 2880 s, seeds 1-8): wolves 10-24 (17.7 on
+  average) and none dying out once dispersers were drawn to a waiting mate (`mate_pull` 3) and
+  given 300 s to look; deer -19 % against the same world without wolves, foxes +7 %.
 - Wolves eat deer only. Their art is the fox's atlas recoloured dun grey
   (`tools/build_wolf_atlas.py`) and drawn larger, until they have their own.
 
