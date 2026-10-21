@@ -213,15 +213,20 @@ func is_vacant(territory_id: int) -> bool:
 
 
 ## The territory with `sex`'s slot open nearest `position`, by distance to its den and then id,
-## other than `excluded` (where the animal was born); -1 when there is none.
-func open_slot_near(position: Vector2, sex: String, excluded: int = NOBODY) -> int:
+## other than `excluded` (where the animal was born); -1 when there is none. One where a mate
+## already holds the other slot counts as `mate_pull` times nearer: few and far between, lone
+## dispersers each took an empty territory of their own and never met.
+func open_slot_near(position: Vector2, sex: String, excluded: int = NOBODY, mate_pull: float = 1.0) -> int:
 	var slot := _slot(sex)
+	var other := "male" if slot == "female" else "female"
 	var best := NOBODY
 	var best_distance := INF
 	for territory in territories:
 		if int(territory["id"]) == excluded or int(territory[slot]) != NOBODY:
 			continue
 		var distance: float = position.distance_squared_to(territory["den"])
+		if mate_pull != 1.0 and int(territory[other]) != NOBODY:
+			distance /= mate_pull * mate_pull
 		if distance < best_distance:
 			best_distance = distance
 			best = int(territory["id"])

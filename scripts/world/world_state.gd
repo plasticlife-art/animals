@@ -3708,9 +3708,11 @@ func _split_oversized_herds() -> void:
 
 ## A species' herd flight (`species.<id>.herd.flight`): empty where each of its herd flees for
 ## itself, as every herd did before.
-## `species.<id>.territory`: empty for a species without territories.
+## `species.<id>.territory`: empty for a species without territories, or with `enabled` false -
+## how a scenario's patch, which can only add to the bundle, switches them off.
 func territory_config(species_key: String) -> Dictionary:
-	return config_bundle.get("species", {}).get(species_key, {}).get("territory", {})
+	var config: Dictionary = config_bundle.get("species", {}).get(species_key, {}).get("territory", {})
+	return {} if not bool(config.get("enabled", true)) else config
 
 
 ## The species' territories, or null for one without them.
@@ -5028,7 +5030,8 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 				record["emigrate"] = true
 				leaving += 1
 			continue
-		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)))
+		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)),
+			float(settings.get("mate_pull", 1.0)))
 		if territory_id == -1:
 			continue
 		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex):

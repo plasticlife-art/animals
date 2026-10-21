@@ -104,6 +104,12 @@ func _test_slots(a) -> void:
 		"a male looking for one is sent to the empty one, though the other is nearer")
 	a.equal(registry.open_slot_near(Vector2(120.0, 100.0), AgentBaseScript.SEX_MALE, 1), -1,
 		"and to none where it was born")
+	var three := TerritoryRegistry.new()
+	three.configure([Vector2(100.0, 100.0), Vector2(400.0, 100.0), Vector2(900.0, 100.0)], 100.0)
+	three.claim(2, 31, AgentBaseScript.SEX_FEMALE)
+	a.equal([three.open_slot_near(Vector2(100.0, 100.0), AgentBaseScript.SEX_MALE, 0),
+		three.open_slot_near(Vector2(100.0, 100.0), AgentBaseScript.SEX_MALE, 0, 3.0)], [1, 2],
+		"the nearest empty one, or - pulled by `mate_pull` - the farther where a mate waits")
 	a.equal(registry.held_at(Vector2(150.0, 150.0)), 0, "the ground near a held den is held")
 	a.equal(registry.held_at(Vector2(900.0, 150.0)), -1, "an empty territory's is not")
 	registry.release(7, 12.0)

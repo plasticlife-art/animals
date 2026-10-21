@@ -63,6 +63,8 @@ func configure(
 	super.configure(agent_id, new_species_type, spawn_position, new_sex, species_config, balance_config, rng, new_group_id)
 	hunt = species_config.get("hunt", {})
 	territory = species_config.get("territory", {})
+	if not bool(territory.get("enabled", true)):
+		territory = {}
 	_making_for = -1
 	_looked_for_ground_at = -INF
 	_set_out = false
@@ -1284,7 +1286,7 @@ func _seek_ground(world) -> bool:
 			return false
 	if _making_for == -1 and world.current_time - _looked_for_ground_at >= float(territory.get("look_seconds", 2.0)):
 		_looked_for_ground_at = world.current_time
-		_making_for = registry.open_slot_near(position, sex, natal_territory_id)
+		_making_for = registry.open_slot_near(position, sex, natal_territory_id, float(territory.get("mate_pull", 1.0)))
 		# The first time it sets out: what the feed tells (`DispersalStarted`).
 		if _making_for != -1 and not _set_out:
 			_set_out = true

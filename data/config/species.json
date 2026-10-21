@@ -472,7 +472,8 @@
       "look_seconds": 2.0,
       "claim_radii": 0.5,
       "ring_radii": 0.6,
-      "emigrate_after_seconds": 180.0
+      "emigrate_after_seconds": 300.0,
+      "mate_pull": 3.0
     }
   }
 }
