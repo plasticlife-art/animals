@@ -324,6 +324,7 @@ func _start_reserve(fresh: bool) -> void:
 	_adopt_running_simulation()
 	# After the bring-up: the session and the director hear the world the view now shows.
 	reserve_session.configure(simulation_manager, config)
+	story_book.lineage.capacity = int(config.get("story_animals", story_book.lineage.capacity))
 	_autosave_interval = maxi(1, int(float(config.get("autosave_seconds", 120.0)) * simulation_manager.tick_rate))
 	_viewer_link = ViewerLink.new()
 	if not _viewer_link.listen(config):

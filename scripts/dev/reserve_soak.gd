@@ -42,6 +42,7 @@ func _initialize() -> void:
 	story = preload("res://scripts/story/story_book.gd").new()
 	story.bind(manager)
 	story.begin({})
+	story.lineage.capacity = int(config.get("story_animals", story.lineage.capacity))
 	viewers.seed = run_seed * 7919 + 13
 	var told: Dictionary = {}
 	session.told.connect(func(line: Dictionary) -> void:
@@ -164,6 +165,7 @@ func _sample(tick_ms: Array, save_ms: Array, told: Dictionary, started: int) -> 
 		"ponds": world.player.ponds.size(),
 		"viewers": session.book.viewers.size(),
 		"story_kb": var_to_bytes(story.export_state()).size() / 1024,
+		"story_animals": story.lineage.size(),
 		"session_kb": var_to_bytes(session.export_state()).size() / 1024,
 		"save_kb": save_bytes / 1024,
 		"save_ms": save_ms.max() if not save_ms.is_empty() else 0.0,
@@ -178,15 +180,19 @@ func _line(sample: Dictionary) -> String:
 	var counts: Array = []
 	for species in ["herbivore", "predator", "scavenger", "wolf"]:
 		counts.append("%s %d" % [species.left(4), int(sample["counts"].get(species, 0))])
-	return "%6.0f s (%5.0f s wall)  %s | wards %d/%d journal %d ponds %d viewers %d | save %d KB (%.0f ms) story %d KB | %.0f MB | tick %.2f / p95 %.2f ms" % [
+	return "%6.0f s (%5.0f s wall)  %s | wards %d/%d journal %d ponds %d viewers %d | save %d KB (%.0f ms) story %d KB / %d | %.0f MB | tick %.2f / p95 %.2f ms" % [
 		sample["time"], sample["wall"], " ".join(counts), sample["wards_living"], sample["wards_kept"], sample["journal"],
-		sample["ponds"], sample["viewers"], sample["save_kb"], sample["save_ms"], sample["story_kb"], sample["memory_mb"],
+		sample["ponds"], sample["viewers"], sample["save_kb"], sample["save_ms"], sample["story_kb"], sample["story_animals"], sample["memory_mb"],
 		sample["tick_ms_mean"], sample["tick_ms_p95"]]
 
 
 ## Saves, loads into a new world, and compares: at the load everything the reserve keeps must be
-## the same; after both run on 600 ticks without viewers the counts are reported side by side.
+## the same; after both run on 600 ticks without viewers the counts are reported side by side
+## (`check_save.gd` explains why only populations are promised after a load).
 func _check_load(selection: Dictionary) -> Dictionary:
+	# The orders queued since the last tick (a vote's, a fund's) are not saved: carried out first.
+	while not manager.pending_commands().is_empty():
+		manager.step_once()
 	var path := SOAK_SAVES + "/reserve_check.dat"
 	SaveSystem.save(manager, selection, path, story.export_state(), session.export_state())
 	var data := SaveSystem.read(path)

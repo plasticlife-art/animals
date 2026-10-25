@@ -19,7 +19,7 @@ extends RefCounted
 ## many kills each hunter made, and how many descendants each animal has - alive and ever.
 ## A birth adds one to every distinct ancestor, a death takes one off the living count.
 
-## An animal dropped to stay within `CAPACITY`, the longest dead first, so its name goes too.
+## An animal dropped to stay within `capacity`, the longest dead first, so its name goes too.
 signal forgotten(agent_id: int)
 
 ## Past this many animals the ones that died longest ago are forgotten first.
@@ -27,6 +27,9 @@ const CAPACITY := 30000
 ## Ancestors walked for one birth or death at most; a deep family is far below it.
 const ANCESTOR_LIMIT := 4096
 
+## How many animals it keeps; the living reserve keeps fewer (`reserve.json` `story_animals`), its
+## story being saved every two minutes for days.
+var capacity: int = CAPACITY
 var _animals: Dictionary = {}
 var _children: Dictionary = {}
 var _kills: Dictionary = {}
@@ -259,14 +262,14 @@ func _rebuild_counts() -> void:
 
 
 func _trim() -> void:
-	if _animals.size() <= CAPACITY:
+	if _animals.size() <= capacity:
 		return
 	var dead: Array = []
 	for agent_id in _animals:
 		if is_dead(agent_id):
 			dead.append(agent_id)
 	dead.sort_custom(func(a, b): return float(_animals[a]["died"]) < float(_animals[b]["died"]))
-	for agent_id in dead.slice(0, _animals.size() - CAPACITY + int(CAPACITY * 0.1)):
+	for agent_id in dead.slice(0, _animals.size() - capacity + int(capacity * 0.1)):
 		_animals.erase(agent_id)
 		_children.erase(agent_id)
 		_kills.erase(agent_id)

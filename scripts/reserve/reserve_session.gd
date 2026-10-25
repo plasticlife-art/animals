@@ -77,7 +77,7 @@ func hear(message: Dictionary) -> void:
 ## Votes and funds as their times come; call once a tick, or a frame.
 func tick() -> void:
 	var won: Dictionary = vote.tick(now(), config)
-	if not won.is_empty():
+	if not won.is_empty() and not _crowded(str(won.get("power", "")), won.get("params", {}), "Голосование: %s" % str(won.get("label", ""))):
 		_order(str(won.get("power", "")), won.get("params", {}), {"key": "", "user": "", "kind": "vote",
 			"label": str(won.get("label", ""))})
 	_count_teams()
@@ -127,8 +127,12 @@ func _steward(key: String, user: String, power: String) -> void:
 	var herd := focus_herd()
 	if herd.is_empty():
 		return
-	if power == "dig_pond" and manager.world_state.player.ponds.size() >= int(config.get("steward", {}).get("max_ponds", 1 << 30)):
+	var steward: Dictionary = config.get("steward", {})
+	if power == "dig_pond" and manager.world_state.player.ponds.size() >= int(steward.get("max_ponds", 1 << 30)):
 		_tell("%s: водоёмов в заповеднике уже довольно" % user, "refused")
+		return
+	if power == "cull" and _cull_species_left() < int(steward.get("cull_floor", 0)):
+		_tell("%s: лис и так мало — отстрел подождёт" % user, "refused")
 		return
 	var params := _steward_target(power, herd)
 	if params.is_empty():
@@ -234,6 +238,8 @@ func _count_teams() -> void:
 	if winner == "":
 		return
 	var perk: Dictionary = funds[winner].get("perk", {})
+	if _crowded(str(perk.get("power", "")), perk.get("params", {}), str(funds[winner].get("label", winner))):
+		return
 	_order(str(perk.get("power", "")), perk.get("params", {}), {"key": "", "user": "", "kind": "team",
 		"label": str(funds[winner].get("label", winner)), "members": int(counts[winner])})
 
@@ -257,6 +263,30 @@ func _rescue() -> void:
 		_rescued_at[species] = now()
 		_order("immigrate", {"species": species}, {"key": "", "user": "", "kind": "rescue", "label": str(species),
 			"count": int(counts.get(species, 0))})
+
+
+## Whether newcomers of `power` (`release`) would come to a species already at its `ceilings`; if
+## so, told, with `about` before it, and not ordered.
+func _crowded(power: String, params: Dictionary, about: String) -> bool:
+	if power != "release":
+		return false
+	var species := str(params.get("species", "predator"))
+	var ceiling := int(config.get("ceilings", {}).get(species, 1 << 30))
+	var count := int(census().get(species, 0))
+	if count < ceiling:
+		return false
+	_tell("%s — но %s и так много, пришлые не пришли" % [about, str(HudTextScript.ANIMALS.get(species, {}).get("count", ["", "", species])[2])],
+		"refused")
+	return true
+
+
+## How many are left of the species a cull takes.
+func _cull_species_left() -> int:
+	var counts := census()
+	var left := 0
+	for species in manager.world_state.player.settings("cull").get("species", ["predator"]):
+		left += int(counts.get(str(species), 0))
+	return left
 
 
 ## How many of each species live, awake or asleep: `{species: count}`.

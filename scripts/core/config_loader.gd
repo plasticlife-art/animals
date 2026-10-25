@@ -24,12 +24,17 @@ static func load_reserve_config() -> Dictionary:
 
 
 ## The reserve's world: the setup options `reserve.json` `selection` names over the defaults, its
-## powers `offered`, and a `reserve` key, which is what puts its saves in the reserve's slots.
+## powers `offered` with the settings `powers` changes, and a `reserve` key, which is what puts its
+## saves in the reserve's slots.
 static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	var selection := default_selection()
 	selection.merge(reserve.get("selection", {}), true)
 	var bundle := load_config_bundle(selection)
 	bundle["powers"]["offered"] = reserve.get("offered", []).duplicate()
+	var changed: Dictionary = reserve.get("powers", {})
+	for power in changed.keys():
+		if bundle["powers"]["powers"].has(power):
+			bundle["powers"]["powers"][power].merge(changed[power], true)
 	bundle["reserve"] = {"selection": selection}
 	return bundle
 

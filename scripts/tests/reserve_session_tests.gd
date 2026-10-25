@@ -6,7 +6,8 @@ extends RefCounted
 ## focus herd; «!моё» asking the camera for the ward; the session back from a save; lines of
 ## JSON read off the local port; the director's shots (`ReserveDirector`); the overlay's text; and
 ## the reserve's saves, in slots of its own; a species about to be lost rescued; the viewers long
-## unseen forgotten.
+## unseen forgotten; no cull of the last foxes, no newcomers to a crowded species, the reserve's
+## own power settings and a shorter story.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
@@ -31,6 +32,7 @@ func run(a) -> void:
 	_test_its_own_slots(a)
 	_test_a_rescue(a)
 	_test_forgetting_viewers(a)
+	_test_floors_and_ceilings(a)
 
 
 ## Stands in for the game's camera: where it was sent.
@@ -297,3 +299,29 @@ func _test_forgetting_viewers(a) -> void:
 	kept.sort()
 	a.equal(kept, ["twitch:10", "twitch:11", "twitch:3", "twitch:4", "twitch:5", "twitch:6", "twitch:7", "twitch:8", "twitch:9"],
 		"past the limit, the longest unseen are forgotten, down to nine tenths")
+
+
+func _test_floors_and_ceilings(a) -> void:
+	var config := _config()
+	config["ceilings"]["herbivore"] = 3
+	var made := _reserve(9939, config)
+	var manager = made[0]
+	var session = made[1]
+	session.hear(_message("1", "Вася", "!отстрел"))
+	a.is_true(manager.pending_commands().is_empty() and str(made[2][-1]).contains("лис и так мало"),
+		"no cull while the foxes are below the floor (%s)" % str(made[2]))
+	a.is_true(session._crowded("release", {"species": "herbivore"}, "Голосование: Пришлое стадо")
+		and str(made[2][-1]) == "Голосование: Пришлое стадо — но оленей и так много, пришлые не пришли"
+		and not session._crowded("release", {"species": "predator"}, "Фонд лис"), "no newcomers to a species at its ceiling")
+	Helpers.destroy_manager(manager)
+	var bundle: Dictionary = ConfigLoaderScript.load_reserve_bundle(_config())
+	a.equal(float(bundle["powers"]["powers"]["cull"]["cooldown_seconds"]), 240.0, "the reserve's own power settings")
+	var lineage = preload("res://scripts/story/lineage.gd").new()
+	lineage.capacity = 10
+	for id in range(1, 9):
+		lineage.note_birth(id, "herbivore", "female", 0.0, 0, [])
+		lineage.note_death(id, float(id), "old_age", -1, Vector2.ZERO)
+	for id in range(9, 12):
+		lineage.note_birth(id, "herbivore", "female", 10.0, 0, [])
+	a.is_true(lineage.size() == 9 and not lineage.knows(1) and not lineage.knows(2) and lineage.knows(3),
+		"a shorter story forgets the longest dead first")
