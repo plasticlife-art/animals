@@ -118,7 +118,9 @@ func _rebuild_isometric(terrain: TerrainSystem) -> void:
 		@warning_ignore("integer_division")
 		var coords := Vector2i(index % cols, index / cols)
 		var surface: String = terrain.get_obstacle_at_index(index)
-		if surface == "":
+		# A river's water has no tile of its own: the ground under it is drawn, and the water
+		# over it by the ground shader.
+		if surface == "" or (surface == "water" and not _iso_rows.has(surface)):
 			surface = terrain.get_biome_at_index(index)
 		if not _iso_rows.has(surface):
 			continue

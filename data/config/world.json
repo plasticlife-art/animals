@@ -248,6 +248,22 @@
       "cliff_gap_radius_cells": 1.6,
       "border_clearance_cells": 1
     },
+    "rivers": {
+      "_comment": "Rivers (`TerrainSystem._generate_rivers`): `count` of them from a source inland to the map's edge at least `min_length_fraction` of the map away, winding over noise (`wiggle`, `wiggle_frequency` per cell), round the ponds by `pond_margin_cells`, along low ground by `climb_weight` a level. Deep water within `half_width_cells` of the bed blocks the way; a ford every `ford_every_cells`, `ford_width_cells` wide, is crossed at `ford_cost` times the ground's cost. Animals drink at points on both banks every `access_every_cells`, which never run dry. A generator of its own (`seed` added to the world's); off while `enabled` is false.",
+      "enabled": false,
+      "count": 2,
+      "half_width_cells": 0.9,
+      "min_length_fraction": 0.45,
+      "wiggle": 4.0,
+      "wiggle_frequency": 0.06,
+      "climb_weight": 1.5,
+      "pond_margin_cells": 3.0,
+      "ford_every_cells": 16.0,
+      "ford_width_cells": 2.0,
+      "ford_cost": 2.5,
+      "access_every_cells": 5.0,
+      "seed": 0
+    },
     "height": {
       "levels": 4,
       "frequency": 0.002,

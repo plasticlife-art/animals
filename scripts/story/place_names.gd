@@ -84,10 +84,22 @@ const MAX_DISTRICTS := 64
 const MIN_BIOME_SHARE := 0.2
 ## How near a pond, in its radii, still counts as «у» it.
 const POND_REACH := 1.6
+## The rivers' names (`TerrainSystem.rivers`), whole, with their «у …» and «в …».
+const RIVER_NAMES := [
+	{"name": "Быстрая река", "at": "у Быстрой реки", "in": "в Быстрой реке", "gender": "f"},
+	{"name": "Тихая река", "at": "у Тихой реки", "in": "в Тихой реке", "gender": "f"},
+	{"name": "Светлая речка", "at": "у Светлой речки", "in": "в Светлой речке", "gender": "f"},
+	{"name": "Студёная речка", "at": "у Студёной речки", "in": "в Студёной речке", "gender": "f"},
+	{"name": "Ольховка", "at": "у Ольховки", "in": "в Ольховке", "gender": "f"},
+	{"name": "Каменка", "at": "у Каменки", "in": "в Каменке", "gender": "f"},
+	{"name": "Сосновка", "at": "у Сосновки", "in": "в Сосновке", "gender": "f"},
+	{"name": "Песчанка", "at": "у Песчанки", "in": "в Песчанке", "gender": "f"},
+]
 const PROBES := 24
 
 ## `{position, radius, level, name, at, in, gender}`, by `water_sources` index; `radius` is the
-## bank, `in` «в Тихой заводи».
+## bank, `in` «в Тихой заводи». A river's bank carries its river's name, `river`, and `label` on the
+## one bank of each river whose name is drawn on the map.
 var ponds: Array = []
 ## `{center, level, biome, name, at}`; `center` is where its label goes.
 var districts: Array = []
@@ -236,11 +248,32 @@ static func compose(adjective: String, noun: Array, district := false) -> Dictio
 func _name_ponds(sources: Array, terrain, seed_value: int) -> void:
 	var taken := {}
 	var uses := {}
-	var share := ceili(float(sources.size()) / float(POND_ADJECTIVES.size()))
+	var pond_total := 0
+	for source in sources:
+		if not bool(source.get("permanent", false)):
+			pond_total += 1
+	var share := ceili(float(pond_total) / float(POND_ADJECTIVES.size()))
+	var river_names := {}
+	var river_banks := {}
 	for index in range(sources.size()):
 		var source: Dictionary = sources[index]
+		if bool(source.get("permanent", false)):
+			var river := int(source.get("river", 0))
+			if not river_names.has(river):
+				# One draw for the map, then in turn: no two rivers share a name.
+				river_names[river] = RIVER_NAMES[(int(_unit(seed_value, 0x5249, 0) * 1000.0) + river) % RIVER_NAMES.size()]
+			_add_pond_name(source, terrain, river_names[river])
+			ponds[ponds.size() - 1]["river"] = river
+			if not river_banks.has(river):
+				river_banks[river] = []
+			river_banks[river].append(ponds.size() - 1)
+			continue
 		var named := _pick(POND_ADJECTIVES, POND_NOUNS, seed_value, 0x504F, index, taken, false, uses, share)
 		_add_pond_name(source, terrain, named)
+	# One label to a river, at its middle bank; the rest name the river in the feed only.
+	for river in river_banks.keys():
+		var banks: Array = river_banks[river]
+		ponds[int(banks[int(banks.size() / 2.0)])]["label"] = true
 
 
 func _add_pond_name(source: Dictionary, terrain, named: Dictionary) -> void:

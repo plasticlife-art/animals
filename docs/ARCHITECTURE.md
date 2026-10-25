@@ -128,6 +128,38 @@ Current terrain features:
 - biome-dependent forage initialization and regrowth multipliers
 - obstacle blocking and chokepoint creation
 
+### Rivers (`terrain.rivers`)
+
+Rivers are part of the terrain (`TerrainSystem._generate_rivers`), laid after the obstacles and
+before the map is joined into one piece. They have a generator of their own, seeded from the
+world's seed, so the world's stream is not drawn from; off (no block or `enabled` false), the
+world is bit for bit the one without them.
+
+- **The bed.** Each of `count` rivers runs from a source inland, away from the ponds, to the
+  map's edge at least `min_length_fraction` of the map away. It follows the cheapest way
+  (`AStarGrid2D`, eight-way) over noise that makes it wind, round the ponds, along low ground
+  where the map has relief, and clear of the rivers before it, smoothed by three rounds of
+  Chaikin into `rivers[i].points`.
+- **The water.** Each cell holds water (`_water`: none, deep, ford). Deep cells within
+  `half_width_cells` of the bed are obstacles (`water`): routes, legs, grass, spawns, dens and
+  sleeping herds keep out of them as out of a cliff. Fords every `ford_every_cells`,
+  `ford_width_cells` wide, are walkable at `ford_cost` times the ground's cost (a multiplier in
+  `get_move_cost_at_index`), bare, and at the lower bank's level. A corridor joining two pieces
+  of the map through a river makes a ford there.
+- **Drinking.** A point on each bank every `access_every_cells` is a small source in
+  `water_sources` marked `permanent` (`WorldState._add_river_banks`), so whatever finds and
+  drinks from a pond finds and drinks from a river. `WaterSystem` gives them no level: they are
+  left out of `mean_radius`, `mean_level` and the demand unit (`pond_count()`), never fill or
+  dry, and give every drink.
+- **Sight and scenery.** An animal sees across a river (`ScenerySystem.terrain_clear(..., sight)`);
+  no tree or stone stands in one.
+- **Drawn.** `WaterMask.stamp_river` adds the bed to the ponds' distance field, segment by
+  segment, owned by no pond, so it never shrinks; over a ford the field stays just below the
+  edge and reads as shallows. The ground mesh takes the deep cells too. In isometric the
+  ground's own tile is drawn under the water. The minimap paints deep water and fords from the
+  terrain, and draws no circle for a bank. Each river has a name of its own («у Быстрой реки»),
+  labelled once, at its middle bank.
+
 ### `ScenerySystem`
 
 - Owns deterministic prop records with stable IDs, base positions, physical

@@ -93,17 +93,28 @@ func initialize(water_config: Dictionary, sources: Array, demand_unit_value: flo
 	size_factor = PackedFloat32Array()
 	transitions.clear()
 	var radius_sum := 0.0
+	var ponds := 0
 	for index in range(sources.size()):
 		var source: Dictionary = sources[index]
 		source["index"] = index
 		source["bank_radius"] = float(source.get("radius", 0.0))
 		_index_by_position[source["position"]] = index
-		radius_sum += float(source["bank_radius"])
-	mean_radius = radius_sum / float(maxi(1, sources.size()))
+		# A river's bank (`permanent`) is no pond: it is not measured, and it never fills or dries.
+		if not bool(source.get("permanent", false)):
+			radius_sum += float(source["bank_radius"])
+			ponds += 1
+	mean_radius = radius_sum / float(maxi(1, ponds))
 	var reference := maxf(1.0, mean_radius)
 	var initial := clampf(float(settings["initial_level"]), 0.0, 1.0)
 	_wet_count = 0
 	for source in sources:
+		if bool(source.get("permanent", false)):
+			levels.append(1.0)
+			dry.append(0)
+			capacity.append(INF)
+			size_factor.append(0.0)
+			_wet_count += 1
+			continue
 		var relative := maxf(0.01, float(source["bank_radius"]) / reference)
 		levels.append(initial)
 		dry.append(1 if initial <= float(settings["dry_level"]) else 0)
@@ -144,6 +155,8 @@ func add_to_all(amount: float) -> void:
 	if not enabled or amount == 0.0:
 		return
 	for index in range(levels.size()):
+		if size_factor[index] == 0.0:
+			continue
 		var next := clampf(levels[index] + amount, 0.0, 1.0)
 		if next != levels[index]:
 			levels[index] = next
@@ -176,6 +189,9 @@ func drink(index: int, wanted: float) -> float:
 		return maxf(0.0, wanted) if not enabled else 0.0
 	if dry[index] != 0:
 		return 0.0
+	# A river's bank: as much as wanted, and it stays full.
+	if is_inf(capacity[index]):
+		return wanted
 	var granted := minf(wanted, levels[index] * capacity[index])
 	levels[index] = maxf(0.0, levels[index] - granted / capacity[index])
 	_settle(index)
@@ -213,13 +229,16 @@ func dry_count() -> int:
 	return _sources.size() - wet_count()
 
 
+## The ponds' mean level; the rivers' banks, always full, are not counted.
 func mean_level() -> float:
-	if levels.is_empty():
-		return 1.0
 	var total := 0.0
-	for value in levels:
-		total += value
-	return total / float(levels.size())
+	var ponds := 0
+	for index in range(levels.size()):
+		if size_factor[index] == 0.0 and is_inf(capacity[index]):
+			continue
+		total += levels[index]
+		ponds += 1
+	return 1.0 if ponds == 0 else total / float(ponds)
 
 
 ## Whether `year` is a drought year: one `drought_years` names, or by a hash of the year and the

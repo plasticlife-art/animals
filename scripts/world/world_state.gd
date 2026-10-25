@@ -232,6 +232,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 
 	terrain_system = TerrainSystemScript.new()
 	terrain_system.initialize(world_config, rng, water_sources)
+	_add_river_banks(world_config.get("terrain", {}).get("rivers", {}))
 	scenery.initialize(world_config, config_bundle.get("visuals", {}), terrain_system, int(rng.seed))
 	# Mixed into every inherited trait's hash, so two worlds' founders are not the same animals.
 	trait_world = int(rng.seed) & 0xFFFFFFFF
@@ -1344,6 +1345,43 @@ func _pond_index(source: Dictionary) -> int:
 ## The thirst, in points, a pond of mean size is measured against (`WaterSystem`): the larger
 ## of one starting herd's thirst in a season and the map's thirst per pond in a season, so a
 ## pond lasts as long on a small map with few ponds or a hard one with thirsty animals.
+## Where animals drink from the rivers (`TerrainSystem.rivers`): a point on each bank every
+## `access_every_cells` along the bed, a little off the deep water, each a small source in
+## `water_sources` marked `permanent` - so whatever finds and drinks from a pond finds and drinks
+## from a river, and a river never runs dry (`WaterSystem`).
+func _add_river_banks(config: Dictionary) -> void:
+	if terrain_system.rivers.is_empty():
+		return
+	var cell := terrain_system.cell_size
+	var every := maxf(1.0, float(config.get("access_every_cells", 5.0))) * cell
+	for river_index in range(terrain_system.rivers.size()):
+		var river: Dictionary = terrain_system.rivers[river_index]
+		var points: PackedVector2Array = river["points"]
+		var length := 0.0
+		for index in range(points.size() - 1):
+			length += points[index].distance_to(points[index + 1])
+		var at := every * 0.5
+		while at < length:
+			var spot: Array = TerrainSystemScript._point_along(points, at)
+			var normal := Vector2(-spot[1].y, spot[1].x)
+			for side in [-1.0, 1.0]:
+				var bank: Vector2 = spot[0] + normal * side * (float(river["half_width"]) + cell * 0.6)
+				var index: int = terrain_system.get_index_from_position(bank)
+				if index < 0 or not terrain_system.is_walkable_index(index) or terrain_system.is_water_index(index):
+					continue
+				water_sources.append({"position": bank, "radius": cell * 0.5, "permanent": true, "river": river_index})
+			at += every
+
+
+## The ponds of `water_sources`, without the rivers' banks.
+func pond_count() -> int:
+	var count := 0
+	for source in water_sources:
+		if not bool(source.get("permanent", false)):
+			count += 1
+	return count
+
+
 func _water_demand_unit() -> float:
 	var season_seconds := float(ClimateScript.calendar(config_bundle.get("world", {}).get("climate", {}))[0])
 	var spawns: Dictionary = config_bundle.get("world", {}).get("spawns", {})
@@ -1357,7 +1395,7 @@ func _water_demand_unit() -> float:
 		if species_registry.social(str(species_id)) == "herd":
 			var groups := float(maxi(1, int(spawns.get("%s_group_count" % species_id, 1))))
 			herd = maxf(herd, count / groups * rate * season_seconds)
-	return maxf(herd, total / float(maxi(1, water_sources.size())))
+	return maxf(herd, total / float(maxi(1, pond_count())))
 
 
 ## Tells each pond that dried or filled again since the last tick, once.

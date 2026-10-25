@@ -234,6 +234,8 @@ func _draw_obstacles(world, visible_rect: Rect2) -> void:
 
 func _draw_water(world, visible_rect: Rect2) -> void:
 	for source in world.water_sources:
+		if bool(source.get("permanent", false)):
+			continue
 		var position: Vector2 = source["position"]
 		var radius: float = float(source["radius"])
 		var source_rect := Rect2(position - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)

@@ -486,6 +486,10 @@ func _rasterize_terrain(image: Image, world) -> void:
 				var obstacle_color := terrain.get_obstacle_color(obstacle_id)
 				obstacle_color.a = 0.58
 				color = _blend_colors(color, obstacle_color)
+			elif terrain.is_ford_index(index):
+				var ford_color := terrain.get_obstacle_color("water")
+				ford_color.a = 0.3
+				color = _blend_colors(color, ford_color)
 			var cell_rect := terrain.get_cell_rect(index)
 			var texture_rect := _world_rect_to_texture_rect(cell_rect, image.get_size())
 			_fill_image_rect(image, texture_rect, color)
@@ -503,6 +507,9 @@ func _draw_live_water(map_rect: Rect2, world) -> void:
 	var scale := map_rect.size.x / world_bounds.size.x
 	for index in range(world.water_sources.size()):
 		var source: Dictionary = world.water_sources[index]
+		# A river's banks: the river itself is in the terrain picture.
+		if bool(source.get("permanent", false)):
+			continue
 		var center := _world_to_map_point(source["position"], map_rect)
 		if world.water.is_dry(index):
 			draw_circle(center, maxf(1.0, float(source.get("bank_radius", 0.0)) * scale), DRY_BED_COLOR)
@@ -514,6 +521,8 @@ func _draw_live_water(map_rect: Rect2, world) -> void:
 
 func _rasterize_water(image: Image, world) -> void:
 	for source in world.water_sources:
+		if bool(source.get("permanent", false)):
+			continue
 		var center := _world_to_texture_point(source["position"], image.get_size())
 		var radius := float(source["radius"]) * _get_texture_scale(image.get_size())
 		_draw_circle_on_image(image, center, radius, WATER_FILL_COLOR, WATER_OUTLINE_COLOR)

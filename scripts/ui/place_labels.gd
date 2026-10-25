@@ -109,6 +109,9 @@ func _draw() -> void:
 		var water = _water()
 		for index in range(places.ponds.size()):
 			var pond: Dictionary = places.ponds[index]
+			# A river's name once, at its middle bank, with no level: a river never runs dry.
+			if pond.has("river") and not bool(pond.get("label", false)):
+				continue
 			if view.has_point(pond["position"]):
 				var dry: bool = water != null and water.is_dry(index)
 				var shade := colour
@@ -127,7 +130,7 @@ func _draw() -> void:
 
 ## A pond's name with how full it is, while ponds have levels.
 static func pond_text(name: String, water, index: int) -> String:
-	if water == null or not water.enabled or index < 0 or index >= water.levels.size():
+	if water == null or not water.enabled or index < 0 or index >= water.levels.size() or is_inf(water.capacity[index]):
 		return name
 	if water.is_dry(index):
 		return "%s · сухо" % name

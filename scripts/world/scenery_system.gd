@@ -31,7 +31,9 @@ func initialize(world_config: Dictionary, visuals: Dictionary, ground: TerrainSy
 	for index in terrain.get_cell_count():
 		var rule: Dictionary = rules.get(terrain.get_biome_at_index(index), {})
 		var obstacle: String = terrain.get_obstacle_at_index(index)
-		if obstacle != "":
+		if obstacle == "water" or terrain.is_ford_index(index):
+			rule = {}
+		elif obstacle != "":
 			rule = {"chance": 1.0, "groups": ["stone" if obstacle == "cliff" else "tree_large"]}
 		var roll := random.randf()
 		var names: Array = rule.get("groups", [])
@@ -94,7 +96,9 @@ static func intersects_rect(a: Vector2, b: Vector2, rect: Rect2) -> bool:
 				return false
 	return true
 
-func terrain_clear(a: Vector2, b: Vector2, radius: float) -> bool:
+## Whether a body of `radius` passes from `a` to `b` over the ground: no blocked cell on the way and
+## no step too high. For sight (`sight`), a river blocks nothing: an animal sees across the water.
+func terrain_clear(a: Vector2, b: Vector2, radius: float, sight: bool = false) -> bool:
 	var bounds := Rect2(Vector2.ZERO, terrain.world_size).grow(-radius - 0.01)
 	if not bounds.has_point(a) or not bounds.has_point(b):
 		return false
@@ -104,7 +108,8 @@ func terrain_clear(a: Vector2, b: Vector2, radius: float) -> bool:
 	for y in range(maxi(0, low.y), mini(terrain.rows - 1, high.y) + 1):
 		for x in range(maxi(0, low.x), mini(terrain.cols - 1, high.x) + 1):
 			var index: int = y * terrain.cols + x
-			if not terrain.is_walkable_index(index) and intersects_rect(a, b, terrain.get_cell_rect(index).grow(radius)):
+			if not terrain.is_walkable_index(index) and not (sight and terrain.is_water_index(index)) \
+					and intersects_rect(a, b, terrain.get_cell_rect(index).grow(radius)):
 				return false
 	var previous := terrain.get_index_from_position(a)
 	var steps := maxi(1, int(ceil(a.distance_to(b) / (terrain.cell_size * 0.25))))
@@ -212,7 +217,7 @@ func movement_cost(point: Vector2) -> float:
 func visible(a: Vector2, b: Vector2, view_radius: float) -> bool:
 	visibility_checks += 1
 	var distance := a.distance_to(b)
-	if distance > view_radius or not terrain_clear(a, b, 0.0):
+	if distance > view_radius or not terrain_clear(a, b, 0.0, true):
 		return false
 	var attenuation := 1.0
 	for entry in query_rect(segment_bounds(a, b, max_extent)):

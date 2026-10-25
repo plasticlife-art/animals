@@ -31,7 +31,13 @@ const DEFAULT_BIOMES := {
 const DEFAULT_OBSTACLE_COLORS := {
 	"cliff": Color(0.36, 0.37, 0.4, 1.0),
 	"dense_forest": Color(0.08, 0.16, 0.11, 1.0),
+	"water": Color(0.2, 0.42, 0.62, 1.0),
 }
+## What water a cell holds (`_water`): none, a river too deep to cross, or a ford.
+const WATER_NONE := 0
+const WATER_DEEP := 1
+const WATER_FORD := 2
+const RIVER_SALT := 0x51BE5
 
 var world_size: Vector2 = Vector2.ZERO
 var cell_size: float = 32.0
@@ -64,6 +70,13 @@ var _path_cache_limit: int = 768
 var _path_searches: Dictionary = {}
 var _path_query_count: int = 0
 var _path_cache_hit_count: int = 0
+## The rivers (`terrain.rivers`): `{points, half_width, fords}` each, in world units, the smoothed
+## bed from source to mouth, how far either side of it the water runs, and where it may be
+## crossed. Empty, with `_water` empty too, in a world without rivers.
+var rivers: Array = []
+var _water: PackedByteArray = PackedByteArray()
+## What crossing a ford costs, over the ground's own cost, in the route search and on the legs.
+var _ford_cost: float = 1.0
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
@@ -105,13 +118,18 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_path_cache_limit = maxi(32, int(world_config.get("navigation", {}).get("path_cache_limit", 768)))
 	_path_query_count = 0
 	_path_cache_hit_count = 0
+	rivers.clear()
+	_water = PackedByteArray()
+	_ford_cost = 1.0
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
 	_generate_heights(height_config, rng)
 	_apply_obstacles(terrain_config.get("obstacles", {}), rng)
+	_generate_rivers(terrain_config.get("rivers", {}), rng, water_sources)
 	_connect_walkable_regions()
 	_refresh_cached_values()
 	_ensure_biome_presence(rng)
+	_finish_rivers()
 	_refresh_navigation_cache()
 
 
@@ -194,6 +212,8 @@ func get_obstacle_color(obstacle_id: String) -> Color:
 func get_move_cost_at_index(index: int) -> float:
 	if index < 0 or index >= get_cell_count():
 		return 1.0
+	if not _water.is_empty() and _water[index] == WATER_FORD:
+		return maxf(1.0, float(_move_costs[index])) * _ford_cost
 	return maxf(1.0, float(_move_costs[index]))
 
 
@@ -614,6 +634,9 @@ func _carve_corridor(start_index: int, end_index: int) -> void:
 	var cells: Array = _corridor_cells(start_index, end_index)
 	for index in cells:
 		_clear_obstacle(int(index))
+		# Through a river, the passage is a ford.
+		if not _water.is_empty() and _water[int(index)] == WATER_DEEP:
+			_water[int(index)] = WATER_FORD
 	_grade_corridor(cells)
 
 
@@ -934,3 +957,241 @@ func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary) -> void:
 	if _path_cache_order.size() > _path_cache_limit:
 		var oldest_key: Vector2i = _path_cache_order.pop_front()
 		_path_cache.erase(oldest_key)
+
+
+## Whether the cell holds river water, deep or a ford.
+func is_water_index(index: int) -> bool:
+	return not _water.is_empty() and index >= 0 and index < _water.size() and _water[index] != WATER_NONE
+
+
+func is_ford_index(index: int) -> bool:
+	return not _water.is_empty() and index >= 0 and index < _water.size() and _water[index] == WATER_FORD
+
+
+func get_water_at_index(index: int) -> int:
+	return WATER_NONE if not is_water_index(index) else int(_water[index])
+
+
+## Rivers (`terrain.rivers`): `count` of them, each from a source inland, away from the ponds, to
+## the map's edge at least `min_length_fraction` of the map away. The bed follows the cheapest way
+## (`AStarGrid2D`, eight-way) over a noise that makes it wind (`wiggle`), round the ponds by
+## `pond_margin_cells`, along low ground where the map has relief, and clear of the rivers before
+## it; smoothed (Chaikin), it is deep water within `half_width_cells` - an obstacle like a cliff -
+## but for a ford every `ford_every_cells` along it, `ford_width_cells` wide, walkable at
+## `ford_cost` times the ground's cost. A generator of its own, seeded from the world's seed: the
+## world's stream is not drawn from, so a world without rivers is the world it was.
+func _generate_rivers(config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
+	if not bool(config.get("enabled", false)) or int(config.get("count", 0)) <= 0:
+		return
+	var random := RandomNumberGenerator.new()
+	random.seed = (int(rng.seed) ^ RIVER_SALT) + int(config.get("seed", 0))
+	_water.resize(get_cell_count())
+	_water.fill(WATER_NONE)
+	_ford_cost = maxf(1.0, float(config.get("ford_cost", 2.5)))
+	var noise := FastNoiseLite.new()
+	noise.seed = random.randi()
+	noise.frequency = float(config.get("wiggle_frequency", 0.08))
+	var grid := AStarGrid2D.new()
+	grid.region = Rect2i(0, 0, cols, rows)
+	grid.cell_size = Vector2.ONE
+	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ALWAYS
+	grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	grid.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	grid.update()
+	var wiggle := float(config.get("wiggle", 3.0))
+	var climb_weight := float(config.get("climb_weight", 1.5))
+	var pond_margin := float(config.get("pond_margin_cells", 3.0)) * cell_size
+	for index in range(get_cell_count()):
+		var coords := get_cell_coords(index)
+		var weight := 1.0 + wiggle * (noise.get_noise_2d(float(coords.x), float(coords.y)) + 1.0) * 0.5
+		if height_levels > 1:
+			weight += float(_heights[index]) * climb_weight
+		if _near_pond(get_cell_center(index), water_sources, pond_margin):
+			weight += 60.0
+		grid.set_point_weight_scale(coords, weight)
+	var half_width := maxf(0.75, float(config.get("half_width_cells", 0.9))) * cell_size
+	var min_length := float(config.get("min_length_fraction", 0.45)) * maxf(world_size.x, world_size.y)
+	var ford_half := maxf(0.5, float(config.get("ford_width_cells", 2.5))) * cell_size * 0.5
+	for _river in range(int(config.get("count", 2))):
+		var route := _river_route(grid, random, water_sources, min_length, pond_margin)
+		if route.size() < 2:
+			continue
+		var points := _chaikin(route, 3)
+		var fords := _place_fords(points, float(config.get("ford_every_cells", 16.0)) * cell_size, half_width)
+		rivers.append({"points": points, "half_width": half_width, "fords": fords})
+		_paint_river(points, half_width, fords, ford_half)
+		# The next river keeps out of this one's bed rather than running into it.
+		for index in range(get_cell_count()):
+			if _water[index] != WATER_NONE:
+				grid.set_point_weight_scale(get_cell_coords(index), 200.0)
+
+
+static func _near_pond(point: Vector2, water_sources: Array, margin: float) -> bool:
+	for source in water_sources:
+		if point.distance_to(source["position"]) <= float(source.get("radius", 0.0)) + margin:
+			return true
+	return false
+
+
+## One river's way, cell centres from a source to a point just past the edge; empty when no try
+## gave one long enough.
+func _river_route(grid: AStarGrid2D, random: RandomNumberGenerator, water_sources: Array, min_length: float,
+		pond_margin: float) -> PackedVector2Array:
+	var margin := mini(12, int(mini(cols, rows) / 4.0))
+	for _attempt in range(24):
+		var source := Vector2i(random.randi_range(margin, cols - 1 - margin), random.randi_range(margin, rows - 1 - margin))
+		var side := random.randi_range(0, 3)
+		var along := random.randf()
+		var start_index := source.y * cols + source.x
+		var start_center := get_cell_center(start_index)
+		if is_water_index(start_index) or _near_pond(start_center, water_sources, pond_margin * 2.0):
+			continue
+		var target := Vector2i(int(along * float(cols - 1)), 0 if side == 0 else rows - 1) if side < 2 \
+			else Vector2i(0 if side == 2 else cols - 1, int(along * float(rows - 1)))
+		var mouth_index := target.y * cols + target.x
+		if get_cell_center(mouth_index).distance_to(start_center) < min_length:
+			continue
+		var ids: Array[Vector2i] = grid.get_id_path(source, target)
+		if ids.size() < 2:
+			continue
+		var route := PackedVector2Array()
+		for id in ids:
+			route.append(get_cell_center(id.y * cols + id.x))
+		var outward := [Vector2(0.0, -1.0), Vector2(0.0, 1.0), Vector2(-1.0, 0.0), Vector2(1.0, 0.0)][side] as Vector2
+		route.append(route[route.size() - 1] + outward * cell_size)
+		return route
+	return PackedVector2Array()
+
+
+## Corner cutting, `rounds` times: each segment's quarter and three-quarter points, the ends kept.
+static func _chaikin(points: PackedVector2Array, rounds: int) -> PackedVector2Array:
+	var current := points
+	for _round in range(rounds):
+		var next := PackedVector2Array([current[0]])
+		for index in range(current.size() - 1):
+			next.append(current[index].lerp(current[index + 1], 0.25))
+			next.append(current[index].lerp(current[index + 1], 0.75))
+		next.append(current[current.size() - 1])
+		current = next
+	return current
+
+
+## Points along the bed every `every` units, the first half a step from the source, at least one
+## in the middle of a short river; none within three cells of the edge. Where the map has relief,
+## each moves up to six cells along to banks a step apart at most, so the ford can be climbed.
+func _place_fords(points: PackedVector2Array, every: float, half_width: float) -> Array:
+	var length := 0.0
+	for index in range(points.size() - 1):
+		length += points[index].distance_to(points[index + 1])
+	var marks: Array = []
+	var at := minf(every * 0.5, length * 0.5)
+	while at < length:
+		marks.append(at)
+		at += every
+	var fords: Array = []
+	var inner := Rect2(Vector2.ZERO, world_size).grow(-3.0 * cell_size)
+	for mark in marks:
+		var best := Vector2.INF
+		for shift in [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]:
+			var spot := _point_along(points, float(mark) + float(shift) * cell_size)
+			if not inner.has_point(spot[0]):
+				continue
+			if best == Vector2.INF:
+				best = spot[0]
+			if _banks_climbable(spot[0], spot[1], half_width):
+				best = spot[0]
+				break
+		if best != Vector2.INF:
+			fords.append(best)
+	return fords
+
+
+## The point `distance` along the polyline and its direction: `[point, unit tangent]`.
+static func _point_along(points: PackedVector2Array, distance: float) -> Array:
+	var left := maxf(0.0, distance)
+	for index in range(points.size() - 1):
+		var step := points[index].distance_to(points[index + 1])
+		if left <= step or index == points.size() - 2:
+			var tangent := (points[index + 1] - points[index]).normalized()
+			return [points[index].lerp(points[index + 1], clampf(left / maxf(step, 0.001), 0.0, 1.0)), tangent]
+		left -= step
+	return [points[points.size() - 1], Vector2.RIGHT]
+
+
+func _banks_climbable(point: Vector2, tangent: Vector2, half_width: float) -> bool:
+	if height_levels <= 1:
+		return true
+	var normal := Vector2(-tangent.y, tangent.x)
+	var a := get_index_from_position(point + normal * (half_width + cell_size))
+	var b := get_index_from_position(point - normal * (half_width + cell_size))
+	if a < 0 or b < 0:
+		return false
+	return absi(int(_heights[a]) - int(_heights[b])) <= _max_climb_step
+
+
+## Marks the bed's cells: deep water within `half_width` of the polyline, an obstacle; a ford within
+## `ford_half` (plus half the width) of a ford point, walkable, at the lower bank's level.
+func _paint_river(points: PackedVector2Array, half_width: float, fords: Array, ford_half: float) -> void:
+	var nearest := polyline_distances(points, half_width)
+	for index in nearest.keys():
+		if float(nearest[index]) > half_width:
+			continue
+		var center := get_cell_center(int(index))
+		var ford := false
+		for spot in fords:
+			if center.distance_to(spot) <= ford_half + half_width * 0.5:
+				ford = true
+				break
+		if ford:
+			_water[int(index)] = WATER_FORD
+			_clear_obstacle(int(index))
+		elif _water[int(index)] != WATER_FORD:
+			_water[int(index)] = WATER_DEEP
+			_set_obstacle(int(index), "water")
+	if height_levels > 1:
+		for index in range(get_cell_count()):
+			if _water[index] == WATER_FORD:
+				_heights[index] = _lowest_dry_neighbour_height(index)
+
+
+## Each cell whose centre lies within `reach` of the polyline, and how far: `{index: distance}`.
+## Segment by segment over the cells about each, so a long river costs what its banks cover.
+func polyline_distances(points: PackedVector2Array, reach: float) -> Dictionary:
+	var nearest := {}
+	for segment in range(points.size() - 1):
+		var a := points[segment]
+		var b := points[segment + 1]
+		var box := Rect2(a, Vector2.ZERO).expand(b).grow(reach)
+		var low := Vector2i((box.position / cell_size).floor())
+		var high := Vector2i((box.end / cell_size).floor())
+		for y in range(maxi(0, low.y), mini(rows - 1, high.y) + 1):
+			for x in range(maxi(0, low.x), mini(cols - 1, high.x) + 1):
+				var index := y * cols + x
+				var center := get_cell_center(index)
+				var distance := center.distance_to(Geometry2D.get_closest_point_to_segment(center, a, b))
+				if distance <= reach and distance < float(nearest.get(index, INF)):
+					nearest[index] = distance
+	return nearest
+
+
+func _lowest_dry_neighbour_height(index: int) -> int:
+	var coords := get_cell_coords(index)
+	var lowest := int(_heights[index])
+	for offset in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var next: Vector2i = coords + offset
+		if next.x < 0 or next.y < 0 or next.x >= cols or next.y >= rows:
+			continue
+		var neighbour := next.y * cols + next.x
+		if _water[neighbour] == WATER_NONE:
+			lowest = mini(lowest, int(_heights[neighbour]))
+	return lowest
+
+
+## Once the rest is laid: no grass in a river, deep or ford.
+func _finish_rivers() -> void:
+	if _water.is_empty():
+		return
+	for index in range(get_cell_count()):
+		if _water[index] != WATER_NONE:
+			_forage_init_multipliers[index] = 0.0
+			_forage_regrowth_multipliers[index] = 0.0

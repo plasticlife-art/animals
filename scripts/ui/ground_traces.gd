@@ -265,7 +265,9 @@ func _apply_water(world, water: Dictionary) -> void:
 	# noise can push it, and two texels for the blend.
 	var texel := maxf(1.0, cell_size * float(water["texel_cells"]))
 	var reach := (float(water["shore_px"]) + float(water["edge_noise_px"])) * scale + texel * 2.0
-	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach)
+	var rivers_config: Dictionary = world.config_bundle.get("world", {}).get("terrain", {}).get("rivers", {})
+	var ford_half := maxf(0.5, float(rivers_config.get("ford_width_cells", 2.5))) * cell_size * 0.5
+	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach, world.terrain_system.rivers, ford_half)
 	_baked_ponds = world.water_sources.size()
 	_water_reach = reach
 	_material.set_shader_parameter("water_extent", Vector2(_water_mask["cols"], _water_mask["rows"]) * texel)
@@ -431,7 +433,7 @@ static func _premultiplied(color: Color) -> Color:
 func _build_rows(terrain: TerrainSystem, iso_layer: TileMapLayer) -> void:
 	var rows: Dictionary = {}
 	for index in range(terrain.get_cell_count()):
-		if not terrain.is_walkable_index(index):
+		if not terrain.is_walkable_index(index) and not terrain.is_water_index(index):
 			continue
 		var coords: Vector2i = terrain.get_cell_coords(index)
 		var row := coords.x + coords.y
@@ -452,10 +454,12 @@ func _build_rows(terrain: TerrainSystem, iso_layer: TileMapLayer) -> void:
 		_row_meshes.append(node)
 
 
+## The cells the ground is drawn on: every walkable one, and a river's deep water, which is drawn
+## by the same shader though nothing walks there.
 static func _all_walkable(terrain: TerrainSystem) -> PackedInt32Array:
 	var cells := PackedInt32Array()
 	for index in range(terrain.get_cell_count()):
-		if terrain.is_walkable_index(index):
+		if terrain.is_walkable_index(index) or terrain.is_water_index(index):
 			cells.append(index)
 	return cells
 
