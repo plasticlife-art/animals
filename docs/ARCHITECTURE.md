@@ -159,6 +159,18 @@ world is bit for bit the one without them.
   ground's own tile is drawn under the water. The minimap paints deep water and fords from the
   terrain, and draws no circle for a bank. Each river has a name of its own («у Быстрой реки»),
   labelled once, at its middle bank.
+- **A setup option** («Реки»: нет / две), off by default and on in the living reserve. Tuned on
+  LOD 2880 s × 8 seeds against the same worlds without rivers (hares at 2.5):
+
+  | Variant | Deer | Deer births | Deer dead of thirst |
+  |---|---|---|---|
+  | Without rivers | 202 | 921 | 76 |
+  | Rivers (fords every 16 cells, cost 2.5) | 158 (−22 %) | 825 | 58 |
+  | Softer (fords every 10, cost 1.5, narrower) | 168 (−17 %) | 818 | 38 |
+
+  Foxes, grouse and hares were even, and no species was lost. Deer lose births, not lives, and
+  more and cheaper fords barely help, so going round to them is not the cause. Left to look into:
+  dens drawn to the banks' water, and hunters by the herds that come to drink there.
 
 ### `ScenerySystem`
 
