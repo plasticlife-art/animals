@@ -159,7 +159,7 @@ func tick(_world, _delta: float) -> void:
 
 
 func tick_maintenance(world, delta: float) -> void:
-	update_needs(delta, world.climate.metabolism_multiplier)
+	update_needs(delta, world.climate.metabolism_multiplier, world.climate.thirst_multiplier)
 	if apply_survival_checks(world, delta):
 		return
 	advance_inertia(world, delta)
@@ -292,10 +292,10 @@ func is_drinking_allowed() -> bool:
 ## Aging, recovery and the cooldowns stay unscaled. Recovery is not consumption,
 ## and scaling it would hand night rest a compounding bonus on top of the
 ## cheaper night metabolism.
-func update_needs(delta: float, metabolism_scale: float = 1.0) -> void:
+func update_needs(delta: float, metabolism_scale: float = 1.0, thirst_scale: float = 1.0) -> void:
 	age += delta
 	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * trait_hunger * metabolism_scale * delta)
-	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * delta)
+	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * thirst_scale * delta)
 	reproduction_cooldown = maxf(0.0, reproduction_cooldown - delta)
 	interaction_timer = maxf(0.0, interaction_timer - delta)
 	attack_cooldown = maxf(0.0, attack_cooldown - delta)
@@ -343,7 +343,7 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 	var effective_speed := desired_speed * trait_speed
 	if move_vector.length_squared() > 0.0001:
 		var local_move_cost := maxf(1.0, world.get_move_cost_at_position(position))
-		effective_speed = desired_speed * trait_speed / local_move_cost
+		effective_speed = desired_speed * trait_speed / local_move_cost * world.climate.movement_multiplier
 		desired_velocity = move_vector.normalized() * effective_speed
 	var fatigue_threshold := float(movement.get("fatigue_energy_ratio", 0.25)) * float(metabolism.get("max_energy", 100.0))
 	var fatigue_scale := lerpf(float(movement.get("exhausted_speed_ratio", 0.55)), 1.0, clampf(energy / maxf(1.0, fatigue_threshold), 0.0, 1.0))

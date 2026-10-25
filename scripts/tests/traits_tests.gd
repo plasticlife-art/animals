@@ -18,6 +18,9 @@ const SelectionCardScript := preload("res://scripts/ui/selection_card.gd")
 class FlatGround:
 	extends RefCounted
 
+	## A clock with no weather: pace as it is.
+	var climate := preload("res://scripts/world/climate.gd").new()
+
 	func get_move_cost_at_position(_position: Vector2) -> float:
 		return 1.0
 

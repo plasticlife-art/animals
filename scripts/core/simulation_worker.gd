@@ -26,6 +26,8 @@ var _sent_territories_revision: int = 0
 var _sent_pastures_revision: int = 0
 ## And for the viewers' wards (`WorldState.adoptions_revision`).
 var _sent_adoptions_revision: int = 0
+## And for the world's events (`WorldState.world_events_revision`): a vote's weather.
+var _sent_world_events_revision: int = 0
 
 func configure(source_world: WorldState, source_stats: StatsSystem, source_events: EventBus, source_rng: RandomNumberGenerator) -> void:
 	world = source_world
@@ -47,6 +49,7 @@ func configure(source_world: WorldState, source_stats: StatsSystem, source_event
 	_sent_territories_revision = world.territories_revision()
 	_sent_pastures_revision = world.herd_pastures_revision
 	_sent_adoptions_revision = world.adoptions_revision
+	_sent_world_events_revision = world.world_events_revision
 	world.resource_system.track_dirty_cells = false
 	world.resource_system.clear_dirty_cells()
 	events.event_emitted.connect(_collect_event)
@@ -169,6 +172,9 @@ func _presentation_state(inspected_id: int, full: bool, include_grass: bool, ful
 	if full or world.adoptions_revision != _sent_adoptions_revision:
 		result["adoptions"] = world.adoptions.duplicate(true)
 		_sent_adoptions_revision = world.adoptions_revision
+	if full or world.world_events_revision != _sent_world_events_revision:
+		result["world_events"] = world.world_events.duplicate(true)
+		_sent_world_events_revision = world.world_events_revision
 	result["snapshot_counts"] = {"agents": records.size(),
 		"agent_removals": agent_removals.size(),
 		"carcasses": carcass_delta.upserts.size(),

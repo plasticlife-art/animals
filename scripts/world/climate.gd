@@ -56,6 +56,14 @@ var regrowth_multiplier: float = 1.0
 var metabolism_multiplier: float = 1.0
 var perception_multiplier: float = 1.0
 var light_color: Color = Color.WHITE
+## The weather's share of the clock (`Weather`, `apply_weather()`), neutral without one: its kind
+## and how strong it shows, and what it does beside the multipliers above - to pace, to thirst and
+## to the ponds' balance (seasons of fill a season, added).
+var weather_kind: String = ""
+var weather_intensity: float = 0.0
+var movement_multiplier: float = 1.0
+var thirst_multiplier: float = 1.0
+var water_bias: float = 0.0
 
 var _config: Dictionary = {}
 var _perception_by_species: Dictionary = {}
@@ -89,6 +97,28 @@ func sample(time_seconds: float) -> void:
 	perception_multiplier = float(values["perception_multiplier"])
 	light_color = values["light_color"]
 	_perception_by_species = values.get("perception_multiplier_by_species", {})
+	weather_kind = ""
+	weather_intensity = 0.0
+	movement_multiplier = 1.0
+	thirst_multiplier = 1.0
+	water_bias = 0.0
+
+
+## The weather (`Weather.evaluate()`) over the clock just sampled.
+func apply_weather(weather: Dictionary) -> void:
+	weather_kind = str(weather.get("kind", ""))
+	weather_intensity = float(weather.get("intensity", 0.0))
+	regrowth_multiplier *= float(weather.get("regrowth", 1.0))
+	metabolism_multiplier *= float(weather.get("metabolism", 1.0))
+	var sight := float(weather.get("perception", 1.0))
+	perception_multiplier *= sight
+	var scaled := {}
+	for species_type in _perception_by_species.keys():
+		scaled[species_type] = float(_perception_by_species[species_type]) * sight
+	_perception_by_species = scaled
+	movement_multiplier = float(weather.get("movement", 1.0))
+	thirst_multiplier = float(weather.get("thirst", 1.0))
+	water_bias = float(weather.get("water", 0.0))
 
 
 ## One hash lookup, not a recomputation - this is the hot path.

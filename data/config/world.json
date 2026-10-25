@@ -311,6 +311,26 @@
     "jitter": 0.42,
     "seed": 3
   },
+  "weather": {
+    "_comment": "Weather (`Weather`): spells of `spell_seconds`, each of a kind drawn from its season's `seasons` weights by a hash of the spell and the world's seed, easing in over `ease_seconds`. A kind's `water` (seasons of fill a season, on the ponds' balance), `regrowth`, `metabolism` and `thirst` are evened out against the season's mean, so the seasons keep their averages; `perception` and `movement` are not. `intensity` is how strongly the view draws it, as `draws` (rain, snow, fog or heat; the kind's own name without). Off while `enabled` is false; the scenarios turn it off. Tuned on LOD 2880 s x 8 seeds: deer +1 %, foxes +2 %, grouse even, no species lost; deaths of thirst 9 % of deer deaths against 6 %, ponds dry twice as often. The first try (rain 1.0, downpour 3.0, heat -1.0 and thirst 1.4) doubled deaths of thirst and trebled dry ponds: a pond at its floor does not take the mean back.",
+    "enabled": true,
+    "spell_seconds": 40.0,
+    "ease_seconds": 6.0,
+    "kinds": {
+      "clear": {"label": "Ясно"},
+      "rain": {"label": "Дождь", "water": 0.6, "regrowth": 1.2, "perception": 0.9, "intensity": 0.6},
+      "downpour": {"label": "Ливень", "water": 2.0, "regrowth": 1.3, "perception": 0.7, "movement": 0.9, "draws": "rain"},
+      "fog": {"label": "Туман", "perception": 0.55},
+      "snow": {"label": "Снег", "metabolism": 1.15, "regrowth": 0.5, "perception": 0.8, "movement": 0.85},
+      "heat": {"label": "Зной", "thirst": 1.2, "water": -0.4, "regrowth": 0.85, "intensity": 0.7}
+    },
+    "seasons": {
+      "spring": {"clear": 4, "rain": 3, "downpour": 1, "fog": 2},
+      "summer": {"clear": 5, "rain": 1, "downpour": 1, "heat": 3},
+      "autumn": {"clear": 3, "rain": 3, "downpour": 1, "fog": 3},
+      "winter": {"clear": 3, "snow": 5, "fog": 2}
+    }
+  },
   "water_levels": {
     "enabled": true,
     "balance": {"spring": 2.0, "summer": -0.6, "autumn": 0.2, "winter": 0.6},

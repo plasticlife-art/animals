@@ -237,6 +237,59 @@ the worst drought year took 13.5 %.
   appends to it and grows the arrays in one step. Levels for another number of ponds than the
   world has are refused with a warning, never silently
 
+### `Weather` (`world.weather`)
+
+The weather (`scripts/world/weather.gd`) is, like `Climate`, a pure function of time. It has
+nothing to save, reads the same on the worker and in the view, and never draws from the world's
+stream.
+
+- **Spells.** Time is cut into spells of `spell_seconds` (40 s: three to a season, which here
+  lasts one 120 s day). Each spell's kind is drawn from its season's `seasons` weights by a hash
+  of the spell's number and the world's seed. A spell eases in from the one before over
+  `ease_seconds`.
+- **Kinds.** Clear, rain, downpour, fog, snow (winter only), heat (summer only). Each changes:
+  - `water`: the ponds' balance, in seasons of fill a season, added to `water_levels.balance`
+    (`Climate.water_bias`);
+  - `regrowth`: the grass;
+  - `metabolism` and `thirst`: the needs (`Climate.thirst_multiplier`, on live and dormant
+    thirst alike);
+  - `perception`: sight;
+  - `movement`: pace (`Climate.movement_multiplier`, in `move_with_vector`).
+- **Evened out.** `water`, `regrowth`, `metabolism` and `thirst` are evened against the
+  season's mean over its weights: the mean is taken off `water` and divided out of the rest.
+  The weather thus varies a season's spells without moving its average, and the balance the
+  ecology was tuned to holds. Sight and pace are not evened: a fog is a fog.
+- **Applied.** `WorldState.sample_climate()` samples the clock and applies the weather over it
+  (`Climate.apply_weather()`), every tick and on load. The view does the same with each worker
+  frame. Off - with no block, `enabled` false, or no seasons - every weather field is neutral
+  (1.0 or 0.0), and the world matches a world without weather bit for bit.
+- **Votes.** A rain, a dry spell or a cold snap ordered (by the reserve's votes) also brings
+  its weather for the power's `weather_seconds`: a downpour, heat, snow. These are
+  `world_events` of kind `weather` (`forced` in `Weather.evaluate()`). The view gets
+  `world_events` as a revisioned frame block.
+- **Drawn.** `WeatherOverlay`, a full-screen rect under every panel, shades the map with
+  `weather.gdshader`: slanting rain streaks, drifting snowflakes, fog noise, the warm tint of
+  heat. It is cut to 3-pixel art pixels, anchored to the world as the camera pans, dimmed with
+  the day's light, and stilled when the game is paused. `Weather.visual()` gives each channel's
+  strength, eased between spells, and a kind's `draws` names its channel (a downpour draws
+  rain). The season bar names the weather: «Весна · Год 1 · Ливень».
+- **Tuned** on LOD 2880 s × 8 seeds against the same worlds without weather:
+
+  | Metric | Without | With |
+  |---|---|---|
+  | Deer | 197 | 199 (+1 %) |
+  | Foxes | 42 | 43 (+2 %) |
+  | Grouse | 119 | 119 |
+  | Species lost | 0 | 0 |
+  | Deaths of thirst, share of deer deaths | 6 % | 9 % |
+  | Ponds drying up | 63 | 134 (twice as often) |
+
+  The first try (rain 1.0, downpour 3.0, heat -1.0 with thirst ×1.4) doubled the deaths of
+  thirst and trebled the drying. A pond at its floor does not take the mean back: evening the
+  balance holds the average inflow, not the levels. Kills did not move (138 either way), so the
+  sleeping hunt, which has no sight, needs no fog factor. The scenarios turn the weather off:
+  their goals were tuned without it.
+
 ### `TrailField`
 
 Where animals have been walking (`scripts/world/trail_field.gd`): a grid

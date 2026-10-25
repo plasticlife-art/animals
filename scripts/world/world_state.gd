@@ -90,6 +90,13 @@ var herd_pastures: Dictionary = {}
 ## Moves whenever `herd_pastures` does, for the view's copy (`SimulationWorker`).
 var herd_pastures_revision: int = 0
 var climate: Climate
+## The weather (`world.weather`, `Weather`) and whether the world has one: off without the block,
+## or without seasons to draw it by.
+var weather_config: Dictionary = {}
+var weather_on: bool = false
+## Moves whenever `world_events` does, for the view's copy (`SimulationWorker`): a vote's weather
+## is drawn there too.
+var world_events_revision: int = 0
 ## The ponds' levels (`WaterSystem`): they fill and dry with the seasons and as they are drunk.
 var water: WaterSystem
 ## The player's powers and the orders given with them (`PlayerState`).
@@ -238,6 +245,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	# snapshot on tick 0, before the first step ever runs.
 	climate = ClimateScript.new()
 	climate.configure(world_config)
+	weather_config = world_config.get("weather", {})
+	weather_on = Weather.enabled(weather_config) and climate.enabled
 	_configure_breeding()
 	var climate_config: Dictionary = world_config.get("climate", {})
 	water = WaterSystemScript.new()
@@ -310,7 +319,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	current_time = time_seconds
 	_reproduction_population_counts.clear()
 	_reproduction_birth_reservations.clear()
-	climate.sample(current_time)
+	sample_climate()
 	_refresh_breeding_values()
 	_reset_performance_counters()
 	if not commands.is_empty():
@@ -1722,6 +1731,7 @@ func _command_rain(command: Dictionary) -> Dictionary:
 		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
 	var share := float(command.get("params", {}).get("share", player.settings("rain").get("share", 0.35)))
 	water.add_to_all(share)
+	_force_weather("downpour", "rain")
 	return {"ok": true, "share": share}
 
 
@@ -1731,11 +1741,13 @@ func _command_drought(command: Dictionary) -> Dictionary:
 		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
 	var share := float(command.get("params", {}).get("share", player.settings("drought").get("share", 0.3)))
 	water.add_to_all(-share)
+	_force_weather("heat", "drought")
 	return {"ok": true, "share": share}
 
 
 ## A cold snap (`cold_snap`): every animal hungers and thirsts `factor` times as fast for `seconds`.
 func _command_cold_snap(command: Dictionary) -> Dictionary:
+	_force_weather("snow", "cold_snap")
 	return _start_world_event("cold_snap", command)
 
 
@@ -1750,7 +1762,34 @@ func _start_world_event(kind: String, command: Dictionary) -> Dictionary:
 	var seconds := float(params.get("seconds", settings.get("seconds", 60.0)))
 	var factor := float(params.get("factor", settings.get("factor", 1.5)))
 	world_events.append({"kind": kind, "until": current_time + seconds, "factor": factor})
+	world_events_revision += 1
 	return {"ok": true, "kind": kind, "seconds": seconds, "factor": factor}
+
+
+## A vote's weather shown and felt (`Weather`, as `forced`) for the power's `weather_seconds`, when
+## the world has weather: the downpour of a rain, the heat of a dry spell, the snow of a cold snap.
+func _force_weather(weather: String, power: String) -> void:
+	if not weather_on:
+		return
+	var seconds := float(player.settings(power).get("weather_seconds", 60.0))
+	world_events.append({"kind": "weather", "weather": weather, "since": current_time, "until": current_time + seconds})
+	world_events_revision += 1
+
+
+## The clock for `current_time`, with the weather over it when the world has one.
+func sample_climate() -> void:
+	climate.sample(current_time)
+	if weather_on:
+		climate.apply_weather(Weather.evaluate(weather_config, climate.season_id, current_time, trait_world, weather_forced()))
+
+
+## The weather votes forced (`world_events` of kind `weather`), for `Weather.evaluate()`.
+func weather_forced() -> Array:
+	var forced: Array = []
+	for event in world_events:
+		if str(event.get("kind", "")) == "weather":
+			forced.append(event)
+	return forced
 
 
 ## The world's events while they last, over the climate the tick sampled; spent ones go.
@@ -1765,6 +1804,8 @@ func _apply_world_events() -> void:
 				climate.metabolism_multiplier *= float(event.get("factor", 1.0))
 			"bloom":
 				climate.regrowth_multiplier *= float(event.get("factor", 1.0))
+	if lasting.size() != world_events.size():
+		world_events_revision += 1
 	world_events = lasting
 
 
@@ -2107,7 +2148,7 @@ func import_state(data: Dictionary) -> void:
 	current_time = float(data.get("current_time", 0.0))
 	# A restored save calls `refresh_snapshot()` immediately; without this the
 	# loaded game would report spring noon for one tick.
-	climate.sample(current_time)
+	sample_climate()
 	_refresh_breeding_values()
 
 	for record in data.get("agents", []):
@@ -2139,6 +2180,7 @@ func import_state(data: Dictionary) -> void:
 	for key in saved_adoptions.keys():
 		adoptions[int(key)] = saved_adoptions[key].duplicate(true)
 	world_events = data.get("world_events", []).duplicate(true)
+	world_events_revision += 1
 	var saved_territories: Dictionary = data.get("territories", {})
 	for species_key in territories.keys():
 		territories[species_key].import_state(saved_territories.get(species_key, {}))
@@ -5603,7 +5645,8 @@ func _apply_dormant_metabolism_to_aggregate(sector_key: Vector2i, aggregate: Dic
 	# follows the camera, the divergence hides exactly where you are looking.
 	var metabolism_scale: float = climate.metabolism_multiplier
 	var avg_hunger: float = minf(100.0, float(aggregate.get("avg_hunger", 0.0)) + float(metabolism.get("hunger_rate", 2.0)) * metabolism_scale * elapsed)
-	var avg_thirst: float = minf(100.0, float(aggregate.get("avg_thirst", 0.0)) + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * elapsed)
+	var avg_thirst: float = minf(100.0, float(aggregate.get("avg_thirst", 0.0)) + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale
+		* climate.thirst_multiplier * elapsed)
 	# Live agents recover energy while resting; the dormant path only ever drained it,
 	# so dormant energy fell monotonically to zero. That alone made dormant breeding
 	# impossible, because `_compute_dormant_births_for_aggregate` gates on

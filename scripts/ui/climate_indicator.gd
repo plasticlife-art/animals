@@ -68,6 +68,10 @@ func _draw() -> void:
 	var baseline: float = PADDING + line_height
 
 	var title := "%s · Год %d" % [climate.season_label, climate.year + 1]
+	# The weather, when the world has one and it is not plain (`Weather`).
+	var weather := Weather.label(simulation_manager.world_state.weather_config, climate.weather_kind)
+	if weather != "" and climate.weather_kind != "clear":
+		title += " · " + weather
 	draw_string(font, Vector2(PADDING, baseline), title,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
 

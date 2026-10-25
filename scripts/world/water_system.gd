@@ -157,6 +157,8 @@ func step(delta: float, climate) -> void:
 	var balance: float = climate.blend_by_season(settings["balance"])
 	if balance < 0.0 and is_drought_year(climate.year):
 		balance *= float(settings["drought_strength"])
+	# The weather's rain or heat (`Climate.water_bias`, 0 without weather).
+	balance += float(climate.water_bias)
 	var rate := balance / season_length * delta
 	if rate == 0.0:
 		return

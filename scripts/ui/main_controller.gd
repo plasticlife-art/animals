@@ -346,11 +346,11 @@ func _start_reserve(fresh: bool) -> void:
 	$CanvasLayer.add_child(_banner)
 	_banner.bind(reserve_session)
 	_reserve_year = int(simulation_manager.world_state.climate.year)
-	# Under every panel: the wards' names belong to the map.
+	# Over the weather and under every panel: the wards' names belong to the map.
 	_ward_tags = WardTags.new()
 	_ward_tags.theme = result_window.theme
 	$CanvasLayer.add_child(_ward_tags)
-	$CanvasLayer.move_child(_ward_tags, 0)
+	$CanvasLayer.move_child(_ward_tags, 1)
 	_ward_tags.bind(simulation_manager, agent_renderer, reserve_session)
 	# The reserve is the one world of this window: no new one over its viewers from the pause menu.
 	restart_button.visible = false
@@ -528,6 +528,11 @@ func _bind_view() -> void:
 	world_camera.bind_agent_renderer(agent_renderer)
 
 	simulation_manager.tick_completed.connect(_on_tick_for_autosave)
+	# The weather over the map, under every panel.
+	var weather := WeatherOverlay.new()
+	$CanvasLayer.add_child(weather)
+	$CanvasLayer.move_child(weather, 0)
+	weather.bind(simulation_manager)
 	simulation_manager.world_exported.connect(_on_world_exported)
 	debug_panel.pause_toggled.connect(_on_pause_toggled)
 	debug_panel.single_step_requested.connect(simulation_manager.request_single_step)

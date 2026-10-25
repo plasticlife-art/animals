@@ -32,7 +32,7 @@ var _selected_box := Rect2()
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 func bind(manager, agent_renderer: Node2D, reserve_session) -> void:

@@ -77,7 +77,7 @@ func configure(
 
 
 func tick(world, delta: float) -> void:
-	update_needs(delta, world.climate.metabolism_multiplier)
+	update_needs(delta, world.climate.metabolism_multiplier, world.climate.thirst_multiplier)
 	_maybe_drink(world)
 	if apply_survival_checks(world, delta):
 		set_ai_state(AgentAIState.DEAD)

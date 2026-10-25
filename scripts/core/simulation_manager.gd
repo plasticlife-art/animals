@@ -893,6 +893,8 @@ func _apply_worker_frame(data: Dictionary) -> void:
 	if data.has("adoptions"):
 		world_state.adoptions = data.adoptions.duplicate(true)
 		world_state.adoptions_revision += 1
+	if data.has("world_events"):
+		world_state.world_events = data.world_events.duplicate(true)
 	if data.has("water"):
 		world_state.water.import_state(data.water)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes
@@ -917,7 +919,8 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		simulation_phase_times[key].add(float(data.performance[key]))
 	world_state.current_tick = current_tick - 1
 	world_state.current_time = simulation_time - tick_duration
-	world_state.climate.sample(world_state.current_time)
+	# With the weather over it, as the worker has it.
+	world_state.sample_climate()
 	for event in data.events:
 		event_bus.emit_event(event)
 	stats_system.counters = data.counters
