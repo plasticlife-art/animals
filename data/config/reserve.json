@@ -1,0 +1,40 @@
+{
+  "_comment": "The living reserve: a world on a stream that its viewers act on (`ReserveSession`). `offered` are the powers the reserve's world has (`powers.json`). Viewers write commands in the chat; `commands` maps each word, after «!», to what it does. Times are simulated seconds. `cooldowns` are per viewer: a ward (`adopt`), a steward's power (`power`), joining a fund (`team`). `vote`: every `every_seconds` a vote of `choices` events from `events`, open for `open_seconds`; viewers vote with «!1», «!2»... (or «!голос 2»), the most votes winning, the first on a tie. `teams`: viewers back a species' fund with «!олени» and the like; every `every_seconds` each fund counts its members active in that time, and the fund with most - at least `min_members` - has its `perk` carried out. `names` keeps wards' names to letters, spaces and hyphens, at most `max_length`, with none of `blocked` in them. `link` is the local port the chat bridge sends lines of JSON to (`tools/stream_bridge`).",
+  "offered": ["dig_pond", "lead_herd", "cull", "adopt", "rain", "drought", "cold_snap", "bloom", "release"],
+  "link": {"host": "127.0.0.1", "port": 47821},
+  "commands": {
+    "имя": "adopt", "name": "adopt",
+    "моё": "mine", "мое": "mine", "my": "mine",
+    "голос": "vote", "vote": "vote",
+    "водопой": "dig_pond", "повести": "lead_herd", "отстрел": "cull",
+    "олени": "team:herbivore", "лисы": "team:predator", "волки": "team:wolf"
+  },
+  "cooldowns": {"adopt": 30.0, "power": 180.0, "team": 60.0},
+  "vote": {
+    "every_seconds": 240.0,
+    "open_seconds": 60.0,
+    "choices": 3,
+    "events": [
+      {"id": "rain", "power": "rain", "label": "Дождь"},
+      {"id": "drought", "power": "drought", "label": "Сушь"},
+      {"id": "cold_snap", "power": "cold_snap", "label": "Стужа"},
+      {"id": "bloom", "power": "bloom", "label": "Буйная трава"},
+      {"id": "foxes", "power": "release", "params": {"species": "predator"}, "label": "Пришлые лисы"},
+      {"id": "deer", "power": "release", "params": {"species": "herbivore"}, "label": "Пришлое стадо"},
+      {"id": "wolves", "power": "release", "params": {"species": "wolf"}, "label": "Пришлые волки"}
+    ]
+  },
+  "teams": {
+    "every_seconds": 300.0,
+    "min_members": 1,
+    "funds": {
+      "herbivore": {"label": "Фонд оленей", "perk": {"power": "bloom"}},
+      "predator": {"label": "Фонд лис", "perk": {"power": "release", "params": {"species": "predator"}}},
+      "wolf": {"label": "Фонд волков", "perk": {"power": "release", "params": {"species": "wolf"}}}
+    }
+  },
+  "names": {
+    "max_length": 16,
+    "blocked": ["хуй", "хуе", "хуё", "пизд", "ебл", "ёбан", "ебан", "бляд", "блят", "сука", "суки", "мудак", "пидор", "пидар", "гандон", "залуп", "шлюх", "fuck", "shit", "cunt", "nigg", "fag", "bitch", "whore"]
+  }
+}
