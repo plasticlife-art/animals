@@ -336,6 +336,8 @@ func _start_reserve(fresh: bool) -> void:
 	_reserve_overlay.position = Vector2(12.0, 12.0)
 	$CanvasLayer.add_child(_reserve_overlay)
 	_reserve_overlay.bind(reserve_session)
+	# The reserve is the one world of this window: no new one over its viewers from the pause menu.
+	restart_button.visible = false
 	_sync_player_bar()
 
 

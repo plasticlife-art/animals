@@ -256,6 +256,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player_command_handlers["cold_snap"] = _command_cold_snap
 	player_command_handlers["bloom"] = _command_bloom
 	player_command_handlers["release"] = _command_release
+	player_command_handlers["immigrate"] = _command_release
 	adoptions.clear()
 	adoptions_revision = 0
 	world_events.clear()
@@ -1699,6 +1700,20 @@ func _note_ward_death(agent_id: int) -> void:
 	if float(ward.get("died_at", -1.0)) < 0.0:
 		ward["died_at"] = current_time
 		adoptions_revision += 1
+		_forget_old_wards(int(player.settings("adopt").get("keep_dead", 200)))
+
+
+## Of the wards that died, keeps the `keep` latest (a longer reserve would carry every one).
+func _forget_old_wards(keep: int) -> void:
+	var dead: Array = []
+	for id in adoptions.keys():
+		if float(adoptions[id].get("died_at", -1.0)) >= 0.0:
+			dead.append([float(adoptions[id]["died_at"]), int(id)])
+	if dead.size() <= keep:
+		return
+	dead.sort()
+	for entry in dead.slice(0, dead.size() - keep):
+		adoptions.erase(entry[1])
 
 
 ## Rain (`rain`): every pond `share` fuller.
@@ -1756,9 +1771,10 @@ func _apply_world_events() -> void:
 ## Newcomers walk in from the edge of the map (`release`): a pair of foxes, a pack of wolves or a
 ## herd of deer (`species`, among the power's `species`), grown, the pair or the pack's leaders
 ## taking the nearest territory with both slots open if there is one. Where on the edge is a hash
-## of the tick, never the world's stream.
+## of the tick, never the world's stream. `immigrate` is the same with its own settings: the
+## reserve's rescue of a species about to be lost.
 func _command_release(command: Dictionary) -> Dictionary:
-	var settings := player.settings("release")
+	var settings := player.settings(str(command.get("type", "release")))
 	var species := str(command.get("params", {}).get("species", "predator"))
 	if species not in settings.get("species", ["predator", "wolf", "herbivore"]) or not species_registry.ids().has(species):
 		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}

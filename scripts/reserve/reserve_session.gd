@@ -14,6 +14,7 @@ extends RefCounted
 ##   members has its perk carried out.
 ##
 ## Per-viewer cooldowns, in simulated seconds, sit on top of each power's own (`powers.json`).
+## A species about to be lost gets newcomers from the edge on its own (`rescue`).
 ## `told` carries a line for the overlay: `{text, kind}`.
 
 signal told(line: Dictionary)
@@ -33,6 +34,9 @@ var vote = VoteRoundScript.new()
 ## empty, or gone, the biggest herd of deer.
 var focus: Dictionary = {}
 var _teams_counted_at: float = -1.0
+var _rescue_checked_at: float = -INF
+## When each species last had newcomers sent to save it.
+var _rescued_at: Dictionary = {}
 ## Orders given and not yet answered: `{seq: {key, user, kind, label}}`.
 var _pending: Dictionary = {}
 
@@ -51,6 +55,7 @@ func now() -> float:
 ## One chat line from the bridge: `{platform, user_id, user, text}`.
 func hear(message: Dictionary) -> void:
 	var viewer: Dictionary = book.meet(message, now())
+	book.forget_beyond(int(config.get("viewers_kept", 5000)))
 	var key := ViewerBookScript.key_of(message)
 	var user := str(viewer.get("name", "")) if str(viewer.get("name", "")) != "" else key
 	var command: Dictionary = ChatCommandsScript.parse(str(message.get("text", "")), config)
@@ -76,6 +81,7 @@ func tick() -> void:
 		_order(str(won.get("power", "")), won.get("params", {}), {"key": "", "user": "", "kind": "vote",
 			"label": str(won.get("label", ""))})
 	_count_teams()
+	_rescue()
 
 
 func _adopt(key: String, user: String, raw_name: String) -> void:
@@ -120,6 +126,9 @@ func _steward(key: String, user: String, power: String) -> void:
 		return
 	var herd := focus_herd()
 	if herd.is_empty():
+		return
+	if power == "dig_pond" and manager.world_state.player.ponds.size() >= int(config.get("steward", {}).get("max_ponds", 1 << 30)):
+		_tell("%s: водоёмов в заповеднике уже довольно" % user, "refused")
 		return
 	var params := _steward_target(power, herd)
 	if params.is_empty():
@@ -229,6 +238,41 @@ func _count_teams() -> void:
 		"label": str(funds[winner].get("label", winner)), "members": int(counts[winner])})
 
 
+## Every `rescue.every_seconds`, each species the world began with that is down to fewer than its
+## `rescue.below` has newcomers ordered from the edge (`immigrate`), no sooner than
+## `rescue.gap_seconds` after its last; in the order `below` lists them.
+func _rescue() -> void:
+	var settings: Dictionary = config.get("rescue", {})
+	if settings.is_empty() or now() < _rescue_checked_at + float(settings.get("every_seconds", 30.0)):
+		return
+	_rescue_checked_at = now()
+	var counts := census()
+	var spawns: Dictionary = manager.world_state.config_bundle.get("world", {}).get("spawns", {})
+	var below: Dictionary = settings.get("below", {})
+	for species in below.keys():
+		if int(spawns.get("%s_count" % species, 0)) <= 0 or int(counts.get(species, 0)) >= int(below[species]):
+			continue
+		if now() < float(_rescued_at.get(species, -INF)) + float(settings.get("gap_seconds", 600.0)):
+			continue
+		_rescued_at[species] = now()
+		_order("immigrate", {"species": species}, {"key": "", "user": "", "kind": "rescue", "label": str(species),
+			"count": int(counts.get(species, 0))})
+
+
+## How many of each species live, awake or asleep: `{species: count}`.
+func census() -> Dictionary:
+	var world = manager.world_state
+	var counts := {}
+	for agent in world.get_living_agents():
+		if agent != null and agent.is_alive:
+			counts[agent.species_type] = int(counts.get(agent.species_type, 0)) + 1
+	for sector in world._sector_states.values():
+		for record in sector.get("dormant_records", []):
+			var species := str(record.get("species_type", ""))
+			counts[species] = int(counts.get(species, 0)) + 1
+	return counts
+
+
 func _order(power: String, params: Dictionary, about: Dictionary) -> void:
 	if power == "":
 		return
@@ -260,6 +304,10 @@ func _on_world_event(event: Dictionary) -> void:
 			_tell("Голосование: %s%s" % [str(about.get("label", "")), "" if ok else " — не вышло"], "vote")
 		"team":
 			_tell("%s: %s%s" % [str(about.get("label", "")), _perk_text(data), "" if ok else " — не вышло"], "team")
+		"rescue":
+			if ok:
+				_tell("Осталось %s — с края карты пришли новые" % HudTextScript.animal_count(str(about.get("label", "")),
+					int(about.get("count", 0))), "rescue")
 		_:
 			var kind := str(about.get("kind", ""))
 			_tell("%s: %s — %s%s" % [user, POWER_LABELS.get(kind, kind), str(about.get("label", "")), "" if ok else ", не вышло"], "power")
@@ -280,7 +328,7 @@ func _tell(text: String, kind: String) -> void:
 
 func export_state() -> Dictionary:
 	return {"book": book.export_state(), "vote": vote.export_state(), "focus": focus.duplicate(true),
-		"teams_counted_at": _teams_counted_at}
+		"teams_counted_at": _teams_counted_at, "rescued_at": _rescued_at.duplicate()}
 
 
 func import_state(data: Dictionary) -> void:
@@ -288,3 +336,4 @@ func import_state(data: Dictionary) -> void:
 	vote.import_state(data.get("vote", {}))
 	focus = data.get("focus", {}).duplicate(true)
 	_teams_counted_at = float(data.get("teams_counted_at", -1.0))
+	_rescued_at = data.get("rescued_at", {}).duplicate()

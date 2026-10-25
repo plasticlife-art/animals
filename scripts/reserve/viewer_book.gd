@@ -37,6 +37,20 @@ static func clean_shown(raw: String) -> String:
 	return kept.substr(0, 32).strip_edges()
 
 
+## Keeps the `limit` viewers seen most recently once there are more, forgetting down to nine
+## tenths of it at a time (the longest unseen first, then by key), so it is not done every line.
+func forget_beyond(limit: int) -> void:
+	if viewers.size() <= limit:
+		return
+	var keys: Array = viewers.keys()
+	keys.sort_custom(func(a, b) -> bool:
+		var seen_a := float(viewers[a].get("seen", 0.0))
+		var seen_b := float(viewers[b].get("seen", 0.0))
+		return seen_a < seen_b or (seen_a == seen_b and str(a) < str(b)))
+	for key in keys.slice(0, viewers.size() - int(limit * 0.9)):
+		viewers.erase(key)
+
+
 ## Seconds until `key` may do `kind` again (0 when it may), with `cooldown` between.
 func wait_for(key: String, kind: String, cooldown: float, now: float) -> float:
 	var last := float(viewers.get(key, {}).get("last", {}).get(kind, -INF))

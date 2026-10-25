@@ -1,5 +1,5 @@
 {
-  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost); a cull takes up to `max_kills` of `species` within `radius_of_mean` of the map's mean pond. `offered` lists the powers a world has; a scenario names its own. The reserve's (`adopt`, `rain`, `drought`, `cold_snap`, `bloom`, `release`) are offered only where the reserve mode lists them (`reserve.json`): a viewer naming a ward, the weather, newcomers from the edge.",
+  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost); a cull takes up to `max_kills` of `species` within `radius_of_mean` of the map's mean pond. `offered` lists the powers a world has; a scenario names its own. The reserve's (`adopt`, `rain`, `drought`, `cold_snap`, `bloom`, `release`, `immigrate`) are offered only where the reserve mode lists them (`reserve.json`): a viewer naming a ward, the weather, newcomers from the edge - `immigrate` as `release`, but the reserve's own, for a species about to be lost, paced by the reserve rather than a cooldown.",
   "offered": ["dig_pond", "lead_herd", "cull"],
   "powers": {
     "dig_pond": {
@@ -27,7 +27,8 @@
       "charges": -1,
       "cooldown_seconds": 0.0,
       "radius": 2400.0,
-      "max_name": 20
+      "max_name": 20,
+      "keep_dead": 200
     },
     "rain": {
       "charges": -1,
@@ -56,6 +57,12 @@
       "cooldown_seconds": 300.0,
       "species": ["predator", "wolf", "herbivore"],
       "counts": {"predator": 2, "wolf": 4, "herbivore": 8}
+    },
+    "immigrate": {
+      "charges": -1,
+      "cooldown_seconds": 0.0,
+      "species": ["predator", "wolf", "herbivore", "scavenger"],
+      "counts": {"predator": 2, "wolf": 4, "herbivore": 8, "scavenger": 8}
     }
   }
 }

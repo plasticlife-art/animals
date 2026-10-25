@@ -11,10 +11,13 @@ extends RefCounted
 const PlayerCommandsScript := preload("res://scripts/core/player_commands.gd")
 ## A power with no limit on its charges.
 const UNLIMITED := -1
+## The journal keeps the latest orders this many.
+const JOURNAL_LIMIT := 1000
 
 ## Moves whenever what the view shows of the player changes: a charge or a cooldown spent.
 var revision: int = 0
-## Every order carried out or refused, oldest first: `{seq, tick, type, params, result}`.
+## The orders carried out or refused, oldest first, the latest `JOURNAL_LIMIT`:
+## `{seq, tick, type, params, result}`.
 var journal: Array = []
 ## Per power: `{charges, cooldown_until}`; `charges` is UNLIMITED for no limit.
 var budget: Dictionary = {}
@@ -95,6 +98,9 @@ func release(key: String) -> void:
 func record(command: Dictionary, tick: int, result: Dictionary) -> void:
 	journal.append({"seq": int(command.get("seq", 0)), "tick": tick, "type": str(command.get("type", "")),
 		"params": command.get("params", {}).duplicate(true), "result": result.duplicate(true)})
+	# A reserve's viewers give orders for days; what was used is counted in `used`, not here.
+	if journal.size() > JOURNAL_LIMIT:
+		journal = journal.slice(journal.size() - JOURNAL_LIMIT)
 
 
 ## What the view needs to draw the player's state, whole each time: it is small, and a frame

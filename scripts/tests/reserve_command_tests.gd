@@ -9,7 +9,7 @@ extends RefCounted
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
-const RESERVE_POWERS := ["dig_pond", "lead_herd", "cull", "adopt", "rain", "drought", "cold_snap", "bloom", "release"]
+const RESERVE_POWERS := ["dig_pond", "lead_herd", "cull", "adopt", "rain", "drought", "cold_snap", "bloom", "release", "immigrate"]
 const AT := Vector2(1500.0, 1500.0)
 
 
@@ -20,6 +20,7 @@ func run(a) -> void:
 	_test_newcomers(a)
 	_test_kept_and_alike(a)
 	_test_not_offered(a)
+	_test_kept_short(a)
 
 
 static func _bundle(seed: int) -> Dictionary:
@@ -179,3 +180,25 @@ func _test_not_offered(a) -> void:
 	a.equal(str(_result(manager.world_state, seq).get("reason", "")), PlayerCommands.REFUSED_UNKNOWN,
 		"a world that does not offer the reserve's powers refuses them")
 	Helpers.destroy_manager(manager)
+
+
+## What a reserve running for days would pile up is kept short: the dead wards to the latest
+## `keep_dead`, the journal to `JOURNAL_LIMIT`. And `immigrate` brings any species it lists.
+func _test_kept_short(a) -> void:
+	var world = _world(9841).world_state
+	for index in range(5):
+		world.adoptions[100 + index] = {"name": "Имя", "viewer": "t:%d" % index, "viewer_name": "", "species": "herbivore",
+			"since": 0.0, "died_at": float(10 - index)}
+	world.adoptions[200] = {"name": "Жива", "viewer": "t:9", "viewer_name": "", "species": "herbivore", "since": 0.0, "died_at": -1.0}
+	world._forget_old_wards(3)
+	var kept: Array = world.adoptions.keys()
+	kept.sort()
+	a.equal(kept, [100, 101, 102, 200], "the latest dead wards kept, and every living one")
+	for index in range(PlayerState.JOURNAL_LIMIT + 5):
+		world.player.record({"seq": index, "type": "rain", "params": {}}, index, {"ok": true})
+	a.is_true(world.player.journal.size() == PlayerState.JOURNAL_LIMIT
+		and int(world.player.journal[-1]["seq"]) == PlayerState.JOURNAL_LIMIT + 4, "the journal keeps the latest orders")
+	var grouse_before: int = world.get_living_agents().filter(func(agent): return agent.species_type == "scavenger").size()
+	world._apply_player_commands([PlayerCommands.make(1, "immigrate", {"species": "scavenger"})])
+	var grouse_after: int = world.get_living_agents().filter(func(agent): return agent.species_type == "scavenger").size()
+	a.equal(grouse_after - grouse_before, 8, "newcomers to save a species, of any it lists")

@@ -5,7 +5,8 @@ extends RefCounted
 ## asked too soon ignored; a vote won and carried out; a fund's perk; a steward's power on the
 ## focus herd; «!моё» asking the camera for the ward; the session back from a save; lines of
 ## JSON read off the local port; the director's shots (`ReserveDirector`); the overlay's text; and
-## the reserve's saves, in slots of its own.
+## the reserve's saves, in slots of its own; a species about to be lost rescued; the viewers long
+## unseen forgotten.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
@@ -28,6 +29,8 @@ func run(a) -> void:
 	_test_the_director(a)
 	_test_the_overlay_text(a)
 	_test_its_own_slots(a)
+	_test_a_rescue(a)
+	_test_forgetting_viewers(a)
 
 
 ## Stands in for the game's camera: where it was sent.
@@ -257,3 +260,40 @@ func _test_its_own_slots(a) -> void:
 	SaveSystem.save_dir = shipped_dir
 	Helpers.destroy_manager(manager)
 	Helpers.destroy_manager(loaded)
+
+
+func _test_a_rescue(a) -> void:
+	var bundle: Dictionary = ReserveCommandTestsScript._bundle(9938)
+	bundle["world"]["spawns"]["herbivore_count"] = 10
+	var manager = Helpers.create_manager_with(bundle, 9938)
+	manager.set_lod_enabled(false)
+	var session = ReserveSessionScript.new()
+	session.configure(manager, _config())
+	var lines: Array = []
+	session.told.connect(func(line: Dictionary) -> void: lines.append(str(line["text"])))
+	var before := int(session.census().get("herbivore", 0))
+	for _tick in range(int(manager.tick_rate * 2.0)):
+		manager.step_once()
+		session.tick()
+	var arrived := int(session.census().get("herbivore", 0)) - before
+	a.is_true(before < 40 and arrived >= 8 and lines.size() == 1 and lines[0].begins_with("Осталось %s" % HudText.animal_count("herbivore", before)),
+		"a species about to be lost gets newcomers, told (%d arrived, %s)" % [arrived, str(lines)])
+	for _tick in range(int(manager.tick_rate * 35.0)):
+		manager.step_once()
+		session.tick()
+	a.equal(lines.size(), 1, "and no more before the gap")
+	a.is_true(not session.census().has("wolf") and manager.world_state.player.journal.filter(
+		func(entry) -> bool: return str(entry["params"].get("species", "")) == "wolf").is_empty(),
+		"none for a species the world did not begin with")
+	Helpers.destroy_manager(manager)
+
+
+func _test_forgetting_viewers(a) -> void:
+	var book = ViewerBook.new()
+	for index in range(12):
+		book.meet(_message(str(index), "Зритель", "!моё"), float(index))
+	book.forget_beyond(10)
+	var kept: Array = book.viewers.keys()
+	kept.sort()
+	a.equal(kept, ["twitch:10", "twitch:11", "twitch:3", "twitch:4", "twitch:5", "twitch:6", "twitch:7", "twitch:8", "twitch:9"],
+		"past the limit, the longest unseen are forgotten, down to nine tenths")
