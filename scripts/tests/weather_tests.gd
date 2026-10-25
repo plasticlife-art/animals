@@ -69,6 +69,11 @@ func _test_even_means(a, config: Dictionary) -> void:
 	a.is_true(even, "each season's weather keeps its means: the ponds, the grass, the needs")
 	var fog := WeatherScript.effects(config, "fog", WeatherScript.season_means(config, "autumn"))
 	a.equal(float(fog["perception"]), 0.55, "but a fog's sight is a fog's")
+	var raw := config.duplicate(true)
+	raw["even"] = false
+	var heat := WeatherScript.effects(raw, "heat", WeatherScript.season_means(raw, "summer"))
+	a.is_true(float(heat["water"]) == float(config["kinds"]["heat"]["water"]) and float(heat["thirst"]) == float(config["kinds"]["heat"]["thirst"]),
+		"a scenario's own weather, not evened: a hot summer is a drier one")
 
 
 func _test_easing_and_forcing(a, config: Dictionary) -> void:

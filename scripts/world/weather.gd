@@ -16,7 +16,8 @@ extends RefCounted
 ## `water`, `regrowth`, `metabolism` and `thirst` are evened out against the season's mean over its
 ## weights (the mean taken off `water`, divided out of the rest), so the weather varies a season's
 ## days without moving its average and the balance the ecology was tuned to holds. Sight and pace
-## are left as they are: a fog is a fog.
+## are left as they are: a fog is a fog. With `even` false - a scenario's own weather - nothing is
+## evened: a hot summer is a drier one, a snowy winter a hungrier one.
 ##
 ## `forced` (`[{weather, since, until}]`, a vote's) overrides the drawn spell while it lasts, the
 ## latest first.
@@ -102,9 +103,11 @@ static func kind_of_spell(config: Dictionary, season_id: String, number: int, se
 	return str(kinds[-1])
 
 
-## What `kind` does, evened out against the season's `means`.
+## What `kind` does, evened out against the season's `means` (unless the weather is not `even`).
 static func effects(config: Dictionary, kind: String, means: Dictionary) -> Dictionary:
 	var raw: Dictionary = config.get("kinds", {}).get(kind, {})
+	if not bool(config.get("even", true)):
+		means = {"water": 0.0, "regrowth": 1.0, "metabolism": 1.0, "thirst": 1.0}
 	var values := {"intensity": float(raw.get("intensity", 0.0 if kind == "clear" else 1.0)),
 		"water": float(raw.get("water", 0.0)) - float(means.get("water", 0.0)),
 		"perception": float(raw.get("perception", 1.0)), "movement": float(raw.get("movement", 1.0))}
