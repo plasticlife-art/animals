@@ -7,7 +7,7 @@ extends RefCounted
 ## the cards, the tag, the event feed and the developer panel all name things through
 ## here, so they name them the same way, and as the help screen does.
 
-const SPECIES := {"herbivore": "Травоядные", "predator": "Хищники", "scavenger": "Падальщики", "wolf": "Волки"}
+const SPECIES := {"herbivore": "Травоядные", "predator": "Хищники", "scavenger": "Падальщики", "wolf": "Волки", "hare": "Зайцы"}
 ## What a group of each species is called; foxes keep to pairs and have none.
 const GROUPS := {"herbivore": "Стадо", "scavenger": "Стая", "wolf": "Волчья стая"}
 ## The same nouns after «за», for the button that follows one.
@@ -37,6 +37,8 @@ const ANIMALS := {
 		"count": ["тетерев", "тетерева", "тетеревов"], "young_count": ["птенец", "птенца", "птенцов"]},
 	"wolf": {"male": "волк", "female": "волчица", "young": "волчонок", "all": "волки",
 		"count": ["волк", "волка", "волков"], "young_count": ["волчонок", "волчонка", "волчат"]},
+	"hare": {"male": "заяц", "female": "зайчиха", "young": "зайчонок", "all": "зайцы",
+		"count": ["заяц", "зайца", "зайцев"], "young_count": ["зайчонок", "зайчонка", "зайчат"]},
 }
 ## After «итоги»: «итоги лета». Keyed by the climate's season ids.
 const SEASONS_GENITIVE := {"spring": "весны", "summer": "лета", "autumn": "осени", "winter": "зимы"}

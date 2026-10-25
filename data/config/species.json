@@ -126,7 +126,8 @@
       "diet": "prey",
       "eats_species": [
         "herbivore",
-        "scavenger"
+        "scavenger",
+        "hare"
       ],
       "is_threat": true,
       "leaves_carcass": true,
@@ -475,5 +476,17 @@
       "emigrate_after_seconds": 300.0,
       "mate_pull": 3.0
     }
+  },
+  "hare": {
+    "_comment": "Hares: small grass-eaters living alone (`social` solitary, group -1), quick to breed and short-lived, fast on the dash and soon tired. Foxes hunt them (`predator.role.eats_species`); wolves leave them. They start in a few clusters (`world.spawns.hare_group_count`) so that mates find each other, and a hare looks for one within `mate_search_radius`, as solitary animals do.",
+    "role": {"label": "Hare", "slot": 4, "diet": "grass", "eats_species": [], "is_threat": false, "leaves_carcass": true, "carcass_meat_multiplier": 0.2, "social": "solitary", "script": "res://scripts/agents/hare.gd", "ai": "res://scripts/agents/ai/hare_ai.gd"},
+    "movement": {"max_speed": 62.0, "sprint_speed": 140.0, "acceleration": 260.0, "drag": 3.8, "wander_jitter": 0.95, "max_turn_rate_degrees": 340.0, "body_radius": 9.0, "fatigue_energy_ratio": 0.3, "exhausted_speed_ratio": 0.5},
+    "perception": {"danger_radius": 150.0, "risk_tolerance": 0.4, "water_search_radius": 1440.0, "water_memory_duration_seconds": 120.0, "grass_search_radius": 720.0, "neighbor_radius": 40.0, "separation_radius": 30.0, "mate_search_radius": 420.0, "threat_memory_seconds": 2.0, "escape_refresh_ticks": 12, "escape_distance_cells": 2.0},
+    "metabolism": {"max_energy": 80.0, "energy_decay": 2.0, "rest_recovery": 10.0, "hunger_rate": 0.3, "thirst_rate": 0.25, "dehydration_energy_penalty": 4.0, "sprint_energy_cost": 3.0},
+    "feeding": {"eat_distance": 20.0, "bite_amount": 10.0, "nutrition_gain": 0.25, "good_sward_fraction": 0.3, "drink_distance": 40.0, "drink_restore": 52.0, "eat_duration": 0.5, "drink_duration": 0.3},
+    "reproduction": {"maturity_age": 40.0, "energy_threshold": 50.0, "male_energy_threshold": 0.0, "herd_mates": false, "cooldown": 70.0, "birth_energy_cost": 14.0, "max_hunger": 35.0, "max_thirst": 45.0, "mate_contact_slack": 4.0, "safe_radius": 90.0, "offspring_spawn_radius": 30.0},
+    "aging": {"max_age": 720.0, "old_age_start": 560.0, "old_age_death_chance_per_second": 0.005},
+    "traits": {"enabled": true, "founder_spread": 0.08, "mutation": 0.04, "clamp": 0.25, "longevity_clamp": 0.1, "run_cost_exponent": 2.0, "speed_hunger": 0.5, "vision_hunger": 0.3},
+    "breeding": {"enabled": true, "litter_mean": 3.0, "litter_max": 5, "curve": [[0, 1], [1.6, 1], [2.2, 0], [3.6, 0]]}
   }
 }

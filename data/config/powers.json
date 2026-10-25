@@ -55,14 +55,14 @@
     "release": {
       "charges": -1,
       "cooldown_seconds": 300.0,
-      "species": ["predator", "wolf", "herbivore"],
-      "counts": {"predator": 2, "wolf": 4, "herbivore": 8}
+      "species": ["predator", "wolf", "herbivore", "hare"],
+      "counts": {"predator": 2, "wolf": 4, "herbivore": 8, "hare": 6}
     },
     "immigrate": {
       "charges": -1,
       "cooldown_seconds": 0.0,
-      "species": ["predator", "wolf", "herbivore", "scavenger"],
-      "counts": {"predator": 2, "wolf": 4, "herbivore": 8, "scavenger": 8}
+      "species": ["predator", "wolf", "herbivore", "scavenger", "hare"],
+      "counts": {"predator": 2, "wolf": 4, "herbivore": 8, "scavenger": 8, "hare": 6}
     }
   }
 }

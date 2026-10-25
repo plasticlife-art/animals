@@ -302,6 +302,8 @@
     "scavenger_group_count": 12,
     "wolf_count": 0,
     "wolf_group_count": 2,
+    "hare_count": 40,
+    "hare_group_count": 10,
     "initial_carcass_count": 40
   },
   "water_generation": {

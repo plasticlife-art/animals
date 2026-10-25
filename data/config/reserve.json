@@ -6,9 +6,9 @@
   "seed": 0,
   "autosave_seconds": 120.0,
   "director": {"shot_seconds": 25.0, "asked_seconds": 15.0, "moment_seconds": 20.0},
-  "rescue": {"every_seconds": 30.0, "gap_seconds": 600.0, "below": {"herbivore": 40, "predator": 6, "scavenger": 15, "wolf": 4}},
+  "rescue": {"every_seconds": 30.0, "gap_seconds": 600.0, "below": {"herbivore": 40, "predator": 6, "scavenger": 15, "wolf": 4, "hare": 10}},
   "steward": {"max_ponds": 12, "cull_floor": 16},
-  "ceilings": {"herbivore": 450, "predator": 40, "scavenger": 200, "wolf": 24},
+  "ceilings": {"herbivore": 450, "predator": 40, "scavenger": 200, "wolf": 24, "hare": 150},
   "powers": {"cull": {"cooldown_seconds": 240.0}},
   "viewers_kept": 5000,
   "story_animals": 6000,
@@ -17,7 +17,7 @@
     "моё": "mine", "мое": "mine", "my": "mine",
     "голос": "vote", "vote": "vote",
     "водопой": "dig_pond", "повести": "lead_herd", "отстрел": "cull",
-    "олени": "team:herbivore", "лисы": "team:predator", "волки": "team:wolf"
+    "олени": "team:herbivore", "лисы": "team:predator", "волки": "team:wolf", "зайцы": "team:hare"
   },
   "cooldowns": {"adopt": 30.0, "power": 180.0, "team": 60.0},
   "vote": {
@@ -40,7 +40,8 @@
     "funds": {
       "herbivore": {"label": "Фонд оленей", "perk": {"power": "bloom"}},
       "predator": {"label": "Фонд лис", "perk": {"power": "release", "params": {"species": "predator"}}},
-      "wolf": {"label": "Фонд волков", "perk": {"power": "release", "params": {"species": "wolf"}}}
+      "wolf": {"label": "Фонд волков", "perk": {"power": "release", "params": {"species": "wolf"}}},
+      "hare": {"label": "Фонд зайцев", "perk": {"power": "release", "params": {"species": "hare"}}}
     }
   },
   "names": {

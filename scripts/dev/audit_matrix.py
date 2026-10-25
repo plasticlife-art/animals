@@ -145,6 +145,13 @@ METRICS = [
     ("herbivore_min", "herbivores, lowest", lambda r: r["population_min"]["herbivore"]),
     ("predator_min", "predators, lowest", lambda r: r["population_min"]["predator"]),
     ("scavenger_min", "scavengers, lowest", lambda r: r["population_min"]["scavenger"]),
+    # Hares, where the world has them (0 in a report from before them).
+    ("hare_mean", "hares, late mean", lambda r: r["regulation"].get("hare", {}).get("mean", 0)),
+    ("hare_low", "hares, late low", lambda r: r["regulation"].get("hare", {}).get("min", 0)),
+    ("hare_min", "hares, lowest", lambda r: r["population_min"].get("hare", 0)),
+    ("births_hare", "hare births", lambda r: r["counters"].get("births_hare", 0)),
+    ("preyed_hare", "hares killed", lambda r: r["counters"].get("deaths_predation_hare", 0)),
+    ("starved_hare", "hares starved", lambda r: r["counters"].get("deaths_starvation_hare", 0)),
 ] + trait_metrics()
 
 

@@ -1096,6 +1096,30 @@ species in `WorldState.territories`, saved, the view's copy sent when its revisi
   none; the card says «Участок у …», «Ищет свой участок», «Своего участка нет»; the feed a
   pair taking a territory, one emptied, a young one setting out, in view or pinned.
 
+### Hares (`species.hare`, `role.social` "solitary")
+
+Small grass-eaters living alone, the first species on the solitary path (group -1). A setup
+option («Зайцы»: есть / нет), on by default and off in the scenarios: forty start.
+
+- **Class.** `Hare` extends `Herbivore` and keeps its grazing, drinking, resting, exploring,
+  fleeing and breeding. `HareAI` drops `join_herd` and tunes the rest from `balance.ai.hare`.
+  With no herd block there is no herd flight, no migration and no herd card.
+- **Body.** Small (body radius 9, drawn at 0.6 of a frame), fast on the dash (sprint 140) and
+  soon tired (sprint cost 3). Quick to breed: grown at 40 s, a litter of about three every
+  70 s in season, the season spring into early summer. Short-lived: old from 560 s.
+- **Finding each other.** Alone on the whole map, forty hares would hardly ever meet, so a
+  solitary species with `<id>_group_count` above 0 starts dealt round that many centres
+  within 300 units (`_spawn_initial_solitary`), and looks for a mate within
+  `mate_search_radius` (420). Asleep, a sector's hares count as one group-(-1) aggregate, as
+  fox pairs do, and breed there by the grass-eaters' sleeping path.
+- **Prey.** Foxes hunt them (`predator.role.eats_species`); wolves do not. Prey switching
+  weighs them against a reference share of 0.3. Asleep they are caught at 0.5 of a deer's
+  rate (`dormant_ecology.prey_catchability`). The capacity cap is three times the start.
+- **Seen.** Their own atlas, composited from the pack's hare sheets by
+  `tools/build_pack_atlases.py` (whose direction check skips `Hare_Run`: a hare's leap
+  carries its weight forward, which reads as swapped side rows), and a carcass sheet from it
+  (`tools/build_carcass_atlases.py`). Names of their own, a tan on the strip and the minimap.
+
 ### Wolves (`species.wolf`, `role.social` "pack")
 
 A second hunter, off unless the setup asks for it («Волки — две стаи»: ten in two packs).

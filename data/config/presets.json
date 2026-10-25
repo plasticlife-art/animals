@@ -7,6 +7,7 @@
     "scenario",
     "rules",
     "wolves",
+    "hares",
     "difficulty"
   ],
   "groups": {
@@ -234,6 +235,27 @@
                   "hunger_rate": 0.343,
                   "thirst_rate": 0.279
                 }
+              },
+              "hare": {
+                "perception": {
+                  "danger_radius": 50.0,
+                  "water_search_radius": 480.0,
+                  "grass_search_radius": 240.0,
+                  "neighbor_radius": 13.333,
+                  "separation_radius": 10.0,
+                  "mate_search_radius": 140.0
+                },
+                "movement": {
+                  "body_radius": 3.0
+                },
+                "feeding": {
+                  "eat_distance": 6.667,
+                  "drink_distance": 13.333
+                },
+                "reproduction": {
+                  "safe_radius": 30.0,
+                  "offspring_spawn_radius": 10.0
+                }
               }
             },
             "balance": {
@@ -364,6 +386,27 @@
                 "metabolism": {
                   "hunger_rate": 0.264,
                   "thirst_rate": 0.216
+                }
+              },
+              "hare": {
+                "perception": {
+                  "danger_radius": 100.0,
+                  "water_search_radius": 960.0,
+                  "grass_search_radius": 480.0,
+                  "neighbor_radius": 26.667,
+                  "separation_radius": 20.0,
+                  "mate_search_radius": 280.0
+                },
+                "movement": {
+                  "body_radius": 6.0
+                },
+                "feeding": {
+                  "eat_distance": 13.333,
+                  "drink_distance": 26.667
+                },
+                "reproduction": {
+                  "safe_radius": 60.0,
+                  "offspring_spawn_radius": 20.0
                 }
               }
             },
@@ -498,6 +541,27 @@
                 "metabolism": {
                   "hunger_rate": 0.176,
                   "thirst_rate": 0.144
+                }
+              },
+              "hare": {
+                "perception": {
+                  "danger_radius": 225.0,
+                  "water_search_radius": 2160.0,
+                  "grass_search_radius": 1080.0,
+                  "neighbor_radius": 60.0,
+                  "separation_radius": 45.0,
+                  "mate_search_radius": 630.0
+                },
+                "movement": {
+                  "body_radius": 13.5
+                },
+                "feeding": {
+                  "eat_distance": 30.0,
+                  "drink_distance": 60.0
+                },
+                "reproduction": {
+                  "safe_radius": 135.0,
+                  "offspring_spawn_radius": 45.0
                 }
               }
             },
@@ -687,6 +751,26 @@
               "spawns": {
                 "wolf_count": 10,
                 "wolf_group_count": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    "hares": {
+      "label": "Зайцы",
+      "default": "some",
+      "options": {
+        "some": {
+          "label": "Есть",
+          "patch": {}
+        },
+        "none": {
+          "label": "Нет",
+          "patch": {
+            "world": {
+              "spawns": {
+                "hare_count": 0
               }
             }
           }

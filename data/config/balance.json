@@ -108,6 +108,50 @@
         }
       }
     },
+    "hare": {
+      "panic_threat_threshold": 0.45,
+      "evaluators": {
+        "graze": {
+          "hunger_weight": 0.52,
+          "food_weight": 0.38,
+          "biomass_weight": 0.18,
+          "safety_weight": 0.14,
+          "threat_penalty": 0.32,
+          "fatigue_penalty": 0.08,
+          "thirst_penalty": 0.12
+        },
+        "drink": {
+          "thirst_weight": 0.6,
+          "water_weight": 0.4,
+          "safety_weight": 0.08,
+          "water_threat_penalty": 0.35,
+          "ambient_threat_penalty": 0.12,
+          "hunger_penalty": 0.08
+        },
+        "rest": {
+          "fatigue_weight": 0.45,
+          "safe_biome_weight": 0.25,
+          "low_threat_weight": 0.1,
+          "hunger_penalty": 0.18,
+          "thirst_penalty": 0.22,
+          "threat_penalty": 0.35,
+          "night_weight": 0.3
+        },
+        "explore": {
+          "low_urgency_weight": 0.45,
+          "scarcity_weight": 0.35,
+          "low_threat_weight": 0.2,
+          "night_penalty": 0.3
+        },
+        "flee_to_safe_area": {
+          "threat_weight": 0.5,
+          "predator_visible_weight": 0.2,
+          "open_area_weight": 0.1,
+          "low_energy_weight": 0.1,
+          "safe_zone_weight": 0.1
+        }
+      }
+    },
     "predator": {
       "evaluators": {
         "hunt_prey": {
@@ -230,14 +274,16 @@
     "enabled": true,
     "reference_share": {
       "herbivore": 0.5,
-      "scavenger": 0.2
+      "scavenger": 0.2,
+      "hare": 0.3
     },
     "min_preference": 0.1
   },
   "dormant_ecology": {
     "kill_rate_per_prey_per_second": 0.006,
     "prey_catchability": {
-      "scavenger": 0.1
+      "scavenger": 0.1,
+      "hare": 0.5
     },
     "predator_thirst_trigger_ratio": 0.6,
     "idle_recovery_energy_ratio": 0.75
@@ -249,7 +295,8 @@
       "herbivore": 3.0,
       "predator": 2.0,
       "scavenger": 1.75,
-      "wolf": 4.0
+      "wolf": 4.0,
+      "hare": 3.0
     }
   }
 }

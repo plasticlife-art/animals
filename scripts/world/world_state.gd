@@ -40,6 +40,8 @@ const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
 const LOD_TIER_0 := 0
 const LOD_TIER_1 := 1
 const LOD_TIER_2 := 2
+## How far round its centre a solitary species' starting cluster spreads (`_spawn_initial_solitary`).
+const SOLITARY_CLUSTER_SPREAD := 300.0
 const LOD_PRIORITY_STATES := {
 	"flee": true,
 	"seek_prey": true,
@@ -2783,7 +2785,7 @@ func _spawn_initial_agents() -> void:
 			SpeciesRegistryScript.SOCIAL_PAIR:
 				_spawn_initial_pairs(species_id, count)
 			SpeciesRegistryScript.SOCIAL_SOLITARY:
-				_spawn_initial_solitary(species_id, count)
+				_spawn_initial_solitary(species_id, count, maxi(0, int(spawn_config.get("%s_group_count" % species_id, 0))))
 			SpeciesRegistryScript.SOCIAL_PACK:
 				_spawn_initial_packs(species_id, count, maxi(1, int(spawn_config.get("%s_group_count" % species_id, 2))))
 			_:
@@ -2944,9 +2946,17 @@ func _spawn_initial_carcasses() -> void:
 
 
 ## `role.social == "solitary"`: scattered singles, no groups and no pairing.
-func _spawn_initial_solitary(species_id: String, count: int) -> void:
-	for _index in range(count):
-		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(random_point()))
+## `role.social == "solitary"`: each alone (group -1). Scattered over the map, or with
+## `cluster_count` above 0 dealt round-robin round that many centres within `SOLITARY_CLUSTER_SPREAD`:
+## a few hundred animals alone on the whole map would hardly ever meet a mate.
+func _spawn_initial_solitary(species_id: String, count: int, cluster_count: int = 0) -> void:
+	var centers: Array = []
+	for _index in range(cluster_count):
+		centers.append(random_point())
+	for index in range(count):
+		var at: Vector2 = random_point() if centers.is_empty() else centers[index % centers.size()] \
+			+ Vector2(rng.randf_range(-SOLITARY_CLUSTER_SPREAD, SOLITARY_CLUSTER_SPREAD), rng.randf_range(-SOLITARY_CLUSTER_SPREAD, SOLITARY_CLUSTER_SPREAD))
+		var spawn_position: Vector2 = get_nearest_walkable_position(clamp_position(at))
 		_stagger_initial_agent(spawn_agent(species_id, spawn_position, -1, "", {"reason": "initial"}))
 
 

@@ -178,7 +178,7 @@ func _sample(tick_ms: Array, save_ms: Array, told: Dictionary, started: int) -> 
 
 func _line(sample: Dictionary) -> String:
 	var counts: Array = []
-	for species in ["herbivore", "predator", "scavenger", "wolf"]:
+	for species in ["herbivore", "predator", "scavenger", "wolf", "hare"]:
 		counts.append("%s %d" % [species.left(4), int(sample["counts"].get(species, 0))])
 	return "%6.0f s (%5.0f s wall)  %s | wards %d/%d journal %d ponds %d viewers %d | save %d KB (%.0f ms) story %d KB / %d | %.0f MB | tick %.2f / p95 %.2f ms" % [
 		sample["time"], sample["wall"], " ".join(counts), sample["wards_living"], sample["wards_kept"], sample["journal"],

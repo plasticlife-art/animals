@@ -28,6 +28,7 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - Herbivore behavior: `alive/panic/dead` AI states with utility-driven graze, drink, rest, explore, herd join, and flee actions; a herd takes fright together and runs for one point (`herd.flight`), and remembers its pastures season by season (`herd.migration.seasonal`)
 - Predator behavior: `alive/engaged/dead` AI states with utility-driven hunt, scavenge, drink, rest, investigate water, pair cohesion, and patrol actions; mates hunt as a pair, one driving and one cutting the prey off (`hunt.pair`), and pairs hold territories round their dens (`territory`)
 - Weather in spells of 40 s (clear, rain, downpour, fog, snow in winter, heat in summer), drawn on the map and named in the season bar; it fills or dries the ponds, speeds or slows the grass, and dims sight and slows pace, evened out so each season keeps its averages (`world.weather`; off in the scenarios)
+- Hares: small grass-eaters living alone, quick to breed and short-lived, fast on the dash; foxes' second prey (`species.hare`; a setup option, on by default, off in the scenarios)
 - Wolves, off unless the setup asks: packs on large territories that hunt together, fanning out to both sides of the prey (`hunt.pack`)
 - Lifecycle rules: hunger, thirst, energy depletion, predation, old age
 - Carcass lifecycle with feeder reservation and meat depletion

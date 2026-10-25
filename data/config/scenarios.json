@@ -1,5 +1,5 @@
 {
-  "_comment": "Scenarios: a world with a goal (`ConfigLoader.load_scenario_bundle`, `ScenarioRunner`). `selection` picks setup options as the setup screen does (the style stays the player's); `patch` is merged over the bundle after them (each turns the weather off: the goals were tuned without it); `challenge` goes into the bundle as it is and is what the runner keeps score by; its `result` holds the result window's titles, `chips` the extra chips shown (\"water\": the own herd's water) and `watch` the species counted into the curve beside the own herd. `own_herd.near` is a point in fractions of the map: the herd of `own_herd.species` nearest it at the start is the player's. A goal names what must hold - `share_at_least`, the own herd against its size at the start, `thirst_deaths_at_most`, its deaths of thirst, `thirst_share_at_most`, those as a share of its size at the start, `starvation_deaths_at_most`, its deaths of hunger, `species_at_least` or `species_share_at_least`, a species' count or share of its start, or `culled_at_most`, the animals culled - and when: `form` `at_season_start` on the first tick of `season` (or `days` into it; the `years`-th such season), `always` on every tick. Its `role` says what it decides: `win`, won if it holds at its moment and lost if not; `lose`, lost the moment it stops holding; `bonus`, nothing - it is kept or not.",
+  "_comment": "Scenarios: a world with a goal (`ConfigLoader.load_scenario_bundle`, `ScenarioRunner`). `selection` picks setup options as the setup screen does (the style stays the player's); `patch` is merged over the bundle after them (each turns the weather off and has no hares: the goals were tuned without them); `challenge` goes into the bundle as it is and is what the runner keeps score by; its `result` holds the result window's titles, `chips` the extra chips shown (\"water\": the own herd's water) and `watch` the species counted into the curve beside the own herd. `own_herd.near` is a point in fractions of the map: the herd of `own_herd.species` nearest it at the start is the player's. A goal names what must hold - `share_at_least`, the own herd against its size at the start, `thirst_deaths_at_most`, its deaths of thirst, `thirst_share_at_most`, those as a share of its size at the start, `starvation_deaths_at_most`, its deaths of hunger, `species_at_least` or `species_share_at_least`, a species' count or share of its start, or `culled_at_most`, the animals culled - and when: `form` `at_season_start` on the first tick of `season` (or `days` into it; the `years`-th such season), `always` on every tick. Its `role` says what it decides: `win`, won if it holds at its moment and lost if not; `lose`, lost the moment it stops holding; `bonus`, nothing - it is kept or not.",
   "order": ["first_winter", "long_drought", "too_many_foxes"],
   "scenarios": {
     "first_winter": {
@@ -12,6 +12,7 @@
         "world": {
           "climate": {"start_season_index": 2, "season_length_days": 2.0},
           "weather": {"enabled": false},
+          "spawns": {"hare_count": 0},
           "terrain": {"height": {"levels": 1}},
           "grass": {"growth_rate": 0.002, "initial_density_min": 0.15, "initial_density_max": 0.4}
         },
@@ -48,6 +49,7 @@
         "world": {
           "climate": {"start_season_index": 1, "season_length_days": 3.0},
           "weather": {"enabled": false},
+          "spawns": {"hare_count": 0},
           "terrain": {"height": {"levels": 1}},
           "water_levels": {"drought_years": [0], "initial_level": 0.5}
         },
@@ -84,7 +86,7 @@
           "climate": {"start_season_index": 2},
           "weather": {"enabled": false},
           "terrain": {"height": {"levels": 1}},
-          "spawns": {"predator_count": 60}
+          "spawns": {"predator_count": 60, "hare_count": 0}
         },
         "species": {
           "predator": {"territory": {"enabled": false}}

@@ -42,7 +42,7 @@ ANIMATIONS = [
     ("eat", "Idle"),
     ("dead", "Death"),
 ]
-SPECIES = {"herbivore": "Deer", "predator": "Fox", "scavenger": "Black_grouse"}
+SPECIES = {"herbivore": "Deer", "predator": "Fox", "scavenger": "Black_grouse", "hare": "Hare"}
 
 # Not every animal in the pack has every sheet. The grouse has no Run - it takes
 # off instead - so its run rows come from Flight, which is what a startled bird
@@ -61,6 +61,9 @@ SHEET_DIRECTION_ORDER = {
     ("Black_grouse", "Flight"): [0, 1, 3, 2],
     ("Fox", "Run"): [0, 1, 3, 2],
 }
+# Sheets whose side rows the mass check below misreads: a hare's leap carries its weight
+# forward of where it sits, so Hare_Run looks swapped by the pixels and is not (checked by eye).
+DIRECTION_CHECK_SKIP = {("Hare", "Run")}
 
 
 def find_sheet(animal, name):
@@ -104,6 +107,8 @@ def check_direction_order(animal, sheets):
     """
     votes = {}
     for name, sheet in sheets:
+        if (animal, name) in DIRECTION_CHECK_SKIP:
+            continue
         order = direction_order(animal, name)
         frame = min(1, sheet.width // FRAME - 1)
         west = _row_bias(sheet, order[2], frame)

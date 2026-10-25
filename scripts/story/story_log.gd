@@ -351,7 +351,7 @@ static func summary_text(tally: Dictionary) -> String:
 	var parts: Array = []
 	for cause in ["predation", "starvation", "thirst", "old_age"]:
 		var counts: Array = []
-		for species in ["herbivore", "scavenger", "predator", "wolf"]:
+		for species in ["herbivore", "hare", "scavenger", "predator", "wolf"]:
 			var count := int(tally.get("deaths:%s:%s" % [cause, species], 0))
 			if count > 0:
 				counts.append(HudTextScript.animal_count(species, count))
@@ -359,7 +359,7 @@ static func summary_text(tally: Dictionary) -> String:
 			var label := "хищники" if cause == "predation" else HudTextScript.cause_label(cause)
 			parts.append("%s — %s" % [label, ", ".join(counts)])
 	var born: Array = []
-	for species in ["herbivore", "scavenger", "predator", "wolf"]:
+	for species in ["herbivore", "hare", "scavenger", "predator", "wolf"]:
 		var count := int(tally.get("births:%s" % species, 0))
 		if count > 0:
 			born.append(HudTextScript.animal_count(species, count, true))
