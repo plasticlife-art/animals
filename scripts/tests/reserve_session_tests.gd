@@ -323,6 +323,9 @@ func _test_floors_and_ceilings(a) -> void:
 	Helpers.destroy_manager(manager)
 	var bundle: Dictionary = ConfigLoaderScript.load_reserve_bundle(_config())
 	a.equal(float(bundle["powers"]["powers"]["cull"]["cooldown_seconds"]), 240.0, "the reserve's own power settings")
+	var wolves = Helpers.create_manager_with(bundle, 9943)
+	a.equal(wolves.world_state.get_reproductive_capacity("wolf"), 24, "wolves are not born past their ceiling in the reserve")
+	Helpers.destroy_manager(wolves)
 	var lineage = preload("res://scripts/story/lineage.gd").new()
 	lineage.capacity = 10
 	for id in range(1, 9):

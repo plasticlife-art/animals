@@ -35,6 +35,17 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	for power in changed.keys():
 		if bundle["powers"]["powers"].has(power):
 			bundle["powers"]["powers"][power].merge(changed[power], true)
+	# A species held to a number by births too (`birth_ceilings`): its capacity, the land's (a
+	# territory's) or the regulation's, set to that number over its start.
+	var ceilings: Dictionary = reserve.get("birth_ceilings", {})
+	for species in ceilings.keys():
+		var start := float(bundle["world"].get("spawns", {}).get("%s_count" % species, 0))
+		if start <= 0.0 or not bundle["species"].has(species):
+			continue
+		var multiplier := float(ceilings[species]) / start
+		bundle["balance"]["population_regulation"]["capacity_multipliers"][species] = multiplier
+		if bundle["species"][species].has("territory"):
+			bundle["species"][species]["territory"]["capacity_multiplier"] = multiplier
 	bundle["reserve"] = {"selection": selection}
 	return bundle
 
