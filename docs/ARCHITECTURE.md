@@ -159,18 +159,22 @@ world is bit for bit the one without them.
   ground's own tile is drawn under the water. The minimap paints deep water and fords from the
   terrain, and draws no circle for a bank. Each river has a name of its own («у Быстрой реки»),
   labelled once, at its middle bank.
-- **A setup option** («Реки»: нет / две), off by default and on in the living reserve. Tuned on
-  LOD 2880 s × 8 seeds against the same worlds without rivers (hares at 2.5):
+- **A setup option** («Реки»: две / нет), on by default and off in the scenarios and the test
+  fixtures. Tuned on LOD 2880 s × 8 seeds against the same worlds without rivers (hares at 2.5):
 
   | Variant | Deer | Deer births | Deer dead of thirst |
   |---|---|---|---|
   | Without rivers | 202 | 921 | 76 |
   | Rivers (fords every 16 cells, cost 2.5) | 158 (−22 %) | 825 | 58 |
-  | Softer (fords every 10, cost 1.5, narrower) | 168 (−17 %) | 818 | 38 |
+  | Softer (fords every 10, cost 1.5, narrower; shipped) | 168 (−17 %) | 818 | 38 |
 
   Foxes, grouse and hares were even, and no species was lost. Deer lose births, not lives, and
-  more and cheaper fords barely help, so going round to them is not the cause. Left to look into:
-  dens drawn to the banks' water, and hunters by the herds that come to drink there.
+  more and cheaper fords barely help, so going round to them is not the cause. Probes over
+  1440 s ruled out the rest that could be measured. Does were readier with rivers (30 % against
+  27 % meeting every condition), bucks as ready, sleeping herds less split between sectors, a
+  ready doe as often beside a ready buck, the same share of deer awake. Births fell 4-6 % in
+  24 minutes and 10 % in 48: it reads as the slow sum of a changed map (about 5 % of it the
+  rivers' bed), not one cause.
 
 ### `ScenerySystem`
 

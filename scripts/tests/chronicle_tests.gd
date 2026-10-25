@@ -126,10 +126,22 @@ func _test_places_of_a_real_map(a) -> void:
 	var places = PlaceNamesScript.new()
 	places.build(world, 3)
 	a.equal(places.ponds.size(), world.water_sources.size(), "every pond named")
+	# A river's banks carry its name, once a river: the ponds are the rest.
 	var distinct := {}
+	var ponds := 0
+	var rivers := {}
 	for pond in places.ponds:
+		if pond.has("river"):
+			rivers[int(pond["river"])] = pond["name"]
+			continue
 		distinct[pond["name"]] = true
-	a.equal(distinct.size(), places.ponds.size(), "no two ponds share a name")
+		ponds += 1
+	a.equal(distinct.size(), ponds, "no two ponds share a name")
+	var river_names := {}
+	for river in rivers.keys():
+		river_names[rivers[river]] = true
+	a.is_true(river_names.size() == rivers.size() and not river_names.keys().any(func(name) -> bool: return distinct.has(name)),
+		"each river a name of its own, no pond's")
 	a.is_true(places.districts.size() >= 12 and places.districts.size() <= 40,
 		"a large map has a couple of dozen districts (%d)" % places.districts.size())
 	var unassigned := 0

@@ -780,19 +780,19 @@
     },
     "rivers": {
       "label": "Реки",
-      "default": "none",
+      "default": "two",
       "options": {
-        "none": {
-          "label": "Нет",
-          "patch": {}
-        },
         "two": {
           "label": "Две",
+          "patch": {}
+        },
+        "none": {
+          "label": "Нет",
           "patch": {
             "world": {
               "terrain": {
                 "rivers": {
-                  "enabled": true
+                  "enabled": false
                 }
               }
             }

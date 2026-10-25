@@ -61,6 +61,8 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# And no weather: a fog or a snow would change a fixture's sight and pace from spell to spell.
 	# `WeatherTests` switches it on.
 	bundle["world"]["weather"] = {"enabled": false}
+	# Nor rivers: the fixtures' ground is theirs to lay out. `RiverTests` switches them on.
+	bundle["world"]["terrain"]["rivers"] = {"enabled": false}
 	# Off as well: the fixtures place their own foxes and herds, and assume a fox pairs with any fox
 	# and a herd weighs its pastures afresh. `TerritoryTests` and `SeasonalPastureTests` switch
 	# them on; wolves keep theirs, and come only where a test spawns them.
