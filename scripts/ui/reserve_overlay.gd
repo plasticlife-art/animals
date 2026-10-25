@@ -1,15 +1,18 @@
 class_name ReserveOverlay
 extends PanelContainer
 
-## What the living reserve's stream shows its viewers, at the top right: how to act on the world
-## with the chat, the vote open (or when the next one opens), how the funds stand, how many wards
-## live, and the latest of what viewers did (`ReserveSession.told`). Built in code, refreshed twice
-## a second; it reads the session and draws nothing of the world.
+## What the living reserve's stream shows its viewers, at the top left: how to act on the world
+## with the chat - by turns with the reserve's tables (`ReserveRecords`), every `PAGE_SECONDS` -
+## the vote open (or when the next one opens), how the funds stand, how many wards live, and the
+## latest of what viewers did (`ReserveSession.told`). Built in code, refreshed twice a second; it
+## reads the session and draws nothing of the world.
 
 const MAX_LINES := 4
+const PAGE_SECONDS := 15.0
 const HELP := "!имя Имя — взять зверя под опеку\n!моё — показать своего\n!1 !2 !3 — голосовать\n!водопой · !повести · !отстрел — стаду в кадре\n!олени · !лисы · !волки — болеть за вид"
 
 var session = null
+var story = null
 var _title: Label
 var _help: Label
 var _vote: Label
@@ -45,8 +48,9 @@ func _label(box: VBoxContainer, text: String) -> Label:
 	return label
 
 
-func bind(new_session) -> void:
+func bind(new_session, new_story = null) -> void:
 	session = new_session
+	story = new_story
 	if not session.told.is_connected(_on_told):
 		session.told.connect(_on_told)
 	refresh()
@@ -69,6 +73,10 @@ func _process(delta: float) -> void:
 func refresh() -> void:
 	if session == null or session.manager == null or session.manager.world_state == null:
 		return
+	# Help, a table, help, the next table...
+	var page := int(Time.get_ticks_msec() / (PAGE_SECONDS * 1000.0))
+	_help.text = HELP if page % 2 == 0 else ReserveRecords.page_text(floori(page / 2.0), session.manager.world_state, story, session,
+		story.calendar() if story != null else [120.0, 4])
 	_vote.text = vote_text(session)
 	var living := 0
 	for ward in session.manager.world_state.adoptions.values():

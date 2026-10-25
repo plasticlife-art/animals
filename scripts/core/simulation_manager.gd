@@ -18,6 +18,10 @@ signal player_state_changed
 ## is in, with the runner's summary. Raised on the main thread, from the world the view is shown.
 signal scenario_goal_changed(goal_id: String, state: String)
 signal scenario_finished(won: bool, summary: Dictionary)
+## The world as `request_world_export()` asked for it, after the tick it was taken on: on the main
+## thread, while the worker waits, so the clock, the stream and the counters read beside it are
+## the same tick's. The copy is the receiver's: nothing live is in it.
+signal world_exported(world: Dictionary)
 
 ## The event types `world_event` carries. Everything else stays on the bus: grazing and
 ## drinking alone fire many times a tick.
@@ -58,6 +62,8 @@ var _worker_result: Dictionary = {}
 var _worker_quit: bool = false
 ## Main thread only: a job has been posted and its result not yet applied.
 var _job_in_flight: bool = false
+## Main thread only: the next tick posted is to bring the world's export back (`world_exported`).
+var _export_requested: bool = false
 ## Set once the view has finished coming up. Until then no tick is threaded:
 ## the frames right after `enable_interactive_worker()` are where the main
 ## thread compiles `scene_sprite_batch.gd`, builds the themes and loads the
@@ -158,6 +164,7 @@ func initialize(config_override: Dictionary = {}, seed_override: int = -1) -> vo
 	selected_agent_id = -1
 	focus_mode = "off"
 	_single_step_requested = false
+	_export_requested = false
 	_worker_sequence = 0
 	_worker_started_usec = 0
 	worker_snapshot_counts.clear()
@@ -707,19 +714,7 @@ func _process_worker(delta: float) -> void:
 		dropped_simulation_seconds += accumulator - cap
 		accumulator = cap
 	if _job_in_flight and _done_semaphore.try_wait():
-		var result: Dictionary = _take_worker_result()
-		if _worker_started_usec > 0:
-			worker_cycle_times.add(float(Time.get_ticks_usec() - _worker_started_usec) / 1000.0)
-		_worker_started_usec = 0
-		worker_snapshot_times.add(float(result.get("snapshot_ms", 0.0)))
-		var apply_started := Time.get_ticks_usec()
-		_apply_worker_frame(result)
-		worker_apply_times.add(float(Time.get_ticks_usec() - apply_started) / 1000.0)
-		_speed_sim += tick_duration
-		_presentation_alpha = 0.0
-		if _single_step_requested:
-			_single_step_requested = false
-			paused = true
+		_accept_worker_result(_take_worker_result())
 	if _speed_wall >= 1.0:
 		actual_speed = _speed_sim / _speed_wall
 		_speed_wall = 0.0
@@ -749,7 +744,8 @@ func _post_worker_job() -> void:
 		"lod": _build_lod_context(), "inspected": selected_agent_id, "commands": _take_commands(),
 		"include_grass": bool(debug_flags.get("show_grass_density", false)),
 		"include_fear": bool(debug_flags.get("show_fear", false)),
-		"ground_interval_ticks": ground_update_interval_ticks()}
+		"ground_interval_ticks": ground_update_interval_ticks(), "export": _export_requested}
+	_export_requested = false
 	_worker_mutex.unlock()
 	_worker_started_usec = Time.get_ticks_usec()
 	_job_in_flight = true
@@ -771,6 +767,9 @@ func _worker_loop() -> void:
 		var result: Dictionary = _worker.step(float(job.delta), int(job.tick), float(job.time),
 			job.lod, int(job.inspected), bool(job.include_grass), bool(job.get("include_fear", false)),
 			int(job.get("ground_interval_ticks", 0)), job.get("commands", []))
+		# A deep copy, as the worker goes on stepping while the save is written from it.
+		if bool(job.get("export", false)):
+			result["export"] = _worker.world.export_state().duplicate(true)
 		_worker_mutex.lock()
 		_worker_result = result
 		_worker_mutex.unlock()
@@ -940,19 +939,36 @@ func _apply_worker_frame(data: Dictionary) -> void:
 func synchronize_worker() -> void:
 	if _job_in_flight:
 		_done_semaphore.wait()
-		var result: Dictionary = _take_worker_result()
-		if _worker_started_usec > 0:
-			worker_cycle_times.add(float(Time.get_ticks_usec() - _worker_started_usec) / 1000.0)
-		_worker_started_usec = 0
-		worker_snapshot_times.add(float(result.get("snapshot_ms", 0.0)))
-		var apply_started := Time.get_ticks_usec()
-		_apply_worker_frame(result)
-		worker_apply_times.add(float(Time.get_ticks_usec() - apply_started) / 1000.0)
-		_speed_sim += tick_duration
-		_presentation_alpha = 0.0
-		if _single_step_requested:
-			_single_step_requested = false
-			paused = true
+		_accept_worker_result(_take_worker_result())
+
+
+## A tick's result from the worker applied to the view, and its export handed on if it carries one.
+func _accept_worker_result(result: Dictionary) -> void:
+	if _worker_started_usec > 0:
+		worker_cycle_times.add(float(Time.get_ticks_usec() - _worker_started_usec) / 1000.0)
+	_worker_started_usec = 0
+	worker_snapshot_times.add(float(result.get("snapshot_ms", 0.0)))
+	var apply_started := Time.get_ticks_usec()
+	_apply_worker_frame(result)
+	worker_apply_times.add(float(Time.get_ticks_usec() - apply_started) / 1000.0)
+	_speed_sim += tick_duration
+	_presentation_alpha = 0.0
+	if _single_step_requested:
+		_single_step_requested = false
+		paused = true
+	if result.has("export"):
+		world_exported.emit(result["export"])
+
+
+## Asks for the world's export (`world_exported`). With the worker, it is taken on the worker's
+## thread right after the next tick, so the view does not wait on it; without, at once.
+func request_world_export() -> void:
+	if world_state == null:
+		return
+	if _worker == null:
+		world_exported.emit(world_state.export_state().duplicate(true))
+		return
+	_export_requested = true
 
 func export_simulation_state() -> Dictionary:
 	synchronize_worker()

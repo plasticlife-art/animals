@@ -95,6 +95,10 @@ var reserve_session: ReserveSession = null
 var _viewer_link: ViewerLink = null
 var _director: ReserveDirector = null
 var _reserve_overlay: ReserveOverlay = null
+var _ward_tags: WardTags = null
+var _banner: ReserveBanner = null
+## The year the reserve's summary was last told for.
+var _reserve_year: int = -1
 
 
 ## Nothing is simulated until the setup screen says so.
@@ -336,7 +340,18 @@ func _start_reserve(fresh: bool) -> void:
 	_reserve_overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_reserve_overlay.position = Vector2(12.0, 12.0)
 	$CanvasLayer.add_child(_reserve_overlay)
-	_reserve_overlay.bind(reserve_session)
+	_reserve_overlay.bind(reserve_session, story_book)
+	_banner = ReserveBanner.new()
+	_banner.theme = result_window.theme
+	$CanvasLayer.add_child(_banner)
+	_banner.bind(reserve_session)
+	_reserve_year = int(simulation_manager.world_state.climate.year)
+	# Under every panel: the wards' names belong to the map.
+	_ward_tags = WardTags.new()
+	_ward_tags.theme = result_window.theme
+	$CanvasLayer.add_child(_ward_tags)
+	$CanvasLayer.move_child(_ward_tags, 0)
+	_ward_tags.bind(simulation_manager, agent_renderer, reserve_session)
 	# The reserve is the one world of this window: no new one over its viewers from the pause menu.
 	restart_button.visible = false
 	_sync_player_bar()
@@ -348,6 +363,12 @@ func _tick_reserve() -> void:
 		reserve_session.hear(message)
 	reserve_session.tick()
 	_director.update()
+	var year := int(simulation_manager.world_state.climate.year)
+	if year > _reserve_year:
+		var summary := ReserveRecords.year_summary(_reserve_year + 1, simulation_manager.world_state, story_book, reserve_session)
+		if summary != "":
+			_banner.hear({"text": summary, "kind": "year"})
+	_reserve_year = year
 
 
 func _start_simulation(selection: Dictionary, seed_value: int) -> void:
@@ -507,6 +528,7 @@ func _bind_view() -> void:
 	world_camera.bind_agent_renderer(agent_renderer)
 
 	simulation_manager.tick_completed.connect(_on_tick_for_autosave)
+	simulation_manager.world_exported.connect(_on_world_exported)
 	debug_panel.pause_toggled.connect(_on_pause_toggled)
 	debug_panel.single_step_requested.connect(simulation_manager.request_single_step)
 	debug_panel.speed_selected.connect(_on_speed_selected)
@@ -943,7 +965,13 @@ func _on_new_simulation_pressed() -> void:
 func _on_tick_for_autosave(tick: int, _snapshot: Dictionary) -> void:
 	if _autosave_interval <= 0 or tick <= 0 or tick % _autosave_interval != 0:
 		return
-	SaveSystem.save(simulation_manager, _selection, "", story_book.export_state(),
+	# The world is taken after the next tick, on the worker's thread, and written on a pool thread:
+	# the screen does not stop for a save (`_on_world_exported()`).
+	simulation_manager.request_world_export()
+
+
+func _on_world_exported(world: Dictionary) -> void:
+	SaveSystem.save_exported(simulation_manager, world, _selection, story_book.export_state(),
 		reserve_session.export_state() if reserve_session != null else {})
 
 
@@ -1162,4 +1190,11 @@ static func resolve_overview_fraction(current: bool, fraction: float, config: Di
 
 
 func _exit_game() -> void:
+	SaveSystem.finish_writing()
 	get_tree().quit()
+
+
+## The window closed: a save being written is finished first.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		SaveSystem.finish_writing()

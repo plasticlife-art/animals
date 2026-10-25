@@ -568,9 +568,30 @@ A world on a stream that its viewers act on through the chat. Launched with
   A sleeping target is reached by moving the camera there and selecting it once its sector
   wakes. The herd of what it follows becomes the session's focus, so the viewers' powers go
   where the stream looks.
-- **`ReserveOverlay`**, top left in place of the herd card, shows the commands, the vote with
-  its count or the time to the next, the funds, the living wards and the last lines told. The
-  player's bar, powers and goals are hidden.
+- **`ReserveOverlay`** stands top left in place of the herd card. It shows:
+  - the commands, every other 15 s replaced by one of the reserve's tables (`ReserveRecords`):
+    the eldest living wards, the wards with most living descendants in the story, each fund's
+    perks this year;
+  - the vote with its count, or the time to the next;
+  - the funds and the living wards;
+  - the last lines told.
+
+  The player's bar, powers and goals are hidden.
+- **`WardTags`** marks every awake ward on the map, under the panels: a ring at its feet in the
+  colour of its guardian's fund (the species' `ui_color`) and «Ветка · Вася» above it. Names that
+  would overlap give way to the one nearest the bottom of the screen and stay clear of the
+  selected animal's own tag.
+- **`ReserveBanner`** shows the big news across the top for 4 s each, the weightiest waiting
+  first: a ward's death or young (told by the session from `AgentDied`, `AgentReproduced` and
+  `AgentBorn`), the year's summary (`ReserveRecords.year_summary()`, when the climate's year
+  turns), a vote's outcome, newcomers, a fund's perk.
+- **Autosaves do not stop the screen.** On the autosave tick the view asks for the world
+  (`SimulationManager.request_world_export()`). The worker exports and deep-copies it on its own
+  thread right after the next tick; `world_exported` hands it over on the main thread, while the
+  worker waits, so the clock, the stream and the counters read with it are the same tick's.
+  `SaveSystem.save_exported()` then chooses the slot (reading both slots whole) and writes it on
+  a pool thread, into a `.part` file renamed over the slot once whole. Quitting waits for it
+  (`finish_writing()`). Without the worker the export is taken at once.
 - **Measured** with `scripts/dev/reserve_soak.gd`: headless, LOD on, made-up viewers at 30
   commands a minute (a quarter wards, a third votes, a fifth funds, the rest the steward's
   powers), an autosave every 2 minutes. Seed 7, four hours:

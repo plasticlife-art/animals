@@ -15,7 +15,8 @@ extends RefCounted
 ##
 ## Per-viewer cooldowns, in simulated seconds, sit on top of each power's own (`powers.json`).
 ## A species about to be lost gets newcomers from the edge on its own (`rescue`).
-## `told` carries a line for the overlay: `{text, kind}`.
+## A ward's death and a ward's young are told too (`ward_death`, `ward_born`).
+## `told` carries a line for the overlay and the banner: `{text, kind}`.
 
 signal told(line: Dictionary)
 signal focus_requested(agent_id: int)
@@ -39,6 +40,11 @@ var _rescue_checked_at: float = -INF
 var _rescued_at: Dictionary = {}
 ## Orders given and not yet answered: `{seq: {key, user, kind, label}}`.
 var _pending: Dictionary = {}
+## Each fund's perks this year, `{team: count}`, and the year they count.
+var year_perks: Dictionary = {}
+var _perks_year: int = -1
+## When each ward's young were last told, so a litter is told once.
+var _young_told_at: Dictionary = {}
 
 
 func configure(new_manager, new_config: Dictionary) -> void:
@@ -118,7 +124,7 @@ func _join(key: String, user: String, team: String) -> void:
 		return
 	book.note(key, "team", now())
 	book.join(key, team)
-	_tell("%s — в «%s»" % [user, str(funds[team].get("label", team))], "team")
+	_tell("%s — в «%s»" % [user, str(funds[team].get("label", team))], "join")
 
 
 func _steward(key: String, user: String, power: String) -> void:
@@ -242,6 +248,16 @@ func _count_teams() -> void:
 		return
 	_order(str(perk.get("power", "")), perk.get("params", {}), {"key": "", "user": "", "kind": "team",
 		"label": str(funds[winner].get("label", winner)), "members": int(counts[winner])})
+	_count_perk(winner)
+
+
+## A fund's perk counted for this year (`year_perks`), the count begun anew each year.
+func _count_perk(team: String) -> void:
+	var year := int(manager.world_state.climate.year)
+	if year != _perks_year:
+		_perks_year = year
+		year_perks.clear()
+	year_perks[team] = int(year_perks.get(team, 0)) + 1
 
 
 ## Every `rescue.every_seconds`, each species the world began with that is down to fewer than its
@@ -311,8 +327,17 @@ func _order(power: String, params: Dictionary, about: Dictionary) -> void:
 
 
 func _on_world_event(event: Dictionary) -> void:
-	if str(event.get("type", "")) != "PlayerCommand":
-		return
+	match str(event.get("type", "")):
+		"AgentDied":
+			_hear_ward_death(event)
+			return
+		"AgentReproduced", "AgentBorn":
+			_hear_ward_young(event)
+			return
+		"PlayerCommand":
+			pass
+		_:
+			return
 	var data: Dictionary = event.get("data", {})
 	var seq := int(data.get("seq", -1))
 	if not _pending.has(seq):
@@ -343,6 +368,54 @@ func _on_world_event(event: Dictionary) -> void:
 			_tell("%s: %s — %s%s" % [user, POWER_LABELS.get(kind, kind), str(about.get("label", "")), "" if ok else ", не вышло"], "power")
 
 
+## «Подопечный погиб: Ветка (Вася) — задрал волк», «Подопечный умер от старости: …».
+func _hear_ward_death(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var id := int(event.get("agent_id", -1))
+	if id < 0:
+		id = int(data.get("record_id", -1))
+	var ward: Dictionary = manager.world_state.adoptions.get(id, {})
+	if ward.is_empty():
+		return
+	var who := _ward_text(ward)
+	match str(data.get("cause", "")):
+		"predation":
+			var killer = manager.world_state.get_agent(int(event.get("other_agent_id", -1)))
+			var species := str(killer.species_type) if killer != null else str(data.get("killer_species", ""))
+			var sex := str(killer.sex) if killer != null else str(data.get("killer_sex", ""))
+			var verb := "задрала" if sex == "female" else "задрал"
+			_tell("Подопечный погиб: %s — %s %s" % [who, verb, HudTextScript.animal_noun(species, sex)] if species != ""
+				else "Подопечный погиб: %s" % who, "ward_death")
+		"old_age":
+			_tell("Подопечный умер от старости: %s" % who, "ward_death")
+		"starvation":
+			_tell("Подопечный умер от голода: %s" % who, "ward_death")
+		"thirst":
+			_tell("Подопечный умер от жажды: %s" % who, "ward_death")
+		_:
+			_tell("Подопечный погиб: %s" % who, "ward_death")
+
+
+## «Потомство у подопечного: Ветка (Вася)», once a litter: a parent's young are told again no
+## sooner than a minute later.
+func _hear_ward_young(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	for key in ["parent_a_id", "parent_b_id", "mother_id", "father_id"]:
+		var parent := int(data.get(key, -1))
+		var ward: Dictionary = manager.world_state.adoptions.get(parent, {})
+		if ward.is_empty() or float(ward.get("died_at", -1.0)) >= 0.0:
+			continue
+		if now() < float(_young_told_at.get(parent, -INF)) + 60.0:
+			continue
+		_young_told_at[parent] = now()
+		_tell("Потомство у подопечного: %s" % _ward_text(ward), "ward_born")
+
+
+static func _ward_text(ward: Dictionary) -> String:
+	var guardian := str(ward.get("viewer_name", ""))
+	return str(ward.get("name", "")) if guardian == "" else "%s (%s)" % [str(ward.get("name", "")), guardian]
+
+
 static func _perk_text(data: Dictionary) -> String:
 	match str(data.get("power", "")):
 		"bloom":
@@ -358,7 +431,8 @@ func _tell(text: String, kind: String) -> void:
 
 func export_state() -> Dictionary:
 	return {"book": book.export_state(), "vote": vote.export_state(), "focus": focus.duplicate(true),
-		"teams_counted_at": _teams_counted_at, "rescued_at": _rescued_at.duplicate()}
+		"teams_counted_at": _teams_counted_at, "rescued_at": _rescued_at.duplicate(), "year_perks": year_perks.duplicate(),
+		"perks_year": _perks_year}
 
 
 func import_state(data: Dictionary) -> void:
@@ -367,3 +441,5 @@ func import_state(data: Dictionary) -> void:
 	focus = data.get("focus", {}).duplicate(true)
 	_teams_counted_at = float(data.get("teams_counted_at", -1.0))
 	_rescued_at = data.get("rescued_at", {}).duplicate()
+	year_perks = data.get("year_perks", {}).duplicate()
+	_perks_year = int(data.get("perks_year", -1))

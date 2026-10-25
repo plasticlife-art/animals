@@ -36,6 +36,8 @@ const KIND_RESERVE := "reserve"
 
 ## Where the slots are; a test points it elsewhere so it never touches the player's saves.
 static var save_dir: String = SAVE_DIR
+## The pool task writing a save (`save_exported()`), or -1.
+static var _writing_task: int = -1
 
 
 ## The slots of `kind` (`KIND_SANDBOX`, `KIND_SCENARIO`, `KIND_RESERVE`), or of the player's two
@@ -116,12 +118,33 @@ static func save(manager, selection: Dictionary, path: String = "", story: Dicti
 		return false
 	var world_data: Dictionary = manager.export_simulation_state()
 	var target := path if path != "" else next_slot(kind_of(manager))
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(target.get_base_dir()))
-	var file := FileAccess.open(target, FileAccess.WRITE)
-	if file == null:
-		push_error("Could not open save file for writing: %s" % target)
-		return false
-	file.store_var({
+	return _write(target, _payload(manager, world_data, selection, story, reserve))
+
+
+## As `save()`, for the world `SimulationManager.world_exported` brought: the rest is read now, in
+## the handler, where it is the same tick's, and the rest is done on a pool thread - choosing the
+## slot (which reads both slots whole) and writing it, into a temporary file first, renamed over
+## the slot once whole - so the game does not wait on it.
+static func save_exported(manager, world_data: Dictionary, selection: Dictionary, story: Dictionary = {},
+		reserve: Dictionary = {}) -> void:
+	var payload := _payload(manager, world_data, selection, story, reserve)
+	finish_writing()
+	_writing_task = WorkerThreadPool.add_task(_write_next.bind(kind_of(manager), payload), false, "Autosave")
+
+
+static func _write_next(kind: String, payload: Dictionary) -> void:
+	_write(next_slot(kind), payload)
+
+
+## Waits for a save still being written (`save_exported()`), as before quitting.
+static func finish_writing() -> void:
+	if _writing_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_writing_task)
+		_writing_task = -1
+
+
+static func _payload(manager, world_data: Dictionary, selection: Dictionary, story: Dictionary, reserve: Dictionary) -> Dictionary:
+	return {
 		"version": SAVE_VERSION,
 		"selection": selection.duplicate(),
 		"config_bundle": manager.config_bundle.duplicate(true),
@@ -138,9 +161,21 @@ static func save(manager, selection: Dictionary, path: String = "", story: Dicti
 		"scenario": manager.scenario.export_state() if kind_of(manager) == KIND_SCENARIO else {},
 		"reserve": reserve.duplicate(true),
 		"saved_at": Time.get_unix_time_from_system(),
-	}, true)
+	}
+
+
+## Writes `payload` to `target` by way of a temporary file beside it, so a slot is never left
+## half written.
+static func _write(target: String, payload: Dictionary) -> bool:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(target.get_base_dir()))
+	var partial := target + ".part"
+	var file := FileAccess.open(partial, FileAccess.WRITE)
+	if file == null:
+		push_error("Could not open save file for writing: %s" % partial)
+		return false
+	file.store_var(payload, true)
 	file.close()
-	return true
+	return DirAccess.rename_absolute(ProjectSettings.globalize_path(partial), ProjectSettings.globalize_path(target)) == OK
 
 
 static func read(path: String) -> Dictionary:

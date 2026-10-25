@@ -7,7 +7,8 @@ extends RefCounted
 ## JSON read off the local port; the director's shots (`ReserveDirector`); the overlay's text; and
 ## the reserve's saves, in slots of its own; a species about to be lost rescued; the viewers long
 ## unseen forgotten; no cull of the last foxes, no newcomers to a crowded species, the reserve's
-## own power settings and a shorter story.
+## own power settings and a shorter story; a ward's death and young told, the banner's order, the
+## tables and the year's summary, the wards' tags; an autosave written in the background.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
@@ -18,6 +19,9 @@ const ReserveDirectorScript := preload("res://scripts/ui/reserve_director.gd")
 const ReserveOverlayScript := preload("res://scripts/ui/reserve_overlay.gd")
 const StoryBookScript := preload("res://scripts/story/story_book.gd")
 const SelectionCardScript := preload("res://scripts/ui/selection_card.gd")
+const ReserveBannerScript := preload("res://scripts/ui/reserve_banner.gd")
+const ReserveRecordsScript := preload("res://scripts/ui/reserve_records.gd")
+const WardTagsScript := preload("res://scripts/ui/ward_tags.gd")
 const AT := Vector2(1500.0, 1500.0)
 
 
@@ -33,6 +37,9 @@ func run(a) -> void:
 	_test_a_rescue(a)
 	_test_forgetting_viewers(a)
 	_test_floors_and_ceilings(a)
+	_test_ward_news(a)
+	_test_the_banner_and_tables(a)
+	_test_saving_in_the_background(a)
 
 
 ## Stands in for the game's camera: where it was sent.
@@ -325,3 +332,92 @@ func _test_floors_and_ceilings(a) -> void:
 		lineage.note_birth(id, "herbivore", "female", 10.0, 0, [])
 	a.is_true(lineage.size() == 9 and not lineage.knows(1) and not lineage.knows(2) and lineage.knows(3),
 		"a shorter story forgets the longest dead first")
+
+
+## Two wards named in the herd at `AT`, by Вася and Маша: `[manager, session, lines, first, second]`.
+static func _two_wards(seed: int) -> Array:
+	var made := _reserve(seed, _config())
+	var manager = made[0]
+	var session = made[1]
+	session.hear(_message("1", "Вася", "!имя Ветка"))
+	session.hear(_message("2", "Маша", "!имя Буран"))
+	manager.step_once()
+	var ids: Array = manager.world_state.adoptions.keys()
+	ids.sort_custom(func(x, y) -> bool: return str(manager.world_state.adoptions[x]["viewer"]) < str(manager.world_state.adoptions[y]["viewer"]))
+	return [manager, session, made[2], int(ids[0]), int(ids[1])]
+
+
+func _test_ward_news(a) -> void:
+	var made := _two_wards(9940)
+	var manager = made[0]
+	var lines: Array = made[2]
+	manager.world_event.emit({"type": "AgentReproduced", "agent_id": 999, "data": {"parent_a_id": made[3], "parent_b_id": -1}})
+	manager.world_event.emit({"type": "AgentReproduced", "agent_id": 1000, "data": {"parent_a_id": made[3], "parent_b_id": -1}})
+	a.is_true(lines.count("Потомство у подопечного: Ветка (Вася)") == 1, "a ward's young told once a litter (%s)" % str(lines))
+	manager.world_state.kill_agent(manager.world_state.get_agent(made[4]), "old_age")
+	manager.step_once()
+	a.is_true(lines.has("Подопечный умер от старости: Буран (Маша)"), "a ward's death told with its cause (%s)" % str(lines))
+	Helpers.destroy_manager(manager)
+
+
+func _test_the_banner_and_tables(a) -> void:
+	var banner = ReserveBannerScript.new()
+	banner.hear({"text": "фонд", "kind": "team"})
+	banner.hear({"text": "реплика", "kind": "adopt"})
+	banner.hear({"text": "смерть", "kind": "ward_death"})
+	banner.hear({"text": "голос", "kind": "vote"})
+	a.equal(banner.waiting().map(func(item) -> String: return str(item["text"])), ["смерть", "голос", "фонд"],
+		"the banner shows the weightiest news first, and only news")
+	banner.free()
+	var made := _two_wards(9941)
+	var manager = made[0]
+	var session = made[1]
+	var world = manager.world_state
+	world.get_agent(made[3]).age = 500.0
+	world.get_agent(made[4]).age = 100.0
+	var eldest: Array = ReserveRecordsScript.longest_lived(world, 3)
+	a.is_true(eldest.size() == 2 and str(eldest[0]["name"]) == "Ветка", "the eldest ward first")
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin({})
+	book.lineage.note_animal(made[4], "herbivore", "male")
+	book.lineage.note_birth(5001, "herbivore", "female", 1.0, 0, [made[4]])
+	var page: String = ReserveRecordsScript.page_text(1, world, book, session, [120.0, 4])
+	a.equal(page, "Большие семьи\nБуран (Маша) — 1 потомок", "the biggest families")
+	session._count_perk("predator")
+	a.is_true(ReserveRecordsScript.page_text(2, world, book, session, [120.0, 4]).contains("Фонд лис — 1 подарок"), "the funds' perks this year")
+	a.equal(ReserveRecordsScript.year_summary(1, world, book, session),
+		"Итоги года 1: дольше всех живёт Ветка (Вася), больше всех потомков — Буран (Маша), фонд года — лис", "the year's summary")
+	a.equal(WardTagsScript._label(world.adoptions[made[3]]), "Ветка · Вася", "a ward's tag names it and its guardian")
+	Helpers.destroy_manager(manager)
+
+
+func _test_saving_in_the_background(a) -> void:
+	var shipped_dir: String = SaveSystem.save_dir
+	SaveSystem.save_dir = "user://test_reserve_saves"
+	for path in SaveSystem.slot_paths(SaveSystem.KIND_RESERVE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var bundle: Dictionary = ReserveCommandTestsScript._bundle(9942)
+	bundle["reserve"] = {"selection": {}}
+	var manager = Helpers.create_manager_with(bundle, 9942)
+	manager.set_lod_enabled(false)
+	Helpers.spawn_herd(manager.world_state, AT, 6, 0)
+	var session = ReserveSessionScript.new()
+	session.configure(manager, _config())
+	session.hear(_message("1", "Вася", "!имя Ветка"))
+	manager.step_once()
+	var heard: Array = []
+	manager.world_exported.connect(func(world: Dictionary) -> void:
+		heard.append(world)
+		SaveSystem.save_exported(manager, world, {}, {}, session.export_state()))
+	manager.request_world_export()
+	SaveSystem.finish_writing()
+	var slot := SaveSystem.latest_slot(SaveSystem.KIND_RESERVE)
+	var data := SaveSystem.read(slot) if slot != "" else {}
+	a.is_true(heard.size() == 1 and not data.is_empty() and data["world"].get("adoptions", {}).size() == 1
+		and int(data["tick"]) == manager.current_tick and not FileAccess.file_exists(slot + ".part"),
+		"an autosave taken on request and written in the background, whole")
+	for path in SaveSystem.slot_paths(SaveSystem.KIND_RESERVE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	SaveSystem.save_dir = shipped_dir
+	Helpers.destroy_manager(manager)
