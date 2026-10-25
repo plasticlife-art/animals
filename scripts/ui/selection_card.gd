@@ -127,6 +127,10 @@ static func family_line(story_book, agent) -> String:
 	var kids := "детей нет" if children.is_empty() else "детей: %d, живы %d" % [children.size(), living]
 	var lines := [" · ".join(parents), "Поколение %d · %s · [url=tree:%d]родословная[/url]" % [
 		int(entry.get("generation", 1)), kids, agent.id]]
+	# A viewer's ward, in the living reserve.
+	var ward: Dictionary = story_book.ward_of(agent.id)
+	if not ward.is_empty() and str(ward.get("viewer_name", "")) != "":
+		lines.push_front("Опекун: %s" % str(ward["viewer_name"]))
 	# Grandchildren and on: the line only says more than the children do when there are some.
 	var descendants: int = story_book.lineage.descendants_alive(agent.id)
 	if descendants > living:

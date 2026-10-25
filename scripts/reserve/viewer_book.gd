@@ -19,12 +19,22 @@ func meet(message: Dictionary, now: float) -> Dictionary:
 	var key := key_of(message)
 	var viewer: Dictionary = viewers.get(key, {"name": "", "platform": str(message.get("platform", "")),
 		"team": "", "last": {}, "seen": now})
-	var shown := str(message.get("user", "")).strip_edges()
+	var shown := clean_shown(str(message.get("user", "")))
 	if shown != "":
 		viewer["name"] = shown
 	viewer["seen"] = now
 	viewers[key] = viewer
 	return viewer
+
+
+## The name a viewer shows, fit to stand in the overlay, the feed and a card: no control
+## characters, no brackets (the feed and the card read `[` as markup), at most 32 characters.
+static func clean_shown(raw: String) -> String:
+	var kept := ""
+	for character in raw.strip_edges():
+		if character.unicode_at(0) >= 32 and not "[]{}<>\\".contains(character):
+			kept += character
+	return kept.substr(0, 32).strip_edges()
 
 
 ## Seconds until `key` may do `kind` again (0 when it may), with `cooldown` between.

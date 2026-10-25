@@ -121,7 +121,8 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 	var killer: int = book.killer_of(event) if book != null else -1
 	var group := int(data.get("group_id", -1))
 	var position := _position_of(event)
-	var pinned: bool = book != null and (book.is_pinned(victim) or book.is_pinned(killer))
+	var pinned: bool = book != null and (book.is_pinned(victim) or book.is_pinned(killer)
+		or (book.has_method("ward_of") and not book.ward_of(victim).is_empty()))
 	var remembered: bool = book != null and book.epitaphs.has(victim)
 	if victim < 0 or not (pinned or remembered or _in_herd(context, species, group) \
 			or (not asleep and _in_view(context, position))):
@@ -130,6 +131,10 @@ func _hear_death(event: Dictionary, data: Dictionary, time: float, context: Dict
 	var entry: Dictionary = book.lineage.entry(victim) if book != null else {}
 	var sex := str(entry.get("sex", ""))
 	var who := "%s, %s%s" % [_name(victim), HudTextScript.animal_noun(species, sex), _from_herd(species, group)]
+	# A viewer's ward: whose, and told wherever it died.
+	var ward: Dictionary = book.ward_of(victim) if book != null and book.has_method("ward_of") else {}
+	if not ward.is_empty():
+		who += " (подопечный %s)" % str(ward.get("viewer_name", ""))
 	var place := _place_of(position)
 	# Where it happened; out of view with no name for the place, just «вдали».
 	var where := " " + place if place != "" else (" вдали" if asleep else "")
@@ -252,6 +257,11 @@ func _hear_player_command(data: Dictionary, time: float, position: Vector2) -> v
 			_add({"time": time, "text": "Отстрел%s: %s" % [_goal_place(position),
 				HudTextScript.animal_count("predator", int(data.get("killed", 0)))], "position": position, "focus_id": -1,
 				"pinned": false, "kind": "player", "key": "", "count": 1})
+		"adopt":
+			var ward_id := int(data.get("agent_id", -1))
+			_add({"time": time, "text": "%s берёт под опеку: %s %s" % [str(data.get("viewer_name", data.get("viewer", ""))),
+				HudTextScript.animal_noun(str(data.get("species", "")), ""), str(data.get("name", ""))], "position": position,
+				"focus_id": ward_id, "pinned": true, "kind": "player", "key": "", "count": 1})
 		"lead_herd":
 			_add({"time": time, "text": "%s в пути: цель%s" % [HudTextScript.herd_name("herbivore", int(data.get("group_id", -1))),
 				_goal_place(position)], "position": position, "focus_id": -1, "pinned": false, "kind": "player", "key": "",

@@ -28,19 +28,25 @@ const SAVE_DIR := "user://saves"
 ## player left in the sandbox.
 const SLOTS := ["autosave_a.dat", "autosave_b.dat"]
 const SCENARIO_SLOTS := ["scenario_a.dat", "scenario_b.dat"]
+## The living reserve's (`--reserve`): never Continue's, and never over the player's worlds.
+const RESERVE_SLOTS := ["reserve_a.dat", "reserve_b.dat"]
 const KIND_SANDBOX := "sandbox"
 const KIND_SCENARIO := "scenario"
+const KIND_RESERVE := "reserve"
 
 ## Where the slots are; a test points it elsewhere so it never touches the player's saves.
 static var save_dir: String = SAVE_DIR
 
 
-## The slots of `kind` (`KIND_SANDBOX`, `KIND_SCENARIO`), or of both by default.
+## The slots of `kind` (`KIND_SANDBOX`, `KIND_SCENARIO`, `KIND_RESERVE`), or of the player's two
+## by default.
 static func slot_paths(kind: String = "") -> Array:
 	var names: Array = []
-	if kind != KIND_SCENARIO:
+	if kind == KIND_RESERVE:
+		names.append_array(RESERVE_SLOTS)
+	if kind == "" or kind == KIND_SANDBOX:
 		names.append_array(SLOTS)
-	if kind != KIND_SANDBOX:
+	if kind == "" or kind == KIND_SCENARIO:
 		names.append_array(SCENARIO_SLOTS)
 	var paths: Array = []
 	for slot in names:
@@ -56,10 +62,10 @@ static func slot_paths(kind: String = "") -> Array:
 ## were written (`saved_at`), then by tick: a tick says nothing between two worlds, and a world
 ## begun anew after a long one used to lose Continue to the old one's higher tick. A save from
 ## before `saved_at` counts as the oldest.
-static func latest_slot() -> String:
+static func latest_slot(kind: String = "") -> String:
 	var newest := ""
 	var newest_key := [-1.0, -1]
-	for path in slot_paths():
+	for path in slot_paths(kind):
 		if not FileAccess.file_exists(path):
 			continue
 		var header := _read_header(path)
@@ -88,6 +94,8 @@ static func next_slot(kind: String = KIND_SANDBOX) -> String:
 
 ## Which kind of slot `manager`'s world saves to.
 static func kind_of(manager) -> String:
+	if manager != null and manager.config_bundle.has("reserve"):
+		return KIND_RESERVE
 	return KIND_SCENARIO if manager != null and manager.scenario != null and manager.scenario.is_active() else KIND_SANDBOX
 
 
@@ -101,8 +109,9 @@ static func _is_later(key: Array, than: Array) -> bool:
 
 ## `story` is the view's story of the world (`StoryBook.export_state()`): names, family tree
 ## and pins. The simulation never reads it; a save without it loads with none. A scenario's score
-## (`ScenarioRunner`) goes under `scenario`, and the save into the scenario's slots.
-static func save(manager, selection: Dictionary, path: String = "", story: Dictionary = {}) -> bool:
+## (`ScenarioRunner`) goes under `scenario`, and the save into the scenario's slots. A reserve's
+## viewers (`ReserveSession.export_state()`) go under `reserve`, the save into the reserve's slots.
+static func save(manager, selection: Dictionary, path: String = "", story: Dictionary = {}, reserve: Dictionary = {}) -> bool:
 	if manager == null or manager.world_state == null:
 		return false
 	var world_data: Dictionary = manager.export_simulation_state()
@@ -127,6 +136,7 @@ static func save(manager, selection: Dictionary, path: String = "", story: Dicti
 		"stats": manager.stats_system.counters.duplicate(),
 		"story": story.duplicate(true),
 		"scenario": manager.scenario.export_state() if kind_of(manager) == KIND_SCENARIO else {},
+		"reserve": reserve.duplicate(true),
 		"saved_at": Time.get_unix_time_from_system(),
 	}, true)
 	file.close()

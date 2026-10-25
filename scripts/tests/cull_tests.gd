@@ -144,9 +144,10 @@ func _test_the_powers_a_world_is_offered(a) -> void:
 	drought.configure(ConfigLoaderScript.load_scenario_bundle("long_drought")["powers"])
 	a.equal(drought.budget.keys(), ["dig_pond", "lead_herd"], "«Долгая сушь» keeps its two")
 	a.equal(drought.refusal("cull", 0.0), "unknown_power", "and refuses a cull")
+	# As a save from then holds it: the two powers there were, and no list.
 	var old: Dictionary = shipped.duplicate(true)
 	old.erase("offered")
-	old["powers"].erase("cull")
+	old["powers"] = {"dig_pond": shipped["powers"]["dig_pond"], "lead_herd": shipped["powers"]["lead_herd"]}
 	var saved = PlayerStateScript.new()
 	saved.configure(old)
 	a.equal(saved.budget.keys(), ["dig_pond", "lead_herd"], "a bundle from before the list has the powers it holds")

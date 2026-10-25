@@ -88,7 +88,7 @@ func _adopt(key: String, user: String, raw_name: String) -> void:
 		return
 	book.note(key, "adopt", now())
 	var herd := focus_herd()
-	var params := {"viewer": key, "name": name}
+	var params := {"viewer": key, "viewer_name": user, "name": name}
 	if not herd.is_empty():
 		params["position"] = herd["center"]
 	_order("adopt", params, {"key": key, "user": user, "kind": "adopt"})

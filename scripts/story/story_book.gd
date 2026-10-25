@@ -214,7 +214,17 @@ func name_of(agent) -> String:
 	lineage.note_animal(agent.id, agent.species_type, agent.sex, agent.group_id, float(agent.age), now)
 	if "trait_settings" in agent and bool(agent.trait_settings.get("enabled", false)):
 		lineage.note_traits(agent.id, agent.traits())
+	var ward := ward_of(agent.id)
+	if not ward.is_empty():
+		return str(ward.get("name", ""))
 	return names.name_of(agent.id, agent.species_type, agent.sex)
+
+
+## A viewer's ward (`WorldState.adoptions`): `{name, viewer, viewer_name, ...}`, or {}.
+func ward_of(agent_id: int) -> Dictionary:
+	if manager == null or manager.world_state == null:
+		return {}
+	return manager.world_state.adoptions.get(agent_id, {})
 
 
 ## Who killed the animal an AgentDied names: the hunter awake, the one a sleeping sector
@@ -229,6 +239,9 @@ static func killer_of(event: Dictionary) -> int:
 
 ## The name of an animal known only by its id - a parent, a killer, a pinned one asleep.
 func name_of_id(agent_id: int) -> String:
+	var ward := ward_of(agent_id)
+	if not ward.is_empty():
+		return str(ward.get("name", ""))
 	var known: String = names.known(agent_id)
 	if known != "":
 		return known

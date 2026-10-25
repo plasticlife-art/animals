@@ -3,14 +3,19 @@ extends RefCounted
 ## The reserve's viewers (`ReserveSession`, `ChatCommands`, `ViewerBook`, `VoteRound`,
 ## `ViewerLink`): chat lines read as commands, names cleaned; a ward taken and told, a second
 ## asked too soon ignored; a vote won and carried out; a fund's perk; a steward's power on the
-## focus herd; «!моё» asking the camera for the ward; the session back from a save; and lines of
-## JSON read off the local port.
+## focus herd; «!моё» asking the camera for the ward; the session back from a save; lines of
+## JSON read off the local port; the director's shots (`ReserveDirector`); the overlay's text; and
+## the reserve's saves, in slots of its own.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
 const ReserveCommandTestsScript := preload("res://scripts/tests/reserve_command_tests.gd")
 const ReserveSessionScript := preload("res://scripts/reserve/reserve_session.gd")
 const ViewerLinkScript := preload("res://scripts/reserve/viewer_link.gd")
+const ReserveDirectorScript := preload("res://scripts/ui/reserve_director.gd")
+const ReserveOverlayScript := preload("res://scripts/ui/reserve_overlay.gd")
+const StoryBookScript := preload("res://scripts/story/story_book.gd")
+const SelectionCardScript := preload("res://scripts/ui/selection_card.gd")
 const AT := Vector2(1500.0, 1500.0)
 
 
@@ -20,6 +25,17 @@ func run(a) -> void:
 	_test_a_vote_and_a_fund(a)
 	_test_a_steward_and_mine(a)
 	_test_the_local_port(a)
+	_test_the_director(a)
+	_test_the_overlay_text(a)
+	_test_its_own_slots(a)
+
+
+## Stands in for the game's camera: where it was sent.
+class FakeCamera:
+	var moved: Array = []
+
+	func move_to_world_position(position: Vector2, _clear_focus: bool = true) -> void:
+		moved.append(position)
 
 
 static func _config() -> Dictionary:
@@ -57,12 +73,17 @@ func _test_reading_the_chat(a) -> void:
 		ChatCommands.clean_name("Абвгдеёжзийклмнопрст", config).length(), ChatCommands.clean_name("Сукин", config),
 		ChatCommands.clean_name("123", config)], ["Ветка", "Ветка", 16, "", ""],
 		"names cleaned: letters only, capital, cut to length, none of the blocked, nothing from digits")
+	a.equal([ViewerBook.clean_shown("  Вася_99 "), ViewerBook.clean_shown("[b]Злой[/b]\n"), ViewerBook.clean_shown("x".repeat(40)).length()],
+		["Вася_99", "bЗлой/b", 32], "viewers' names kept clear of markup and cut")
 
 
 func _test_a_ward(a) -> void:
 	var made := _reserve(9931, _config())
 	var manager = made[0]
 	var session = made[1]
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin({})
 	session.hear(_message("1", "Вася", "!имя Ветка"))
 	manager.step_once()
 	var ward := -1
@@ -71,6 +92,11 @@ func _test_a_ward(a) -> void:
 			ward = int(id)
 	a.is_true(ward != -1 and str(manager.world_state.adoptions[ward]["name"]) == "Ветка", "a viewer's ward, named")
 	a.is_true(made[2].size() == 1 and str(made[2][0]).contains("опекун"), "and told (%s)" % str(made[2]))
+	var agent = manager.world_state.get_agent(ward)
+	a.is_true(book.name_of(agent) == "Ветка" and SelectionCardScript.family_line(book, agent).begins_with("Опекун: Вася"),
+		"its card names it and its guardian")
+	var feed: Array = book.feed.lines.map(func(line) -> String: return str(line.text))
+	a.is_true(feed.has("Вася берёт под опеку: олень Ветка"), "the feed tells it by the viewer's name (%s)" % str(feed))
 	session.hear(_message("1", "Вася", "!имя Ещё"))
 	a.equal(manager.pending_commands().size(), 0, "a second asked too soon is ignored")
 	Helpers.destroy_manager(manager)
@@ -147,3 +173,87 @@ func _test_the_local_port(a) -> void:
 	a.is_true(got.size() == 1 and str(got[0]["text"]) == "!имя Луна", "a line of JSON read off it, the rest dropped (%s)" % str(got))
 	client.disconnect_from_host()
 	link.stop()
+
+
+func _test_the_director(a) -> void:
+	var made := _reserve(9934, _config())
+	var manager = made[0]
+	var session = made[1]
+	var director = ReserveDirectorScript.new()
+	director.configure(manager, FakeCamera.new(), session, _config())
+	director.update()
+	var herd: Dictionary = session.focus_herd()
+	var first = manager.get_selected_agent()
+	a.is_true(first != null and int(first.group_id) == int(herd["group_id"]) and manager.focus_mode == "flock",
+		"with nothing happening it follows the focus herd")
+	var deer: Array = manager.world_state.get_living_agents().filter(func(agent): return agent.species_type == "herbivore")
+	var other = deer[deer.size() - 1] if deer[deer.size() - 1].id != first.id else deer[0]
+	manager.world_event.emit({"type": "PredationSuccess", "agent_id": other.id, "species": "herbivore",
+		"position": {"x": other.position.x, "y": other.position.y}, "data": {}})
+	director.update()
+	a.equal(manager.selected_agent_id, first.id, "a moment waits for the shot to end")
+	director._until_msec = 0
+	director.update()
+	a.equal(manager.selected_agent_id, other.id, "then the camera turns to it")
+	session.hear(_message("7", "Лиза", "!имя Искра"))
+	manager.step_once()
+	session.hear(_message("7", "Лиза", "!моё"))
+	director.update()
+	var ward := -1
+	for id in manager.world_state.adoptions.keys():
+		ward = int(id)
+	a.is_true(ward >= 0 and manager.selected_agent_id == ward, "«!моё» cuts to the ward at once")
+	Helpers.destroy_manager(manager)
+
+
+func _test_the_overlay_text(a) -> void:
+	var config := _config()
+	config["vote"]["every_seconds"] = 1.0
+	var made := _reserve(9935, config)
+	var manager = made[0]
+	var session = made[1]
+	session.tick()
+	a.is_true(ReserveOverlayScript.vote_text(session).begins_with("Следующее голосование через 0:01"), "the time to the next vote")
+	for _tick in range(int(manager.tick_rate * 1.2)):
+		manager.step_once()
+		session.tick()
+	session.hear(_message("1", "Вася", "!2"))
+	var text: String = ReserveOverlayScript.vote_text(session)
+	var second := str(session.vote.current["choices"][1]["label"])
+	a.is_true(text.begins_with("Голосование, 1:") and text.contains("2 %s — 1" % second), "the vote open, with its count (%s)" % text)
+	session.hear(_message("2", "Маша", "!лисы"))
+	a.is_true(ReserveOverlayScript.funds_text(session).contains("лис 1"), "the funds (%s)" % ReserveOverlayScript.funds_text(session))
+	a.equal([ReserveOverlayScript.clock(59.2), ReserveOverlayScript.clock(125.0)], ["1:00", "2:05"], "the clock")
+	Helpers.destroy_manager(manager)
+
+
+func _test_its_own_slots(a) -> void:
+	var shipped_dir: String = SaveSystem.save_dir
+	SaveSystem.save_dir = "user://test_reserve_saves"
+	for path in SaveSystem.slot_paths() + SaveSystem.slot_paths(SaveSystem.KIND_RESERVE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var bundle: Dictionary = ReserveCommandTestsScript._bundle(9936)
+	bundle["reserve"] = {"selection": {}}
+	var manager = Helpers.create_manager_with(bundle, 9936)
+	manager.set_lod_enabled(false)
+	Helpers.spawn_herd(manager.world_state, AT, 6, 0)
+	var session = ReserveSessionScript.new()
+	session.configure(manager, _config())
+	session.hear(_message("1", "Вася", "!олени"))
+	session.hear(_message("2", "Маша", "!имя Ветка"))
+	manager.step_once()
+	a.equal(SaveSystem.kind_of(manager), SaveSystem.KIND_RESERVE, "a reserve's world knows its kind")
+	SaveSystem.save(manager, {}, "", {}, session.export_state())
+	a.is_true(SaveSystem.latest_slot() == "" and SaveSystem.latest_slot(SaveSystem.KIND_RESERVE).get_file() == "reserve_a.dat",
+		"it saves to its own slot, which Continue never opens")
+	var data: Dictionary = SaveSystem.read(SaveSystem.latest_slot(SaveSystem.KIND_RESERVE))
+	var loaded = Helpers.create_manager(9937)
+	SaveSystem.restore(loaded, data)
+	a.is_true(loaded.world_state.adoptions == manager.world_state.adoptions and loaded.config_bundle.has("reserve")
+		and loaded.world_state.player.budget.has("adopt"), "and comes back with its wards and powers")
+	a.equal(data.get("reserve", {}), session.export_state(), "and its viewers")
+	for path in SaveSystem.slot_paths(SaveSystem.KIND_RESERVE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	SaveSystem.save_dir = shipped_dir
+	Helpers.destroy_manager(manager)
+	Helpers.destroy_manager(loaded)

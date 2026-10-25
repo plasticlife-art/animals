@@ -1642,11 +1642,11 @@ func _command_adopt(command: Dictionary) -> Dictionary:
 	if target.is_empty():
 		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
 	var agent_id := int(target["id"])
-	adoptions[agent_id] = {"name": name, "viewer": viewer, "species": str(target["species"]), "since": current_time,
-		"died_at": -1.0}
+	adoptions[agent_id] = {"name": name, "viewer": viewer, "viewer_name": str(params.get("viewer_name", viewer)),
+		"species": str(target["species"]), "since": current_time, "died_at": -1.0}
 	adoptions_revision += 1
 	return {"ok": true, "agent_id": agent_id, "species": str(target["species"]), "name": name, "viewer": viewer,
-		"position": target["position"]}
+		"viewer_name": str(adoptions[agent_id]["viewer_name"]), "position": target["position"]}
 
 
 ## The animal an `adopt` order takes: `{id, species, position}`, or {}.

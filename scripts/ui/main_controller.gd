@@ -89,6 +89,12 @@ var _climate_offsets := Vector2.ZERO
 var _strip_offsets := Vector2.ZERO
 var _herd_height: float = 0.0
 var _overview_mode: bool = false
+## The living reserve (`--reserve`), when this window is one: its viewers, the port their chat
+## comes in on, the camera that directs itself and the panel the stream shows. Null otherwise.
+var reserve_session: ReserveSession = null
+var _viewer_link: ViewerLink = null
+var _director: ReserveDirector = null
+var _reserve_overlay: ReserveOverlay = null
 
 
 ## Nothing is simulated until the setup screen says so.
@@ -128,6 +134,9 @@ func _ready() -> void:
 	start_menu.exit_requested.connect(_exit_game)
 	help_button.pressed.connect(_open_help.bind("pause"))
 	help_screen.closed.connect(_close_help)
+	if OS.get_cmdline_user_args().has("--reserve"):
+		_start_reserve(OS.get_cmdline_user_args().has("--fresh"))
+		return
 	_show_start_menu(SaveSystem.latest_slot() != "")
 
 
@@ -291,6 +300,51 @@ func _on_continue_requested() -> void:
 	# A first game resumed goes on without its hints: they were for its first minutes.
 	tutorial_hints.stop()
 	_adopt_running_simulation()
+
+
+## The living reserve (`--reserve`, `reserve.json`): a world on a stream that its viewers act on
+## through the chat, with no player's bar and a camera that directs itself. It goes on from its
+## newest save (its own slots), unless started with `--fresh`.
+func _start_reserve(fresh: bool) -> void:
+	var config := ConfigLoader.load_reserve_config()
+	var path := SaveSystem.latest_slot(SaveSystem.KIND_RESERVE)
+	var data := SaveSystem.read(path) if path != "" and not fresh else {}
+	if not data.is_empty() and SaveSystem.restore(simulation_manager, data):
+		_selection = data.get("selection", {})
+		_pending_story = data.get("story", {})
+	else:
+		data = {}
+		var bundle := ConfigLoader.load_reserve_bundle(config)
+		_selection = bundle["reserve"]["selection"]
+		var seed_value := int(config.get("seed", 0))
+		simulation_manager.initialize(bundle, seed_value if seed_value != 0 else 1 + int(Time.get_unix_time_from_system()) % 999983)
+	tutorial_hints.stop()
+	reserve_session = ReserveSession.new()
+	reserve_session.import_state(data.get("reserve", {}))
+	_adopt_running_simulation()
+	# After the bring-up: the session and the director hear the world the view now shows.
+	reserve_session.configure(simulation_manager, config)
+	_autosave_interval = maxi(1, int(float(config.get("autosave_seconds", 120.0)) * simulation_manager.tick_rate))
+	_viewer_link = ViewerLink.new()
+	if not _viewer_link.listen(config):
+		push_warning("The reserve's chat port %s is taken: no viewers' lines will come in" % str(config.get("link", {})))
+	_director = ReserveDirector.new()
+	_director.configure(simulation_manager, world_camera, reserve_session, config)
+	_reserve_overlay = ReserveOverlay.new()
+	_reserve_overlay.theme = result_window.theme
+	_reserve_overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_reserve_overlay.position = Vector2(12.0, 12.0)
+	$CanvasLayer.add_child(_reserve_overlay)
+	_reserve_overlay.bind(reserve_session)
+	_sync_player_bar()
+
+
+## The reserve's chat, votes and camera, once a frame.
+func _tick_reserve() -> void:
+	for message in _viewer_link.poll():
+		reserve_session.hear(message)
+	reserve_session.tick()
+	_director.update()
 
 
 func _start_simulation(selection: Dictionary, seed_value: int) -> void:
@@ -476,6 +530,8 @@ func _process(delta: float) -> void:
 	_layout_hud()
 	if tutorial_hints != null and not tutorial_hints.is_done():
 		tutorial_hints.advance(_tutorial_facts(), delta, _hints_allowed())
+	if reserve_session != null and _director != null and _bound:
+		_tick_reserve()
 	if simulation_manager != null and simulation_manager.world_state != null:
 		simulation_manager.record_render_phase("ui",
 			float(Time.get_ticks_usec() - started) / 1000.0)
@@ -720,6 +776,10 @@ func _layout_hud() -> void:
 	story_feed.fit_below(card_bottom)
 	if herd_card.visible:
 		_herd_height = herd_card.size.y
+	# The reserve's panel stands where the herd card would.
+	if reserve_session != null:
+		herd_card.set_room(false)
+		return
 	if not selection_card.visible or _herd_height <= 0.0:
 		herd_card.set_room(true)
 		return
@@ -880,7 +940,8 @@ func _on_new_simulation_pressed() -> void:
 func _on_tick_for_autosave(tick: int, _snapshot: Dictionary) -> void:
 	if _autosave_interval <= 0 or tick <= 0 or tick % _autosave_interval != 0:
 		return
-	SaveSystem.save(simulation_manager, _selection, "", story_book.export_state())
+	SaveSystem.save(simulation_manager, _selection, "", story_book.export_state(),
+		reserve_session.export_state() if reserve_session != null else {})
 
 
 ## The selection tag and card are deliberately absent from this: they are the one
@@ -1012,7 +1073,7 @@ func _sync_player_bar() -> void:
 	if player_bar == null:
 		return
 	player_bar.visible = _bound and not hud_visible and not _pause_menu_open \
-		and not start_menu.visible and not help_screen.visible
+		and not start_menu.visible and not help_screen.visible and reserve_session == null
 	pinned_bar.set_allowed(player_bar.visible)
 	var world = simulation_manager.world_state if simulation_manager != null else null
 	powers_bar.visible = player_bar.visible and world != null and PowersBar.has_powers(world.player)

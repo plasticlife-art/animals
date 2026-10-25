@@ -15,6 +15,25 @@ const HELP_FILE := "res://data/config/help.json"
 const SCENARIOS_FILE := "res://data/config/scenarios.json"
 
 
+const RESERVE_FILE := "res://data/config/reserve.json"
+
+
+## The living reserve's own settings (`reserve.json`): its viewers' commands, votes and funds.
+static func load_reserve_config() -> Dictionary:
+	return _load_json(RESERVE_FILE)
+
+
+## The reserve's world: the setup options `reserve.json` `selection` names over the defaults, its
+## powers `offered`, and a `reserve` key, which is what puts its saves in the reserve's slots.
+static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
+	var selection := default_selection()
+	selection.merge(reserve.get("selection", {}), true)
+	var bundle := load_config_bundle(selection)
+	bundle["powers"]["offered"] = reserve.get("offered", []).duplicate()
+	bundle["reserve"] = {"selection": selection}
+	return bundle
+
+
 ## Loads every config file and overlays the chosen setup options.
 ##
 ## `selection` maps a group id to an option id; any group it omits falls back to
