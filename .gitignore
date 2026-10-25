@@ -22,3 +22,7 @@ assets/craftpix-net-200380-free-pixel-art-plants-for-farm/*
 assets/craftpix-net-255216-free-basic-pixel-art-ui-for-rpg/*
 !assets/craftpix-net-255216-free-basic-pixel-art-ui-for-rpg/SOURCE.md
 !assets/craftpix-net-255216-free-basic-pixel-art-ui-for-rpg/.gdignore
+
+# The stream bridge's own settings: the streamer's keys.
+tools/stream_bridge/bridge.json
+__pycache__/
