@@ -891,6 +891,9 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		world_state.apply_territories_block(data.territories)
 	if data.has("herd_pastures"):
 		world_state.herd_pastures = data.herd_pastures.duplicate(true)
+	if data.has("adoptions"):
+		world_state.adoptions = data.adoptions.duplicate(true)
+		world_state.adoptions_revision += 1
 	if data.has("water"):
 		world_state.water.import_state(data.water)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes

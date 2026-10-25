@@ -17,6 +17,8 @@ const REFUSED_UNKNOWN := "unknown_power"
 const REFUSED_NO_CHARGES := "no_charges"
 const REFUSED_COOLING := "cooling_down"
 const REFUSED_BAD_TARGET := "bad_target"
+## A viewer who has a living ward asked for another (`adopt`).
+const REFUSED_HAS_WARD := "has_ward"
 
 
 static func make(seq: int, type: String, params: Dictionary = {}) -> Dictionary:

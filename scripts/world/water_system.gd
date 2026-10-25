@@ -139,6 +139,17 @@ func _capacity_for(relative: float) -> float:
 	return maxf(1.0, float(settings["capacity_seasons"]) * demand_unit * pow(relative, float(settings["capacity_exponent"])))
 
 
+## Every pond `amount` fuller (or emptier, negative): rain, or a dry spell, a command brought.
+func add_to_all(amount: float) -> void:
+	if not enabled or amount == 0.0:
+		return
+	for index in range(levels.size()):
+		var next := clampf(levels[index] + amount, 0.0, 1.0)
+		if next != levels[index]:
+			levels[index] = next
+			_settle(index)
+
+
 ## One tick: the season's balance on every pond. `climate` is the world's `Climate`, sampled.
 func step(delta: float, climate) -> void:
 	if not enabled:

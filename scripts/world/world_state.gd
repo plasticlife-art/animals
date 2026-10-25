@@ -94,6 +94,14 @@ var climate: Climate
 var water: WaterSystem
 ## The player's powers and the orders given with them (`PlayerState`).
 var player: PlayerState
+## The animals viewers have taken under their care (`adopt`), by id: `{name, viewer, species,
+## since, died_at}` - `died_at` -1 while it lives. Saved; the view's copy follows when
+## `adoptions_revision` moves.
+var adoptions: Dictionary = {}
+var adoptions_revision: int = 0
+## Weather and the like a command brought, while it lasts: `{kind, until, factor}` - `cold_snap`
+## (metabolism), `bloom` (grass regrowth). Saved.
+var world_events: Array = []
 ## Per species with `territory`, its territories and who holds them (`TerritoryRegistry`);
 ## empty for a world without them. Saved; the view's copy follows `presentation_block()`.
 var territories: Dictionary = {}
@@ -242,6 +250,15 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player_command_handlers["dig_pond"] = _command_dig_pond
 	player_command_handlers["lead_herd"] = _command_lead_herd
 	player_command_handlers["cull"] = _command_cull
+	player_command_handlers["adopt"] = _command_adopt
+	player_command_handlers["rain"] = _command_rain
+	player_command_handlers["drought"] = _command_drought
+	player_command_handlers["cold_snap"] = _command_cold_snap
+	player_command_handlers["bloom"] = _command_bloom
+	player_command_handlers["release"] = _command_release
+	adoptions.clear()
+	adoptions_revision = 0
+	world_events.clear()
 	_sector_size = maxf(terrain_system.cell_size * 2.0, float(simulation_lod_config.get("sector_size", 512.0)))
 	_goal_bucket_size = maxi(1, int(navigation_config.get("goal_bucket_size", 4)))
 	_sector_grass_refresh_ticks = maxi(1, int(navigation_config.get("sector_grass_refresh_ticks", 18)))
@@ -297,6 +314,8 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	_reset_performance_counters()
 	if not commands.is_empty():
 		_apply_player_commands(commands)
+	if not world_events.is_empty():
+		_apply_world_events()
 	scenery.visibility_checks = 0
 	scenery.local_searches = 0
 	_prepare_navigation_budget()
@@ -455,6 +474,7 @@ func kill_agent(agent, cause: String, other_agent_id: int = -1, extra: Dictionar
 	agent.is_alive = false
 	pending_removals.append(agent.id)
 	_release_territory(agent.species_type, agent.id)
+	_note_ward_death(agent.id)
 	_maybe_spawn_carcass(agent, cause)
 	if cause == "predation":
 		fear_field.deposit(agent.position, fear_field.kill_risk)
@@ -1604,6 +1624,206 @@ func _apply_player_commands(commands: Array) -> void:
 			PlayerCommandsScript.position_of(params, "position", Vector2.ZERO), data)
 
 
+## A viewer takes an animal under care (`adopt`): the one `agent_id` names, or else the nearest to
+## `position` (the map's middle without) of `species` (any without) within the power's `radius`,
+## awake or asleep, that no one cares for yet, and names it `name` (at most `max_name` letters).
+## A viewer has one living ward: a second is refused (`has_ward`).
+func _command_adopt(command: Dictionary) -> Dictionary:
+	var params: Dictionary = command.get("params", {})
+	var settings := player.settings("adopt")
+	var viewer := str(params.get("viewer", ""))
+	var name := str(params.get("name", "")).strip_edges().left(int(settings.get("max_name", 20)))
+	if viewer == "" or name == "":
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	for ward in adoptions.values():
+		if str(ward.get("viewer", "")) == viewer and float(ward.get("died_at", -1.0)) < 0.0:
+			return {"ok": false, "reason": PlayerCommandsScript.REFUSED_HAS_WARD}
+	var target := _adoption_target(params, float(settings.get("radius", 2000.0)))
+	if target.is_empty():
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	var agent_id := int(target["id"])
+	adoptions[agent_id] = {"name": name, "viewer": viewer, "species": str(target["species"]), "since": current_time,
+		"died_at": -1.0}
+	adoptions_revision += 1
+	return {"ok": true, "agent_id": agent_id, "species": str(target["species"]), "name": name, "viewer": viewer,
+		"position": target["position"]}
+
+
+## The animal an `adopt` order takes: `{id, species, position}`, or {}.
+func _adoption_target(params: Dictionary, radius: float) -> Dictionary:
+	var wanted := int(params.get("agent_id", -1))
+	var species_filter = params.get("species", null)
+	var near := PlayerCommandsScript.position_of(params, "position", bounds.get_center())
+	var best := {}
+	var best_distance := INF
+	var best_id := -1
+	for candidate in _all_animals():
+		var id := int(candidate["id"])
+		if adoptions.has(id):
+			continue
+		if wanted >= 0:
+			if id == wanted:
+				return candidate
+			continue
+		if species_filter != null and str(species_filter) != "" and str(candidate["species"]) != str(species_filter):
+			continue
+		var distance: float = near.distance_squared_to(candidate["position"])
+		if distance > radius * radius:
+			continue
+		if distance < best_distance or (distance == best_distance and id < best_id):
+			best_distance = distance
+			best_id = id
+			best = candidate
+	return best
+
+
+## Every living animal, awake or asleep: `{id, species, position}`, the awake first in the world's
+## order, then the sleeping by sector.
+func _all_animals() -> Array:
+	var found: Array = []
+	for agent in living_agents:
+		if agent != null and agent.is_alive:
+			found.append({"id": agent.id, "species": agent.species_type, "position": agent.position})
+	for sector_key in _sector_states.keys():
+		for record in _sector_states[sector_key].get("dormant_records", []):
+			found.append({"id": int(record.get("id", -1)), "species": str(record.get("species_type", "")),
+				"position": Vector2(record.get("position", Vector2.ZERO))})
+	return found
+
+
+## A ward died: remembered, with when.
+func _note_ward_death(agent_id: int) -> void:
+	if adoptions.is_empty() or not adoptions.has(agent_id):
+		return
+	var ward: Dictionary = adoptions[agent_id]
+	if float(ward.get("died_at", -1.0)) < 0.0:
+		ward["died_at"] = current_time
+		adoptions_revision += 1
+
+
+## Rain (`rain`): every pond `share` fuller.
+func _command_rain(command: Dictionary) -> Dictionary:
+	if not water.enabled:
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	var share := float(command.get("params", {}).get("share", player.settings("rain").get("share", 0.35)))
+	water.add_to_all(share)
+	return {"ok": true, "share": share}
+
+
+## A dry spell (`drought`): every pond `share` emptier.
+func _command_drought(command: Dictionary) -> Dictionary:
+	if not water.enabled:
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	var share := float(command.get("params", {}).get("share", player.settings("drought").get("share", 0.3)))
+	water.add_to_all(-share)
+	return {"ok": true, "share": share}
+
+
+## A cold snap (`cold_snap`): every animal hungers and thirsts `factor` times as fast for `seconds`.
+func _command_cold_snap(command: Dictionary) -> Dictionary:
+	return _start_world_event("cold_snap", command)
+
+
+## A bloom (`bloom`): grass grows back `factor` times as fast for `seconds`.
+func _command_bloom(command: Dictionary) -> Dictionary:
+	return _start_world_event("bloom", command)
+
+
+func _start_world_event(kind: String, command: Dictionary) -> Dictionary:
+	var settings := player.settings(kind)
+	var params: Dictionary = command.get("params", {})
+	var seconds := float(params.get("seconds", settings.get("seconds", 60.0)))
+	var factor := float(params.get("factor", settings.get("factor", 1.5)))
+	world_events.append({"kind": kind, "until": current_time + seconds, "factor": factor})
+	return {"ok": true, "kind": kind, "seconds": seconds, "factor": factor}
+
+
+## The world's events while they last, over the climate the tick sampled; spent ones go.
+func _apply_world_events() -> void:
+	var lasting: Array = []
+	for event in world_events:
+		if current_time >= float(event.get("until", 0.0)):
+			continue
+		lasting.append(event)
+		match str(event.get("kind", "")):
+			"cold_snap":
+				climate.metabolism_multiplier *= float(event.get("factor", 1.0))
+			"bloom":
+				climate.regrowth_multiplier *= float(event.get("factor", 1.0))
+	world_events = lasting
+
+
+## Newcomers walk in from the edge of the map (`release`): a pair of foxes, a pack of wolves or a
+## herd of deer (`species`, among the power's `species`), grown, the pair or the pack's leaders
+## taking the nearest territory with both slots open if there is one. Where on the edge is a hash
+## of the tick, never the world's stream.
+func _command_release(command: Dictionary) -> Dictionary:
+	var settings := player.settings("release")
+	var species := str(command.get("params", {}).get("species", "predator"))
+	if species not in settings.get("species", ["predator", "wolf", "herbivore"]) or not species_registry.ids().has(species):
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	var at := _edge_point(_dormant_hash_unit(current_tick, 0x8E1EA5E))
+	var count := int(settings.get("counts", {}).get(species, 2))
+	var social: String = species_registry.social(species)
+	var group := -1
+	if social == SpeciesRegistryScript.SOCIAL_HERD or social == SpeciesRegistryScript.SOCIAL_PACK:
+		group = _next_group_id(species)
+	var species_config: Dictionary = config_bundle.get("species", {}).get(species, {})
+	var grown := maxf(float(species_config.get("reproduction", {}).get("maturity_age", 0.0)) + 10.0,
+		float(species_config.get("aging", {}).get("old_age_start", 600.0)) * 0.25)
+	var young := float(territory_config(species).get("dispersal_age_seconds", grown)) * 0.5
+	var arrived: Array = []
+	for index in range(count):
+		var offset := Vector2.from_angle(TAU * float(index) / float(maxi(1, count))) * 40.0
+		var sex := AgentBaseScript.SEX_MALE if index % 2 == 0 else AgentBaseScript.SEX_FEMALE
+		var agent = spawn_agent(species, get_nearest_walkable_position(clamp_position(at + offset)), group, sex,
+			{"reason": "release"})
+		if agent == null:
+			continue
+		agent.age = grown if (social != SpeciesRegistryScript.SOCIAL_PACK or index < 2) else minf(grown, young)
+		# Fresh from a journey: no litter on arrival.
+		agent.reproduction_cooldown = float(species_config.get("reproduction", {}).get("cooldown", 60.0))
+		arrived.append(agent)
+	if arrived.size() >= 2 and arrived[0].has_method("set_preferred_mate_id"):
+		arrived[0].set_preferred_mate_id(arrived[1].id)
+		arrived[1].set_preferred_mate_id(arrived[0].id)
+		var registry := territory_registry(species)
+		if registry != null:
+			var best := -1
+			var best_distance := INF
+			for territory in registry.territories:
+				if registry.is_vacant(int(territory["id"])):
+					var distance: float = at.distance_squared_to(territory["den"])
+					if distance < best_distance:
+						best_distance = distance
+						best = int(territory["id"])
+			if best != -1:
+				claim_territory(arrived[0], best)
+				claim_territory(arrived[1], best)
+	if arrived.is_empty():
+		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
+	_rebuild_group_state_cache()
+	return {"ok": true, "species": species, "count": arrived.size(), "position": at, "group_id": group}
+
+
+## A point on the map's edge, two cells in, at `fraction` of the way round from the top left.
+func _edge_point(fraction: float) -> Vector2:
+	var inset := terrain_system.cell_size * 2.0
+	var inner := bounds.grow(-inset)
+	var perimeter := 2.0 * (inner.size.x + inner.size.y)
+	var along := fraction * perimeter
+	if along < inner.size.x:
+		return inner.position + Vector2(along, 0.0)
+	along -= inner.size.x
+	if along < inner.size.y:
+		return inner.position + Vector2(inner.size.x, along)
+	along -= inner.size.y
+	if along < inner.size.x:
+		return inner.end - Vector2(along, 0.0)
+	along -= inner.size.x
+	return inner.position + Vector2(0.0, inner.size.y - along)
+
+
 ## The player's state as a worker frame brings it (`PlayerState.presentation_block()`), with the
 ## ponds dug since the last one added to this world's water, before the frame's levels.
 ## Applying the same block twice leaves the world as once.
@@ -1837,6 +2057,8 @@ func export_state() -> Dictionary:
 		"herd_migrations": herd_migrations.duplicate(true),
 		"herd_alarms": herd_alarms.duplicate(true),
 		"herd_pastures": herd_pastures.duplicate(true),
+		"adoptions": adoptions.duplicate(true),
+		"world_events": world_events.duplicate(true),
 		"player": player.export_state(),
 		"territories": _export_territories(),
 		"sectors": _export_sector_states(),
@@ -1896,6 +2118,11 @@ func import_state(data: Dictionary) -> void:
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
 	herd_alarms = data.get("herd_alarms", {}).duplicate(true)
 	herd_pastures = data.get("herd_pastures", {}).duplicate(true)
+	adoptions = {}
+	var saved_adoptions: Dictionary = data.get("adoptions", {})
+	for key in saved_adoptions.keys():
+		adoptions[int(key)] = saved_adoptions[key].duplicate(true)
+	world_events = data.get("world_events", []).duplicate(true)
 	var saved_territories: Dictionary = data.get("territories", {})
 	for species_key in territories.keys():
 		territories[species_key].import_state(saved_territories.get(species_key, {}))
@@ -2365,6 +2592,7 @@ func _emit_dormant_death(species_type: String, position: Vector2, cause: String,
 	var death := {"cause": cause, "dormant": true, "group_id": group_id, "record_id": record_id}
 	death.merge(extra)
 	_release_territory(species_type, record_id)
+	_note_ward_death(record_id)
 	if cause == "starvation":
 		emit_population_event("AgentStarved", species_type, position, death)
 	elif cause == "old_age":

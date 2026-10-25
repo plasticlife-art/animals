@@ -41,6 +41,7 @@ const SUITES := [
 	{"name": "TerritoryTests", "script": preload("res://scripts/tests/territory_tests.gd")},
 	{"name": "SeasonalPastureTests", "script": preload("res://scripts/tests/seasonal_pasture_tests.gd")},
 	{"name": "WolfPackTests", "script": preload("res://scripts/tests/wolf_pack_tests.gd")},
+	{"name": "ReserveCommandTests", "script": preload("res://scripts/tests/reserve_command_tests.gd")},
 ]
 
 
