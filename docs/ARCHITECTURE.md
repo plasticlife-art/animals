@@ -508,6 +508,90 @@ Current snapshot categories:
   there (17 of 20 of the own herd), being too hungry to move pastures. The drought takes the
   whole species down with it: about 250 deer at second 360, 45-115 at second 600
 
+### The living reserve (`scripts/reserve/`, `--reserve`, `reserve.json`)
+
+A world on a stream that its viewers act on through the chat. Launched with
+`Godot --path . -- --reserve` (`--fresh` for a new world), it takes the place of the start page.
+
+- **The world** comes from `ConfigLoader.load_reserve_bundle()`: the setup options of
+  `reserve.json` `selection` over the defaults (wolves on), the powers `offered` (the steward's
+  three, `adopt`, the weather, `release`, `immigrate`) with the settings `reserve.json` `powers`
+  changes (a cull's cooldown, which many viewers share), and a `reserve` key in the bundle. That
+  key is what `SaveSystem.kind_of()` reads: the reserve saves to `reserve_a/b.dat`, which
+  `latest_slot()` without a kind (Continue) never opens, and goes on from the newest on start.
+  The save carries the session under `reserve`.
+- **Orders from viewers are ordinary player commands** (`enqueue_command`), so they are
+  deterministic, journaled and carried by the worker like the steward's:
+  - `adopt` names a ward: the animal nearest the focus herd that no one cares for. A viewer has
+    one living ward. `WorldState.adoptions` holds `{name, viewer, viewer_name, species, since,
+    died_at}` by id; a ward's death sets `died_at` (`_note_ward_death`, awake or asleep). The
+    latest `keep_dead` dead wards are kept. The view gets them as a revisioned frame block.
+    `StoryBook.name_of()` prefers a ward's name, the selection card names the guardian, and a
+    ward's adoption and death are told in the feed wherever they happen.
+  - `rain` and `drought` move every pond's level by `share`.
+  - `cold_snap` and `bloom` are timed `world_events` that scale metabolism or regrowth while
+    they last; they are saved.
+  - `release` brings a pair, a herd or a pack in from an edge point hashed from the tick, grown
+    and in no state to breed on arrival; a pair takes the nearest vacant territory.
+    `immigrate` is the same handler with its own settings, used only by the rescue.
+- **`ReserveSession`** turns chat lines into those orders and tells back what came of them
+  (`told`). It is kept apart from any window, so a server can run it later.
+  - `ChatCommands` parses «!word arg» through `reserve.json` `commands` and cleans ward names:
+    letters, spaces and hyphens, a length limit and a blocked list.
+  - `ViewerBook` keeps viewers by `platform:user_id`: the name shown (no markup characters), the
+    fund backed, per-viewer cooldowns and when last seen. It forgets the longest unseen past
+    `viewers_kept`. The view's story keeps `story_animals` animals in the reserve, not 30 000:
+    it is saved every two minutes, for days.
+  - `VoteRound` opens a vote of three events every `every_seconds` for `open_seconds`; the most
+    votes win and are carried out.
+  - Funds (`teams`) count their members active since the last count; the biggest has its perk.
+  - The steward's powers aim at the focus herd: a pond in the nearest free spot (at most
+    `steward.max_ponds`), the best grass within the lead's reach, the foxes nearest it - none
+    while fewer than `steward.cull_floor` are left.
+  - Newcomers by a vote or a fund's perk do not come to a species at its `ceilings`.
+  - The **rescue** checks every `every_seconds`: a species the world began with that is down to
+    fewer than its `below` has `immigrate` ordered, at most once per `gap_seconds`. A reserve
+    that runs for days cannot lose a species for good.
+  - All times are simulated seconds, so a saved reserve picks up where it stopped.
+- **`ViewerLink`** listens on 127.0.0.1 (`link`) for one JSON object per line. The bridge
+  `tools/stream_bridge/bridge.py` (standard library only) writes them, reading Twitch's IRC
+  anonymously and YouTube's live chat with an API key, within its daily quota. Only «!» lines
+  are passed on.
+- **`ReserveDirector`** is the camera with no one at the controls. Each shot (`director`, real
+  seconds), in order of priority:
+  1. an animal a viewer asked for (`!моё`);
+  2. the weightiest moment of the last `moment_seconds` whose animal is still about: an
+     adoption, a kill, an arrival, a pair's or pack's hunt, a herd alarm, a territory taken, a
+     birth;
+  3. by turns, each living ward and the focus herd.
+
+  A sleeping target is reached by moving the camera there and selecting it once its sector
+  wakes. The herd of what it follows becomes the session's focus, so the viewers' powers go
+  where the stream looks.
+- **`ReserveOverlay`**, top left in place of the herd card, shows the commands, the vote with
+  its count or the time to the next, the funds, the living wards and the last lines told. The
+  player's bar, powers and goals are hidden.
+- **Measured** with `scripts/dev/reserve_soak.gd`: headless, LOD on, made-up viewers at 30
+  commands a minute (a quarter wards, a third votes, a fifth funds, the rest the steward's
+  powers), an autosave every 2 minutes. Seed 7, four hours:
+
+  | Species | Mean | Least | Most |
+  |---|---|---|---|
+  | Deer | 243 | 131 | 341 |
+  | Foxes | 41 | 30 | 56 |
+  | Grouse | 122 | 109 | 126 |
+  | Wolves | 17 | 8 | 30 |
+
+  No species was lost and no rescue was needed. Tick 19.6 ms on average (p95 at most 42 ms),
+  memory 99-237 MB with no trend, saves up to 5 MB in 289 ms. Before the cull floor and the
+  ceilings, the same viewers culled the foxes out in an hour, taking every pair the rescue
+  sent, and brought the wolves from 10 to 30.
+
+  A save loads back with every count, ward, use of a power and session field the same. Queued
+  orders are not saved, so the soak carries them out first. After a load, the reserve drifts as
+  any world does once its caches are cold. `check_save.gd` promises the populations for 200
+  ticks; after 600, 1 to 3 foxes differ, in a plain world with wolves as in the reserve.
+
 ## Agent Model
 
 ### `AgentBase`
