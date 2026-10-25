@@ -8,6 +8,7 @@
     "rules",
     "wolves",
     "hares",
+    "rivers",
     "difficulty"
   ],
   "groups": {
@@ -771,6 +772,28 @@
             "world": {
               "spawns": {
                 "hare_count": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "rivers": {
+      "label": "Реки",
+      "default": "none",
+      "options": {
+        "none": {
+          "label": "Нет",
+          "patch": {}
+        },
+        "two": {
+          "label": "Две",
+          "patch": {
+            "world": {
+              "terrain": {
+                "rivers": {
+                  "enabled": true
+                }
               }
             }
           }

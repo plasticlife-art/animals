@@ -1136,8 +1136,8 @@ option («Зайцы»: есть / нет), on by default and off in the scenari
 - **Class.** `Hare` extends `Herbivore` and keeps its grazing, drinking, resting, exploring,
   fleeing and breeding. `HareAI` drops `join_herd` and tunes the rest from `balance.ai.hare`.
   With no herd block there is no herd flight, no migration and no herd card.
-- **Body.** Small (body radius 9, drawn at 0.6 of a frame), fast on the dash (sprint 140) and
-  soon tired (sprint cost 3). Quick to breed: grown at 40 s, a litter of about three every
+- **Body.** Small (body radius 9, drawn at 0.6 of a frame), quick on the dash (sprint 115, a
+  fox's 128) and soon tired (sprint cost 3). Quick to breed: grown at 40 s, a litter of about three every
   70 s in season, the season spring into early summer. Short-lived: old from 560 s.
 - **Finding each other.** Alone on the whole map, forty hares would hardly ever meet, so a
   solitary species with `<id>_group_count` above 0 starts dealt round that many centres
@@ -1145,8 +1145,22 @@ option («Зайцы»: есть / нет), on by default and off in the scenari
   `mate_search_radius` (420). Asleep, a sector's hares count as one group-(-1) aggregate, as
   fox pairs do, and breed there by the grass-eaters' sleeping path.
 - **Prey.** Foxes hunt them (`predator.role.eats_species`); wolves do not. Prey switching
-  weighs them against a reference share of 0.3. Asleep they are caught at 0.5 of a deer's
-  rate (`dormant_ecology.prey_catchability`). The capacity cap is three times the start.
+  weighs them against a reference share of 0.3. Asleep they are caught as readily as deer
+  (`dormant_ecology.prey_catchability` 1.0). The capacity cap is 2.5 times the start.
+- **Tuned** on LOD 2880 s × 8 seeds against the same worlds without hares:
+
+  | Variant | Deer | Hares | Hares killed by foxes |
+  |---|---|---|---|
+  | Without hares | 199 | — | — |
+  | First try (sprint 140, caught at 0.5 asleep, cap 3) | 175 (−12 %) | 111, at the cap, dying of old age | 24 |
+  | Slower (sprint 115, caught at 1.0), cap 3 | 161 (−19 %, the interval clear of zero) | 107, at the cap | 44 |
+  | Slower, cap 2 | 193 | 66 ± 23 | 18; lost on one seed of eight |
+  | Slower, cap 2.5 (shipped) | 202 (+2 %) | 91, never below the start | 28 |
+
+  Shipped: deer's lowest is up (123 against 98), foxes +7 %, grouse even, no species lost.
+  Deer suffer in step with the hares' number: they graze the same grass, and foxes hunting
+  them about the herds keep the does from breeding (no birth with a hunter near). Asleep,
+  kills go to the biggest aggregate first, and a herd outweighs a sector's hares.
 - **Seen.** Their own atlas, composited from the pack's hare sheets by
   `tools/build_pack_atlases.py` (whose direction check skips `Hare_Run`: a hare's leap
   carries its weight forward, which reads as swapped side rows), and a carcass sheet from it

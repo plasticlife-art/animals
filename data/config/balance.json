@@ -283,7 +283,7 @@
     "kill_rate_per_prey_per_second": 0.006,
     "prey_catchability": {
       "scavenger": 0.1,
-      "hare": 0.5
+      "hare": 1.0
     },
     "predator_thirst_trigger_ratio": 0.6,
     "idle_recovery_energy_ratio": 0.75
@@ -296,7 +296,7 @@
       "predator": 2.0,
       "scavenger": 1.75,
       "wolf": 4.0,
-      "hare": 3.0
+      "hare": 2.5
     }
   }
 }
