@@ -52,6 +52,12 @@ var epitaphs: Dictionary = {}
 var _epitaph_order: Array = []
 var _record_tops: Dictionary = {}
 var _records_time: float = -INF
+## The longest life a «долгожитель» epitaph told of, kept apart from the tree: the reserve's tree
+## forgets the longest dead first, and with them its record.
+var _longest_told: float = 0.0
+## When an epitaph was last raised by each record alone (`{kind: time}`): the oldest on the map
+## dies, the next oldest a few days later - one such word a season.
+var _record_told_at: Dictionary = {}
 var _released_id: int = -1
 var _released_at: float = -INF
 var _selected_id: int = -1
@@ -86,6 +92,8 @@ func begin(saved: Dictionary = {}) -> void:
 	_epitaph_order.clear()
 	_record_tops.clear()
 	_records_time = -INF
+	_longest_told = 0.0
+	_record_told_at.clear()
 	_released_id = -1
 	_selected_id = -1
 	trait_history.clear()
@@ -191,8 +199,14 @@ func hear(event: Dictionary) -> void:
 			lineage.note_death(died, time, str(data.get("cause", "")), killer, position, float(data.get("age", -1.0)))
 			if _outlived_everyone(died, time):
 				held.append("longest")
+				_longest_told = lineage.age_at(died, time)
+				# The records are cached for a few seconds: the next death is measured against this one.
+				_records_time = -INF
+			var due := _records_due(held, time)
 			# A cull is told by its order alone: one click would raise as many epitaphs as it took.
-			if str(data.get("cause", "")) != "culled" and (remembers(died, time) or not held.is_empty()):
+			if str(data.get("cause", "")) != "culled" and (remembers(died, time) or not due.is_empty()):
+				for kind in due:
+					_record_told_at[kind] = time
 				_remember(died, EpitaphScript.compose(self, died, held, calendar()), position)
 			names.release(died)
 			if pins.has(died):
@@ -307,14 +321,30 @@ func _held_records(agent_id: int, time: float) -> Array:
 
 
 ## Whether, just dead, it lived longer than anyone the records knew of - and at least a year,
-## so the first calf to die is not the longest life the world has seen.
+## so the first calf to die is not the longest life the world has seen. Longer by a season at
+## least, as the epitaph tells an age: most die of old age within days of one another, and a
+## record by a few seconds would be a second «1 год и 1 сезон», a third...
 func _outlived_everyone(agent_id: int, time: float) -> bool:
 	var lived: float = lineage.age_at(agent_id, time)
 	var year: Array = calendar()
-	if lived < float(year[0]) * float(year[1]):
+	var season := maxf(0.001, float(year[0]))
+	if lived < season * float(year[1]):
 		return false
 	var top: Array = _record_tops.get("longest", [])
-	return top.is_empty() or lived > float(top[0]["value"])
+	var best := maxf(_longest_told, 0.0 if top.is_empty() else float(top[0]["value"]))
+	return best <= 0.0 or floorf(lived / season) > floorf(best / season)
+
+
+## The records of `held` that may raise an epitaph by themselves now: a season since that record
+## last did. A pinned or watched animal's epitaph names all it held regardless.
+func _records_due(held: Array, time: float) -> Array:
+	var season := maxf(0.001, float(calendar()[0]))
+	var due: Array = []
+	for kind in held:
+		var last := float(_record_told_at.get(kind, -INF))
+		if time < last or time - last >= season:
+			due.append(kind)
+	return due
 
 
 func _on_selection_changed(agent_id: int) -> void:

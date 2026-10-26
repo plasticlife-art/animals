@@ -69,6 +69,7 @@ func run(a) -> void:
 	_test_records_rank(a)
 	_test_epitaph_words(a)
 	_test_remembered_deaths(a)
+	_test_records_raise_few_epitaphs(a)
 	_test_epitaph_card_queue(a)
 	_test_family_tree_model(a)
 	_test_chronicle_window(a)
@@ -476,6 +477,34 @@ func _test_remembered_deaths(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
+## A record raises an epitaph by itself seldom: a life longer by a season, each record a season
+## after its last. Most die of old age within days of one another, and each was «долгожитель».
+func _test_records_raise_few_epitaphs(a) -> void:
+	var manager = Helpers.create_manager(873)
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var written: Array = []
+	book.epitaph_written.connect(func(agent_id: int, _text: String, _position: Vector2) -> void:
+		written.append(agent_id))
+	book.feed.context_provider = func() -> Dictionary: return {}
+	var season := float(book.calendar()[0])
+	var year := season * float(book.calendar()[1])
+	var die := func(record_id: int, time: float, age: float) -> void:
+		book.hear({"type": "AgentDied", "agent_id": -1, "species": "herbivore", "time_seconds": time,
+			"position": {"x": 1.0, "y": 2.0}, "data": {"cause": "old_age", "dormant": true, "record_id": record_id, "age": age}})
+	die.call(9001, 10.0, year + 10.0)
+	a.equal(written, [9001], "the first to live a year is the longest life yet")
+	die.call(9002, 12.0, year + 30.0)
+	die.call(9003, 14.0 + season, year + 40.0)
+	a.equal(written, [9001], "a few seconds longer is no record, nor a season later")
+	die.call(9004, 16.0 + season, year + season + 20.0)
+	a.equal(written, [9001, 9004], "a season longer is")
+	die.call(9005, 18.0 + season, year + 2.0 * season + 20.0)
+	a.equal(written, [9001, 9004], "but one such word a season")
+	Helpers.destroy_manager(manager)
+
+
 func _test_epitaph_card_queue(a) -> void:
 	var card = EpitaphCardScript.new()
 	card.show_epitaph(1, "Первая.", Vector2(10.0, 10.0))
@@ -526,6 +555,10 @@ func _test_family_tree_model(a) -> void:
 	a.is_true(bool(calf["dead"]) and str(calf["status"]).begins_with("† хищник"), "a dead calf: %s" % calf["status"])
 	var mother: Dictionary = FamilyTreeScript.card(book, 20, 440.0)
 	a.equal(mother["status"], "2 сезона", "a living one's age")
+	a.equal([FamilyTreeScript.mate_line(book, 31, 20), FamilyTreeScript.mate_line(book, 31, 11)],
+		["отец — %s" % book.name_of_id(11), "мать — %s" % book.name_of_id(20)], "a child's box names the other parent")
+	lineage.note_birth(40, "herbivore", "female", 300.0, 0, [20])
+	a.equal(FamilyTreeScript.mate_line(book, 40, 20), "отец неизвестен", "or says it is not known")
 	Helpers.destroy_manager(manager)
 
 

@@ -376,6 +376,10 @@ class TreeView:
 			+ family.get("children", [])
 		for agent_id in ids:
 			_cards[int(agent_id)] = FamilyTree.card(story, int(agent_id), now, calendar)
+		for child in family.get("children", []):
+			var mate := FamilyTree.mate_line(story, int(child), int(family.get("focus", -1)))
+			if mate != "" and bool(_cards[int(child)].get("known", false)):
+				_cards[int(child)]["kind"] = mate
 		queue_redraw()
 
 	func _gui_input(event: InputEvent) -> void:

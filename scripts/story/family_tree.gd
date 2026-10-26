@@ -34,6 +34,20 @@ static func around(book, agent_id: int) -> Dictionary:
 		"children": children.slice(0, MAX_CHILDREN), "more": maxi(0, children.size() - MAX_CHILDREN)}
 
 
+## What a child's box says in place of its kind: the parent the tree does not draw, the focus's
+## mate - «мать — Ветка», «отец — Буян», «отец неизвестен». Without it a buck's calves stood under
+## him as if he had them alone. "" when the child is not the focus's.
+static func mate_line(book, child_id: int, focus_id: int) -> String:
+	var entry: Dictionary = book.lineage.entry(child_id)
+	var mother := int(entry.get("mother", -1))
+	var father := int(entry.get("father", -1))
+	if focus_id == mother:
+		return "отец — %s" % book.name_of_id(father) if father >= 0 and book.lineage.knows(father) else "отец неизвестен"
+	if focus_id == father:
+		return "мать — %s" % book.name_of_id(mother) if mother >= 0 and book.lineage.knows(mother) else "мать неизвестна"
+	return ""
+
+
 ## What a relative's box says: `{id, known, name, glyph, kind, status, dead, pinned, traits}` - the
 ## status an age, or «†» and the cause; `traits` what it inherited, for the box's tooltip, empty
 ## when not known.
