@@ -106,11 +106,11 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 ### Living Reserve (stream)
 
 `Godot --path . -- --reserve` starts the living reserve: a world for a stream whose viewers act on
-it from the Twitch and YouTube chats - naming wards (`!имя`), voting on the weather and newcomers
-(`!1 !2 !3`), the steward's powers for the herd on screen, backing a species' fund. The camera
-directs itself; the reserve saves to its own slots and goes on from them (`--fresh` for a new
-world). The chat comes in through `tools/stream_bridge/bridge.py`; its README covers the keys,
-the YouTube quota and OBS. Settings: `data/config/reserve.json`.
+it from the Twitch, YouTube and Telegram chats - naming wards (`!имя`), voting on the weather and
+newcomers (`!1 !2 !3`), the steward's powers for the herd on screen, backing a species' fund. The
+camera directs itself; the reserve saves to its own slots and goes on from them (`--fresh` for a
+new world). The chat comes in through `tools/stream_bridge/bridge.py`; its README covers the keys,
+the YouTube quota, the Telegram bot and OBS. Settings: `data/config/reserve.json`.
 
 ### Headless Scene
 

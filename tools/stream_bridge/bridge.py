@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Carry a stream's chat to the living reserve: Twitch and YouTube in, lines of JSON out.
+"""Carry a stream's chat to the living reserve: Twitch, YouTube and Telegram in, lines of JSON out.
 
 The game, started with `--reserve`, listens on a local port (`data/config/reserve.json`
 `link`, 127.0.0.1:47821) for one JSON object per line:
@@ -12,6 +12,10 @@ game reads nothing else, and the rest of the chat stays out of it.
 - YouTube: the Live Streaming API, polled. It takes an API key of your own Google Cloud
   project and the id of the live video. Each poll costs 5 units of the project's 10 000 a day,
   so `min_interval_seconds` keeps the polls apart (8 s: about 9 000 units in 4 hours).
+- Telegram: a bot of your own (@BotFather) in the group the stream is in, read by the Bot API's
+  long polling. Only the groups in `chats` are heard; a command may start with «/» as well as «!».
+  Asked «!помощь», «!правила», /help or /start - in the group or in a private chat with it - the
+  bot answers with the rules (`rules`), in a group no more than once a `rules_gap_seconds`.
 
 Settings are in a JSON file beside this one, `bridge.json`, made from `bridge.example.json`.
 It holds your keys and is never committed (`.gitignore`). Standard library only.
@@ -38,6 +42,18 @@ DEFAULT_CONFIG = os.path.join(HERE, "bridge.json")
 PREFIX = "!"
 MAX_TEXT = 300
 MAX_QUEUE = 200
+## The words that ask the Telegram bot for the rules, after «!» (or «/»).
+RULES_WORDS = {"помощь", "правила", "help", "start"}
+## What the bot answers them with, unless `telegram.rules` says otherwise; as `reserve.json` has it.
+RULES = """Живой заповедник — мир зверей, которым правит чат. Пишите команды в чат трансляции:
+
+!имя Ветка — взять под опеку зверя у стада в кадре и дать ему имя (один живой подопечный, раз в 30 с)
+!моё — камера покажет вашего подопечного
+!1 !2 !3 — голос за событие: дождь, сушь, стужа, буйная трава, пришлые звери. Голосование открывается каждые 4 минуты на минуту
+!водопой !повести !отстрел — силы смотрителя для стада в кадре (раз в 3 минуты)
+!олени !лисы !волки !зайцы — болеть за вид: раз в 5 минут вид, за который болеет больше всех, получает подмогу
+
+Если вид почти вымер, с края карты сами приходят новые звери."""
 
 
 def log(source, text):
@@ -335,6 +351,145 @@ def _http_reason(error):
         return ""
 
 
+# --- Telegram -----------------------------------------------------------------------------
+
+def telegram_message(update, chats, accept_slash=True):
+    """The game's line for a Bot API update from one of `chats` (ids or @usernames), or None."""
+    post = update.get("message") or {}
+    chat = post.get("chat", {})
+    if not _chat_heard(chat, chats):
+        return None
+    text = (post.get("text") or "").strip()
+    if accept_slash:
+        text = _slash_to_bang(text)
+    sender = post.get("from", {})
+    shown = sender.get("username") or " ".join(part for part in [sender.get("first_name", ""), sender.get("last_name", "")] if part)
+    return message("telegram", sender.get("id", ""), shown, text)
+
+
+def wants_rules(update, chats, accept_slash=True):
+    """Whether a Bot API update asks for the rules: «!помощь», «!правила», /help or /start, in one of
+    `chats` or in a private chat with the bot (where «/» is always taken)."""
+    post = update.get("message") or {}
+    chat = post.get("chat", {})
+    private = chat.get("type") == "private"
+    if not private and not _chat_heard(chat, chats):
+        return False
+    text = (post.get("text") or "").strip()
+    if accept_slash or private:
+        text = _slash_to_bang(text)
+    if not text.startswith(PREFIX):
+        return False
+    return text[1:].split(" ", 1)[0].lower() in RULES_WORDS
+
+
+def _slash_to_bang(text):
+    if not text.startswith("/"):
+        return text
+    command, _, rest = text[1:].partition(" ")
+    # «/моё@ReserveBot» in a group names the bot it is for.
+    return "!" + command.partition("@")[0] + (" " + rest if rest else "")
+
+
+def _chat_heard(chat, chats):
+    wanted = {str(entry).lower() for entry in chats}
+    username = "@" + str(chat.get("username", "")).lower() if chat.get("username") else ""
+    return str(chat.get("id", "")) in wanted or (username != "" and username in wanted)
+
+
+class TelegramReader:
+    """A bot's updates by long polling (`getUpdates`). What was said before the bridge started is
+    passed over; a message from a chat not in `chats` is noted in the log once, with its id, so the
+    group to hear can be found."""
+
+    def __init__(self, settings, game):
+        self.token = str(settings.get("bot_token", "")).strip()
+        self.chats = list(settings.get("chats", []))
+        self.accept_slash = bool(settings.get("accept_slash", True))
+        rules = settings.get("rules") or RULES
+        self.rules = "\n".join(rules) if isinstance(rules, list) else str(rules)
+        self.rules_gap = float(settings.get("rules_gap_seconds", 60.0))
+        self._rules_at = {}
+        self.base_url = str(settings.get("api_url", "https://api.telegram.org")).rstrip("/")
+        self.wait = int(settings.get("poll_seconds", 25))
+        self.game = game
+        self.polls = 0
+        self._noted = set()
+
+    def _get(self, method, params):
+        url = "%s/bot%s/%s?%s" % (self.base_url, self.token, method, urllib.parse.urlencode(params))
+        with urllib.request.urlopen(url, timeout=self.wait + 15) as response:
+            body = json.load(response)
+        if not body.get("ok", False):
+            raise ValueError(body.get("description", "the Bot API refused"))
+        return body.get("result", [])
+
+    def _post(self, method, params):
+        url = "%s/bot%s/%s" % (self.base_url, self.token, method)
+        request = urllib.request.Request(url, data=urllib.parse.urlencode(params).encode("utf-8"), method="POST")
+        with urllib.request.urlopen(request, timeout=15) as response:
+            body = json.load(response)
+        if not body.get("ok", False):
+            raise ValueError(body.get("description", "the Bot API refused"))
+
+    def run(self, stop):
+        backoff = Backoff(120.0)
+        offset = None
+        while not stop.is_set():
+            try:
+                if offset is None:
+                    # Skip the backlog: the newest update only, and start past it.
+                    last = self._get("getUpdates", {"offset": -1, "timeout": 0})
+                    offset = (last[-1]["update_id"] + 1) if last else 0
+                    log("telegram", "reading %s" % (", ".join(str(chat) for chat in self.chats) or "no chat yet: see the ids below"))
+                    backoff.reset()
+                updates = self._get("getUpdates", {"offset": offset, "timeout": self.wait,
+                                                   "allowed_updates": json.dumps(["message"])})
+                self.polls += 1
+                for update in updates:
+                    offset = max(offset, int(update.get("update_id", 0)) + 1)
+                    if wants_rules(update, self.chats, self.accept_slash):
+                        self._answer_rules(update)
+                    line_out = telegram_message(update, self.chats, self.accept_slash)
+                    if line_out is not None:
+                        self.game.send(line_out)
+                    else:
+                        self._note_stranger(update)
+            except urllib.error.HTTPError as error:
+                log("telegram", "Bot API refused (%d): %s" % (error.code, "check bot_token" if error.code in (401, 404)
+                    else "another bridge or a webhook reads this bot" if error.code == 409 else _http_reason(error)))
+                stop.wait(60.0 if error.code in (401, 404, 409) else 5.0)
+            except (urllib.error.URLError, OSError, ValueError, KeyError) as error:
+                log("telegram", str(error))
+                backoff.wait(stop)
+
+    def _answer_rules(self, update):
+        """The rules, as a reply in a group (once a `rules_gap` there: many may ask at once) or to a
+        private chat. A failure is logged and the reading goes on."""
+        post = update["message"]
+        chat = post["chat"]
+        private = chat.get("type") == "private"
+        now = time.monotonic()
+        if not private and now < self._rules_at.get(chat["id"], float("-inf")) + self.rules_gap:
+            return
+        self._rules_at[chat["id"]] = now
+        params = {"chat_id": chat["id"], "text": self.rules}
+        if not private and post.get("message_id") is not None:
+            params["reply_parameters"] = json.dumps({"message_id": post["message_id"], "allow_sending_without_reply": True})
+        try:
+            self._post("sendMessage", params)
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            log("telegram", "could not send the rules: %s" % error)
+
+    def _note_stranger(self, update):
+        chat = (update.get("message") or {}).get("chat", {})
+        key = chat.get("id")
+        if key is None or key in self._noted or chat.get("type") == "private" or _chat_heard(chat, self.chats):
+            return
+        self._noted.add(key)
+        log("telegram", "a message from chat %s «%s», not in chats: add %s to hear it" % (key, chat.get("title", ""), key))
+
+
 # --- Main ---------------------------------------------------------------------------------
 
 def start(config, dry_run=False):
@@ -350,6 +505,9 @@ def start(config, dry_run=False):
     if youtube.get("enabled") and (youtube.get("api_key") or youtube.get("oauth_token")) \
             and (youtube.get("video_id") or youtube.get("live_chat_id")):
         readers.append(YouTubeReader(youtube, game))
+    telegram = config.get("telegram", {})
+    if telegram.get("enabled") and telegram.get("bot_token"):
+        readers.append(TelegramReader(telegram, game))
     threads = [threading.Thread(target=game.run, args=(stop,), daemon=True)]
     threads += [threading.Thread(target=reader.run, args=(stop,), daemon=True) for reader in readers]
     for thread in threads:
@@ -367,7 +525,7 @@ def main():
     stop, game, readers, threads = start(load_config(args.config), args.dry_run)
     if not readers:
         stop.set()
-        sys.exit("Nothing to read: turn on twitch (channel) or youtube (api_key and video_id) in the settings.")
+        sys.exit("Nothing to read: turn on twitch (channel), youtube (api_key and video_id) or telegram (bot_token) in the settings.")
     log("bridge", "running; Ctrl+C stops")
     try:
         while True:

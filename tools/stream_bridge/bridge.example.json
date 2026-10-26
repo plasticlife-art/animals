@@ -1,6 +1,7 @@
 {
-  "_comment": "Copy to bridge.json (never committed) and fill in. twitch: the channel's name is enough to read its chat; oauth_token and nick only for a chat closed to guests. youtube: api_key of your own Google Cloud project with YouTube Data API v3 on, and video_id of the live broadcast (the part after watch?v=). min_interval_seconds keeps the polls within the daily quota: each costs 5 of 10 000 units. game: where the game listens (reserve.json link).",
+  "_comment": "Copy to bridge.json (never committed) and fill in. twitch: the channel's name is enough to read its chat; oauth_token and nick only for a chat closed to guests. youtube: api_key of your own Google Cloud project with YouTube Data API v3 on, and video_id of the live broadcast (the part after watch?v=). min_interval_seconds keeps the polls within the daily quota: each costs 5 of 10 000 units. telegram: bot_token of your own bot (@BotFather, privacy off or the bot an admin), chats the groups to hear (their ids, as the bridge's log shows them, or @usernames); accept_slash takes «/моё» as «!моё»; the bot answers «!помощь», «!правила», /help and /start with the rules (rules: a list of lines, empty for the built-in ones), in a group once a rules_gap_seconds. game: where the game listens (reserve.json link).",
   "game": {"host": "127.0.0.1", "port": 47821},
   "twitch": {"enabled": true, "channel": "", "oauth_token": "", "nick": ""},
-  "youtube": {"enabled": false, "api_key": "", "video_id": "", "min_interval_seconds": 8.0}
+  "youtube": {"enabled": false, "api_key": "", "video_id": "", "min_interval_seconds": 8.0},
+  "telegram": {"enabled": false, "bot_token": "", "chats": [], "accept_slash": true, "rules": [], "rules_gap_seconds": 60}
 }

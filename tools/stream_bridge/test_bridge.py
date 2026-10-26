@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""The stream bridge against stand-ins: an IRC server that speaks as Twitch's chat does, a web
-server that answers as YouTube's API does, and a port that takes the game's lines.
+"""The stream bridge against stand-ins: an IRC server that speaks as Twitch's chat does, web
+servers that answer as YouTube's API and Telegram's Bot API do, and a port that takes the game's
+lines.
 
 Run:  python3 tools/stream_bridge/test_bridge.py
 """
@@ -174,6 +175,145 @@ class YouTubeTests(unittest.TestCase):
             self.assertEqual(asked[1][1].get("liveChatId"), "chat-1")
             self.assertEqual(asked[1][1].get("key"), "test-key")
             self.assertTrue(all(line["user_id"] != "UC0" for line in lines), "nothing from before the bridge started")
+        finally:
+            stop.set()
+            link.stop()
+            api.shutdown()
+            api.server_close()
+            game.close()
+
+
+class TelegramTests(unittest.TestCase):
+    def test_reading_an_update(self):
+        def update(chat, text, user=7, username="masha"):
+            return {"update_id": 1, "message": {"chat": chat, "text": text, "from": {"id": user, "username": username}}}
+        group = {"id": -1001, "title": "Заповедник"}
+        chats = [-1001, "@reserve_open"]
+        self.assertEqual(bridge.telegram_message(update(group, "!имя Ветка"), chats),
+                         {"platform": "telegram", "user_id": "7", "user": "masha", "text": "!имя Ветка"})
+        self.assertEqual(bridge.telegram_message(update(group, "/имя@ReserveBot Ветка"), chats)["text"], "!имя Ветка")
+        self.assertEqual(bridge.telegram_message(update(group, "/моё"), chats)["text"], "!моё")
+        self.assertEqual(bridge.telegram_message(update({"id": -5, "username": "Reserve_Open"}, "!олени"), chats)["text"], "!олени")
+        self.assertIsNone(bridge.telegram_message(update({"id": -9}, "!олени"), chats), "a chat not in chats is not heard")
+        self.assertIsNone(bridge.telegram_message(update(group, "привет"), chats))
+        self.assertIsNone(bridge.telegram_message(update(group, "/моё"), chats, accept_slash=False))
+        named = {"update_id": 2, "message": {"chat": group, "text": "!моё", "from": {"id": 8, "first_name": "Аня", "last_name": "К"}}}
+        self.assertEqual(bridge.telegram_message(named, chats)["user"], "Аня К")
+
+    def test_polls_past_what_was_said_before(self):
+        game = FakeGame()
+        asked = []
+
+        def message(update_id, chat, text, user):
+            return {"update_id": update_id, "message": {"chat": {"id": chat, "title": "Группа"}, "text": text,
+                                                         "from": {"id": user, "username": "u%d" % user}}}
+
+        class Api(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                url = urllib.parse.urlparse(self.path)
+                query = dict(urllib.parse.parse_qsl(url.query))
+                asked.append((url.path, query))
+                if query.get("offset") == "-1":
+                    result = [message(10, -1001, "!имя Прошлое", 1)]
+                elif query.get("offset") == "11":
+                    result = [message(11, -1001, "!олени", 2), message(12, -42, "!имя Чужой", 3), message(13, -1001, "привет", 4)]
+                else:
+                    time.sleep(0.2)
+                    result = []
+                data = json.dumps({"ok": True, "result": result}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Api)
+        threading.Thread(target=api.serve_forever, daemon=True).start()
+        config = {"game": {"port": game.port},
+                  "telegram": {"enabled": True, "bot_token": "123:test", "chats": [-1001], "poll_seconds": 1,
+                               "api_url": "http://127.0.0.1:%d" % api.server_address[1]}}
+        stop, link, readers, _threads = bridge.start(config)
+        try:
+            lines = game.wait_for(1)
+            self.assertEqual(lines[0], {"platform": "telegram", "user_id": "2", "user": "u2", "text": "!олени"})
+            time.sleep(0.5)
+            self.assertEqual(len(game.lines), 1, "nothing from before the bridge, nor from another chat, nor talk")
+            self.assertEqual(asked[0][0], "/bot123:test/getUpdates")
+        finally:
+            stop.set()
+            link.stop()
+            api.shutdown()
+            api.server_close()
+            game.close()
+
+
+class TelegramRulesTests(unittest.TestCase):
+    def test_who_asks_for_the_rules(self):
+        def update(chat, text):
+            return {"update_id": 1, "message": {"message_id": 5, "chat": chat, "text": text, "from": {"id": 7}}}
+        group = {"id": -1001, "type": "supergroup"}
+        alone = {"id": 7, "type": "private"}
+        chats = [-1001]
+        self.assertTrue(bridge.wants_rules(update(group, "!помощь"), chats))
+        self.assertTrue(bridge.wants_rules(update(group, "/help@ReserveBot"), chats))
+        self.assertTrue(bridge.wants_rules(update(alone, "/start"), chats), "a private chat needs no listing")
+        self.assertTrue(bridge.wants_rules(update(alone, "/правила"), chats, accept_slash=False), "and always takes «/»")
+        self.assertFalse(bridge.wants_rules(update({"id": -9, "type": "group"}, "!помощь"), chats), "a group not heard")
+        self.assertFalse(bridge.wants_rules(update(group, "!олени"), chats))
+        self.assertFalse(bridge.wants_rules(update(group, "/help"), chats, accept_slash=False))
+
+    def test_answers_once_a_while_in_a_group(self):
+        game = FakeGame()
+        sent = []
+        queue = [[], [
+            {"update_id": 11, "message": {"message_id": 1, "chat": {"id": -1001, "type": "supergroup"}, "text": "!помощь", "from": {"id": 2}}},
+            {"update_id": 12, "message": {"message_id": 2, "chat": {"id": -1001, "type": "supergroup"}, "text": "/help", "from": {"id": 3}}},
+            {"update_id": 13, "message": {"message_id": 3, "chat": {"id": 2, "type": "private"}, "text": "/start", "from": {"id": 2}}},
+        ]]
+
+        class Api(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def _reply(self, result):
+                data = json.dumps({"ok": True, "result": result}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                if queue:
+                    self._reply(queue.pop(0))
+                else:
+                    time.sleep(0.2)
+                    self._reply([])
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                sent.append((urllib.parse.urlparse(self.path).path, dict(urllib.parse.parse_qsl(self.rfile.read(length).decode("utf-8")))))
+                self._reply({"message_id": 99})
+
+        api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Api)
+        threading.Thread(target=api.serve_forever, daemon=True).start()
+        config = {"game": {"port": game.port},
+                  "telegram": {"enabled": True, "bot_token": "123:test", "chats": [-1001], "poll_seconds": 1,
+                               "rules": ["Правила:", "!моё"], "api_url": "http://127.0.0.1:%d" % api.server_address[1]}}
+        stop, link, readers, _threads = bridge.start(config)
+        try:
+            lines = game.wait_for(2)
+            time.sleep(0.5)
+            self.assertEqual([line["text"] for line in lines], ["!помощь", "!help"], "the group's asks go on to the game as well")
+            self.assertEqual([(path, params["chat_id"]) for path, params in sent],
+                             [("/bot123:test/sendMessage", "-1001"), ("/bot123:test/sendMessage", "2")],
+                             "one answer in the group for two asks, one in private")
+            self.assertEqual(sent[0][1]["text"], "Правила:\n!моё")
+            self.assertEqual(json.loads(sent[0][1]["reply_parameters"])["message_id"], 1, "a reply to who asked")
+            self.assertNotIn("reply_parameters", sent[1][1])
         finally:
             stop.set()
             link.stop()
