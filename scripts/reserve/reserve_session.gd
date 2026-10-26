@@ -45,6 +45,8 @@ var year_perks: Dictionary = {}
 var _perks_year: int = -1
 ## When each ward's young were last told, so a litter is told once.
 var _young_told_at: Dictionary = {}
+## When a viewer last asked for the rules («!помощь»): the panel shows the commands a while.
+var help_asked_at: float = -INF
 
 
 func configure(new_manager, new_config: Dictionary) -> void:
@@ -78,6 +80,8 @@ func hear(message: Dictionary) -> void:
 			_join(key, user, str(command["arg"]))
 		"dig_pond", "lead_herd", "cull":
 			_steward(key, user, str(command["kind"]))
+		"help":
+			help_asked_at = now()
 
 
 ## Votes and funds as their times come; call once a tick, or a frame.
@@ -124,7 +128,7 @@ func _join(key: String, user: String, team: String) -> void:
 		return
 	book.note(key, "team", now())
 	book.join(key, team)
-	_tell("%s — в «%s»" % [user, str(funds[team].get("label", team))], "join")
+	_tell("%s болеет за %s" % [user, str(funds[team].get("label", team)).trim_prefix("Фонд ")], "join")
 
 
 func _steward(key: String, user: String, power: String) -> void:
@@ -267,8 +271,10 @@ func _rescue() -> void:
 	var settings: Dictionary = config.get("rescue", {})
 	if settings.is_empty() or now() < _rescue_checked_at + float(settings.get("every_seconds", 30.0)):
 		return
-	_rescue_checked_at = now()
 	var counts := census()
+	if counts.is_empty():
+		return
+	_rescue_checked_at = now()
 	var spawns: Dictionary = manager.world_state.config_bundle.get("world", {}).get("spawns", {})
 	var below: Dictionary = settings.get("below", {})
 	for species in below.keys():
@@ -305,10 +311,19 @@ func _cull_species_left() -> int:
 	return left
 
 
-## How many of each species live, awake or asleep: `{species: count}`.
+## How many of each species live, awake or asleep: `{species: count}`. In the game the view's world
+## holds the animals about the camera only, the sleeping ones staying with the worker, so the
+## count is the stats' (`<species>_population`, from the worker each tick); stepped inline, as in a
+## test or a soak, the world itself is counted. Empty while the stats have no count yet.
 func census() -> Dictionary:
 	var world = manager.world_state
 	var counts := {}
+	if manager.get("_worker") != null:
+		var snapshot: Dictionary = manager.stats_system.latest_snapshot
+		for species in world.species_registry.ids():
+			if snapshot.has("%s_population" % species):
+				counts[species] = int(snapshot["%s_population" % species])
+		return counts
 	for agent in world.get_living_agents():
 		if agent != null and agent.is_alive:
 			counts[agent.species_type] = int(counts.get(agent.species_type, 0)) + 1

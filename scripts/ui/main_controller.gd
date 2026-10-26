@@ -339,6 +339,7 @@ func _start_reserve(fresh: bool) -> void:
 	_reserve_overlay.theme = result_window.theme
 	_reserve_overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_reserve_overlay.position = Vector2(12.0, 12.0)
+	_reserve_overlay.avoid = selection_card
 	$CanvasLayer.add_child(_reserve_overlay)
 	_reserve_overlay.bind(reserve_session, story_book)
 	_banner = ReserveBanner.new()

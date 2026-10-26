@@ -35,6 +35,7 @@ func run(a) -> void:
 	_test_the_overlay_text(a)
 	_test_its_own_slots(a)
 	_test_a_rescue(a)
+	_test_counting_with_a_worker(a)
 	_test_forgetting_viewers(a)
 	_test_floors_and_ceilings(a)
 	_test_ward_news(a)
@@ -232,9 +233,16 @@ func _test_the_overlay_text(a) -> void:
 	session.hear(_message("1", "Вася", "!2"))
 	var text: String = ReserveOverlayScript.vote_text(session)
 	var second := str(session.vote.current["choices"][1]["label"])
-	a.is_true(text.begins_with("Голосование, 1:") and text.contains("2 %s — 1" % second), "the vote open, with its count (%s)" % text)
+	a.is_true(text.begins_with("Голосование, ещё 1:") and text.contains("!2 %s — 1" % second), "the vote open, with its count (%s)" % text)
 	session.hear(_message("2", "Маша", "!лисы"))
 	a.is_true(ReserveOverlayScript.funds_text(session).contains("лис 1"), "the funds (%s)" % ReserveOverlayScript.funds_text(session))
+	session.config["overlay"] = {"help_every_seconds": 0.0, "help_seconds": 20.0}
+	var quiet := not ReserveOverlayScript.help_shown(session)
+	session.hear(_message("3", "Петя", "!помощь"))
+	a.is_true(quiet and ReserveOverlayScript.help_shown(session), "the commands show when a viewer asks, and not by themselves when told never")
+	session.config["overlay"] = {"help_every_seconds": 300.0, "help_seconds": 20.0}
+	session.help_asked_at = -INF
+	a.is_true(ReserveOverlayScript.help_shown(session), "and at the start of every five minutes (%.1f s)" % session.now())
 	a.equal([ReserveOverlayScript.clock(59.2), ReserveOverlayScript.clock(125.0)], ["1:00", "2:05"], "the clock")
 	Helpers.destroy_manager(manager)
 
@@ -294,6 +302,29 @@ func _test_a_rescue(a) -> void:
 	a.is_true(not session.census().has("wolf") and manager.world_state.player.journal.filter(
 		func(entry) -> bool: return str(entry["params"].get("species", "")) == "wolf").is_empty(),
 		"none for a species the world did not begin with")
+	Helpers.destroy_manager(manager)
+
+
+## In the game the view's world holds the animals about the camera only: the count is the
+## worker's, its stats' totals. Counting the view sent newcomers to every species at the start.
+func _test_counting_with_a_worker(a) -> void:
+	var bundle: Dictionary = ReserveCommandTestsScript._bundle(9939)
+	bundle["world"]["spawns"]["herbivore_count"] = 10
+	var manager = Helpers.create_manager_with(bundle, 9939)
+	var session = ReserveSessionScript.new()
+	session.configure(manager, _config())
+	var lines: Array = []
+	session.told.connect(func(line: Dictionary) -> void: lines.append(str(line["text"])))
+	manager._worker = RefCounted.new()
+	manager.stats_system.latest_snapshot = {}
+	session._rescue()
+	a.is_true(session.census().is_empty() and lines.is_empty(), "nothing counted, nobody sent, before the worker's first count")
+	manager.stats_system.latest_snapshot = {"tick": 3, "herbivore_population": 160, "predator_population": 30}
+	a.is_true(int(session.census().get("herbivore", 0)) == 160 and int(session.census().get("predator", 0)) == 30,
+		"the worker's totals: %s" % str(session.census()))
+	session._rescue()
+	a.is_true(lines.is_empty(), "and none sent where there are plenty: %s" % str(lines))
+	manager._worker = null
 	Helpers.destroy_manager(manager)
 
 
