@@ -335,8 +335,24 @@ stream.
   The first try (rain 1.0, downpour 3.0, heat -1.0 with thirst ×1.4) doubled the deaths of
   thirst and trebled the drying. A pond at its floor does not take the mean back: evening the
   balance holds the average inflow, not the levels. Kills did not move (138 either way), so the
-  sleeping hunt, which has no sight, needs no fog factor. The scenarios turn the weather off:
-  their goals were tuned without it.
+  sleeping hunt, which has no sight, needs no fog factor.
+- **In the scenarios.** Turned on as it ships, the weather undid the two it fits:
+
+  | Scenario | Policy | Without weather | With it, evened |
+  |---|---|---|---|
+  | «Первая зима» | none | 4/8 | 6/8 |
+  | | lead to grass | 6/8 | 6/8 |
+  | «Долгая сушь» | none | 0/8 | 5/8 |
+  | | late pond and leads | 8/8 | 5/8 |
+
+  Evened against heat, a clear summer day brings water, and a pond at its floor takes the rains
+  back but not the heat. So a scenario may keep its weather whole (`even` false): a hot summer
+  is a drier one.
+  - «Долгая сушь» has one: summer half heat (water −0.25, thirst ×1.1), autumn's rains, nothing
+    evened. Tuned over three rounds, it wins 1/8 without powers and 7/8 with a late pond and leads.
+  - «Первая зима», the first game, keeps none: with a light snow the powers decided one game in
+    eight (4/8 without, 5/8 leading), too little for a game that teaches them.
+  - «Слишком много лис» keeps none either.
 
 ### `TrailField`
 
