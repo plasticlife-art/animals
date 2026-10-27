@@ -176,6 +176,52 @@ world is bit for bit the one without them.
   24 minutes and 10 % in 48: it reads as the slow sum of a changed map (about 5 % of it the
   rivers' bed), not one cause.
 
+### Ponds on the ground (`terrain.ponds`)
+
+A pond's water is no ground: animals go round it and drink from its shore. Off (no block or
+`enabled` false) the ponds lie on open ground, walked and grazed through, and the world is bit
+for bit the one without the block; the test fixtures keep it off (`PondTests` switch it on).
+
+- **Two measures.** A terrain cell is coarse beside a pond (96 units on the large map against
+  radii of 180-280), so the water is kept twice. A body keeps out of the water's round edge as it
+  is now (`TerrainSystem.pond_clear_at()`, read by `ScenerySystem.terrain_clear()`), wading in
+  `wade` (half) of its radius at most, and slides along the shore as along a trunk
+  (`resolve_motion()`). A route keeps out of the cells whose centre lies within
+  `route_margin_cells` of the edge (`flood_pond()`: flooded, not walkable), so no waypoint falls
+  in the water; the ground under a flooded cell is still ground to a body (`is_ground_index()`),
+  so a body may stand on its dry corner. Sight crosses a pond.
+- **The level.** Every tick `WorldState.lay_pond_water()` lays each pond's water out to its
+  `radius`: as the level falls the outer cells come out, nearest the centre last, and only
+  `hysteresis_cells` past where they went under, so a pond drunk down while it rains does not
+  flicker. Each pond keeps its cells in order of distance, and `flooded` of them are under, so a
+  tick costs what changed.
+- **What changes with a cell.** `_settle_pond_cells()`: the grass goes under with it
+  (`ResourceSystem.drown_cell()`) and greens back from stubble where the water left
+  (`uncover_cell()`); the walking reach about it is forgotten (`_walk_reachable_cache`); the
+  neighbour lists about it are made again; and an animal the water rose about steps out to the
+  nearest free spot on the shore. A route remembered from before the water rose is checked cell by
+  cell before it is handed out again (`flood_epoch`, dated by when its search began).
+- **Drinking.** An awake drinker walks to the shore on its side (`WorldState.water_approach()`:
+  the way a sixteenth of a turn at a time and the edge a quarter cell at a time, so the goal holds
+  while it walks) and drinks within `drink_distance` of the edge as before. A sleeping group
+  counts as at its water when its centre is within the usual reach of the edge rather than of the
+  centre (`_dormant_aggregate_reached_goal()`).
+- **Pockets.** Where a cliff runs into a pond, a full pond can cut a few cells off from the rest
+  (1-4 per map). `seal_pond_pockets()` finds them once, with every pond full, and keeps them out of
+  every route for good, so nothing is sent where it could not come back.
+- **Scenery.** No tree or stone stands within a pond's bank, full or not; the scenery's draws are
+  made all the same, so the rest stand where they did.
+- **Saved** with the world (`"pond_floods"`: how many cells each pond has under), since past the
+  hysteresis that is more than the levels say; a save from before lays the water from the levels.
+  A pond the player digs is laid at once, and whoever stands there steps out. A view's copy of the
+  world lays the water from the frames' levels and leaves its animals to the frames.
+- **Measured** on the large map, seed 1, 30 s at full fidelity: animals standing in a pond's water
+  (centre deeper than its body radius) 324 of 6979 samples before, none after; trees and stones in
+  a pond's bed 274 before, 18 after (on the waterline, by their jitter). About 1150 of the 12750
+  cells are out of routes with every pond full. With the block off the world is bit for bit HEAD's
+  (`ecology_audit` 3 off 300 and 1 lod 600, `compare_reports --strict`). Balance over many seeds
+  is still to be measured.
+
 ### `ScenerySystem`
 
 - Owns deterministic prop records with stable IDs, base positions, physical

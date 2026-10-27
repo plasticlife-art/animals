@@ -191,7 +191,7 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 
 	set_state("seek_water", world.current_tick)
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, false)
-	var waypoint: Vector2 = world.get_next_waypoint(position, water["position"], id)
+	var waypoint: Vector2 = world.get_next_waypoint(position, world.water_approach(water, position, get_body_radius()), id)
 	if not path_reachable:
 		forget_water(water.get("position", null))
 		leave_unreachable(world, place_key(water["position"]))

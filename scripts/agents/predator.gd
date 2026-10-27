@@ -1109,7 +1109,7 @@ func _seek_or_drink(world, delta: float, water: Dictionary = {}) -> bool:
 		return false
 
 	set_state("seek_water", world.current_tick)
-	var water_waypoint: Vector2 = world.get_next_waypoint(position, water["position"], id)
+	var water_waypoint: Vector2 = world.get_next_waypoint(position, world.water_approach(water, position, get_body_radius()), id)
 	if not path_reachable:
 		forget_water(water.get("position", null))
 		leave_unreachable(world, place_key(water["position"]))
@@ -1186,7 +1186,7 @@ func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> 
 	var investigate_distance := float(feeding.get("drink_distance", 28.0)) + float(source.get("radius", 0.0))
 	if position.distance_squared_to(source["position"]) > investigate_distance * investigate_distance:
 		set_state("investigate_water", world.current_tick)
-		var waypoint: Vector2 = world.get_next_waypoint(position, source["position"], id)
+		var waypoint: Vector2 = world.get_next_waypoint(position, world.water_approach(source, position, get_body_radius()), id)
 		if not path_reachable:
 			mark_water_source_investigated(source["position"], world.current_time)
 			leave_unreachable(world, place_key(source["position"]))

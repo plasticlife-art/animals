@@ -394,6 +394,31 @@ func consume_cell(index: int, amount: float) -> float:
 	return consumed
 
 
+## Pond water over cell `index` (`TerrainSystem.flood_pond()`): what grew there goes under.
+func drown_cell(index: int) -> void:
+	_set_cell(index, 0.0)
+
+
+## Cell `index` out of the water again: it greens over from stubble.
+func uncover_cell(index: int) -> void:
+	_set_cell(index, _get_cell_max_biomass(index) * stubble_fraction)
+
+
+func _set_cell(index: int, biomass: float) -> void:
+	if index < 0 or index >= _cells.size():
+		return
+	var delta_biomass := biomass - _cells[index]
+	_cells[index] = biomass
+	if track_dirty_cells:
+		_dirty_cells[index] = biomass
+	total_biomass += delta_biomass
+	_add_biomass_to_biome(index, delta_biomass)
+	var below := 1 if biomass < _get_cell_max_biomass(index) else 0
+	if below != _below_cap[index]:
+		_below_cap_count += 1 if below == 1 else -1
+		_below_cap[index] = below
+
+
 func take_dirty_cells() -> Dictionary:
 	var indices := PackedInt32Array()
 	var values := PackedFloat32Array()

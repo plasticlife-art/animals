@@ -169,6 +169,11 @@ var _sector_grass_refresh_ticks: int = 18
 var _grass_local_reach_cells: int = 3
 var _walk_reachable_cache: Dictionary = {}
 var _walk_reachable_order: Array = []
+## The spots round each pond's shore a body can drink from (`water_approach()`), by pond, edge
+## and body; forgotten all at once when there get to be too many.
+var _shore_spots: Dictionary = {}
+const SHORE_SPOTS := 16
+const _SHORE_SPOT_CACHE_LIMIT := 2048
 var _walk_reachable_cache_limit: int = 4096
 var _grass_target_refresh_ticks: int = 6
 var _mid_decision_interval_ticks: int = 3
@@ -256,6 +261,10 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	water.initialize(world_config.get("water_levels", {}), water_sources, _water_demand_unit(),
 		float(ClimateScript.calendar(climate_config)[0]),
 		bool(climate_config.get("enabled", false)) and not climate_config.get("seasons", []).is_empty(), trait_world)
+	# Before the dens and the animals are placed, so neither lands in the water.
+	if terrain_system.ponds_solid:
+		_settle_pond_cells(terrain_system.seal_pond_pockets(), false)
+	lay_pond_water(false)
 	player = PlayerStateScript.new()
 	player.configure(config_bundle.get("powers", {}))
 	player_command_handlers.clear()
@@ -279,6 +288,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_walk_reachable_cache_limit = maxi(64, int(navigation_config.get("grass_local_reach_cache_limit", 4096)))
 	_walk_reachable_cache.clear()
 	_walk_reachable_order.clear()
+	_shore_spots.clear()
 	_pending_global_paths.clear()
 	_pending_global_path_keys.clear()
 	_pending_local_agent_ids.clear()
@@ -337,6 +347,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 	fear_field.step(delta, current_tick)
 	trail_field.step(delta, current_tick)
 	water.step(delta, climate)
+	lay_pond_water()
 	performance_counters["phase_resources_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	var active_lod_context: Dictionary = _normalize_lod_context(lod_context)
 	var lod_context_key := _lod_assignment_context_key(active_lod_context)
@@ -800,6 +811,7 @@ func shutdown() -> void:
 	_sector_grass_cache.clear()
 	_walk_reachable_cache.clear()
 	_walk_reachable_order.clear()
+	_shore_spots.clear()
 	_pending_global_paths.clear()
 	_pending_global_path_keys.clear()
 	_pending_local_agent_ids.clear()
@@ -1944,11 +1956,120 @@ func _restore_player_ponds() -> void:
 
 ## A pond added while the world runs - dug, or coming back with a save or a frame: on the water's
 ## list and in its level arrays in one step (`WaterSystem.add_source()`). Returns its index.
-func _add_pond_source(position: Vector2, bank_radius: float, level: float) -> int:
+## `move_animals`: whoever stands where its water lies steps out onto the shore (a pond dug under
+## them); a view's copy of the world leaves its animals to the frames.
+func _add_pond_source(position: Vector2, bank_radius: float, level: float, move_animals: bool = false) -> int:
 	var source := {"position": position, "radius": bank_radius, "bank_radius": bank_radius}
 	water_sources.append(source)
 	water.add_source(source, level)
-	return int(source["index"])
+	var index := int(source["index"])
+	terrain_system.add_pond(index, position, bank_radius)
+	_settle_pond_cells(terrain_system.flood_pond(index, float(source["radius"])), move_animals)
+	return index
+
+
+## The ponds' water laid on the ground at their levels now (`terrain.ponds`,
+## `TerrainSystem.flood_pond()`), every tick and whenever the levels come from elsewhere (a
+## worker's frame, `move_animals` false: the view's animals are the frames' to place).
+func lay_pond_water(move_animals: bool = true) -> void:
+	if terrain_system == null or not terrain_system.ponds_solid:
+		return
+	for index in range(water_sources.size()):
+		var changed := terrain_system.flood_pond(index, float(water_sources[index].get("radius", 0.0)))
+		if not changed.is_empty():
+			_settle_pond_cells(changed, move_animals)
+
+
+## A save's water over the ground (`TerrainSystem.export_floods()`), cell for cell; a save from
+## before lays it from the levels. Before the save's animals are set down, so none is moved.
+func _import_pond_floods(floods) -> void:
+	if terrain_system == null or not terrain_system.ponds_solid:
+		return
+	if floods is Dictionary:
+		for pond in floods.keys():
+			_settle_pond_cells(terrain_system.import_flood(int(pond), int(floods[pond])), false)
+	lay_pond_water(false)
+
+
+## After the ground under `cells` went under water or came out of it: the grass goes under with
+## it and greens back from stubble where the water left, the cells an animal could reach on foot
+## are measured again about them, and an animal the water reached steps out onto the shore.
+func _settle_pond_cells(cells: PackedInt32Array, move_animals: bool) -> void:
+	if cells.is_empty():
+		return
+	var reach := _grass_local_reach_cells + 1
+	for index in cells:
+		if terrain_system.is_walkable_index(index):
+			resource_system.uncover_cell(index)
+		else:
+			resource_system.drown_cell(index)
+		# The reach from any cell near enough to have walked through this one.
+		var coords := terrain_system.get_cell_coords(index)
+		for y in range(maxi(0, coords.y - reach), mini(terrain_system.rows - 1, coords.y + reach) + 1):
+			for x in range(maxi(0, coords.x - reach), mini(terrain_system.cols - 1, coords.x + reach) + 1):
+				_walk_reachable_cache.erase(y * terrain_system.cols + x)
+	if move_animals:
+		_step_out_of_water(cells)
+
+
+func _step_out_of_water(cells: PackedInt32Array) -> void:
+	var found: Array = []
+	var reach := terrain_system.cell_size * 0.75 + _largest_body_radius()
+	for index in cells:
+		if terrain_system.is_walkable_index(index):
+			continue
+		spatial_grid.query_into(found, terrain_system.get_cell_center(index), reach)
+		for agent in found:
+			var radius: float = agent.get_body_radius()
+			if scenery.segment_clear(agent.position, agent.position, radius):
+				continue
+			var previous: Vector2 = agent.position
+			agent.position = scenery.nearest_free(get_nearest_walkable_position(previous), radius)
+			agent.velocity = Vector2.ZERO
+			agent.clear_navigation()
+			_track_agent_runtime_position(agent, previous)
+
+
+func _largest_body_radius() -> float:
+	var largest := 0.0
+	for species_config in config_bundle.get("species", {}).values():
+		if species_config is Dictionary:
+			largest = maxf(largest, float(species_config.get("movement", {}).get("body_radius", 0.0)))
+	return largest
+
+
+## Where to walk to drink from `source`, coming from `from`, for a body of `body_radius`: the
+## nearest of `SHORE_SPOTS` spots round its shore where such a body can stand - not under a
+## cliff, a bush or another pond - just past the edge it may wade to. The edge is taken a quarter
+## cell at a time, rounded out, so the spots hold while the level creeps and stay within reach to
+## drink; they are worked out once for each. The source itself where its water lies on open
+## ground, for a river's bank, which is a spot on the shore already, or where no spot is clear.
+func water_approach(source: Dictionary, from: Vector2, body_radius: float = 0.0) -> Vector2:
+	var center: Vector2 = source.get("position", from)
+	if terrain_system == null or not terrain_system.ponds_solid or bool(source.get("permanent", false)):
+		return center
+	var pond := water.index_at(center)
+	var radius := float((water_sources[pond] if pond >= 0 else source).get("radius", 0.0))
+	var step := terrain_system.cell_size * 0.25
+	var key := Vector3i(pond, ceili(radius / step), roundi(body_radius * 4.0))
+	if not _shore_spots.has(key):
+		if _shore_spots.size() >= _SHORE_SPOT_CACHE_LIMIT:
+			_shore_spots.clear()
+		var reach := float(key.y) * step + body_radius * (1.0 - terrain_system._pond_wade) + 2.0
+		var spots := PackedVector2Array()
+		for spoke in range(SHORE_SPOTS):
+			var spot := center + Vector2.from_angle(TAU * float(spoke) / float(SHORE_SPOTS)) * reach
+			if bounds.has_point(spot) and scenery.segment_clear(spot, spot, body_radius):
+				spots.append(spot)
+		_shore_spots[key] = spots
+	var best := center
+	var best_distance := INF
+	for spot in _shore_spots[key]:
+		var distance := from.distance_squared_to(spot)
+		if distance < best_distance:
+			best_distance = distance
+			best = spot
+	return best
 
 
 ## How big a pond the player digs: the map's mean pond times `powers.dig_pond.radius_of_mean`,
@@ -1989,7 +2110,7 @@ func _command_dig_pond(command: Dictionary) -> Dictionary:
 	if refusal != "":
 		return {"ok": false, "reason": refusal}
 	var radius := player_pond_radius()
-	var index := _add_pond_source(position, radius, float(player.settings("dig_pond").get("start_level", 0.8)))
+	var index := _add_pond_source(position, radius, float(player.settings("dig_pond").get("start_level", 0.8)), true)
 	player.add_pond(position, radius, index)
 	return {"ok": true, "index": index, "radius": radius}
 
@@ -2151,6 +2272,7 @@ func export_state() -> Dictionary:
 		"fear": fear_field.export_cells(),
 		"trails": trail_field.export_cells(),
 		"water": water.export_state(),
+		"pond_floods": terrain_system.export_floods(),
 		"herd_migrations": herd_migrations.duplicate(true),
 		"herd_alarms": herd_alarms.duplicate(true),
 		"herd_pastures": herd_pastures.duplicate(true),
@@ -2190,6 +2312,15 @@ func import_state(data: Dictionary) -> void:
 	# loaded game would report spring noon for one tick.
 	sample_climate()
 	_refresh_breeding_values()
+	# The ponds the player dug before their levels: the levels are for every pond, and the map
+	# the seed makes has only its own. Nothing is told: they were dug long ago.
+	player.import_state(data.get("player", {}))
+	_restore_player_ponds()
+	# A save from before ponds had levels keeps them full.
+	water.import_state(data.get("water", {}))
+	# The water over the ground before the animals, set down clear of it as it was, and before
+	# the grass, so the saved grass is what stands after.
+	_import_pond_floods(data.get("pond_floods", null))
 
 	for record in data.get("agents", []):
 		var agent = _restore_agent_record(record)
@@ -2206,12 +2337,6 @@ func import_state(data: Dictionary) -> void:
 	resource_system.import_cells(data.get("grass", PackedFloat32Array()), terrain_system)
 	fear_field.import_cells(data.get("fear", PackedFloat32Array()))
 	trail_field.import_cells(data.get("trails", PackedFloat32Array()))
-	# The ponds the player dug before their levels: the levels are for every pond, and the map
-	# the seed makes has only its own. Nothing is told: they were dug long ago.
-	player.import_state(data.get("player", {}))
-	_restore_player_ponds()
-	# A save from before ponds had levels keeps them full.
-	water.import_state(data.get("water", {}))
 	herd_migrations = data.get("herd_migrations", {}).duplicate(true)
 	herd_alarms = data.get("herd_alarms", {}).duplicate(true)
 	herd_pastures = data.get("herd_pastures", {}).duplicate(true)
@@ -2392,9 +2517,10 @@ func _find_reachable_grass_uncounted(position: Vector2, radius: float, min_bioma
 	return candidate
 
 
-## Terrain walkability is fixed once the world is generated, so a cell's reachable set never
-## changes. Herds revisit the same cells constantly, so memoising it turns the per-agent
-## flood fill into a dictionary lookup.
+## Terrain walkability is fixed once the world is generated but for the ponds' water, which
+## forgets the sets about the cells it covers or leaves (`_settle_pond_cells()`). Herds revisit
+## the same cells constantly, so memoising it turns the per-agent flood fill into a dictionary
+## lookup.
 func _get_walk_reachable_cells(start_index: int) -> Dictionary:
 	var cached: Dictionary = _walk_reachable_cache.get(start_index, {})
 	if not cached.is_empty():
@@ -6501,6 +6627,11 @@ func _dormant_aggregate_reached_goal(sector_key: Vector2i, aggregate: Dictionary
 	var center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
 	var goal_position: Vector2 = aggregate.get("goal_position", center)
 	var proximity := maxf(_sector_size * 0.35, 24.0 if resource_system == null else resource_system.cell_size * 1.25)
+	# A pond's water is no ground to stand on: the herd drinks from its shore.
+	if terrain_system != null and terrain_system.ponds_solid and str(aggregate.get("goal_kind", "")) == "water":
+		var pond := water.index_at(goal_position)
+		if pond >= 0:
+			proximity += float(water_sources[pond].get("radius", 0.0))
 	return center.distance_to(goal_position) <= proximity
 
 

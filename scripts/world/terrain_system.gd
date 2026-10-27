@@ -77,6 +77,28 @@ var rivers: Array = []
 var _water: PackedByteArray = PackedByteArray()
 ## What crossing a ford costs, over the ground's own cost, in the route search and on the legs.
 var _ford_cost: float = 1.0
+## Ponds on the ground (`terrain.ponds`): where a pond holds water there is no ground to walk on
+## and nothing to graze, and the ground comes back as the water goes down. Two measures, since a
+## cell is coarse beside a pond: a body keeps out of the water itself, its round edge as it is
+## now (`pond_clear_at()`), and a route keeps out of the cells whose centre lies within
+## `route_margin_cells` of it - flooded, no longer walkable - so no waypoint falls in the water.
+## A flooded cell comes out only `hysteresis_cells` further, so a pond drunk down while it rains
+## does not flicker. Each pond, keyed by its index in the world's `water_sources`, keeps its
+## centre, bank and edge, and the cells it may flood, nearest its centre first, with how far each
+## cell's centre lies from it; the first `flooded` of them are. `_flooded` counts the ponds over
+## each cell, as two may overlap; `_near_ponds` and `_bank_ponds` the ponds near enough a cell
+## for a body in it to reach their water. Off (`enabled` false), the ponds lie on open ground, as
+## they always did.
+var ponds_solid: bool = false
+var _pond_route_margin: float = 0.0
+var _pond_hysteresis: float = 0.0
+var _pond_wade: float = 0.5
+var _ponds: Dictionary = {}
+var _flooded: PackedByteArray = PackedByteArray()
+var _near_ponds: PackedByteArray = PackedByteArray()
+var _bank_ponds: Dictionary = {}
+## Raised each time water covers ground: a route found before may run through it now.
+var flood_epoch: int = 0
 
 
 func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
@@ -121,6 +143,16 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	rivers.clear()
 	_water = PackedByteArray()
 	_ford_cost = 1.0
+	var pond_config: Dictionary = terrain_config.get("ponds", {})
+	ponds_solid = bool(pond_config.get("enabled", false))
+	_pond_route_margin = float(pond_config.get("route_margin_cells", 0.25)) * cell_size
+	_pond_hysteresis = maxf(0.0, float(pond_config.get("hysteresis_cells", 0.1))) * cell_size
+	_pond_wade = clampf(float(pond_config.get("wade", 0.5)), 0.0, 1.0)
+	_ponds.clear()
+	_flooded = PackedByteArray()
+	_near_ponds = PackedByteArray()
+	_bank_ponds.clear()
+	flood_epoch = 0
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
 	_generate_heights(height_config, rng)
@@ -131,6 +163,14 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_ensure_biome_presence(rng)
 	_finish_rivers()
 	_refresh_navigation_cache()
+	if ponds_solid:
+		_flooded.resize(cell_count)
+		_flooded.fill(0)
+		_near_ponds.resize(cell_count)
+		_near_ponds.fill(0)
+		# Dry for now: the world lays their water once it knows their levels.
+		for pond in range(water_sources.size()):
+			add_pond(pond, water_sources[pond]["position"], float(water_sources[pond].get("radius", 0.0)))
 
 
 func get_cell_count() -> int:
@@ -329,8 +369,11 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 
 	var cache_key := Vector2i(start_index, goal_index)
 	if _path_cache.has(cache_key):
-		_path_cache_hit_count += 1
-		return {"complete": true, "result": _path_cache[cache_key]}
+		var cached: Dictionary = _path_cache[cache_key]
+		if _route_still_dry(cached):
+			_path_cache_hit_count += 1
+			return {"complete": true, "result": cached}
+		_path_cache.erase(cache_key)
 
 	var max_search_cells: int = maxi(64, int(navigation_config.get("max_search_cells", 2800)))
 	var state: Dictionary = _path_searches.get(cache_key, {})
@@ -342,6 +385,8 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 		state = {"open_heap": initial_heap, "came_from": {},
 			"g_score": {start_index: 0.0}, "f_score": {start_index: first_heuristic},
 			"best_index": start_index, "best_heuristic": first_heuristic, "visited": 0}
+		if ponds_solid:
+			state["flood_epoch"] = flood_epoch
 		_path_searches[cache_key] = state
 
 	var open_heap: Array = state.open_heap
@@ -376,7 +421,7 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 				"cost": float(g_score.get(current_index, 0.0)), "reachable": true,
 				"start_index": start_index, "goal_index": goal_index}
 			_path_searches.erase(cache_key)
-			_store_path_cache_entry(cache_key, result)
+			_store_path_cache_entry(cache_key, result, state)
 			return {"complete": true, "result": result, "expanded": expanded}
 
 		var neighbor_indices: Array = get_walkable_neighbors(current_index)
@@ -402,12 +447,12 @@ func step_path_between_indices(start_index: int, goal_index: int, expansion_budg
 	if best_index == start_index:
 		var failed_result := {"cells": [start_index], "cost": INF,
 			"reachable": false, "start_index": start_index, "goal_index": goal_index}
-		_store_path_cache_entry(cache_key, failed_result)
+		_store_path_cache_entry(cache_key, failed_result, state)
 		return {"complete": true, "result": failed_result, "expanded": expanded}
 	var partial_result := {"cells": _reconstruct_path(best_index, came_from),
 		"cost": float(g_score.get(best_index, INF)), "reachable": false,
 		"start_index": start_index, "goal_index": goal_index}
-	_store_path_cache_entry(cache_key, partial_result)
+	_store_path_cache_entry(cache_key, partial_result, state)
 	return {"complete": true, "result": partial_result, "expanded": expanded}
 
 
@@ -770,18 +815,22 @@ func _refresh_navigation_cache() -> void:
 		var coords: Vector2i = get_cell_coords(index)
 		_cell_centers[index] = Vector2((coords.x + 0.5) * cell_size, (coords.y + 0.5) * cell_size)
 	for index in range(cell_count):
-		if not is_walkable_index(index):
-			_cached_walkable_neighbors[index] = []
-			_cached_walkable_neighbor_costs[index] = []
-			continue
-		var neighbors: Array = _compute_walkable_neighbors(index)
-		var costs: Array = []
-		costs.resize(neighbors.size())
-		for neighbor_offset in range(neighbors.size()):
-			var neighbor_index: int = int(neighbors[neighbor_offset])
-			costs[neighbor_offset] = _step_cost(index, neighbor_index)
-		_cached_walkable_neighbors[index] = neighbors
-		_cached_walkable_neighbor_costs[index] = costs
+		_refresh_navigation_cell(index)
+
+
+func _refresh_navigation_cell(index: int) -> void:
+	if not is_walkable_index(index):
+		_cached_walkable_neighbors[index] = []
+		_cached_walkable_neighbor_costs[index] = []
+		return
+	var neighbors: Array = _compute_walkable_neighbors(index)
+	var costs: Array = []
+	costs.resize(neighbors.size())
+	for neighbor_offset in range(neighbors.size()):
+		var neighbor_index: int = int(neighbors[neighbor_offset])
+		costs[neighbor_offset] = _step_cost(index, neighbor_index)
+	_cached_walkable_neighbors[index] = neighbors
+	_cached_walkable_neighbor_costs[index] = costs
 
 
 func _compute_walkable_neighbors(index: int) -> Array:
@@ -946,9 +995,12 @@ func _closest_point_on_segment(point: Vector2, segment_start: Vector2, segment_e
 	return segment_start + segment * t
 
 
-func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary) -> void:
+func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary, state: Dictionary = {}) -> void:
 	if _path_cache.has(cache_key):
 		return
+	# Dated by when the search began: water that rose while it ran may lie across it.
+	if ponds_solid:
+		result["flood_epoch"] = int(state.get("flood_epoch", flood_epoch))
 	# Stored by reference, and `find_path_between_indices()` hands the same
 	# object back, so there is one rule for callers rather than two: never
 	# mutate a path result in place.
@@ -970,6 +1022,215 @@ func is_ford_index(index: int) -> bool:
 
 func get_water_at_index(index: int) -> int:
 	return WATER_NONE if not is_water_index(index) else int(_water[index])
+
+
+## Whether a pond's water lies over the cell's centre now (`terrain.ponds`): no route runs there.
+func is_flooded_index(index: int) -> bool:
+	return not _flooded.is_empty() and index >= 0 and index < _flooded.size() and _flooded[index] > 0
+
+
+## Whether the cell's centre lies within a pond's bank, under water or not.
+func is_pond_bank_index(index: int) -> bool:
+	if _near_ponds.is_empty() or index < 0 or index >= _near_ponds.size() or _near_ponds[index] == 0:
+		return false
+	var center := get_cell_center(index)
+	for pond in _bank_ponds.get(index, []):
+		if center.distance_to(_ponds[pond]["center"]) <= float(_ponds[pond]["bank"]):
+			return true
+	return false
+
+
+## Whether a body could stand on the cell's ground but for a pond's water: what a body walking
+## is held by (`ScenerySystem.terrain_clear()`), the water itself being kept by `pond_clear_at()`.
+func is_ground_index(index: int) -> bool:
+	if index < 0 or index >= get_cell_count():
+		return false
+	if _walkable[index] != 0:
+		return true
+	return not _flooded.is_empty() and _flooded[index] > 0 and _obstacles[index] == ""
+
+
+## Whether cell `index` lies near enough a pond for a body in it to reach the water.
+func is_near_pond_index(index: int) -> bool:
+	return not _near_ponds.is_empty() and index >= 0 and index < _near_ponds.size() and _near_ponds[index] > 0
+
+
+## Whether a body of `radius` going from `a` to `b` keeps out of the water of the ponds near cell
+## `index`: it may wade `wade` of its radius in, and one further in - the water rose about it -
+## may come out or walk along the shore but not go deeper.
+func pond_clear_at(index: int, a: Vector2, b: Vector2, radius: float) -> bool:
+	if not is_near_pond_index(index):
+		return true
+	var moving := not a.is_equal_approx(b)
+	for pond in _bank_ponds.get(index, []):
+		var entry: Dictionary = _ponds[pond]
+		var edge: float = entry["edge"]
+		if edge <= 0.0:
+			continue
+		var center: Vector2 = entry["center"]
+		var reach := edge + radius * (1.0 - _pond_wade)
+		var closest := Geometry2D.get_closest_point_to_segment(center, a, b)
+		if closest.distance_squared_to(center) < reach * reach:
+			if moving and closest.is_equal_approx(a):
+				continue
+			return false
+	return true
+
+
+## The centres of the ponds with water near `position`, for a body sliding along a shore.
+func pond_centres_near(position: Vector2) -> Array:
+	var centres: Array = []
+	var index := get_index_from_position(position)
+	if not is_near_pond_index(index):
+		return centres
+	for pond in _bank_ponds.get(index, []):
+		if float(_ponds[pond]["edge"]) > 0.0:
+			centres.append(_ponds[pond]["center"])
+	return centres
+
+
+## Takes pond `pond` (its index in the world's `water_sources`) onto the ground, dry until
+## `flood_pond()` lays its water. A no-op while ponds lie on open ground.
+func add_pond(pond: int, center: Vector2, bank_radius: float) -> void:
+	if not ponds_solid or _ponds.has(pond):
+		return
+	# Near: a body in the cell may reach the water. Flooded: no route through the cell.
+	var near := bank_radius + cell_size
+	var reach := bank_radius + _pond_route_margin
+	var low := Vector2i(((center - Vector2.ONE * near) / cell_size).floor())
+	var high := Vector2i(((center + Vector2.ONE * near) / cell_size).floor())
+	# Distance first and the index breaking a tie, so the order is the same on every run.
+	var found: Array[Vector2] = []
+	for y in range(maxi(0, low.y), mini(rows - 1, high.y) + 1):
+		for x in range(maxi(0, low.x), mini(cols - 1, high.x) + 1):
+			var index := y * cols + x
+			var distance := get_cell_center(index).distance_to(center)
+			if distance > near:
+				continue
+			_near_ponds[index] += 1
+			if not _bank_ponds.has(index):
+				_bank_ponds[index] = []
+			_bank_ponds[index].append(pond)
+			if distance <= reach:
+				found.append(Vector2(distance, index))
+	found.sort()
+	var cells := PackedInt32Array()
+	var distances := PackedFloat32Array()
+	for entry in found:
+		cells.append(int(entry.y))
+		distances.append(entry.x)
+	_ponds[pond] = {"center": center, "bank": bank_radius, "edge": 0.0,
+		"cells": cells, "distances": distances, "flooded": 0}
+
+
+## The cells the ponds, full, would cut off from the rest - wedged between water and a cliff - kept
+## out of every route for good, as if under water: an animal sent there could not come back.
+## Once, before any water is laid. Returns them.
+func seal_pond_pockets() -> PackedInt32Array:
+	var pockets := PackedInt32Array()
+	if not ponds_solid or _ponds.is_empty():
+		return pockets
+	for pond in _ponds.keys():
+		_flood_to(_ponds[pond], _ponds[pond]["cells"].size())
+	var components: Array = _collect_walkable_components()
+	components.sort_custom(func(a, b): return a["cells"].size() > b["cells"].size())
+	for component in components.slice(1):
+		for index in component["cells"]:
+			_flooded[int(index)] += 1
+			_walkable[int(index)] = 0
+			pockets.append(int(index))
+	for pond in _ponds.keys():
+		_flood_to(_ponds[pond], 0)
+	_refresh_navigation_around(pockets)
+	flood_epoch = 0
+	return pockets
+
+
+## Lays pond `pond`'s water out to `radius`, its edge now: bodies keep out of the water itself,
+## routes out of the cells whose centre lies within `route_margin_cells` of it. Returns the cells
+## that changed, gone under or come out, with the routes about them found again.
+func flood_pond(pond: int, radius: float) -> PackedInt32Array:
+	var entry: Dictionary = _ponds.get(pond, {})
+	if entry.is_empty():
+		return PackedInt32Array()
+	entry["edge"] = maxf(0.0, radius)
+	var distances: PackedFloat32Array = entry["distances"]
+	var flooded: int = entry["flooded"]
+	var under := radius + _pond_route_margin
+	while flooded < distances.size() and distances[flooded] <= under:
+		flooded += 1
+	while flooded > 0 and distances[flooded - 1] > under + _pond_hysteresis:
+		flooded -= 1
+	return _flood_to(entry, flooded)
+
+
+## How many of each pond's cells are under water, for a save: past the hysteresis it is more
+## than the levels alone say.
+func export_floods() -> Dictionary:
+	var floods := {}
+	for pond in _ponds.keys():
+		floods[pond] = int(_ponds[pond]["flooded"])
+	return floods
+
+
+## Pond `pond`'s water over its first `count` cells, as a save had it (`export_floods()`), its
+## edge left where `flood_pond()` last laid it. Returns the cells that changed.
+func import_flood(pond: int, count: int) -> PackedInt32Array:
+	var entry: Dictionary = _ponds.get(pond, {})
+	if entry.is_empty():
+		return PackedInt32Array()
+	return _flood_to(entry, clampi(count, 0, entry["cells"].size()))
+
+
+func _flood_to(entry: Dictionary, target: int) -> PackedInt32Array:
+	var changed := PackedInt32Array()
+	var cells: PackedInt32Array = entry["cells"]
+	var flooded: int = entry["flooded"]
+	var drowned := false
+	while flooded < target:
+		var index := cells[flooded]
+		_flooded[index] += 1
+		if _flooded[index] == 1 and _walkable[index] != 0:
+			_walkable[index] = 0
+			changed.append(index)
+			drowned = true
+		flooded += 1
+	while flooded > target:
+		flooded -= 1
+		var index := cells[flooded]
+		_flooded[index] -= 1
+		if _flooded[index] == 0 and _obstacles[index] == "":
+			_walkable[index] = 1
+			changed.append(index)
+	entry["flooded"] = flooded
+	if drowned:
+		flood_epoch += 1
+	if not changed.is_empty():
+		_refresh_navigation_around(changed)
+	return changed
+
+
+func _route_still_dry(result: Dictionary) -> bool:
+	if not ponds_solid or int(result.get("flood_epoch", flood_epoch)) == flood_epoch:
+		return true
+	for cell in result.get("cells", []):
+		if not is_walkable_index(int(cell)):
+			return false
+	result["flood_epoch"] = flood_epoch
+	return true
+
+
+## The neighbour lists of `cells` and of each one's neighbours, after their ground changed.
+func _refresh_navigation_around(cells: PackedInt32Array) -> void:
+	var seen := {}
+	for index in cells:
+		var coords := get_cell_coords(index)
+		for y in range(maxi(0, coords.y - 1), mini(rows - 1, coords.y + 1) + 1):
+			for x in range(maxi(0, coords.x - 1), mini(cols - 1, coords.x + 1) + 1):
+				var neighbour := y * cols + x
+				if not seen.has(neighbour):
+					seen[neighbour] = true
+					_refresh_navigation_cell(neighbour)
 
 
 ## Rivers (`terrain.rivers`): `count` of them, each from a source inland, away from the ponds, to

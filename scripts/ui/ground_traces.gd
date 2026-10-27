@@ -433,7 +433,8 @@ static func _premultiplied(color: Color) -> Color:
 func _build_rows(terrain: TerrainSystem, iso_layer: TileMapLayer) -> void:
 	var rows: Dictionary = {}
 	for index in range(terrain.get_cell_count()):
-		if not terrain.is_walkable_index(index) and not terrain.is_water_index(index):
+		if not terrain.is_walkable_index(index) and not terrain.is_water_index(index) \
+				and not terrain.is_flooded_index(index):
 			continue
 		var coords: Vector2i = terrain.get_cell_coords(index)
 		var row := coords.x + coords.y
@@ -454,12 +455,12 @@ func _build_rows(terrain: TerrainSystem, iso_layer: TileMapLayer) -> void:
 		_row_meshes.append(node)
 
 
-## The cells the ground is drawn on: every walkable one, and a river's deep water, which is drawn
-## by the same shader though nothing walks there.
+## The cells the ground is drawn on: every walkable one, and a river's deep water or a pond's,
+## which the same shader draws though nothing walks there.
 static func _all_walkable(terrain: TerrainSystem) -> PackedInt32Array:
 	var cells := PackedInt32Array()
 	for index in range(terrain.get_cell_count()):
-		if terrain.is_walkable_index(index) or terrain.is_water_index(index):
+		if terrain.is_walkable_index(index) or terrain.is_water_index(index) or terrain.is_flooded_index(index):
 			cells.append(index)
 	return cells
 

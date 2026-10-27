@@ -897,6 +897,7 @@ func _apply_worker_frame(data: Dictionary) -> void:
 		world_state.world_events = data.world_events.duplicate(true)
 	if data.has("water"):
 		world_state.water.import_state(data.water)
+		world_state.lay_pond_water(false)
 	world_state.resource_system._biomass_totals_by_biome = data.biomes
 	if bool(data.get("full", false)):
 		world_state._sector_states.clear()

@@ -4,6 +4,8 @@ extends RefCounted
 const INVALID_LOCAL_POINT := Vector2i(-2147483648, -2147483648)
 
 ## World-owned static scenery. No dependency on the renderer or the ecology RNG.
+## Whether a body of a size could stand at each point of the local grids, the ground and the
+## scenery alone: the ponds' water, which moves, is looked at afresh.
 var _point_cache: Dictionary = {}
 var _near_cache: Dictionary = {}
 var objects: Array = []
@@ -21,6 +23,8 @@ func initialize(world_config: Dictionary, visuals: Dictionary, ground: TerrainSy
 	bucket_size = terrain.cell_size
 	objects.clear()
 	buckets.clear()
+	_point_cache.clear()
+	_near_cache.clear()
 	if not bool(config.get("enabled", true)):
 		return
 	var rules: Dictionary = config.get("placement", {})
@@ -44,12 +48,17 @@ func initialize(world_config: Dictionary, visuals: Dictionary, ground: TerrainSy
 		var jitter := Vector2(random.randf_range(-0.22, 0.22), random.randf_range(-0.22, 0.22)) * bucket_size
 		var point := terrain.get_cell_center(index) + jitter
 		var physics: Dictionary = config.get("types", {}).get(kind, {})
+		var slot := 0 if slots.is_empty() else int(slots[random.randi_range(0, slots.size() - 1)])
+		# Nothing grows in a pond's bed, full or not; drawn all the same, so the rest come out
+		# where they did.
+		if terrain.is_pond_bank_index(index):
+			continue
 		add_object({"id": index + 1, "position": point, "kind": kind,
 			"radius": float(physics.get("radius_cells", 0.0)) * bucket_size,
 			"cover_radius": float(physics.get("cover_radius_cells", 0.0)) * bucket_size,
 			"opacity": float(physics.get("opacity", 0.0)),
 			"move_cost": float(physics.get("move_cost", 1.0)),
-			"slot": 0 if slots.is_empty() else int(slots[random.randi_range(0, slots.size() - 1)]),
+			"slot": slot,
 			"scale": float(scales.get(kind, 1.0)), "level": terrain.get_height_at_index(index)})
 
 func add_object(entry: Dictionary) -> void:
@@ -96,20 +105,24 @@ static func intersects_rect(a: Vector2, b: Vector2, rect: Rect2) -> bool:
 				return false
 	return true
 
-## Whether a body of `radius` passes from `a` to `b` over the ground: no blocked cell on the way and
-## no step too high. For sight (`sight`), a river blocks nothing: an animal sees across the water.
-func terrain_clear(a: Vector2, b: Vector2, radius: float, sight: bool = false) -> bool:
+## Whether a body of `radius` passes from `a` to `b` over the ground: no blocked cell on the way,
+## no pond's water (`TerrainSystem.pond_clear_at()`, unless `ponds` is false) and no step too high.
+## For sight (`sight`), a river or a pond blocks nothing: an animal sees across the water.
+func terrain_clear(a: Vector2, b: Vector2, radius: float, sight: bool = false, ponds: bool = true) -> bool:
 	var bounds := Rect2(Vector2.ZERO, terrain.world_size).grow(-radius - 0.01)
 	if not bounds.has_point(a) or not bounds.has_point(b):
 		return false
 	var area := segment_bounds(a, b, radius)
 	var low := Vector2i((area.position / terrain.cell_size).floor())
 	var high := Vector2i((area.end / terrain.cell_size).floor())
+	var wet := ponds and not sight and terrain.ponds_solid
 	for y in range(maxi(0, low.y), mini(terrain.rows - 1, high.y) + 1):
 		for x in range(maxi(0, low.x), mini(terrain.cols - 1, high.x) + 1):
 			var index: int = y * terrain.cols + x
-			if not terrain.is_walkable_index(index) and not (sight and terrain.is_water_index(index)) \
+			if not terrain.is_ground_index(index) and not (sight and terrain.is_water_index(index)) \
 					and intersects_rect(a, b, terrain.get_cell_rect(index).grow(radius)):
+				return false
+			if wet and not terrain.pond_clear_at(index, a, b, radius):
 				return false
 	var previous := terrain.get_index_from_position(a)
 	var steps := maxi(1, int(ceil(a.distance_to(b) / (terrain.cell_size * 0.25))))
@@ -120,7 +133,8 @@ func terrain_clear(a: Vector2, b: Vector2, radius: float, sight: bool = false) -
 		previous = index
 	return true
 
-func segment_clear(a: Vector2, b: Vector2, radius: float = 0.0) -> bool:
+## `ponds` false leaves the ponds' water out, for what is remembered while their edges move.
+func segment_clear(a: Vector2, b: Vector2, radius: float = 0.0, ponds: bool = true) -> bool:
 	var ai := terrain.get_index_from_position(a)
 	var bi := terrain.get_index_from_position(b)
 	var short_move := ai >= 0 and ai == bi and radius + max_extent < terrain.cell_size
@@ -131,8 +145,9 @@ func segment_clear(a: Vector2, b: Vector2, radius: float = 0.0) -> bool:
 	var safe_cell := false
 	if short_move and radius * 2.0 + 0.02 < terrain.cell_size:
 		var inset := terrain.get_cell_rect(ai).grow(-radius - 0.01)
-		safe_cell = terrain.is_walkable_index(ai) and inset.has_point(a) and inset.has_point(b)
-	if not safe_cell and not terrain_clear(a, b, radius):
+		safe_cell = terrain.is_walkable_index(ai) and not terrain.is_near_pond_index(ai) \
+			and inset.has_point(a) and inset.has_point(b)
+	if not safe_cell and not terrain_clear(a, b, radius, false, ponds):
 		return false
 	var nearby: Array
 	if short_move:
@@ -180,6 +195,10 @@ func resolve_motion(a: Vector2, b: Vector2, radius: float) -> Vector2:
 		if float(entry.get("radius", 0.0)) <= 0.0:
 			continue
 		var normal: Vector2 = (contact - entry.position).normalized()
+		candidates.append(remainder - normal * minf(0.0, remainder.dot(normal)))
+	# Along a pond's shore, as along a trunk.
+	for center in terrain.pond_centres_near(contact):
+		var normal: Vector2 = (contact - center).normalized()
 		candidates.append(remainder - normal * minf(0.0, remainder.dot(normal)))
 	for displacement in candidates:
 		var candidate := contact + displacement
@@ -244,8 +263,11 @@ func local_path(a: Vector2, b: Vector2, radius: float) -> PackedVector2Array:
 			var point := grid.get_point_position(key)
 			var cache_key := Vector3i(x, y, int(ceil(radius * 100.0)))
 			if not _point_cache.has(cache_key):
-				_point_cache[cache_key] = not segment_clear(point, point, radius + spacing * 0.15)
-			grid.set_point_solid(key, _point_cache[cache_key])
+				_point_cache[cache_key] = not segment_clear(point, point, radius + spacing * 0.15, false)
+			# The water as it is now: a pond's edge moves too often to remember.
+			var solid: bool = _point_cache[cache_key] or not terrain.pond_clear_at(
+				terrain.get_index_from_position(point), point, point, radius + spacing * 0.15)
+			grid.set_point_solid(key, solid)
 	var start := Vector2i((a / spacing).floor())
 	var end := Vector2i((b / spacing).floor()).clamp(origin + Vector2i.ONE, origin + Vector2i(23, 23))
 	end = _nearest_open_local_point(grid, end, origin)
