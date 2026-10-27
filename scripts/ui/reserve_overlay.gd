@@ -33,6 +33,12 @@ var story = null
 ## What the admin must see - a chat that is not being read («Telegram: неверный токен бота») - in
 ## red under the title.
 var problems: Array = []
+## The reserve on a phone: the title, where the rules are (or the commands when asked), an open
+## vote and the latest line - no tables, no counts - and no wider than the canvas.
+var compact := false:
+	set(value):
+		compact = value
+		refresh()
 ## The card the panel must stop above while it is shown (the selected animal's), or null.
 var avoid: Control = null
 var _box: VBoxContainer
@@ -136,7 +142,7 @@ func refresh() -> void:
 	_hint.text = "" if helping else str(session.config.get("overlay", {}).get("hint", HINT))
 	_help.visible = helping
 	var page := int(Time.get_ticks_msec() / (PAGE_SECONDS * 1000.0))
-	var table := "" if helping else ReserveRecords.page_text(page, world, story, session,
+	var table := "" if helping or compact else ReserveRecords.page_text(page, world, story, session,
 		story.calendar() if story != null else [120.0, 4])
 	# Its first line is its title, set apart as the help's «Пишите в чат:» is.
 	_table_title.text = table.get_slice("\n", 0)
@@ -145,10 +151,14 @@ func refresh() -> void:
 	for ward in world.adoptions.values():
 		if float(ward.get("died_at", -1.0)) < 0.0:
 			living += 1
-	_wards.text = "" if living == 0 else "Под опекой %d %s" % [living, HudText.plural(living, ["зверь", "зверя", "зверей"])]
-	_funds.text = funds_text(session)
+	_wards.text = "" if living == 0 or compact else "Под опекой %d %s" % [living, HudText.plural(living, ["зверь", "зверя", "зверей"])]
+	_funds.text = "" if compact else funds_text(session)
+	# On a phone the latest line only.
+	var shown_lines: Array = _told.slice(_told.size() - 1) if compact else _told
 	for index in range(MAX_LINES):
-		_lines[index].text = str(_told[index]) if index < _told.size() else ""
+		_lines[index].text = str(shown_lines[index]) if index < shown_lines.size() else ""
+	if is_inside_tree():
+		custom_minimum_size.x = minf(WIDTH, get_viewport_rect().size.x - 24.0) if compact else WIDTH
 	_fit()
 
 
@@ -170,10 +180,13 @@ func _fit() -> void:
 	droppable.append_array([_funds, _wards, _table if _table.visible else _help])
 	for control in droppable:
 		if _height() <= room:
-			return
+			break
 		control.visible = false
 		if control == _table:
 			_table_title.visible = false
+	# A container grows with what it holds but does not shrink back by itself.
+	if size.y > _height() + 1.0:
+		reset_size()
 
 
 ## How tall the panel may be: down to `avoid`'s top while it is shown, else to the screen's foot.

@@ -62,11 +62,11 @@ const POWER_KEYS := {"dig_pond": ["power_dig", KEY_Q], "lead_herd": ["power_lead
 ## more, on a fanless laptop.
 const RESERVE_FPS := 60
 ## The reserve standing upright, for viewers on phones (`set_reserve_portrait`): the canvas its
-## panels are laid out on, 9:16.
-const PORTRAIT_CANVAS := Vector2i(720, 1280)
-## Clear of the selected animal's card on a canvas that narrow: the minimap's and the feed's left
-## edge, from the right.
-const PORTRAIT_COLUMN_LEFT := -360.0
+## panels are laid out on, 9:16 - small, so that on a phone's width the type and the animals are
+## large.
+const PORTRAIT_CANVAS := Vector2i(540, 960)
+## How long the pointer may rest before it is hidden from the stream.
+const POINTER_IDLE_MSEC := 2000
 
 var hud_visible: bool = false;
 var _hud_visible_before_pause: bool = false
@@ -111,7 +111,8 @@ var stream_settings_path := StreamSettings.PATH
 ## Whether the reserve stands upright (`set_reserve_portrait`), and the canvas it had lying down.
 var reserve_portrait := false
 var _landscape_canvas := Vector2i(1600, 900)
-var _column_left := -376.0
+## When the pointer last moved over the reserve's window.
+var _pointer_moved_at := 0
 ## Where the right column's cards stand lying down (their top), from the scene.
 var _cards_top := 232.0
 var _director: ReserveDirector = null
@@ -131,7 +132,6 @@ func _ready() -> void:
 	_apply_ui_theme()
 	_climate_offsets = Vector2(climate_indicator.offset_left, climate_indicator.offset_right)
 	_landscape_canvas = get_window().content_scale_size
-	_column_left = minimap.offset_left
 	_cards_top = epitaph_card.offset_top
 	_strip_offsets = Vector2(ecology_strip.offset_left, ecology_strip.offset_right)
 	# Before the first frame, so the window opens at the size and scale the player left it.
@@ -368,7 +368,6 @@ func _start_reserve(fresh: bool) -> void:
 	var stream_settings := StreamSettings.load_settings(stream_settings_path)
 	_stream_chats.start(stream_settings)
 	_keep_running_unseen()
-	set_reserve_portrait(bool(stream_settings.get("view", {}).get("portrait", false)))
 	_director = ReserveDirector.new()
 	_director.configure(simulation_manager, world_camera, reserve_session, config)
 	_reserve_overlay = ReserveOverlay.new()
@@ -395,10 +394,23 @@ func _start_reserve(fresh: bool) -> void:
 	# The reserve is the one world of this window: no new one over its viewers from the pause menu.
 	restart_button.visible = false
 	_sync_player_bar()
+	# Last, once every panel it lays out is there.
+	set_reserve_portrait(bool(stream_settings.get("view", {}).get("portrait", false)))
+
+
+## The pointer over the reserve: shown while it moves, hidden from the stream when it rests.
+func _input(event: InputEvent) -> void:
+	if reserve_session != null and event is InputEventMouseMotion:
+		_pointer_moved_at = Time.get_ticks_msec()
+		if Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 ## The reserve's chat, votes and camera, once a frame.
 func _tick_reserve() -> void:
+	if Input.mouse_mode == Input.MOUSE_MODE_VISIBLE and Time.get_ticks_msec() - _pointer_moved_at > POINTER_IDLE_MSEC \
+			and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
 	for message in _viewer_link.poll():
 		reserve_session.hear(message)
 	for message in _stream_chats.poll():
@@ -510,20 +522,29 @@ func _keep_running_unseen() -> void:
 	Engine.max_fps = RESERVE_FPS
 
 
-## The reserve upright or lying down («Картинка» in «Трансляция», F10 while it runs). Upright, the
-## window stands 9:16 at the height of the screen and the panels are laid out on `PORTRAIT_CANVAS`:
-## the season and the species line at the top, the reserve's panel under them, the selected
-## animal's card and the minimap side by side at the foot (`_layout_hud`). Viewers on a phone see
-## it whole - a video chat's shared window, or OBS at 1080x1920.
+## The reserve upright or lying down («Картинка» in «Трансляция», F10 while it runs). Upright it
+## is laid out for a phone: the window stands 9:16 at the height of the screen with no frame or
+## title, the canvas small (`PORTRAIT_CANVAS`) so the type and the animals are large, and only
+## what reads on a phone is shown - the season and the species line at the top, the reserve's
+## panel cut to its commands and votes, a short card of the animal on screen at the foot; no
+## minimap, no feed, no tag over the animal (`_layout_reserve`). Viewers see it whole in a video chat's shared window, or
+## in OBS at 1080x1920.
 func set_reserve_portrait(on: bool) -> void:
 	reserve_portrait = on
 	var window := get_window()
 	window.content_scale_size = PORTRAIT_CANVAS if on else _landscape_canvas
 	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND if on else Window.CONTENT_SCALE_ASPECT_KEEP
-	for column in [minimap, story_feed]:
-		column.offset_left = PORTRAIT_COLUMN_LEFT if on else _column_left
+	selection_card.compact = on
+	ecology_strip.compact = on
+	if _reserve_overlay != null:
+		_reserve_overlay.compact = on
+	minimap.visible = not on
+	story_feed.visible = not on
+	# The card at the foot says what the tag over the animal would, and the tag hid the herd.
+	selection_tag.visible = not on
 	if DisplayServer.get_name() == "headless":
 		return
+	window.borderless = on
 	if on:
 		if window.mode != Window.MODE_WINDOWED:
 			window.mode = Window.MODE_WINDOWED
@@ -937,6 +958,10 @@ func _layout_hud() -> void:
 func _layout_reserve() -> void:
 	if _reserve_overlay == null:
 		return
+	if reserve_portrait:
+		minimap.visible = false
+		story_feed.visible = false
+		selection_tag.visible = false
 	var panel_top := 12.0
 	if reserve_portrait and ecology_strip.visible:
 		panel_top = ecology_strip.get_global_rect().end.y + 8.0

@@ -46,6 +46,14 @@ var _capacity: Dictionary = {}
 var _capacity_world: Object = null
 ## The whole table (true) or the one line (false).
 var expanded: bool = false
+## The reserve on a phone: the species and their numbers only, no grass and no table; names dropped
+## too when even that is wider than the strip.
+var compact := false:
+	set(value):
+		compact = value
+		if compact and expanded:
+			set_expanded(false)
+		queue_redraw()
 ## Where the folded line was drawn, which is where it takes clicks.
 var _folded_box := Rect2()
 
@@ -68,6 +76,8 @@ func set_expanded(value: bool) -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
+	if compact:
+		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		set_expanded(not expanded)
 		accept_event()
@@ -266,7 +276,7 @@ func _folded_pieces(font: Font, font_size: int, shown: Dictionary) -> Array:
 		var species_id: String = row["id"]
 		pieces.append(["swatch", x, _colors.get(species_id, INK)])
 		x += SWATCH + 5.0
-		var text := "%s %d" % [species_name(species_id), int(row["population"])]
+		var text := str(int(row["population"])) if shown.has("numbers_only") else "%s %d" % [species_name(species_id), int(row["population"])]
 		pieces.append(["text", x, text, LEVEL_INK[row_level(row, _hunted.get(species_id, true))]])
 		x += font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
 		if int(row["trend"]) != 0:
@@ -274,6 +284,15 @@ func _folded_pieces(font: Font, font_size: int, shown: Dictionary) -> Array:
 			x += ARROW + 4.0
 		pieces.append(["text", x, separator, INK_DIM])
 		x += separator_width
+	if compact:
+		pieces.pop_back()
+		x -= separator_width
+		if x + PADDING * 2.0 > size.x and not shown.has("numbers_only"):
+			var bare := shown.duplicate()
+			bare["numbers_only"] = true
+			return _folded_pieces(font, font_size, bare)
+		pieces.append(["end", x])
+		return pieces
 	var grass := grass_summary(shown.get("grass", []))
 	pieces.append(["text", x, str(grass["text"]), LEVEL_INK[int(grass["level"])]])
 	x += font.get_string_size(str(grass["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x

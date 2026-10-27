@@ -244,6 +244,16 @@ func _test_the_overlay_text(a) -> void:
 	session.help_asked_at = -INF
 	a.is_true(ReserveOverlayScript.help_shown(session), "and at the start of every five minutes (%.1f s)" % session.now())
 	a.equal([ReserveOverlayScript.clock(59.2), ReserveOverlayScript.clock(125.0)], ["1:00", "2:05"], "the clock")
+	var panel = ReserveOverlayScript.new()
+	panel.bind(session)
+	session.help_asked_at = -INF
+	session.config["overlay"] = {"help_every_seconds": 0.0, "help_seconds": 20.0}
+	panel.refresh()
+	var full_has_funds: bool = panel._funds.text != ""
+	panel.compact = true
+	a.is_true(full_has_funds and panel._funds.text == "" and panel._table.text == "" and panel._wards.text == ""
+		and panel._hint.text != "", "on a phone: where the rules are, no tables, no counts")
+	panel.free()
 	Helpers.destroy_manager(manager)
 
 

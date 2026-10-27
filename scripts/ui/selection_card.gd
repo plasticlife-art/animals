@@ -34,6 +34,11 @@ const BAR_SPACING := 8.0
 const VALUE_COLUMN := 74.0
 
 var simulation_manager: SimulationManager
+## The short card of the reserve on a phone: the name, the bars and what it does, no more.
+var compact := false:
+	set(value):
+		compact = value
+		refresh()
 ## The world's names and family tree (`StoryBook`); without it the card shows numbers.
 var story = null
 ## The reason said for the animal on the card (`WhyText`). A switch's words - what it dropped,
@@ -254,10 +259,22 @@ func refresh() -> void:
 	if pin_button != null:
 		_show_pin(agent)
 	if action_label != null:
-		action_label.text = "%s  ·  %s" % [AgentReadout.action_label(agent), HudText.state_label(agent.state)]
+		var doing: String = AgentReadout.action_label(agent)
+		var state: String = HudText.state_label(agent.state)
+		# «Бродит · бродит» says it once.
+		action_label.text = doing if doing.to_lower() == state.to_lower() else "%s  ·  %s" % [doing, state]
 	if why_label != null:
 		why_label.text = why_line(agent)
 		why_label.visible = why_label.text != ""
+	var buttons: Control = follow_button.get_parent() if follow_button != null else null
+	if compact:
+		for row in [why_label, family_text, traits_label, buttons]:
+			if row != null:
+				row.visible = false
+	else:
+		for row in [family_text, buttons]:
+			if row != null:
+				row.visible = true
 	_vitals = AgentReadout.vitals(agent)
 	if bars_view != null:
 		bars_view.queue_redraw()
