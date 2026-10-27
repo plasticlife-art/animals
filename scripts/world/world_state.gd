@@ -2000,7 +2000,7 @@ func _settle_pond_cells(cells: PackedInt32Array, move_animals: bool) -> void:
 	var reach := _grass_local_reach_cells + 1
 	for index in cells:
 		if terrain_system.is_walkable_index(index):
-			resource_system.uncover_cell(index)
+			resource_system.uncover_cell(index, terrain_system.pond_bed_grass)
 		else:
 			resource_system.drown_cell(index)
 		# The reach from any cell near enough to have walked through this one.

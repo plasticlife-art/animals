@@ -399,9 +399,9 @@ func drown_cell(index: int) -> void:
 	_set_cell(index, 0.0)
 
 
-## Cell `index` out of the water again: it greens over from stubble.
-func uncover_cell(index: int) -> void:
-	_set_cell(index, _get_cell_max_biomass(index) * stubble_fraction)
+## Cell `index` out of the water again: it greens over from `share` of its cap, or the stubble.
+func uncover_cell(index: int, share: float = 0.0) -> void:
+	_set_cell(index, _get_cell_max_biomass(index) * maxf(stubble_fraction, share))
 
 
 func _set_cell(index: int, biomass: float) -> void:

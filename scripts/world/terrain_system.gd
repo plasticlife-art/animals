@@ -90,6 +90,11 @@ var _ford_cost: float = 1.0
 ## for a body in it to reach their water. Off (`enabled` false), the ponds lie on open ground, as
 ## they always did.
 var ponds_solid: bool = false
+## The share of its cap a pond's bed comes out of the water with (`bed_grass`), the stubble at
+## least; and how much richer the ground within `shore_cells` of a bank grows (`shore_forage`).
+var pond_bed_grass: float = 0.0
+var _pond_shore_cells: float = 0.0
+var _pond_shore_forage: float = 1.0
 var _pond_route_margin: float = 0.0
 var _pond_hysteresis: float = 0.0
 var _pond_wade: float = 0.5
@@ -97,6 +102,7 @@ var _ponds: Dictionary = {}
 var _flooded: PackedByteArray = PackedByteArray()
 var _near_ponds: PackedByteArray = PackedByteArray()
 var _bank_ponds: Dictionary = {}
+var _shore_cells: Dictionary = {}
 ## Raised each time water covers ground: a route found before may run through it now.
 var flood_epoch: int = 0
 
@@ -148,10 +154,14 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_pond_route_margin = float(pond_config.get("route_margin_cells", 0.25)) * cell_size
 	_pond_hysteresis = maxf(0.0, float(pond_config.get("hysteresis_cells", 0.1))) * cell_size
 	_pond_wade = clampf(float(pond_config.get("wade", 0.5)), 0.0, 1.0)
+	pond_bed_grass = clampf(float(pond_config.get("bed_grass", 0.0)), 0.0, 1.0)
+	_pond_shore_cells = maxf(0.0, float(pond_config.get("shore_cells", 0.0)))
+	_pond_shore_forage = maxf(0.0, float(pond_config.get("shore_forage", 1.0)))
 	_ponds.clear()
 	_flooded = PackedByteArray()
 	_near_ponds = PackedByteArray()
 	_bank_ponds.clear()
+	_shore_cells.clear()
 	flood_epoch = 0
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
@@ -998,9 +1008,16 @@ func _closest_point_on_segment(point: Vector2, segment_start: Vector2, segment_e
 func _store_path_cache_entry(cache_key: Vector2i, result: Dictionary, state: Dictionary = {}) -> void:
 	if _path_cache.has(cache_key):
 		return
-	# Dated by when the search began: water that rose while it ran may lie across it.
+	# Dated by when the search began: water that rose while it ran may lie across it. A route
+	# that passes by no pond never needs looking at again.
 	if ponds_solid:
 		result["flood_epoch"] = int(state.get("flood_epoch", flood_epoch))
+		var by_ponds := false
+		for cell in result.get("cells", []):
+			if _near_ponds[int(cell)] > 0:
+				by_ponds = true
+				break
+		result["by_ponds"] = by_ponds
 	# Stored by reference, and `find_path_between_indices()` hands the same
 	# object back, so there is one rule for callers rather than two: never
 	# mutate a path result in place.
@@ -1095,8 +1112,9 @@ func add_pond(pond: int, center: Vector2, bank_radius: float) -> void:
 	if not ponds_solid or _ponds.has(pond):
 		return
 	# Near: a body in the cell may reach the water. Flooded: no route through the cell.
-	var near := bank_radius + cell_size
+	var near := maxf(bank_radius + cell_size, bank_radius + _pond_shore_cells * cell_size)
 	var reach := bank_radius + _pond_route_margin
+	var shore := bank_radius + _pond_shore_cells * cell_size
 	var low := Vector2i(((center - Vector2.ONE * near) / cell_size).floor())
 	var high := Vector2i(((center + Vector2.ONE * near) / cell_size).floor())
 	# Distance first and the index breaking a tie, so the order is the same on every run.
@@ -1107,6 +1125,11 @@ func add_pond(pond: int, center: Vector2, bank_radius: float) -> void:
 			var distance := get_cell_center(index).distance_to(center)
 			if distance > near:
 				continue
+			# The wet meadow round the water, once, however many banks it lies by.
+			if _pond_shore_forage != 1.0 and distance <= shore and not _shore_cells.has(index):
+				_shore_cells[index] = true
+				_forage_init_multipliers[index] *= _pond_shore_forage
+				_forage_regrowth_multipliers[index] *= _pond_shore_forage
 			_near_ponds[index] += 1
 			if not _bank_ponds.has(index):
 				_bank_ponds[index] = []
@@ -1211,7 +1234,8 @@ func _flood_to(entry: Dictionary, target: int) -> PackedInt32Array:
 
 
 func _route_still_dry(result: Dictionary) -> bool:
-	if not ponds_solid or int(result.get("flood_epoch", flood_epoch)) == flood_epoch:
+	if not ponds_solid or not bool(result.get("by_ponds", true)) \
+			or int(result.get("flood_epoch", flood_epoch)) == flood_epoch:
 		return true
 	for cell in result.get("cells", []):
 		if not is_walkable_index(int(cell)):

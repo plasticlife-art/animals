@@ -265,11 +265,14 @@
       "seed": 0
     },
     "ponds": {
-      "_comment": "Ponds on the ground (`TerrainSystem.flood_pond()`): where a pond holds water there is no ground to walk on and nothing to graze, and as its level falls the bed comes out and greens over from stubble. A body keeps out of the water's round edge as it is now, wading in `wade` of its radius at most; routes keep out of the cells whose centre lies within `route_margin_cells` of it, and a cell comes out of the water only `hysteresis_cells` further. Animals drink from the shore nearest them; one the rising water reaches steps out onto it. Nothing grows in a pond's bed, full or not. Off while `enabled` is false: the ponds lie on open ground, walked and grazed through.",
+      "_comment": "Ponds on the ground (`TerrainSystem.flood_pond()`): where a pond holds water there is no ground to walk on and nothing to graze. A body keeps out of the water's round edge as it is now, wading in `wade` of its radius at most; routes keep out of the cells whose centre lies within `route_margin_cells` of it, and a cell comes out of the water only `hysteresis_cells` further. Animals drink from the nearest spot on the shore they can stand on; one the rising water reaches steps out onto it. Nothing grows in a pond's bed, full or not; a bed coming out of the water greens over at `bed_grass` of its cap, and the ground within `shore_cells` of a bank is a wet meadow growing `shore_forage` times as much. Off while `enabled` is false: the ponds lie on open ground, walked and grazed through. On LOD 1440 s x 8 seeds against the same worlds without it: deer late mean 340 against 327, at the end 249 against 251, births 566 against 585, foxes, grouse and hares even, no species lost; without the meadow and the beds, 292 and 196 (the herds had grazed the ponds' middles by the water); with a meadow of 1.5, 379.",
       "enabled": true,
-      "route_margin_cells": 0.25,
+      "route_margin_cells": 0.0,
       "hysteresis_cells": 0.1,
-      "wade": 0.5
+      "wade": 0.5,
+      "bed_grass": 0.5,
+      "shore_cells": 2.0,
+      "shore_forage": 1.25
     },
     "height": {
       "levels": 4,

@@ -186,21 +186,27 @@ for bit the one without the block; the test fixtures keep it off (`PondTests` sw
   radii of 180-280), so the water is kept twice. A body keeps out of the water's round edge as it
   is now (`TerrainSystem.pond_clear_at()`, read by `ScenerySystem.terrain_clear()`), wading in
   `wade` (half) of its radius at most, and slides along the shore as along a trunk
-  (`resolve_motion()`). A route keeps out of the cells whose centre lies within
-  `route_margin_cells` of the edge (`flood_pond()`: flooded, not walkable), so no waypoint falls
-  in the water; the ground under a flooded cell is still ground to a body (`is_ground_index()`),
-  so a body may stand on its dry corner. Sight crosses a pond.
+  (`resolve_motion()`). A route keeps out of the cells whose centre lies in the water, or within
+  `route_margin_cells` of it (`flood_pond()`: flooded, not walkable; none shipped, as a waypoint a
+  hair inside still counts as reached within 0.42 of a cell); the ground under a flooded cell is
+  still ground to a body (`is_ground_index()`), so a body may stand on its dry corner. Sight
+  crosses a pond.
 - **The level.** Every tick `WorldState.lay_pond_water()` lays each pond's water out to its
   `radius`: as the level falls the outer cells come out, nearest the centre last, and only
   `hysteresis_cells` past where they went under, so a pond drunk down while it rains does not
   flicker. Each pond keeps its cells in order of distance, and `flooded` of them are under, so a
   tick costs what changed.
 - **What changes with a cell.** `_settle_pond_cells()`: the grass goes under with it
-  (`ResourceSystem.drown_cell()`) and greens back from stubble where the water left
-  (`uncover_cell()`); the walking reach about it is forgotten (`_walk_reachable_cache`); the
+  (`ResourceSystem.drown_cell()`) and the bed comes out at `bed_grass` (half) of its cap
+  (`uncover_cell()`), wet soil greening fast; the walking reach about it is forgotten (`_walk_reachable_cache`); the
   neighbour lists about it are made again; and an animal the water rose about steps out to the
   nearest free spot on the shore. A route remembered from before the water rose is checked cell by
-  cell before it is handed out again (`flood_epoch`, dated by when its search began).
+  cell before it is handed out again (`flood_epoch`, dated by when its search began), unless it
+  passes by no pond.
+- **Wet meadows.** The ground within `shore_cells` (2) of a bank grows `shore_forage` (1.25) times
+  the grass, sown and regrowing (`add_pond()` scales the cell's forage multipliers once). The
+  ponds' middles had been the pasture by the water: without them, sleeping herds drinking crowded
+  onto the shore, grazed it bare after the summer's drying, and bore fewer young.
 - **Drinking.** An awake drinker walks to the shore on its side (`WorldState.water_approach()`:
   the way a sixteenth of a turn at a time and the edge a quarter cell at a time, so the goal holds
   while it walks) and drinks within `drink_distance` of the edge as before. A sleeping group
@@ -217,10 +223,19 @@ for bit the one without the block; the test fixtures keep it off (`PondTests` sw
   world lays the water from the frames' levels and leaves its animals to the frames.
 - **Measured** on the large map, seed 1, 30 s at full fidelity: animals standing in a pond's water
   (centre deeper than its body radius) 324 of 6979 samples before, none after; trees and stones in
-  a pond's bed 274 before, 18 after (on the waterline, by their jitter). About 1150 of the 12750
-  cells are out of routes with every pond full. With the block off the world is bit for bit HEAD's
-  (`ecology_audit` 3 off 300 and 1 lod 600, `compare_reports --strict`). Balance over many seeds
-  is still to be measured.
+  a pond's bed 274 before, 18 after (on the waterline, by their jitter). With the block off the
+  world is bit for bit HEAD's (`ecology_audit` 3 off 300 and 1 lod 600, `compare_reports
+  --strict`). On LOD 1440 s × 8 seeds against the same worlds without the block:
+
+  | Variant | Deer, late mean | Deer at the end | Deer births | Deer dead of thirst |
+  |---|---|---|---|---|
+  | Without | 327 | 251 | 585 | 21 |
+  | Ponds alone (margin 0.25, beds from stubble) | 292 | 196 (↓) | 518 (↓) | 29 (↑) |
+  | Margin 0, beds at half | 313 | 214 (↓) | 540 | 26 (↑) |
+  | Meadows × 1.5 | 379 (↑) | 297 | 643 | 29 |
+  | Meadows × 1.25 (shipped) | 340 | 249 | 566 | 23 |
+
+  Foxes, grouse and hares were even in every variant, and no species was lost.
 
 ### `ScenerySystem`
 
