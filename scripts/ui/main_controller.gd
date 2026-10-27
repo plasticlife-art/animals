@@ -58,6 +58,9 @@ const CHIP_ROW_HEIGHT := 32.0
 const SCENARIO_FRAME := Vector2(1800.0, 1100.0)
 ## Each power's input action and its key by place on the keyboard.
 const POWER_KEYS := {"dig_pond": ["power_dig", KEY_Q], "lead_herd": ["power_lead", KEY_E], "cull": ["power_cull", KEY_R]}
+## The reserve's frames a second, V-Sync off (`_keep_running_unseen`): what OBS takes, and no
+## more, on a fanless laptop.
+const RESERVE_FPS := 60
 
 var hud_visible: bool = false;
 var _hud_visible_before_pause: bool = false
@@ -346,6 +349,7 @@ func _start_reserve(fresh: bool) -> void:
 	_stream_chats = StreamChats.new()
 	add_child(_stream_chats)
 	_stream_chats.start(StreamSettings.load_settings())
+	_keep_running_unseen()
 	_director = ReserveDirector.new()
 	_director.configure(simulation_manager, world_camera, reserve_session, config)
 	_reserve_overlay = ReserveOverlay.new()
@@ -468,6 +472,20 @@ func _show_start_menu(continue_available: bool) -> void:
 	world_camera.set_input_enabled(false)
 	minimap.set_input_enabled(false)
 	simulation_manager.set_paused(true)
+
+
+## The reserve goes on drawing while the admin is in OBS. On a Mac a full-screen window is a desktop
+## of its own, which is not drawn while another is shown - the stream froze the moment OBS was
+## brought up - so the reserve starts in a window filling the screen instead (F11 still switches).
+## A window merely covered goes on (measured: ~56 frames a second under another). V-Sync off,
+## the frames held at `RESERVE_FPS` by the engine, so no hidden window waits on a display.
+func _keep_running_unseen() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	if OS.get_name() == "macOS" and get_window().mode in [Window.MODE_FULLSCREEN, Window.MODE_EXCLUSIVE_FULLSCREEN]:
+		get_window().mode = Window.MODE_MAXIMIZED
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = RESERVE_FPS
 
 
 ## «Трансляция»: the setup over the start menu's place; it goes back to the menu or starts the

@@ -390,6 +390,7 @@ static func obs_steps(system: String, title: String, chats: Array) -> String:
 	else:
 		steps.append("Внизу в «Источниках» нажмите «+» → «Захват окна» → в списке «Окно» выберите то, где написано «%s». Если картинка чёрная — в свойствах источника поставьте «Метод захвата: Windows 10 (1903 и новее)»." % title)
 	steps.append("Настройки → Видео: базовое и выходное разрешение 1920×1080, 30 кадров в секунду. Источник растяните на весь холст (правая кнопка → Преобразовать → Растянуть по экрану).")
+	steps.append("Настройки → Вывод → режим «Расширенный» → Потоковое вещание: кодировщик x264 (или Apple VT H264), управление битрейтом CBR, битрейт 4500 Кбит/с, интервал ключевых кадров 2 с. Звук: AAC, 160 Кбит/с.")
 	var where: Array = chats if not chats.is_empty() else ["telegram", "twitch", "youtube"]
 	if where.has("telegram"):
 		steps.append("Telegram: в группе нажмите «Трансляция» (значок видеочата) → «Начать с помощью…». Telegram покажет «URL сервера» и «Ключ трансляции». В OBS: Настройки → Трансляция → Сервис «Настраиваемый…», вставьте оба.")
@@ -397,7 +398,10 @@ static func obs_steps(system: String, title: String, chats: Array) -> String:
 		steps.append("Twitch: Настройки → Трансляция → Сервис «Twitch» → «Подключить аккаунт» (или ключ из Панели автора → Настройки → Трансляция).")
 	if where.has("youtube"):
 		steps.append("YouTube: Настройки → Трансляция → Сервис «YouTube» → «Подключить аккаунт» (или ключ из YouTube Studio → «Начать трансляцию»).")
-	steps.append("Окно игры не сворачивайте — свёрнутое окно не рисуется. Удобно держать его на втором мониторе; другие окна поверх не мешают%s." % (" только в «Захвате окна»" if system == "macOS" else ""))
+	if system == "macOS":
+		steps.append("Игру держите в окне, не во весь экран: полноэкранная игра на Mac — отдельный рабочий стол, и пока вы в OBS, она не рисуется. Заповедник сам запускается в окне на весь экран. Окна поверх игры не мешают; сворачивать её нельзя.")
+	else:
+		steps.append("Окно игры не сворачивайте — свёрнутое окно не рисуется. Окна поверх игры не мешают.")
 	steps.append("Запустите заповедник (шаг 3), затем в OBS «Начать трансляцию»%s." % (", потом в Telegram «Начать трансляцию»" if where.has("telegram") else ""))
 	var lines: Array = []
 	for index in range(steps.size()):
@@ -410,8 +414,8 @@ static func obs_steps(system: String, title: String, chats: Array) -> String:
 func _build_start() -> VBoxContainer:
 	var page := _page()
 	_summary = _text(page, "")
-	_text(page, "Окно игры можно развернуть во весь экран клавишей F11. Пауза, скорость и Esc работают как обычно; "
-		+ "мир сохраняется каждые две минуты в свои слоты.", SMALL_SIZE)
+	_text(page, "Заповедник открывается в окне на весь экран: так OBS видит его, даже пока вы в других окнах. "
+		+ "Пауза, скорость и Esc работают как обычно; мир сохраняется каждые две минуты в свои слоты.", SMALL_SIZE)
 	var row := _row(page)
 	_continue = _button(row, "Продолжить мир", func() -> void: _start(false))
 	_continue.size_flags_horizontal = Control.SIZE_EXPAND_FILL
