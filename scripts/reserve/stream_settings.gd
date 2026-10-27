@@ -15,6 +15,8 @@ const DEFAULTS := {
 		"rules_gap_seconds": 60.0, "poll_seconds": 25},
 	"twitch": {"enabled": false, "channel": "", "oauth_token": "", "nick": ""},
 	"youtube": {"enabled": false, "api_key": "", "video_id": "", "min_interval_seconds": 8.0},
+	## The picture: upright 9:16 for viewers on phones, or lying down 16:9.
+	"view": {"portrait": false},
 }
 
 

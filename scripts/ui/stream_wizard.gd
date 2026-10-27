@@ -7,8 +7,10 @@ extends CenterContainer
 ##    (`getMe`), and its groups found by reading what the bot hears («Найти группу») and picked
 ##    with a click. Twitch: the channel, checked by joining its chat. YouTube: the API key and the
 ##    live stream's link, checked by finding its chat.
-## 2. «OBS» - what to click in OBS, for a Mac or for Windows, the window's name to copy.
-## 3. «Запуск» - what is ready, then «Продолжить мир» or «Новый мир» (`start_requested`).
+## 2. «OBS» - what to click in OBS, for a Mac or for Windows, the window's name to copy; or, with
+##    no OBS, the game's window shared in a Telegram video chat.
+## 3. «Запуск» - what is ready, the picture upright (9:16, for phones) or lying down, then
+##    «Продолжить мир» or «Новый мир» (`start_requested`).
 ## Every change is written at once (`StreamSettings`); the keys stay in the game's folder for its
 ## user. The game reads the chats itself while the reserve runs (`StreamChats`).
 
@@ -47,6 +49,7 @@ var _obs_text: Label
 var _obs_switch: Button
 var _summary: Label
 var _continue: Button
+var _portrait: Button
 var _telegram: TelegramChat
 var _twitch: TwitchChat
 var _youtube: YouTubeChat
@@ -373,7 +376,8 @@ func _build_obs() -> VBoxContainer:
 
 func _show_obs() -> void:
 	_obs_switch.text = "Подсказки для: %s (сменить)" % ("Mac" if obs_system == "macOS" else "Windows")
-	_obs_text.text = obs_steps(obs_system, window_title(), StreamSettings.ready_chats(settings))
+	_obs_text.text = obs_steps(obs_system, window_title(), StreamSettings.ready_chats(settings),
+		bool(settings.get("view", {}).get("portrait", false)))
 
 
 static func window_title() -> String:
@@ -381,17 +385,21 @@ static func window_title() -> String:
 
 
 ## What to click in OBS, step by step, for `system` ("macOS" or "Windows"), the stream going to
-## the platforms of `chats` (Telegram, Twitch, YouTube; all three when none is set up yet).
-static func obs_steps(system: String, title: String, chats: Array) -> String:
+## the platforms of `chats` (Telegram, Twitch, YouTube; all three when none is set up yet), the
+## canvas upright when `portrait`. Telegram first offers the way without OBS.
+static func obs_steps(system: String, title: String, chats: Array, portrait := false) -> String:
+	var where: Array = chats if not chats.is_empty() else ["telegram", "twitch", "youtube"]
+	var lead := ""
+	if where.has("telegram"):
+		lead = "Проще всего — без OBS: в группе Telegram начните видеочат, нажмите «Экран» и выберите окно «%s». Зрители смотрят прямо в группе, а команды пишут в её чат.\n\nС OBS (для Twitch, YouTube или трансляции Telegram «Начать с помощью…»):\n" % title
 	var steps: Array = ["Установите OBS Studio с obsproject.com и запустите."]
 	if system == "macOS":
 		steps.append("При первом запуске разрешите OBS запись экрана: Системные настройки → Конфиденциальность и безопасность → Запись экрана → включите OBS и перезапустите его.")
 		steps.append("Внизу в «Источниках» нажмите «+» → «Захват экрана macOS» → «Способ: Захват окна» → выберите окно «%s»." % title)
 	else:
 		steps.append("Внизу в «Источниках» нажмите «+» → «Захват окна» → в списке «Окно» выберите то, где написано «%s». Если картинка чёрная — в свойствах источника поставьте «Метод захвата: Windows 10 (1903 и новее)»." % title)
-	steps.append("Настройки → Видео: базовое и выходное разрешение 1920×1080, 30 кадров в секунду. Источник растяните на весь холст (правая кнопка → Преобразовать → Растянуть по экрану).")
+	steps.append("Настройки → Видео: базовое и выходное разрешение %s, 30 кадров в секунду. Источник растяните на весь холст (правая кнопка → Преобразовать → Растянуть по экрану)." % ("1080×1920 (вертикально)" if portrait else "1920×1080"))
 	steps.append("Настройки → Вывод → режим «Расширенный» → Потоковое вещание: кодировщик x264 (или Apple VT H264), управление битрейтом CBR, битрейт 4500 Кбит/с, интервал ключевых кадров 2 с. Звук: AAC, 160 Кбит/с.")
-	var where: Array = chats if not chats.is_empty() else ["telegram", "twitch", "youtube"]
 	if where.has("telegram"):
 		steps.append("Telegram: в группе нажмите «Трансляция» (значок видеочата) → «Начать с помощью…». Telegram покажет «URL сервера» и «Ключ трансляции». В OBS: Настройки → Трансляция → Сервис «Настраиваемый…», вставьте оба.")
 	if where.has("twitch"):
@@ -406,7 +414,7 @@ static func obs_steps(system: String, title: String, chats: Array) -> String:
 	var lines: Array = []
 	for index in range(steps.size()):
 		lines.append("%d. %s" % [index + 1, steps[index]])
-	return "\n".join(lines)
+	return lead + "\n".join(lines)
 
 
 # --- Step 3: start ----------------------------------------------------------------------------
@@ -414,7 +422,18 @@ static func obs_steps(system: String, title: String, chats: Array) -> String:
 func _build_start() -> VBoxContainer:
 	var page := _page()
 	_summary = _text(page, "")
-	_text(page, "Заповедник открывается в окне на весь экран: так OBS видит его, даже пока вы в других окнах. "
+	_portrait = Button.new()
+	_portrait.toggle_mode = true
+	_portrait.focus_mode = Control.FOCUS_NONE
+	_portrait.add_theme_font_size_override("font_size", TEXT_SIZE)
+	_portrait.toggled.connect(func(pressed: bool) -> void:
+		settings["view"]["portrait"] = pressed
+		_save()
+		_show_portrait())
+	page.add_child(_portrait)
+	_text(page, "Вертикальная картинка — для зрителей с телефонов: окно 9:16, панели друг под другом. "
+		+ "Во время эфира её переключает F10.", SMALL_SIZE)
+	_text(page, "Заповедник открывается в окне: так его видно, даже пока вы в других окнах. "
 		+ "Пауза, скорость и Esc работают как обычно; мир сохраняется каждые две минуты в свои слоты.", SMALL_SIZE)
 	var row := _row(page)
 	_continue = _button(row, "Продолжить мир", func() -> void: _start(false))
@@ -429,6 +448,13 @@ func _refresh_summary() -> void:
 		return
 	_summary.text = summary_text(settings)
 	_continue.visible = can_continue
+	_show_portrait()
+
+
+func _show_portrait() -> void:
+	var upright := bool(settings.get("view", {}).get("portrait", false))
+	_portrait.set_pressed_no_signal(upright)
+	_portrait.text = "Картинка: вертикальная 9:16, для телефонов" if upright else "Картинка: горизонтальная 16:9"
 
 
 ## What is ready, a line a chat: «Telegram: группы «Заповедник»», «Twitch: выключен»…

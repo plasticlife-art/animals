@@ -61,6 +61,12 @@ const POWER_KEYS := {"dig_pond": ["power_dig", KEY_Q], "lead_herd": ["power_lead
 ## The reserve's frames a second, V-Sync off (`_keep_running_unseen`): what OBS takes, and no
 ## more, on a fanless laptop.
 const RESERVE_FPS := 60
+## The reserve standing upright, for viewers on phones (`set_reserve_portrait`): the canvas its
+## panels are laid out on, 9:16.
+const PORTRAIT_CANVAS := Vector2i(720, 1280)
+## Clear of the selected animal's card on a canvas that narrow: the minimap's and the feed's left
+## edge, from the right.
+const PORTRAIT_COLUMN_LEFT := -360.0
 
 var hud_visible: bool = false;
 var _hud_visible_before_pause: bool = false
@@ -100,6 +106,14 @@ var _viewer_link: ViewerLink = null
 var _stream_chats: StreamChats = null
 ## «Трансляция» from the start menu: the reserve's chats, OBS and start.
 var stream_wizard: StreamWizard = null
+## Where the stream's settings are read from (`StreamSettings`); a capture points it elsewhere.
+var stream_settings_path := StreamSettings.PATH
+## Whether the reserve stands upright (`set_reserve_portrait`), and the canvas it had lying down.
+var reserve_portrait := false
+var _landscape_canvas := Vector2i(1600, 900)
+var _column_left := -376.0
+## Where the right column's cards stand lying down (their top), from the scene.
+var _cards_top := 232.0
 var _director: ReserveDirector = null
 var _reserve_overlay: ReserveOverlay = null
 var _ward_tags: WardTags = null
@@ -116,6 +130,9 @@ var _reserve_year: int = -1
 func _ready() -> void:
 	_apply_ui_theme()
 	_climate_offsets = Vector2(climate_indicator.offset_left, climate_indicator.offset_right)
+	_landscape_canvas = get_window().content_scale_size
+	_column_left = minimap.offset_left
+	_cards_top = epitaph_card.offset_top
 	_strip_offsets = Vector2(ecology_strip.offset_left, ecology_strip.offset_right)
 	# Before the first frame, so the window opens at the size and scale the player left it.
 	_settings = SettingsStore.load_settings()
@@ -348,8 +365,10 @@ func _start_reserve(fresh: bool) -> void:
 		push_warning("The reserve's chat port %s is taken: no viewers' lines will come in" % str(config.get("link", {})))
 	_stream_chats = StreamChats.new()
 	add_child(_stream_chats)
-	_stream_chats.start(StreamSettings.load_settings())
+	var stream_settings := StreamSettings.load_settings(stream_settings_path)
+	_stream_chats.start(stream_settings)
 	_keep_running_unseen()
+	set_reserve_portrait(bool(stream_settings.get("view", {}).get("portrait", false)))
 	_director = ReserveDirector.new()
 	_director.configure(simulation_manager, world_camera, reserve_session, config)
 	_reserve_overlay = ReserveOverlay.new()
@@ -363,6 +382,9 @@ func _start_reserve(fresh: bool) -> void:
 	_banner.theme = result_window.theme
 	$CanvasLayer.add_child(_banner)
 	_banner.bind(reserve_session)
+	# Under the chronicle: opened over the map, it is not to have the panel across its title.
+	for panel in [_reserve_overlay, _banner]:
+		$CanvasLayer.move_child(panel, chronicle_window.get_index())
 	_reserve_year = int(simulation_manager.world_state.climate.year)
 	# Over the weather and under every panel: the wards' names belong to the map.
 	_ward_tags = WardTags.new()
@@ -488,10 +510,36 @@ func _keep_running_unseen() -> void:
 	Engine.max_fps = RESERVE_FPS
 
 
+## The reserve upright or lying down («Картинка» in «Трансляция», F10 while it runs). Upright, the
+## window stands 9:16 at the height of the screen and the panels are laid out on `PORTRAIT_CANVAS`:
+## the season and the species line at the top, the reserve's panel under them, the selected
+## animal's card and the minimap side by side at the foot (`_layout_hud`). Viewers on a phone see
+## it whole - a video chat's shared window, or OBS at 1080x1920.
+func set_reserve_portrait(on: bool) -> void:
+	reserve_portrait = on
+	var window := get_window()
+	window.content_scale_size = PORTRAIT_CANVAS if on else _landscape_canvas
+	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND if on else Window.CONTENT_SCALE_ASPECT_KEEP
+	for column in [minimap, story_feed]:
+		column.offset_left = PORTRAIT_COLUMN_LEFT if on else _column_left
+	if DisplayServer.get_name() == "headless":
+		return
+	if on:
+		if window.mode != Window.MODE_WINDOWED:
+			window.mode = Window.MODE_WINDOWED
+		var usable := DisplayServer.screen_get_usable_rect(window.current_screen)
+		var height := int(usable.size.y * 0.94)
+		window.size = Vector2i(roundi(height * 9.0 / 16.0), height)
+		window.position = usable.position + (usable.size - window.size) / 2
+	else:
+		window.mode = Window.MODE_MAXIMIZED
+
+
 ## «Трансляция»: the setup over the start menu's place; it goes back to the menu or starts the
 ## reserve (`_start_reserve`).
 func _open_stream_wizard() -> void:
 	start_menu.visible = false
+	stream_wizard.settings_path = stream_settings_path
 	stream_wizard.open(SaveSystem.latest_slot(SaveSystem.KIND_RESERVE) != "")
 	_sync_overlay_blur()
 
@@ -732,6 +780,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	# F11 switches full screen whatever is up.
+	# F10 stands the reserve upright for phones, or lays it down again.
+	if reserve_session != null and event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_F10:
+		set_reserve_portrait(not reserve_portrait)
+		get_viewport().set_input_as_handled()
+		return
 	if _is_key(event, "toggle_fullscreen", KEY_F11):
 		_settings["fullscreen"] = not bool(_settings.get("fullscreen", false))
 		_on_settings_changed(_settings)
@@ -845,7 +899,10 @@ func _layout_hud() -> void:
 		goal_chips.fit(2.0 * minf(center - left, right - center))
 	# One card at a time in the right column: an epitaph waits, its countdown stopped, while the
 	# season card stands there. Stacked, the two reach down over the event feed.
-	var epitaph_allowed: bool = not start_menu.visible and not season_card.visible and not result_window.visible
+	# Nor while the chronicle is open over it: the window stood over the cards' left half.
+	season_card.set_covered(chronicle_window.visible)
+	var epitaph_allowed: bool = not start_menu.visible and not season_card.visible and not result_window.visible \
+		and not chronicle_window.visible
 	if epitaph_card.is_allowed() != epitaph_allowed:
 		epitaph_card.set_allowed(epitaph_allowed)
 	# The feed keeps below the card standing in that column: fewer rows, the newest kept.
@@ -859,6 +916,7 @@ func _layout_hud() -> void:
 	# The reserve's panel stands where the herd card would.
 	if reserve_session != null:
 		herd_card.set_room(false)
+		_layout_reserve()
 		return
 	if not selection_card.visible or _herd_height <= 0.0:
 		herd_card.set_room(true)
@@ -871,6 +929,27 @@ func _layout_hud() -> void:
 	var top: float = card_stack.get_global_rect().end.y - selection_card.size.y - 8.0 - _herd_height
 	# A little slack before it comes back, so it does not blink at the edge.
 	herd_card.set_room(top >= ceiling + (8.0 if herd_card.has_room else 24.0))
+
+
+## The reserve's own panels. Lying down: its panel at the top left, the banner and the right column's
+## cards where the scene has them. Upright: the panel under the species line, the banner under the
+## panel, the cards under the banner.
+func _layout_reserve() -> void:
+	if _reserve_overlay == null:
+		return
+	var panel_top := 12.0
+	if reserve_portrait and ecology_strip.visible:
+		panel_top = ecology_strip.get_global_rect().end.y + 8.0
+	if not is_equal_approx(_reserve_overlay.position.y, panel_top):
+		_reserve_overlay.position = Vector2(12.0, panel_top)
+	var below_panel: float = _reserve_overlay.get_global_rect().end.y + 10.0
+	_banner.top = below_panel if reserve_portrait else ReserveBanner.TOP
+	var cards_top: float = below_panel + 60.0 if reserve_portrait else _cards_top
+	for card in [epitaph_card, season_card]:
+		if not is_equal_approx(card.offset_top, cards_top):
+			var height: float = card.offset_bottom - card.offset_top
+			card.offset_top = cards_top
+			card.offset_bottom = cards_top + height
 
 
 ## An action, or its key by where it sits on the keyboard, so a Russian layout presses it too.

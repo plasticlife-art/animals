@@ -15,6 +15,8 @@ const FADE_SECONDS := 0.35
 const MAX_WAITING := 6
 const TOP := 150.0
 
+## How far down it stands: `TOP`, or under the reserve's panel when the reserve stands upright.
+var top := TOP
 var _label: Label
 var _stripe: ColorRect
 var _waiting: Array = []
@@ -76,6 +78,8 @@ func _process(delta: float) -> void:
 	if _left > 0.0:
 		_left -= delta
 		modulate.a = clampf(minf(_left, SHOW_SECONDS - _left) / FADE_SECONDS, 0.0, 1.0)
+		# Kept where it belongs while shown: the panel it stands under may grow meanwhile.
+		position.y = top
 		if _left <= 0.0:
 			visible = false
 		return
@@ -90,4 +94,4 @@ func _process(delta: float) -> void:
 	visible = true
 	size = get_combined_minimum_size()
 	var view := get_viewport_rect().size
-	position = Vector2(roundf((view.x - size.x) * 0.5), TOP)
+	position = Vector2(roundf((view.x - size.x) * 0.5), top)

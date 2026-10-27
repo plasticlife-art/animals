@@ -214,13 +214,20 @@ func _test_wizard(a) -> void:
 	wizard.start_requested.connect(func(fresh: bool) -> void: started.append(fresh))
 	wizard.open(true)
 	a.is_true(wizard._pages[2].visible and wizard._continue.visible, "opens on «Запуск» when a chat is ready, «Продолжить мир» with a save")
+	wizard._portrait.toggled.emit(true)
+	a.is_true(bool(StreamSettings.load_settings(TEST_PATH, "")["view"]["portrait"]) and wizard._portrait.text.contains("вертикальная"),
+		"the picture stood upright, kept")
 	a.is_true(wizard._summary.text.contains("Telegram: группы «Заповедник»"), "what is ready: %s" % wizard._summary.text)
 	wizard._continue.pressed.emit()
 	a.equal(started, [false], "the world goes on")
 	var mac := StreamWizard.obs_steps("macOS", "Engine of Ecosystem", ["telegram"])
 	var windows := StreamWizard.obs_steps("Windows", "Engine of Ecosystem", [])
-	a.is_true(mac.contains("Захват экрана macOS") and mac.contains("Запись экрана") and mac.contains("Настраиваемый") and not mac.contains("Twitch"),
-		"OBS on a Mac, to Telegram")
+	a.is_true(mac.contains("Захват экрана macOS") and mac.contains("Запись экрана") and mac.contains("Настраиваемый")
+		and not mac.contains("Сервис «Twitch»") and mac.begins_with("Проще всего — без OBS") and mac.contains("«Экран»"),
+		"OBS on a Mac, to Telegram, after the way without it")
+	a.is_true(StreamWizard.obs_steps("macOS", "Engine of Ecosystem", ["twitch"], true).contains("1080×1920")
+		and not StreamWizard.obs_steps("macOS", "Engine of Ecosystem", ["twitch"]).contains("без OBS"),
+		"an upright canvas for an upright picture; no Telegram, no video chat")
 	a.is_true(windows.contains("Захват окна") and windows.contains("Windows 10") and windows.contains("Twitch") and windows.contains("YouTube"),
 		"on Windows, every platform while none is set up")
 	a.is_true(StreamWizard.summary_text(StreamSettings.merged({})).begins_with("Ни один чат не настроен"), "nothing ready, said")
