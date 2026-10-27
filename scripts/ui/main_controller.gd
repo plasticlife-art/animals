@@ -119,6 +119,8 @@ var _director: ReserveDirector = null
 var _reserve_overlay: ReserveOverlay = null
 var _ward_tags: WardTags = null
 var _banner: ReserveBanner = null
+## What the reserve's camera shows and where, as a scene opens (`ReserveDirector.caption_changed`).
+var _caption: ReserveCaption = null
 ## The year the reserve's summary was last told for.
 var _reserve_year: int = -1
 
@@ -370,6 +372,7 @@ func _start_reserve(fresh: bool) -> void:
 	_keep_running_unseen()
 	_director = ReserveDirector.new()
 	_director.configure(simulation_manager, world_camera, reserve_session, config)
+	_director.story = story_book
 	_reserve_overlay = ReserveOverlay.new()
 	_reserve_overlay.theme = result_window.theme
 	_reserve_overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
@@ -381,8 +384,12 @@ func _start_reserve(fresh: bool) -> void:
 	_banner.theme = result_window.theme
 	$CanvasLayer.add_child(_banner)
 	_banner.bind(reserve_session)
+	_caption = ReserveCaption.new()
+	_caption.theme = result_window.theme
+	$CanvasLayer.add_child(_caption)
+	_director.caption_changed.connect(_caption.show_caption)
 	# Under the chronicle: opened over the map, it is not to have the panel across its title.
-	for panel in [_reserve_overlay, _banner]:
+	for panel in [_reserve_overlay, _banner, _caption]:
 		$CanvasLayer.move_child(panel, chronicle_window.get_index())
 	_reserve_year = int(simulation_manager.world_state.climate.year)
 	# Over the weather and under every panel: the wards' names belong to the map.
@@ -970,6 +977,21 @@ func _layout_reserve() -> void:
 	var below_panel: float = _reserve_overlay.get_global_rect().end.y + 10.0
 	_banner.top = below_panel if reserve_portrait else ReserveBanner.TOP
 	var cards_top: float = below_panel + 60.0 if reserve_portrait else _cards_top
+	# The caption: over the foot of the map lying down, between the card and the minimap; upright,
+	# just above the animal's card.
+	if _caption != null and _caption.visible:
+		var view: Vector2 = get_viewport().get_visible_rect().size
+		var card_top: float = selection_card.get_global_rect().position.y if selection_card.visible else view.y
+		if reserve_portrait:
+			_caption.set_room(view.x - 24.0)
+			_caption.reset_size()
+			_caption.position = Vector2(12.0, card_top - _caption.size.y - 10.0)
+		else:
+			var left: float = selection_card.get_global_rect().end.x + 16.0 if selection_card.visible else 16.0
+			var right: float = minimap.get_global_rect().position.x - 16.0 if minimap.visible else view.x - 16.0
+			_caption.set_room(maxf(240.0, right - left))
+			_caption.reset_size()
+			_caption.position = Vector2(roundf(left + (right - left - _caption.size.x) * 0.5), view.y - _caption.size.y - 24.0)
 	for card in [epitaph_card, season_card]:
 		if not is_equal_approx(card.offset_top, cards_top):
 			var height: float = card.offset_bottom - card.offset_top
@@ -1327,7 +1349,11 @@ func _sync_lod_focus_rect() -> void:
 		world_camera.get_visible_screen_rect(), bounds)
 	_overview_mode = resolve_overview_fraction(_overview_mode, visible_fraction, overview_config)
 	var focus_center := WorldProjection.to_world(world_camera.global_position)
-	simulation_manager.set_lod_view(focus_rect, focus_center, _overview_mode)
+	# While the reserve's camera flies across the map the sectors stay as they were: woken and put
+	# to sleep under a sweeping view, every frame, they held a frame for seconds. They follow it
+	# when it lands.
+	if _director == null or not _director.is_moving():
+		simulation_manager.set_lod_view(focus_rect, focus_center, _overview_mode)
 	agent_renderer.set_overview_mode(_overview_mode)
 	minimap.set_overview_mode(_overview_mode)
 	if bool(simulation_manager.debug_flags.get("show_lod_overlay", false)):

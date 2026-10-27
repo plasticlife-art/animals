@@ -118,6 +118,41 @@ func frame_world_rect(rect: Rect2) -> void:
 	_clamp_to_bounds()
 
 
+## The view as the living reserve's director sets it through a move (`ReserveDirector`): a centre in
+## simulation space and a zoom, clamped as any other.
+func set_view(world_center: Vector2, zoom_factor: float) -> void:
+	if world_bounds.size.is_zero_approx():
+		return
+	_set_zoom_factor(zoom_factor)
+	global_position = WorldProjection.to_screen(world_center)
+	_clamp_to_bounds()
+
+
+## Where the view is centred, in simulation space.
+func view_center() -> Vector2:
+	return WorldProjection.to_world(global_position)
+
+
+func zoom_factor() -> float:
+	return zoom.x
+
+
+## The zoom at which `rect` (simulation space) fills the view - at the widest, the whole map.
+func zoom_to_fit(rect: Rect2) -> float:
+	var screen := Rect2(WorldProjection.to_screen(rect.position), Vector2.ZERO)
+	for corner in [Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]:
+		screen = screen.expand(WorldProjection.to_screen(corner))
+	var viewport_size := get_viewport_rect().size
+	if screen.size.x <= 0.0 or screen.size.y <= 0.0:
+		return zoom.x
+	return clampf(minf(viewport_size.x / screen.size.x, viewport_size.y / screen.size.y), _zoom_min, _zoom_max)
+
+
+## How much of the map the view spans across, in simulation units.
+func view_span() -> float:
+	return WorldProjection.world_rect_covering(_get_camera_view_rect()).size.x
+
+
 func move_to_world_position(position: Vector2, clear_focus: bool = true) -> void:
 	if world_bounds.size.is_zero_approx():
 		return

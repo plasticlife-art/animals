@@ -46,9 +46,30 @@ func run(a) -> void:
 ## Stands in for the game's camera: where it was sent.
 class FakeCamera:
 	var moved: Array = []
+	var center := Vector2.ZERO
+	var zoom := 1.0
+	var views: Array = []
 
 	func move_to_world_position(position: Vector2, _clear_focus: bool = true) -> void:
 		moved.append(position)
+		center = position
+
+	func set_view(world_center: Vector2, zoom_factor: float) -> void:
+		center = world_center
+		zoom = zoom_factor
+		views.append([world_center, zoom_factor])
+
+	func view_center() -> Vector2:
+		return center
+
+	func zoom_factor() -> float:
+		return zoom
+
+	func zoom_to_fit(rect: Rect2) -> float:
+		return clampf(800.0 / maxf(1.0, rect.size.x), 0.1, zoom)
+
+	func view_span() -> float:
+		return 800.0 / zoom
 
 
 static func _config() -> Dictionary:
@@ -192,30 +213,60 @@ func _test_the_director(a) -> void:
 	var made := _reserve(9934, _config())
 	var manager = made[0]
 	var session = made[1]
+	var world = manager.world_state
+	var camera := FakeCamera.new()
+	camera.center = AT
 	var director = ReserveDirectorScript.new()
-	director.configure(manager, FakeCamera.new(), session, _config())
+	director.configure(manager, camera, session, _config())
+	var now := [100000]
+	director.clock = func() -> int: return now[0]
+	var captions: Array = []
+	director.caption_changed.connect(func(text: String, _seconds: float) -> void: captions.append(text))
+	var step := func(milliseconds: int) -> void:
+		now[0] += milliseconds
+		director.update()
 	director.update()
+	step.call(6000)
 	var herd: Dictionary = session.focus_herd()
 	var first = manager.get_selected_agent()
 	a.is_true(first != null and int(first.group_id) == int(herd["group_id"]) and manager.focus_mode == "flock",
 		"with nothing happening it follows the focus herd")
-	var deer: Array = manager.world_state.get_living_agents().filter(func(agent): return agent.species_type == "herbivore")
+	a.is_true(captions.size() == 1 and str(captions[0]).begins_with(HudText.herd_name("herbivore", int(herd["group_id"]))),
+		"and says which herd: %s" % str(captions))
+	var deer: Array = world.get_living_agents().filter(func(agent): return agent.species_type == "herbivore")
 	var other = deer[deer.size() - 1] if deer[deer.size() - 1].id != first.id else deer[0]
-	manager.world_event.emit({"type": "PredationSuccess", "agent_id": other.id, "species": "herbivore",
+	manager.world_event.emit({"type": "AgentBorn", "agent_id": other.id, "species": "herbivore",
 		"position": {"x": other.position.x, "y": other.position.y}, "data": {}})
-	director.update()
-	a.equal(manager.selected_agent_id, first.id, "a moment waits for the shot to end")
-	director._until_msec = 0
-	director.update()
-	a.equal(manager.selected_agent_id, other.id, "then the camera turns to it")
+	step.call(10000)
+	a.equal(director.current_id, first.id, "a birth near does not cut a calm scene")
+	var fox = Helpers.spawn_predator(world, AT + Vector2(2600.0, 0.0))
+	manager.world_event.emit({"type": "PredationSuccess", "agent_id": fox.id, "other_agent_id": other.id,
+		"species": "predator", "position": {"x": fox.position.x, "y": fox.position.y}, "data": {}})
+	step.call(1000)
+	a.equal(director.current_id, first.id, "a kill far off waits until the scene has had its half minute")
+	step.call(20000)
+	a.equal(director.current_id, fox.id, "then cuts to it")
+	a.is_true(str(captions.back()).begins_with("Добыча: лис"), "saying what it is: %s" % str(captions.back()))
+	var scene_zoom: float = camera.zoom
+	for _frame in range(50):
+		step.call(100)
+	var widest := scene_zoom
+	for view in camera.views:
+		widest = minf(widest, float(view[1]))
+	a.is_true(widest < scene_zoom * 0.8 and manager.selected_agent_id == fox.id and is_equal_approx(camera.zoom, scene_zoom),
+		"far off, through the map: out to %.2f and back to %.2f, then following" % [widest, camera.zoom])
 	session.hear(_message("7", "Лиза", "!имя Искра"))
 	manager.step_once()
 	session.hear(_message("7", "Лиза", "!моё"))
-	director.update()
 	var ward := -1
-	for id in manager.world_state.adoptions.keys():
+	for id in world.adoptions.keys():
 		ward = int(id)
-	a.is_true(ward >= 0 and manager.selected_agent_id == ward, "«!моё» cuts to the ward at once")
+	step.call(1000)
+	a.is_true(ward >= 0 and director.current_id != ward, "a viewer's ask lets the scene have a few seconds")
+	step.call(8000)
+	step.call(6000)
+	a.is_true(manager.selected_agent_id == ward and str(captions.back()).contains("Лиза"),
+		"then the ward, said whose: %s" % str(captions.back()))
 	# The view's world under the worker knows a far sleeper by its group's record only.
 	var far := Vector2i(999, 999)
 	manager.world_state._sector_states[far] = {"dormant": true, "dormant_aggregates": [
