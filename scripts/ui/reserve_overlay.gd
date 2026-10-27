@@ -18,6 +18,7 @@ const HINT := "Правила и команды: напишите !помощь"
 const INK := Color(0.20, 0.13, 0.08)
 const DIM := Color(0.20, 0.13, 0.08, 0.62)
 const COMMAND := Color(0.56, 0.22, 0.05)
+const PROBLEM := Color(0.72, 0.18, 0.12)
 ## The chat's commands, as rows: what to write and what it does, the shorter ones command first.
 const COMMANDS := [
 	["!имя Ветка", "— взять зверя под опеку"],
@@ -29,10 +30,14 @@ const COMMANDS := [
 
 var session = null
 var story = null
+## What the admin must see - a chat that is not being read («Telegram: неверный токен бота») - in
+## red under the title.
+var problems: Array = []
 ## The card the panel must stop above while it is shown (the selected animal's), or null.
 var avoid: Control = null
 var _box: VBoxContainer
 var _next_vote: Label
+var _problems: Label
 var _vote: Label
 var _hint: Label
 var _help: VBoxContainer
@@ -61,6 +66,7 @@ func _init() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_next_vote = _label(head, "", DIM, -2)
 	_next_vote.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_problems = _label(_box, "", PROBLEM, -2)
 	_vote = _label(_box, "", INK)
 	_hint = _label(_box, HINT, INK)
 	_help = VBoxContainer.new()
@@ -122,6 +128,7 @@ func refresh() -> void:
 	if session == null or session.manager == null or session.manager.world_state == null:
 		return
 	var world = session.manager.world_state
+	_problems.text = "\n".join(problems)
 	var open: bool = not session.vote.current.is_empty()
 	_next_vote.text = "" if open else "голосование через %s" % clock(maxf(0.0, float(session.vote.next_at) - session.now()))
 	_vote.text = vote_text(session) if open else ""
@@ -148,6 +155,7 @@ func refresh() -> void:
 ## Shows what has text and fits above `avoid`: the latest lines are dropped first, then the counts,
 ## then the help or the table. The title and an open vote always stay.
 func _fit() -> void:
+	_problems.visible = _problems.text != ""
 	_vote.visible = _vote.text != ""
 	_hint.visible = _hint.text != ""
 	_table.visible = _table.text != ""

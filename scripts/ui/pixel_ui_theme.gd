@@ -57,6 +57,8 @@ const TAG_INK_DIM := Color(0.94, 0.91, 0.84, 0.66)
 ## Dark enough to read as a grip against the parchment without competing with
 ## the ink of the text it sits beside.
 const SCROLL_GRABBER := Color(0.20, 0.13, 0.08, 0.62)
+## A text field's paper, a shade lighter than the panel it sits in.
+const FIELD_FILL := Color(0.97, 0.94, 0.84)
 
 
 ## `compact` trades the menu's generous padding for the density the HUD needs.
@@ -136,6 +138,24 @@ static func build(compact: bool = false) -> Theme:
 	theme.set_color("font_disabled_color", "CheckBox", INK_DIM)
 	theme.set_color("font_color", "OptionButton", BUTTON_INK)
 	theme.set_color("default_color", "RichTextLabel", INK)
+	# A text field - the stream's keys in «Трансляция» - as a pressed-in slip of paper with an ink
+	# rule round it; the pack has no art for one.
+	for state in ["normal", "focus", "read_only"]:
+		var field := StyleBoxFlat.new()
+		field.bg_color = FIELD_FILL if state != "read_only" else FIELD_FILL.darkened(0.06)
+		field.border_color = INK if state == "focus" else INK_DIM
+		field.set_border_width_all(2)
+		field.set_corner_radius_all(2)
+		field.content_margin_left = 10.0 * pad
+		field.content_margin_right = 10.0 * pad
+		field.content_margin_top = 6.0 * pad
+		field.content_margin_bottom = 6.0 * pad
+		theme.set_stylebox(state, "LineEdit", field)
+	theme.set_color("font_color", "LineEdit", INK)
+	theme.set_color("font_placeholder_color", "LineEdit", INK_DIM)
+	theme.set_color("caret_color", "LineEdit", INK)
+	theme.set_color("selection_color", "LineEdit", Color(0.26, 0.52, 0.82, 0.35))
+	theme.set_color("font_selected_color", "LineEdit", INK)
 
 	# The pack has no scrollbar art, and both the HUD panel and the help screen
 	# scroll. Flat boxes in the palette above read as part of the parchment;

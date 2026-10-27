@@ -93,6 +93,10 @@ var _overview_mode: bool = false
 ## comes in on, the camera that directs itself and the panel the stream shows. Null otherwise.
 var reserve_session: ReserveSession = null
 var _viewer_link: ViewerLink = null
+## The chats the game reads itself, as «Трансляция» set them up (`StreamSettings`).
+var _stream_chats: StreamChats = null
+## «Трансляция» from the start menu: the reserve's chats, OBS and start.
+var stream_wizard: StreamWizard = null
 var _director: ReserveDirector = null
 var _reserve_overlay: ReserveOverlay = null
 var _ward_tags: WardTags = null
@@ -122,6 +126,12 @@ func _ready() -> void:
 	start_menu.start_requested.connect(_on_start_requested)
 	start_menu.scenario_requested.connect(_on_scenario_requested)
 	start_menu.continue_requested.connect(_on_continue_requested)
+	stream_wizard = StreamWizard.new()
+	stream_wizard.theme = start_menu.theme
+	$CanvasLayer.add_child(stream_wizard)
+	start_menu.stream_requested.connect(_open_stream_wizard)
+	stream_wizard.closed.connect(func() -> void: _show_start_menu(SaveSystem.latest_slot() != ""))
+	stream_wizard.start_requested.connect(_start_reserve)
 	result_window.brief_closed.connect(_close_result_window)
 	result_window.watch_on_requested.connect(_close_result_window)
 	result_window.restart_requested.connect(_restart_scenario)
@@ -333,6 +343,9 @@ func _start_reserve(fresh: bool) -> void:
 	_viewer_link = ViewerLink.new()
 	if not _viewer_link.listen(config):
 		push_warning("The reserve's chat port %s is taken: no viewers' lines will come in" % str(config.get("link", {})))
+	_stream_chats = StreamChats.new()
+	add_child(_stream_chats)
+	_stream_chats.start(StreamSettings.load_settings())
 	_director = ReserveDirector.new()
 	_director.configure(simulation_manager, world_camera, reserve_session, config)
 	_reserve_overlay = ReserveOverlay.new()
@@ -362,6 +375,9 @@ func _start_reserve(fresh: bool) -> void:
 func _tick_reserve() -> void:
 	for message in _viewer_link.poll():
 		reserve_session.hear(message)
+	for message in _stream_chats.poll():
+		reserve_session.hear(message)
+	_reserve_overlay.problems = _stream_chats.problems()
 	reserve_session.tick()
 	_director.update()
 	var year := int(simulation_manager.world_state.climate.year)
@@ -452,6 +468,14 @@ func _show_start_menu(continue_available: bool) -> void:
 	world_camera.set_input_enabled(false)
 	minimap.set_input_enabled(false)
 	simulation_manager.set_paused(true)
+
+
+## «Трансляция»: the setup over the start menu's place; it goes back to the menu or starts the
+## reserve (`_start_reserve`).
+func _open_stream_wizard() -> void:
+	start_menu.visible = false
+	stream_wizard.open(SaveSystem.latest_slot(SaveSystem.KIND_RESERVE) != "")
+	_sync_overlay_blur()
 
 
 func _hide_start_menu() -> void:
@@ -667,6 +691,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_follow_pressed = toggle_follow_pressed or event.keycode == KEY_F
 		toggle_help_pressed = toggle_help_pressed or event.keycode == KEY_F1
 
+	# «Трансляция» answers Esc and leaves nothing behind it to act on; its fields take the keys
+	# typed into them before they get here.
+	if stream_wizard != null and stream_wizard.visible:
+		if cancel_pressed:
+			stream_wizard.close()
+		get_viewport().set_input_as_handled()
+		return
 	# Photo mode keeps its own keys: Esc or P leaves it, H hides its bar; nothing else acts.
 	if photo_mode.active:
 		if cancel_pressed or _is_key(event, "toggle_photo_mode", KEY_P):
@@ -1158,7 +1189,8 @@ func _set_pause_menu_visible(value: bool) -> void:
 ## so it is derived from all three rather than owned by any one of them. Setting
 ## it per screen used to mean whichever ran last won, and the setup screen lost.
 func _sync_overlay_blur() -> void:
-	pause_blur.visible = start_menu.visible or pause_menu.visible or help_screen.visible or settings_panel.visible
+	pause_blur.visible = start_menu.visible or pause_menu.visible or help_screen.visible or settings_panel.visible \
+		or (stream_wizard != null and stream_wizard.visible)
 
 
 func _sync_lod_focus_rect() -> void:

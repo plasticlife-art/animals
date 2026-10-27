@@ -24,6 +24,8 @@ signal start_requested(selection: Dictionary)
 ## A scenario to play, in the style the setup page has chosen (the scenario decides the rest).
 signal scenario_requested(scenario_id: String, style: String)
 signal continue_requested()
+## «Трансляция»: the living reserve's chats, OBS and start (`StreamWizard`).
+signal stream_requested()
 signal help_requested()
 signal settings_requested()
 signal exit_requested()
@@ -144,6 +146,12 @@ func _build_root_page() -> PanelContainer:
 	_continue_button.pressed.connect(func(): continue_requested.emit())
 	_continue_button.visible = false
 	column.add_child(_continue_button)
+
+	var stream_button := Button.new()
+	stream_button.text = "Трансляция"
+	stream_button.tooltip_text = "Живой заповедник для стрима: зрители правят миром из чата"
+	stream_button.pressed.connect(func(): stream_requested.emit())
+	column.add_child(stream_button)
 
 	var help_button := Button.new()
 	help_button.text = "Помощь"
