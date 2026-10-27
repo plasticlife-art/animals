@@ -140,6 +140,21 @@ func _next_shot(now: int) -> void:
 
 ## Follows `agent_id` for `seconds`: selected at once if it is awake, else the camera goes where it
 ## sleeps and selects it when it wakes. False when it is nowhere.
+## Where an animal asleep in a far sector lies, or null. The view's world under the worker has no
+## sleeping records, only each sleeping group's (`dormant_aggregates`: its members' ids and where
+## each lies); stepped inline, as in a test, the records themselves are there.
+static func sleeping_position(world, agent_id: int):
+	for sector in world._sector_states.values():
+		for aggregate in sector.get("dormant_aggregates", []):
+			var index: int = Array(aggregate.get("record_ids", [])).find(agent_id)
+			if index >= 0 and index < aggregate.get("record_positions", PackedVector2Array()).size():
+				return Vector2(aggregate["record_positions"][index])
+		for record in sector.get("dormant_records", []):
+			if int(record.get("id", -1)) == agent_id:
+				return Vector2(record.get("position", Vector2.ZERO))
+	return null
+
+
 func _show(agent_id: int, seconds: float) -> bool:
 	if agent_id < 0:
 		return false
@@ -148,13 +163,12 @@ func _show(agent_id: int, seconds: float) -> bool:
 	if manager.select_agent_by_id(agent_id, true):
 		_follow_herd_of(manager.world_state.get_agent(agent_id))
 		return true
-	for sector in manager.world_state._sector_states.values():
-		for record in sector.get("dormant_records", []):
-			if int(record.get("id", -1)) == agent_id:
-				camera.move_to_world_position(Vector2(record.get("position", Vector2.ZERO)))
-				_pending_id = agent_id
-				_pending_until_msec = Time.get_ticks_msec() + 4000
-				return true
+	var asleep = sleeping_position(manager.world_state, agent_id)
+	if asleep != null:
+		camera.move_to_world_position(asleep)
+		_pending_id = agent_id
+		_pending_until_msec = Time.get_ticks_msec() + 4000
+		return true
 	current_id = -1
 	return false
 

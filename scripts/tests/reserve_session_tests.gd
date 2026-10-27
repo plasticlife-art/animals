@@ -216,6 +216,14 @@ func _test_the_director(a) -> void:
 	for id in manager.world_state.adoptions.keys():
 		ward = int(id)
 	a.is_true(ward >= 0 and manager.selected_agent_id == ward, "«!моё» cuts to the ward at once")
+	# The view's world under the worker knows a far sleeper by its group's record only.
+	var far := Vector2i(999, 999)
+	manager.world_state._sector_states[far] = {"dormant": true, "dormant_aggregates": [
+		{"record_ids": [70001, 70002], "record_positions": PackedVector2Array([Vector2(10.0, 20.0), Vector2(123.0, 456.0)])}]}
+	a.equal(ReserveDirectorScript.sleeping_position(manager.world_state, 70002), Vector2(123.0, 456.0),
+		"a ward asleep far off is found where its group's record has it")
+	a.is_true(ReserveDirectorScript.sleeping_position(manager.world_state, 70003) == null, "and one nowhere is not")
+	manager.world_state._sector_states.erase(far)
 	Helpers.destroy_manager(manager)
 
 
