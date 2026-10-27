@@ -68,6 +68,9 @@ static func death_text(book, entry: Dictionary) -> String:
 			HudTextScript.animal_noun(str(hunter.get("species", "predator")), hunter_sex), book.name_of_id(killer)]
 	if cause == "predation":
 		return "%s от хищника%s." % [HudTextScript.verb(sex, "Погиб", "Погибла"), place]
+	if cause == "emigrated":
+		return "Не %s своего участка и %s с карты%s." % [HudTextScript.verb(sex, "нашёл", "нашла"),
+			HudTextScript.verb(sex, "ушёл", "ушла"), place]
 	return "%s от %s%s." % [HudTextScript.verb(sex, "Умер", "Умерла"),
 		str(HudTextScript.CAUSES_FROM.get(cause, cause)), place]
 

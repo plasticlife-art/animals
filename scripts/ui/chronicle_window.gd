@@ -17,7 +17,7 @@ const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
 const SeasonReportScript := preload("res://scripts/story/season_report.gd")
 const ClimateScript := preload("res://scripts/world/climate.gd")
 const REFRESH_SECONDS := 1.5
-const BODY_SIZE := Vector2(760.0, 440.0)
+const BODY_SIZE := Vector2(760.0, 500.0)
 const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты", "seasons": "Сезоны"}
 ## Species lines are drawn in the species' interface colour, darkened to read on parchment.
 const SPECIES_DARKEN := 0.45
@@ -350,21 +350,42 @@ func _calendar() -> Array:
 class TreeView:
 	extends Control
 
+	## Three generations about an animal, laid out to the height there is: the grandparents in
+	## pairs over each parent, the parents over the animal, its children under it, four a row.
+	## Generations nobody knows take no room. The lines run first and the boxes over them, a
+	## lower row of children reached down the gap between two boxes of the row above. A box
+	## shows sex by its stripe, the dead dimmed; the animal's own box says its family and whether
+	## its parents are kin.
+
 	signal picked(agent_id: int)
 
 	const INK := Color(0.20, 0.13, 0.08)
-	const INK_DIM := Color(0.20, 0.13, 0.08, 0.5)
-	const BOX_FILL := Color(0.20, 0.13, 0.08, 0.07)
-	const BOX_HOVER := Color(0.20, 0.13, 0.08, 0.16)
+	const INK_DIM := Color(0.20, 0.13, 0.08, 0.55)
+	const LINE := Color(0.20, 0.13, 0.08, 0.45)
+	const PAPER := Color(0.91, 0.86, 0.72)
+	const PAPER_HOVER := Color(0.85, 0.79, 0.63)
+	const PAPER_DEAD := Color(0.87, 0.84, 0.76)
 	const PINNED := Color(0.78, 0.55, 0.12)
-	const BOX := Vector2(168.0, 54.0)
-	const CHILD_BOX := Vector2(160.0, 50.0)
+	const KIN := Color(0.62, 0.30, 0.10)
+	const STRIPE := {"female": Color(0.74, 0.36, 0.42), "male": Color(0.27, 0.45, 0.64)}
+	const STRIPE_DEAD := Color(0.20, 0.13, 0.08, 0.25)
+	const BOX := Vector2(176.0, 56.0)
+	const FOCUS_BOX := Vector2(250.0, 84.0)
+	const CHILD_BOX := Vector2(168.0, 56.0)
+	const PER_ROW := 4
+	const GENERATION_GAP := 40.0
+	const CHILD_ROW_GAP := 20.0
+	const CAPTION := 16.0
+	const NAME_SIZE := 15
+	const LINE_SIZE := 13
 
 	var story = null
 	var _family: Dictionary = {}
 	var _cards: Dictionary = {}
 	var _boxes: Array = []
 	var _hover := -2
+	var _focus_line := ""
+	var _kinship := ""
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
@@ -372,14 +393,16 @@ class TreeView:
 	func show_family(family: Dictionary, now: float, calendar: Array) -> void:
 		_family = family
 		_cards.clear()
-		var ids: Array = [int(family.get("focus", -1))] + family.get("parents", []) + family.get("grandparents", []) \
-			+ family.get("children", [])
+		var focus := int(family.get("focus", -1))
+		var ids: Array = [focus] + family.get("parents", []) + family.get("grandparents", []) + family.get("children", [])
 		for agent_id in ids:
 			_cards[int(agent_id)] = FamilyTree.card(story, int(agent_id), now, calendar)
 		for child in family.get("children", []):
-			var mate := FamilyTree.mate_line(story, int(child), int(family.get("focus", -1)))
+			var mate := FamilyTree.mate_line(story, int(child), focus)
 			if mate != "" and bool(_cards[int(child)].get("known", false)):
 				_cards[int(child)]["kind"] = mate
+		_focus_line = FamilyTree.focus_line(story, focus) if focus >= 0 else ""
+		_kinship = FamilyTree.parents_kinship(family)
 		queue_redraw()
 
 	func _gui_input(event: InputEvent) -> void:
@@ -406,13 +429,54 @@ class TreeView:
 				return int(box[1])
 		return -1
 
+	## The rows there are and where they stand: `{grand, parents, focus, children: [y…], more}`,
+	## each a row's top, -1 for a row not drawn; the whole centred in `height`.
+	func layout(height: float) -> Dictionary:
+		var grand: Array = _family.get("grandparents", [-1, -1, -1, -1])
+		var parents: Array = _family.get("parents", [-1, -1])
+		var children: Array = _family.get("children", [])
+		var has_grand := false
+		for index in range(4):
+			has_grand = has_grand or _known(int(grand[index]))
+		var has_parents := _known(int(parents[0])) or _known(int(parents[1]))
+		has_grand = has_grand and has_parents
+		var child_rows := ceili(float(children.size()) / PER_ROW)
+		var more := int(_family.get("more", 0))
+		var total := FOCUS_BOX.y
+		if has_grand:
+			total += CAPTION + BOX.y + GENERATION_GAP
+		if has_parents:
+			total += BOX.y + GENERATION_GAP
+		if child_rows > 0:
+			total += GENERATION_GAP + child_rows * CHILD_BOX.y + (child_rows - 1) * CHILD_ROW_GAP
+		if more > 0:
+			total += 24.0
+		var y := maxf(6.0, (height - total) * 0.5)
+		var out := {"grand": -1.0, "parents": -1.0, "focus": -1.0, "children": [], "more": -1.0}
+		if has_grand:
+			out["grand"] = y + CAPTION
+			y += CAPTION + BOX.y + GENERATION_GAP
+		if has_parents:
+			out["parents"] = y
+			y += BOX.y + GENERATION_GAP
+		out["focus"] = y
+		y += FOCUS_BOX.y
+		if child_rows > 0:
+			y += GENERATION_GAP
+			for row in range(child_rows):
+				out["children"].append(y)
+				y += CHILD_BOX.y + CHILD_ROW_GAP
+			y -= CHILD_ROW_GAP
+		if more > 0:
+			out["more"] = y + 18.0
+		return out
+
 	func _draw() -> void:
 		_boxes.clear()
 		if _family.is_empty():
 			return
 		var w := size.x
-		var h := size.y
-		var rows := [h * 0.1, h * 0.33, h * 0.56, h * 0.79]
+		var rows := layout(size.y)
 		var grand: Array = _family.get("grandparents", [-1, -1, -1, -1])
 		var parents: Array = _family.get("parents", [-1, -1])
 		var focus := int(_family.get("focus", -1))
@@ -420,73 +484,135 @@ class TreeView:
 		var parent_x := [w * 0.27, w * 0.73]
 		var grand_x := [w * 0.13, w * 0.39, w * 0.61, w * 0.87]
 		var font := get_theme_default_font()
-		var any_parent := _known(int(parents[0])) or _known(int(parents[1]))
-		# Nobody known above - a founder - says so once instead of six empty boxes.
-		if not any_parent:
-			var note := "основатель: родители неизвестны"
-			var width := font.get_string_size(note, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-			draw_string(font, Vector2(w * 0.5 - width * 0.5, rows[1]), note, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
-		else:
-			var labels := ["родители матери", "родители отца"]
+		var focus_top: float = rows["focus"]
+		var focus_bottom: float = focus_top + FOCUS_BOX.y
+		# Lines first, boxes over them.
+		var grand_pairs: Array = []
+		if float(rows["grand"]) >= 0.0:
 			for side in range(2):
-				_line(Vector2(parent_x[side], rows[1] + BOX.y * 0.5), Vector2(w * 0.5, rows[2] - BOX.y * 0.5))
-				# A pair of grandparents is drawn when either of them is known.
 				if _known(int(grand[side * 2])) or _known(int(grand[side * 2 + 1])):
-					for index in [side * 2, side * 2 + 1]:
-						_line(Vector2(grand_x[index], rows[0] + BOX.y * 0.5), Vector2(parent_x[side], rows[1] - BOX.y * 0.5))
-						_box(Vector2(grand_x[index], rows[0]), BOX, int(grand[index]))
-					draw_string(font, Vector2(parent_x[side] - 52.0, rows[0] - BOX.y * 0.5 - 6.0), labels[side],
-						HORIZONTAL_ALIGNMENT_LEFT, -1, 12, INK_DIM)
-				_box(Vector2(parent_x[side], rows[1]), BOX, int(parents[side]))
-		var per_row := 4
-		var child_rows := ceili(float(children.size()) / per_row)
+					grand_pairs.append(side)
+					_join([grand_x[side * 2], grand_x[side * 2 + 1]], float(rows["grand"]) + BOX.y, parent_x[side],
+						float(rows["parents"]))
+		if float(rows["parents"]) >= 0.0:
+			_join(parent_x, float(rows["parents"]) + BOX.y, w * 0.5, focus_top)
+		var child_rows: Array = rows["children"]
+		var trunk_from := focus_bottom
+		var trunk_x := w * 0.5
+		for row in range(child_rows.size()):
+			var row_top: float = child_rows[row]
+			var bus := row_top - (GENERATION_GAP if row == 0 else CHILD_ROW_GAP) * 0.5
+			var xs: Array = []
+			for index in range(row * PER_ROW, mini(children.size(), (row + 1) * PER_ROW)):
+				xs.append(_child_x(index, children.size(), w))
+			draw_line(Vector2(trunk_x, trunk_from), Vector2(trunk_x, bus), LINE, 1.5)
+			draw_line(Vector2(minf(trunk_x, xs.min()), bus), Vector2(maxf(trunk_x, xs.max()), bus), LINE, 1.5)
+			for x in xs:
+				draw_line(Vector2(x, bus), Vector2(x, row_top), LINE, 1.5)
+			# The next row is reached down the gap nearest the middle of this one.
+			trunk_from = bus
+			trunk_x = _gap_x(xs, w)
+		# Boxes.
+		var captions := ["родители матери", "родители отца"]
+		for side in grand_pairs:
+			var caption: String = captions[side]
+			var width := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+			draw_string(font, Vector2(parent_x[side] - width * 0.5, float(rows["grand"]) - 5.0), caption,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, INK_DIM)
+			for index in [side * 2, side * 2 + 1]:
+				_box(Vector2(grand_x[index], float(rows["grand"]) + BOX.y * 0.5), BOX, int(grand[index]), "неизвестно")
+		if float(rows["parents"]) >= 0.0:
+			var unknown := ["мать неизвестна", "отец неизвестен"]
+			for side in range(2):
+				_box(Vector2(parent_x[side], float(rows["parents"]) + BOX.y * 0.5), BOX, int(parents[side]), unknown[side])
+		_focus_box(Vector2(w * 0.5, focus_top + FOCUS_BOX.y * 0.5), focus, float(rows["parents"]) < 0.0)
 		for index in range(children.size()):
-			var at := _child_point(index, children.size(), per_row, w, rows[3], child_rows)
-			_line(Vector2(w * 0.5, rows[2] + BOX.y * 0.5), at - Vector2(0.0, CHILD_BOX.y * 0.5))
-		_box(Vector2(w * 0.5, rows[2]), BOX + Vector2(24.0, 0.0), focus, true)
-		for index in range(children.size()):
-			_box(_child_point(index, children.size(), per_row, w, rows[3], child_rows), CHILD_BOX, int(children[index]))
-		var more := int(_family.get("more", 0))
-		if more > 0:
-			var text := "и ещё %d" % more
-			draw_string(font, Vector2(w * 0.5 - 30.0, h - 4.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
-		if children.is_empty():
-			draw_string(font, Vector2(w * 0.5 - 30.0, rows[3]), "детей нет", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
+			var row := floori(float(index) / PER_ROW)
+			_box(Vector2(_child_x(index, children.size(), w), float(child_rows[row]) + CHILD_BOX.y * 0.5), CHILD_BOX,
+				int(children[index]), "неизвестно")
+		if float(rows["more"]) >= 0.0:
+			var text := "и ещё %d" % int(_family.get("more", 0))
+			var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE).x
+			draw_string(font, Vector2(w * 0.5 - width * 0.5, float(rows["more"])), text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				LINE_SIZE, INK_DIM)
 
 	func _known(agent_id: int) -> bool:
 		return bool(_cards.get(agent_id, {}).get("known", false))
 
-	func _child_point(index: int, count: int, per_row: int, w: float, top: float, child_rows: int) -> Vector2:
-		var row := floori(float(index) / per_row)
-		var in_row := mini(per_row, count - row * per_row)
-		var column := index - row * per_row
-		var spacing := w / float(per_row)
-		var start := w * 0.5 - spacing * (in_row - 1) * 0.5
-		var y := top + float(row) * (CHILD_BOX.y + 10.0) - (float(child_rows - 1) * (CHILD_BOX.y + 10.0) * 0.25)
-		return Vector2(start + spacing * column, y)
+	## A child's centre: `PER_ROW` a row, a short last row centred.
+	func _child_x(index: int, count: int, w: float) -> float:
+		var row := floori(float(index) / PER_ROW)
+		var in_row := mini(PER_ROW, count - row * PER_ROW)
+		var spacing := w / float(PER_ROW)
+		return w * 0.5 - spacing * (in_row - 1) * 0.5 + spacing * (index - row * PER_ROW)
 
-	func _line(from: Vector2, to: Vector2) -> void:
-		var mid := (from.y + to.y) * 0.5
-		draw_polyline(PackedVector2Array([from, Vector2(from.x, mid), Vector2(to.x, mid), to]), INK_DIM, 1.5)
+	## Where a line can pass down through a row of boxes centred at `xs`: the middle when the row
+	## is even (a gap there), else beside the middle box.
+	func _gap_x(xs: Array, w: float) -> float:
+		if xs.size() % 2 == 0:
+			return w * 0.5
+		var spacing := w / float(PER_ROW)
+		return w * 0.5 + spacing * 0.5
 
-	func _box(center: Vector2, box_size: Vector2, agent_id: int, focus := false) -> void:
-		var rect := Rect2(center - box_size * 0.5, box_size)
+	## Parents into a child: down from each parent to a rule between the rows, along it, down
+	## into the child.
+	func _join(from_xs: Array, from_bottom: float, to_x: float, to_top: float) -> void:
+		var bus := to_top - GENERATION_GAP * 0.5
+		var left: float = minf(from_xs.min(), to_x)
+		var right: float = maxf(from_xs.max(), to_x)
+		for x in from_xs:
+			draw_line(Vector2(x, from_bottom), Vector2(x, bus), LINE, 1.5)
+		draw_line(Vector2(left, bus), Vector2(right, bus), LINE, 1.5)
+		draw_line(Vector2(to_x, bus), Vector2(to_x, to_top), LINE, 1.5)
+
+	func _frame(rect: Rect2, agent_id: int, focus: bool) -> Dictionary:
 		var card: Dictionary = _cards.get(agent_id, {})
 		var known := bool(card.get("known", false))
+		var dead := bool(card.get("dead", false))
 		_boxes.append([rect, agent_id])
-		draw_rect(rect, BOX_HOVER if agent_id == _hover and known else BOX_FILL, true)
-		var border := PINNED if bool(card.get("pinned", false)) else (INK if focus else INK_DIM)
-		draw_rect(rect, border, false, 2.0 if focus or bool(card.get("pinned", false)) else 1.0)
-		var font := get_theme_default_font()
-		var ink := INK_DIM if not known or bool(card.get("dead", false)) else INK
-		var title := "%s %s" % [card.get("name", ""), card.get("glyph", "")] if known else "неизвестно"
-		draw_string(font, rect.position + Vector2(8.0, 18.0), title.strip_edges(), HORIZONTAL_ALIGNMENT_LEFT,
-			box_size.x - 16.0, 14, ink)
+		draw_rect(rect, PAPER_HOVER if agent_id == _hover and known else (PAPER_DEAD if dead or not known else PAPER), true)
+		var pinned := bool(card.get("pinned", false))
+		var border := PINNED if pinned else (INK if focus else INK_DIM)
+		draw_rect(rect, border, false, 2.0 if focus or pinned else 1.0)
 		if known:
-			draw_string(font, rect.position + Vector2(8.0, 33.0), str(card.get("kind", "")), HORIZONTAL_ALIGNMENT_LEFT,
-				box_size.x - 16.0, 12, INK_DIM)
-			draw_string(font, rect.position + Vector2(8.0, 47.0), str(card.get("status", "")), HORIZONTAL_ALIGNMENT_LEFT,
-				box_size.x - 16.0, 12, INK_DIM)
+			var stripe: Color = STRIPE_DEAD if dead else STRIPE.get(str(card.get("sex", "")), INK_DIM)
+			draw_rect(Rect2(rect.position + Vector2(1.0, 1.0), Vector2(5.0, rect.size.y - 2.0)), stripe, true)
+		return card
+
+	func _box(center: Vector2, box_size: Vector2, agent_id: int, unknown_text: String) -> void:
+		var rect := Rect2(center - box_size * 0.5, box_size)
+		var card := _frame(rect, agent_id, false)
+		var font := get_theme_default_font()
+		var known := bool(card.get("known", false))
+		var ink := INK_DIM if not known or bool(card.get("dead", false)) else INK
+		var left := rect.position.x + 14.0
+		var room := box_size.x - 22.0
+		if not known:
+			draw_string(font, Vector2(left, rect.position.y + 33.0), unknown_text, HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE, INK_DIM)
+			return
+		var title := ("%s %s" % [card.get("name", ""), card.get("glyph", "")]).strip_edges()
+		draw_string(font, Vector2(left, rect.position.y + 19.0), title, HORIZONTAL_ALIGNMENT_LEFT, room, NAME_SIZE, ink)
+		draw_string(font, Vector2(left, rect.position.y + 35.0), str(card.get("kind", "")), HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE, INK_DIM)
+		draw_string(font, Vector2(left, rect.position.y + 50.0), str(card.get("status", "")), HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE, INK_DIM)
+
+	## The animal itself: its name larger, its kind and age, its family, and a note when its
+	## parents are kin - or that its parents are not known.
+	func _focus_box(center: Vector2, agent_id: int, founder: bool) -> void:
+		var rect := Rect2(center - FOCUS_BOX * 0.5, FOCUS_BOX)
+		var card := _frame(rect, agent_id, true)
+		var font := get_theme_default_font()
+		var left := rect.position.x + 14.0
+		var room := FOCUS_BOX.x - 22.0
+		var ink := INK_DIM if bool(card.get("dead", false)) else INK
+		var title := ("%s %s" % [card.get("name", ""), card.get("glyph", "")]).strip_edges()
+		draw_string(font, Vector2(left, rect.position.y + 22.0), title, HORIZONTAL_ALIGNMENT_LEFT, room, NAME_SIZE + 2, ink)
+		var about := " · ".join([str(card.get("kind", "")), str(card.get("status", ""))].filter(func(part): return part != ""))
+		draw_string(font, Vector2(left, rect.position.y + 40.0), about, HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE, INK_DIM)
+		draw_string(font, Vector2(left, rect.position.y + 57.0), _focus_line, HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE, INK)
+		var note := "родители неизвестны" if founder else _kinship
+		if note != "":
+			draw_string(font, Vector2(left, rect.position.y + 74.0), note, HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE,
+				INK_DIM if founder else KIN)
 
 
 ## Each species' inherited traits over the world's life (`TraitHistory`): four small charts, one

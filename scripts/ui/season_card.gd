@@ -19,6 +19,8 @@ var simulation_manager = null
 var _summary: Dictionary = {}
 var _left: float = 0.0
 var _allowed: bool = true
+## Held back, its countdown stopped, while a window stands over its place (`set_covered`).
+var _covered: bool = false
 var _title: Label
 var _text: Label
 
@@ -59,12 +61,20 @@ func show_season(summary: Dictionary) -> void:
 	_title.text = SeasonReportScript.title(summary)
 	_text.text = SeasonReportScript.text(summary)
 	_left = SHOW_SECONDS
-	visible = _allowed
+	visible = _allowed and not _covered
 
 
 func set_allowed(value: bool) -> void:
 	_allowed = value
-	visible = _allowed and not _summary.is_empty()
+	visible = _allowed and not _covered and not _summary.is_empty()
+
+
+## While the chronicle is open over the right column the card waits, as an epitaph does there.
+func set_covered(value: bool) -> void:
+	if _covered == value:
+		return
+	_covered = value
+	visible = _allowed and not _covered and not _summary.is_empty()
 
 
 func clear() -> void:
@@ -84,7 +94,7 @@ func text() -> String:
 func _process(delta: float) -> void:
 	if _summary.is_empty():
 		return
-	if simulation_manager != null and bool(simulation_manager.paused):
+	if _covered or (simulation_manager != null and bool(simulation_manager.paused)):
 		return
 	_left -= delta
 	if _left <= 0.0:

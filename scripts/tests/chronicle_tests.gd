@@ -559,6 +559,17 @@ func _test_family_tree_model(a) -> void:
 		["отец — %s" % book.name_of_id(11), "мать — %s" % book.name_of_id(20)], "a child's box names the other parent")
 	lineage.note_birth(40, "herbivore", "female", 300.0, 0, [20])
 	a.equal(FamilyTreeScript.mate_line(book, 40, 20), "отец неизвестен", "or says it is not known")
+	a.equal(FamilyTreeScript.focus_line(book, 20), "11 детёнышей (живы 10)", "the animal's own family")
+	a.equal(FamilyTreeScript.focus_line(book, 31), "детей нет", "or none")
+	a.equal(FamilyTreeScript.parents_kinship(FamilyTreeScript.around(book, 20)), "", "parents not kin")
+	lineage.note_birth(50, "herbivore", "female", 400.0, 0, [10, 11])
+	lineage.note_birth(51, "herbivore", "male", 400.0, 0, [10, 11])
+	lineage.note_birth(52, "herbivore", "female", 500.0, 0, [50, 51])
+	a.equal(FamilyTreeScript.parents_kinship(FamilyTreeScript.around(book, 52)), "родители — брат и сестра",
+		"a calf of a brother and a sister")
+	lineage.note_death(51, 520.0, "emigrated", -1, Vector2.ZERO)
+	var gone: Dictionary = FamilyTreeScript.card(book, 51, 600.0)
+	a.is_true(bool(gone["dead"]) and str(gone["status"]) == "ушёл с карты", "gone from the map, without a cross: %s" % gone["status"])
 	Helpers.destroy_manager(manager)
 
 
@@ -581,6 +592,23 @@ func _test_chronicle_window(a) -> void:
 	window.focus_requested.connect(func(agent_id: int) -> void: asked.append(agent_id))
 	window.open(10)
 	a.is_true(window.visible and window._tree.visible and window.focus_id() == 10, "open on the animal's family")
+	var rows: Dictionary = window._tree.layout(500.0)
+	a.is_true(float(rows["grand"]) < 0.0 and float(rows["parents"]) >= 0.0 and rows["children"].is_empty(),
+		"no grandparents known: no row for them (%s)" % str(rows))
+	a.is_true(float(rows["parents"]) > 100.0, "and what there is stands in the middle, not at the top")
+	window._tree.show_family({"focus": 10, "parents": [1, 2], "grandparents": [-1, -1, -1, -1],
+		"children": [1, 2, 3, 10, 1, 2], "more": 0}, 300.0, [120.0, 4])
+	var tree_rows: Dictionary = window._tree.layout(500.0)
+	a.equal(tree_rows["children"].size(), 2, "six children in two rows")
+	var first_row: Array = []
+	for index in range(4):
+		first_row.append(window._tree._child_x(index, 6, 760.0))
+	var down: float = window._tree._gap_x(first_row, 760.0)
+	var clear := true
+	for x in first_row:
+		clear = clear and absf(float(x) - down) > ChronicleWindowScript.TreeView.CHILD_BOX.x * 0.5
+	a.is_true(clear, "the line to the second row passes between the boxes of the first (%s at %.0f)" % [str(first_row), down])
+	window.refresh()
 	window._on_relative_picked(1)
 	a.is_true(window.focus_id() == 1 and asked == [1], "a relative clicked: the tree moves to her and the camera is asked")
 	a.is_true(window._back.visible, "with a way back")

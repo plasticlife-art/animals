@@ -34,6 +34,38 @@ static func around(book, agent_id: int) -> Dictionary:
 		"children": children.slice(0, MAX_CHILDREN), "more": maxi(0, children.size() - MAX_CHILDREN)}
 
 
+## The focus's own line of family: «3 детёныша (живы 2) · 7 живых потомков», «детей нет».
+static func focus_line(book, agent_id: int) -> String:
+	var children: Array = book.lineage.children(agent_id)
+	if children.is_empty():
+		return "детей нет"
+	var living := 0
+	for child in children:
+		if not book.lineage.is_dead(int(child)):
+			living += 1
+	var text := "%d %s (живы %d)" % [children.size(),
+		HudText.plural(children.size(), ["детёныш", "детёныша", "детёнышей"]), living]
+	var descendants: int = book.lineage.descendants_alive(agent_id)
+	if descendants > living:
+		text += " · %d %s" % [descendants, HudText.plural(descendants, ["живой потомок", "живых потомка", "живых потомков"])]
+	return text
+
+
+## Whether the focus's parents are kin - «родители — брат и сестра», «у родителей одна мать», «у
+## родителей один отец» - from the grandparents `around()` found; "" when not, or not known.
+static func parents_kinship(family: Dictionary) -> String:
+	var grand: Array = family.get("grandparents", [-1, -1, -1, -1])
+	var same_mother: bool = int(grand[0]) >= 0 and int(grand[0]) == int(grand[2])
+	var same_father: bool = int(grand[1]) >= 0 and int(grand[1]) == int(grand[3])
+	if same_mother and same_father:
+		return "родители — брат и сестра"
+	if same_mother:
+		return "у родителей одна мать"
+	if same_father:
+		return "у родителей один отец"
+	return ""
+
+
 ## What a child's box says in place of its kind: the parent the tree does not draw, the focus's
 ## mate - «мать — Ветка», «отец — Буян», «отец неизвестен». Without it a buck's calves stood under
 ## him as if he had them alone. "" when the child is not the focus's.
@@ -61,11 +93,14 @@ static func card(book, agent_id: int, now: float, calendar: Array = [120.0, 4]) 
 	var dead: bool = book.lineage.is_dead(agent_id)
 	var age: float = book.lineage.age_at(agent_id, now)
 	var status := HudText.age_text(age, calendar) if age >= 0.0 else ""
-	if dead:
+	var cause := str(entry["cause"])
+	if dead and cause == "emigrated":
+		# Gone from the map, not dead: no cross.
+		status = HudText.verb(sex, "ушёл с карты", "ушла с карты")
+	elif dead:
 		# The cause alone: the age it died at is in its epitaph, and a box has one short line.
-		var cause := str(entry["cause"])
 		status = "† %s" % (HudText.cause_label(cause) if cause != "" else HudText.verb(sex, "умер", "умерла"))
 	var traits = entry.get("traits", null)
-	return {"id": agent_id, "known": true, "name": book.name_of_id(agent_id), "glyph": HudText.sex_glyph(sex),
+	return {"id": agent_id, "known": true, "name": book.name_of_id(agent_id), "glyph": HudText.sex_glyph(sex), "sex": sex,
 		"kind": HudText.animal_noun(str(entry["species"]), sex), "status": status, "dead": dead,
 		"pinned": book.is_pinned(agent_id), "traits": "" if traits == null else HudText.traits_text(Array(traits))}
