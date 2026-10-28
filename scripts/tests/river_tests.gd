@@ -7,12 +7,14 @@ extends RefCounted
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const TerrainSystemScript := preload("res://scripts/world/terrain_system.gd")
+const WaterMaskScript := preload("res://scripts/ui/water_mask.gd")
 
 
 func run(a) -> void:
 	_test_off(a)
 	_test_a_river(a)
 	_test_banks(a)
+	_test_fords_drawn(a)
 
 
 static func _rivers(count: int = 1) -> Dictionary:
@@ -143,3 +145,32 @@ func _test_banks(a) -> void:
 		a.equal(world.water.drink(bank_index, 40.0), 40.0, "and they give every drink")
 	Helpers.destroy_manager(manager)
 	Helpers.destroy_manager(plain)
+
+
+## The water field marks a ford's texels, so the shader can draw the bar across the stream; the
+## rest of the river is owned by no pond, as before.
+func _test_fords_drawn(a) -> void:
+	var manager = Helpers.create_manager_with(_bundle(9972, _rivers()), 9972)
+	var world = manager.world_state
+	var river: Dictionary = world.terrain_system.rivers[0]
+	var texel: float = world.terrain_system.cell_size * 0.5
+	var mask: Dictionary = WaterMaskScript.bake([], world.bounds.end, texel, texel * 3.0, [river],
+		2.5 * world.terrain_system.cell_size * 0.5)
+	var at_ford: Vector2 = river["fords"][0]
+	var ford_texel := int(floor(at_ford.y / texel)) * int(mask["cols"]) + int(floor(at_ford.x / texel))
+	a.equal(mask["ids"][ford_texel], WaterMaskScript.FORD_ID, "a ford's texel is marked")
+	var points: PackedVector2Array = river["points"]
+	var plain_marked := 0
+	var plain := 0
+	for point in points:
+		var near_ford := false
+		for spot in river["fords"]:
+			near_ford = near_ford or point.distance_to(spot) < world.terrain_system.cell_size * 3.0
+		if near_ford or not Rect2(Vector2.ZERO, world.bounds.end).has_point(point):
+			continue
+		var index := int(floor(point.y / texel)) * int(mask["cols"]) + int(floor(point.x / texel))
+		plain += 1
+		if mask["ids"][index] == WaterMaskScript.FORD_ID:
+			plain_marked += 1
+	a.is_true(plain > 10 and plain_marked == 0, "and the rest of the river is not (%d of %d)" % [plain_marked, plain])
+	Helpers.destroy_manager(manager)

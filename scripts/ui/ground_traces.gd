@@ -58,6 +58,8 @@ const WATER_DEFAULTS := {
 	"deep_color": [0.10, 0.28, 0.46, 0.93],
 	"foam_color": [0.90, 0.96, 0.97, 0.55],
 	"shore_color": [0.79, 0.71, 0.50, 0.50],
+	"ford_color": [0.74, 0.72, 0.54, 0.90],
+	"ford_stone_color": [0.46, 0.44, 0.39, 0.95],
 	"depth_px": 48.0,
 	"shore_px": 12.0,
 	"foam_px": 3.0,
@@ -68,7 +70,8 @@ const WATER_DEFAULTS := {
 	"bed_color": [0.50, 0.40, 0.28, 0.70],
 	"bed_px": 10.0,
 }
-const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color", "bed_color"]
+const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color", "bed_color",
+	"ford_color", "ford_stone_color"]
 ## How often a pond's shrink is handed to the shader while ponds have levels: a level moves a
 ## few hundredths a second at most.
 const WATER_REFRESH_TICKS := 18
@@ -277,18 +280,23 @@ func _apply_water(world, water: Dictionary) -> void:
 	simulation_manager.record_render_phase("water_bake", float(Time.get_ticks_usec() - started) / 1000.0)
 
 
-## The water field and, for ponds with levels, which pond owns each texel and how far each has
-## shrunk, handed to the shader whole.
+## The water field and, for ponds with levels or rivers with fords, which pond owns each texel
+## (`WaterMask.FORD_ID` over a ford) and how far each pond has shrunk, handed to the shader whole.
 func _upload_water_field(world) -> void:
 	var cols: int = _water_mask["cols"]
 	var rows: int = _water_mask["rows"]
 	_material.set_shader_parameter("water_tex", ImageTexture.create_from_image(
 		_float_image(_water_mask["cells"], cols, rows)))
 	var levels_on: bool = world.water.enabled
+	var fords_on := false
+	for river in world.terrain_system.rivers:
+		fords_on = fords_on or not river.get("fords", []).is_empty()
 	_material.set_shader_parameter("water_levels", 1.0 if levels_on else 0.0)
-	if levels_on:
+	_material.set_shader_parameter("water_fords", 1.0 if fords_on else 0.0)
+	if levels_on or fords_on:
 		_material.set_shader_parameter("water_id_tex", ImageTexture.create_from_image(
 			_float_image(_water_mask["ids"], cols, rows)))
+	if levels_on:
 		water_shrinks = PackedFloat32Array()
 		water_shrinks.resize(world.water_sources.size())
 		_shrink_texture = ImageTexture.create_from_image(_float_image(water_shrinks, water_shrinks.size(), 1))

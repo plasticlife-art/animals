@@ -155,7 +155,11 @@ world is bit for bit the one without them.
   no tree or stone stands in one.
 - **Drawn.** `WaterMask.stamp_river` adds the bed to the ponds' distance field, segment by
   segment, owned by no pond, so it never shrinks; over a ford the field stays just below the
-  edge and reads as shallows. The ground mesh takes the deep cells too. In isometric the
+  edge and the texel is marked `WaterMask.FORD_ID` in the id field (uploaded whenever a river has
+  a ford, levels or not). There the shader draws a bar across the stream: sand under clear water
+  (`ford_color`), stones a few art pixels across lit from the upper left (`ford_stone_color`),
+  and the odd white glint running over them - a crossing that reads at a glance, where the first
+  shallows read only as slightly lighter water. The ground mesh takes the deep cells too. In isometric the
   ground's own tile is drawn under the water. The minimap paints deep water and fords from the
   terrain, and draws no circle for a bank. Each river has a name of its own («у Быстрой реки»),
   labelled once, at its middle bank.

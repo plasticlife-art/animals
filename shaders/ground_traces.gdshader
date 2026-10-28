@@ -51,6 +51,12 @@ uniform sampler2D water_id_tex : filter_nearest, repeat_disable;
 uniform sampler2D water_shrink_tex : filter_nearest, repeat_disable;
 uniform vec4 bed_color : source_color = vec4(0.50, 0.40, 0.28, 0.70);
 uniform float bed_fade = 30.0;
+// Fords (`WaterMask.FORD_ID` in `water_id_tex`, uploaded while a river has any): the river runs
+// shallow there over a bar of sand and pebbles, the sand showing through and the stones breaking
+// the water white, so a crossing reads at a glance.
+uniform float water_fords = 0.0;
+uniform vec4 ford_color : source_color = vec4(0.74, 0.72, 0.54, 0.90);
+uniform vec4 ford_stone_color : source_color = vec4(0.46, 0.44, 0.39, 0.95);
 
 // Biome borders: the terrain grid is square cells, so its biomes meet in a staircase. Near a
 // cell's edge a fragment looks a noise-warped way into the neighbouring cell, the warp stepped to
@@ -124,6 +130,20 @@ float shrunk_distance(vec2 uv) {
 	float b = shrunk_at(clamp(i + ivec2(1, 0), ivec2(0), hi));
 	float c = shrunk_at(clamp(i + ivec2(0, 1), ivec2(0), hi));
 	float d = shrunk_at(clamp(i + ivec2(1, 1), ivec2(0), hi));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// How much of a ford the fragment is in, 0 to 1, blended between the four texels about it.
+float ford_share(vec2 uv) {
+	ivec2 size = textureSize(water_id_tex, 0);
+	vec2 p = uv * vec2(size) - 0.5;
+	ivec2 i = ivec2(floor(p));
+	vec2 f = p - vec2(i);
+	ivec2 hi = size - ivec2(1);
+	float a = step(texelFetch(water_id_tex, clamp(i, ivec2(0), hi), 0).r, -1.5);
+	float b = step(texelFetch(water_id_tex, clamp(i + ivec2(1, 0), ivec2(0), hi), 0).r, -1.5);
+	float c = step(texelFetch(water_id_tex, clamp(i + ivec2(0, 1), ivec2(0), hi), 0).r, -1.5);
+	float d = step(texelFetch(water_id_tex, clamp(i + ivec2(1, 1), ivec2(0), hi), 0).r, -1.5);
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -354,6 +374,24 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 	water.rgb += ripple_strength * ripple;
 	float foam = (1.0 - smoothstep(0.0, foam_width, -d)) * (0.6 + 0.4 * sin(TIME * 1.3 + d * 0.15));
 	water = over(vec4(foam_color.rgb, foam * foam_color.a), water);
+	if (water_fords > 0.5) {
+		float ford = smoothstep(0.3, 0.7, ford_share(world / water_extent) + (noise - 0.5) * 0.4);
+		if (ford > 0.0) {
+			// In the art's own pixels: sand under clear water, stones a few pixels across with
+			// their tops lit, and the odd white glint where the stream runs over them.
+			vec2 px = floor(world / art_px);
+			float stone = step(0.74, value_noise(px * 0.21));
+			// Lit from the upper left, as the rest of the art: a stone's pixel whose upper-left
+			// neighbour is no stone.
+			float rim = stone * (1.0 - step(0.74, value_noise((px - vec2(1.0)) * 0.21)));
+			vec3 bar = mix(shallow_color.rgb, ford_color.rgb, 0.62) + ripple_strength * ripple;
+			bar = mix(bar, ford_stone_color.rgb, stone * ford_stone_color.a);
+			bar = mix(bar, foam_color.rgb, rim * 0.6);
+			float glint = step(0.9, value_noise(px * 0.3 + flow * 40.0));
+			bar = mix(bar, foam_color.rgb, glint * foam_color.a);
+			water = vec4(mix(water.rgb, bar, ford * ford_color.a), mix(water.a, 1.0, ford * 0.5));
+		}
+	}
 	return over(vec4(water.rgb, water.a * inside), result);
 }
 

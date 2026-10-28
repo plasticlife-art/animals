@@ -1,6 +1,10 @@
 class_name WaterMask
 extends RefCounted
 
+## What `ids` holds over a ford: no pond's, as for the rest of a river, but marked, so the shader
+## draws the bar of sand and stones the river is crossed by.
+const FORD_ID := -2.0
+
 ## The watering holes as a signed distance field: for each texel of a grid laid over the
 ## world, how far its centre is from the nearest pond's bank, negative inside it, and which
 ## pond that is. Baked once per world, since ponds never move, and read by the ground shader
@@ -37,7 +41,8 @@ static func bake(sources: Array, world_size: Vector2, texel: float, reach: float
 
 ## Adds a river: the distance to its bed less its half width, segment by segment over the texels
 ## about each, owned by no pond (-1: a river never shrinks). Over a ford the field is held just
-## below the water's edge, so the river shows there as shallows, light and narrow.
+## below the water's edge, so the river shows there as shallows, light and narrow, and the texel is
+## marked `FORD_ID`.
 static func stamp_river(mask: Dictionary, river: Dictionary, ford_half: float, reach: float) -> void:
 	var cells: PackedFloat32Array = mask["cells"]
 	var ids: PackedFloat32Array = mask["ids"]
@@ -61,13 +66,15 @@ static func stamp_river(mask: Dictionary, river: Dictionary, ford_half: float, r
 				var index := y * cols + x
 				var point := Vector2((float(x) + 0.5) * texel, (float(y) + 0.5) * texel)
 				var distance := point.distance_to(Geometry2D.get_closest_point_to_segment(point, a, b)) - half_width
+				var ford := false
 				for spot in fords:
 					if point.distance_to(spot) <= ford_half + half_width * 0.5:
 						distance = maxf(distance, -texel * 0.75)
+						ford = true
 						break
 				if distance < cells[index]:
 					cells[index] = distance
-					ids[index] = -1.0
+					ids[index] = FORD_ID if ford else -1.0
 	mask["cells"] = cells
 	mask["ids"] = ids
 
