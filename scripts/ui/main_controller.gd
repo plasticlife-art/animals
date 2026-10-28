@@ -545,6 +545,7 @@ func set_reserve_portrait(on: bool) -> void:
 	ecology_strip.compact = on
 	if _reserve_overlay != null:
 		_reserve_overlay.compact = on
+		_banner.compact = on
 	minimap.visible = not on
 	story_feed.visible = not on
 	# The card at the foot says what the tag over the animal would, and the tag hid the herd.
@@ -960,8 +961,9 @@ func _layout_hud() -> void:
 
 
 ## The reserve's own panels. Lying down: its panel at the top left, the banner and the right column's
-## cards where the scene has them. Upright: the panel under the species line, the banner under the
-## panel, the cards under the banner.
+## cards where the scene has them. Upright, from the foot up: the animal's card, the caption just
+## above it, an epitaph or a season's summary above that, the banner above them; the panel under
+## the species line stops above the highest of them, dropping rows.
 func _layout_reserve() -> void:
 	if _reserve_overlay == null:
 		return
@@ -974,14 +976,12 @@ func _layout_reserve() -> void:
 		panel_top = ecology_strip.get_global_rect().end.y + 8.0
 	if not is_equal_approx(_reserve_overlay.position.y, panel_top):
 		_reserve_overlay.position = Vector2(12.0, panel_top)
-	var below_panel: float = _reserve_overlay.get_global_rect().end.y + 10.0
-	_banner.top = below_panel if reserve_portrait else ReserveBanner.TOP
-	var cards_top: float = below_panel + 60.0 if reserve_portrait else _cards_top
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	var card_top: float = selection_card.get_global_rect().position.y if selection_card.visible else view.y
 	# The caption: over the foot of the map lying down, between the card and the minimap; upright,
 	# just above the animal's card.
-	if _caption != null and _caption.visible:
-		var view: Vector2 = get_viewport().get_visible_rect().size
-		var card_top: float = selection_card.get_global_rect().position.y if selection_card.visible else view.y
+	var caption_shown := _caption != null and _caption.visible
+	if caption_shown:
 		if reserve_portrait:
 			_caption.set_room(view.x - 24.0)
 			_caption.reset_size()
@@ -992,11 +992,31 @@ func _layout_reserve() -> void:
 			_caption.set_room(maxf(240.0, right - left))
 			_caption.reset_size()
 			_caption.position = Vector2(roundf(left + (right - left - _caption.size.x) * 0.5), view.y - _caption.size.y - 24.0)
+	if not reserve_portrait:
+		_banner.bottom = INF
+		_reserve_overlay.avoid = selection_card
+		for card in [epitaph_card, season_card]:
+			_place_card(card, _cards_top, card.offset_bottom - card.offset_top)
+		return
+	var foot: float = _caption.position.y if caption_shown else card_top
+	var highest: Control = _caption if caption_shown else selection_card
+	var news_foot := foot
 	for card in [epitaph_card, season_card]:
-		if not is_equal_approx(card.offset_top, cards_top):
-			var height: float = card.offset_bottom - card.offset_top
-			card.offset_top = cards_top
-			card.offset_bottom = cards_top + height
+		var height: float = card.get_combined_minimum_size().y
+		_place_card(card, foot - 10.0 - height, height)
+		if card.visible:
+			highest = card
+			news_foot = foot - 10.0 - height
+	_banner.bottom = news_foot - 10.0
+	if _banner.visible:
+		highest = _banner
+	_reserve_overlay.avoid = highest
+
+
+func _place_card(card: Control, top: float, height: float) -> void:
+	if not is_equal_approx(card.offset_top, top) or not is_equal_approx(card.offset_bottom, top + height):
+		card.offset_top = top
+		card.offset_bottom = top + height
 
 
 ## An action, or its key by where it sits on the keyboard, so a Russian layout presses it too.

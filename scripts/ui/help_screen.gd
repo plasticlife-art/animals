@@ -24,8 +24,15 @@ const EMPTY_TEXT := "Файл справки не найден: data/config/help
 ## its title, tab row and back button still clear the bottom of the screen.
 const PANEL_WIDTH := 1040.0
 const BODY_HEIGHT := 560.0
+## A screen narrower than the panel (the reserve upright): the panel takes the screen's width less
+## this each side, its section buttons in `NARROW_COLUMNS` columns.
+const NARROW_MARGIN := 8.0
+const NARROW_COLUMNS := 2
 
 var _sections: Array = []
+var _panel: PanelContainer = null
+var _tab_row: HBoxContainer = null
+var _tab_grid: GridContainer = null
 var _buttons: Array[Button] = []
 var _scroll: ScrollContainer = null
 var _body: RichTextLabel = null
@@ -37,6 +44,24 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
 	show_section(0)
+	get_viewport().size_changed.connect(_fit_to_view)
+	_fit_to_view()
+
+
+## The panel to the screen's width when the screen is narrower than it, the section buttons
+## then in a grid rather than one row; as designed otherwise.
+func _fit_to_view() -> void:
+	if _panel == null:
+		return
+	var view_width := get_viewport_rect().size.x
+	var narrow := view_width < PANEL_WIDTH + 2.0 * NARROW_MARGIN
+	_panel.custom_minimum_size.x = view_width - 2.0 * NARROW_MARGIN if narrow else PANEL_WIDTH
+	var holder: Container = _tab_grid if narrow else _tab_row
+	for button in _buttons:
+		if button.get_parent() != holder:
+			button.reparent(holder, false)
+	_tab_grid.visible = narrow
+	_tab_row.visible = not narrow
 
 
 func _build() -> void:
@@ -45,6 +70,7 @@ func _build() -> void:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
 	add_child(panel)
+	_panel = panel
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right"]:
@@ -62,15 +88,21 @@ func _build() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
 
-	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 8)
-	column.add_child(tabs)
+	_tab_row = HBoxContainer.new()
+	_tab_row.add_theme_constant_override("separation", 8)
+	column.add_child(_tab_row)
+	_tab_grid = GridContainer.new()
+	_tab_grid.columns = NARROW_COLUMNS
+	_tab_grid.add_theme_constant_override("h_separation", 8)
+	_tab_grid.add_theme_constant_override("v_separation", 8)
+	_tab_grid.visible = false
+	column.add_child(_tab_grid)
 	for index in range(_sections.size()):
 		var button := Button.new()
 		button.text = str(_sections[index]["label"])
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.pressed.connect(show_section.bind(index))
-		tabs.add_child(button)
+		_tab_row.add_child(button)
 		_buttons.append(button)
 
 	_scroll = ScrollContainer.new()

@@ -20,6 +20,8 @@ const ReserveOverlayScript := preload("res://scripts/ui/reserve_overlay.gd")
 const StoryBookScript := preload("res://scripts/story/story_book.gd")
 const SelectionCardScript := preload("res://scripts/ui/selection_card.gd")
 const ReserveBannerScript := preload("res://scripts/ui/reserve_banner.gd")
+const ChronicleWindowScript := preload("res://scripts/ui/chronicle_window.gd")
+const HelpScreenScript := preload("res://scripts/ui/help_screen.gd")
 const ReserveRecordsScript := preload("res://scripts/ui/reserve_records.gd")
 const WardTagsScript := preload("res://scripts/ui/ward_tags.gd")
 const AT := Vector2(1500.0, 1500.0)
@@ -40,6 +42,7 @@ func run(a) -> void:
 	_test_floors_and_ceilings(a)
 	_test_ward_news(a)
 	_test_the_banner_and_tables(a)
+	_test_upright_fits(a)
 	_test_saving_in_the_background(a)
 
 
@@ -493,6 +496,55 @@ func _test_the_banner_and_tables(a) -> void:
 		"Итоги года 1: дольше всех живёт Ветка (Вася), больше всех потомков — Буран (Маша), фонд года — лис", "the year's summary")
 	a.equal(WardTagsScript._label(world.adoptions[made[3]]), "Ветка · Вася", "a ward's tag names it and its guardian")
 	Helpers.destroy_manager(manager)
+
+
+## Upright (a 540x960 screen): the short card links to the tree, long news wraps, and the chronicle
+## and the help fit the screen - and are as before on a wide one.
+func _test_upright_fits(a) -> void:
+	var made := _two_wards(9942)
+	var manager = made[0]
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin({})
+	var ward = manager.world_state.get_agent(made[3])
+	a.equal(SelectionCardScript.compact_family_line(book, ward), "Опекун: Вася · [url=tree:%d]родословная[/url]" % ward.id,
+		"the short card: the guardian and the way to the tree")
+	Helpers.destroy_manager(manager)
+	var screen := SubViewport.new()
+	screen.size = Vector2i(540, 960)
+	Engine.get_main_loop().root.add_child(screen)
+	var banner = ReserveBannerScript.new()
+	screen.add_child(banner)
+	banner.compact = true
+	banner.hear({"text": "Подопечный погиб: Огонёк_зрителя_Константин — его поймала волчица Белоснежка", "kind": "ward_death"})
+	banner._process(0.0)
+	a.is_true(banner._label.autowrap_mode != TextServer.AUTOWRAP_OFF and banner._label.custom_minimum_size.x < 540.0 - 2.0 * ReserveBannerScript.SIDE,
+		"long news wraps inside the screen (%.0f)" % banner._label.custom_minimum_size.x)
+	banner.bottom = 600.0
+	banner._process(0.0)
+	a.is_true(is_equal_approx(banner.position.y + banner.size.y, 600.0), "and stands on its foot when told to")
+	var window = ChronicleWindowScript.new()
+	window.set_anchors_preset(Control.PRESET_CENTER)
+	window.offset_left = -410.0
+	window.offset_top = -290.0
+	window.offset_right = 410.0
+	window.offset_bottom = 290.0
+	screen.add_child(window)
+	window.open(-1, "records")
+	a.is_true(window.narrow and window.offset_right - window.offset_left <= 540.0 and window._tabs_row.get_parent() == window._root
+		and window._tree.custom_minimum_size == Vector2.ZERO and window._records.custom_minimum_size == Vector2.ZERO,
+		"upright, the chronicle fills the screen, its tabs under the title")
+	var help = HelpScreenScript.new()
+	screen.add_child(help)
+	a.is_true(help._panel.custom_minimum_size.x <= 540.0 - 2.0 * HelpScreenScript.NARROW_MARGIN and help._tab_grid.visible
+		and help._buttons[0].get_parent() == help._tab_grid, "and the help is the screen's width, its sections in a grid")
+	screen.size = Vector2i(1600, 900)
+	a.is_true(not window.narrow and is_equal_approx(window.offset_left, -410.0) and window._tabs_row.get_parent() == window._header
+		and window._tree.custom_minimum_size == ChronicleWindowScript.BODY_SIZE and window._records.custom_minimum_size == ChronicleWindowScript.BODY_SIZE,
+		"lying down, the chronicle as the scene has it")
+	a.is_true(is_equal_approx(help._panel.custom_minimum_size.x, HelpScreenScript.PANEL_WIDTH) and help._buttons[0].get_parent() == help._tab_row,
+		"and the help too")
+	screen.free()
 
 
 func _test_saving_in_the_background(a) -> void:

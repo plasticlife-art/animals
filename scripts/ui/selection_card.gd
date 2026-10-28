@@ -34,7 +34,8 @@ const BAR_SPACING := 8.0
 const VALUE_COLUMN := 74.0
 
 var simulation_manager: SimulationManager
-## The short card of the reserve on a phone: the name, the bars and what it does, no more.
+## The short card of the reserve on a phone: the name, the bars, what it does and a link to its
+## family tree, no more.
 var compact := false:
 	set(value):
 		compact = value
@@ -203,6 +204,15 @@ func why_line(agent, now_msec := -1) -> String:
 	return "Почему: " + _why if _why != "" else ""
 
 
+## The short card's family line: «Опекун: Костя · родословная», or the link alone.
+static func compact_family_line(story_book, agent) -> String:
+	var link := "[url=tree:%d]родословная[/url]" % agent.id
+	var ward: Dictionary = story_book.ward_of(agent.id)
+	if not ward.is_empty() and str(ward.get("viewer_name", "")) != "":
+		return "Опекун: %s · %s" % [str(ward["viewer_name"]), link]
+	return link
+
+
 func _on_family_meta(meta) -> void:
 	var link := str(meta)
 	if link.begins_with("tree:"):
@@ -268,9 +278,13 @@ func refresh() -> void:
 		why_label.visible = why_label.text != ""
 	var buttons: Control = follow_button.get_parent() if follow_button != null else null
 	if compact:
-		for row in [why_label, family_text, traits_label, buttons]:
+		for row in [why_label, traits_label, buttons]:
 			if row != null:
 				row.visible = false
+		# The family cut to its link (and a ward's guardian), so the tree opens from the short card too.
+		if family_text != null:
+			family_text.text = "" if story == null else compact_family_line(story, agent)
+			family_text.visible = family_text.text != ""
 	else:
 		for row in [family_text, buttons]:
 			if row != null:

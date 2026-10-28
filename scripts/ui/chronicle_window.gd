@@ -20,6 +20,8 @@ const SeasonReportScript := preload("res://scripts/story/season_report.gd")
 const ClimateScript := preload("res://scripts/world/climate.gd")
 const REFRESH_SECONDS := 1.5
 const BODY_SIZE := Vector2(760.0, 500.0)
+## Narrow, the room left between the window and the screen's edges.
+const NARROW_MARGIN := 8.0
 const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты", "seasons": "Сезоны"}
 ## Species lines are drawn in the species' interface colour, darkened to read on parchment.
 const SPECIES_DARKEN := 0.45
@@ -42,6 +44,14 @@ var _running_text: Label
 var _seasons_key := ""
 var _back: Button
 var _empty: Label
+## Too narrow a screen for the window as the scene has it (`_fit_to_view`).
+var narrow := false
+var _root: VBoxContainer
+var _header: HBoxContainer
+var _spacer: Control
+var _tabs_row: HBoxContainer
+## The window's offsets as the scene has them: left, top, right, bottom.
+var _wide_offsets: Array = [-410.0, -290.0, 410.0, 290.0]
 var _refresh_left := 0.0
 
 
@@ -58,9 +68,12 @@ func _init() -> void:
 	title.text = "Летопись"
 	title.add_theme_font_size_override("font_size", 20)
 	header.add_child(title)
-	var spacer := Control.new()
-	spacer.custom_minimum_size.x = 16.0
-	header.add_child(spacer)
+	_spacer = Control.new()
+	_spacer.custom_minimum_size.x = 16.0
+	header.add_child(_spacer)
+	_tabs_row = HBoxContainer.new()
+	_tabs_row.add_theme_constant_override("separation", 8)
+	header.add_child(_tabs_row)
 	var group := ButtonGroup.new()
 	for tab in TABS.keys():
 		var button := Button.new()
@@ -69,7 +82,7 @@ func _init() -> void:
 		button.button_group = group
 		button.focus_mode = Control.FOCUS_NONE
 		button.pressed.connect(show_tab.bind(tab))
-		header.add_child(button)
+		_tabs_row.add_child(button)
 		_tabs[tab] = button
 	var fill := Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -113,6 +126,52 @@ func _init() -> void:
 	_empty.custom_minimum_size.x = BODY_SIZE.x
 	_empty.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(_empty)
+	_root = root
+	_header = header
+
+
+func _ready() -> void:
+	_wide_offsets = [offset_left, offset_top, offset_right, offset_bottom]
+	get_viewport().size_changed.connect(_fit_to_view)
+	_fit_to_view()
+
+
+## Narrow when the screen is narrower than the window (the reserve upright, 540 wide): it fills
+## the screen, its tabs on a row of their own under the title, the records' cards and the trait
+## charts one under another and the seasons' text wrapped to what room there is; the tree fits
+## itself. Wide again as the scene has it.
+func _fit_to_view() -> void:
+	var view := get_viewport_rect().size
+	var now_narrow: bool = view.x < float(_wide_offsets[2]) - float(_wide_offsets[0]) + 2.0 * NARROW_MARGIN
+	if now_narrow:
+		offset_left = -view.x * 0.5 + NARROW_MARGIN
+		offset_right = view.x * 0.5 - NARROW_MARGIN
+		offset_top = -view.y * 0.5 + NARROW_MARGIN
+		offset_bottom = view.y * 0.5 - NARROW_MARGIN
+	else:
+		offset_left = _wide_offsets[0]
+		offset_top = _wide_offsets[1]
+		offset_right = _wide_offsets[2]
+		offset_bottom = _wide_offsets[3]
+	if now_narrow == narrow:
+		return
+	narrow = now_narrow
+	_tabs_row.reparent(_root if narrow else _header, false)
+	if narrow:
+		_root.move_child(_tabs_row, 1)
+	else:
+		_header.move_child(_tabs_row, _spacer.get_index() + 1)
+	_spacer.visible = not narrow
+	# The tree fills what room there is either way, and fits the family to it itself.
+	_tree.custom_minimum_size = Vector2.ZERO if narrow else BODY_SIZE
+	for body in [_records, _traits_view, _seasons_scroll]:
+		body.custom_minimum_size = Vector2.ZERO if narrow else BODY_SIZE
+		body.size_flags_vertical = Control.SIZE_EXPAND_FILL if narrow else Control.SIZE_FILL
+	_empty.custom_minimum_size.x = 0.0 if narrow else BODY_SIZE.x
+	# The seasons' rows are built to a width: built again to this one.
+	_seasons_key = ""
+	if visible:
+		refresh()
 
 
 func bind(story_book, manager) -> void:
@@ -128,6 +187,8 @@ func open(agent_id := -1, tab := "family") -> void:
 		_history.clear()
 		_focus_id = agent_id
 	visible = true
+	if is_inside_tree():
+		_fit_to_view()
 	show_tab(tab)
 
 
@@ -271,7 +332,7 @@ func _season_text(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.custom_minimum_size.x = BODY_SIZE.x - 24.0
+	label.custom_minimum_size.x = 0.0 if narrow else BODY_SIZE.x - 24.0
 	_seasons_box.add_child(label)
 	return label
 
@@ -378,6 +439,13 @@ class RecordsView:
 	const NAME_SIZE := 15
 	const LINE_SIZE := 13
 	const HINT_SIZE := 12
+	## Narrower than this (the reserve upright), the cards stand one under another, each title with
+	## its note on one line and the rows a little lower, so the four fit the screen's height.
+	const NARROW := 600.0
+	const NARROW_GAP := 12.0
+	const NARROW_HEADER := 36.0
+	const NARROW_ROW := 46.0
+	const NARROW_ROW_GAP := 2.0
 
 	var _rows: Dictionary = {}
 	var _calendar: Array = [120.0, 4]
@@ -434,32 +502,45 @@ class RecordsView:
 		var font := get_theme_default_font()
 		if font == null:
 			return
-		var cell := Vector2((size.x - GAP) * 0.5, (size.y - GAP) * 0.5)
-		for index in range(StoryRecords.KINDS.size()):
-			var origin := Vector2(float(index % 2) * (cell.x + GAP), float(floori(index / 2.0)) * (cell.y + GAP))
-			_card(Rect2(origin, cell), str(StoryRecords.KINDS[index]), font)
+		var narrow := size.x < NARROW
+		var columns := 1 if narrow else 2
+		var gap := NARROW_GAP if narrow else GAP
+		var count := StoryRecords.KINDS.size()
+		var rows := ceili(float(count) / columns)
+		var cell := Vector2((size.x - gap * (columns - 1)) / columns, (size.y - gap * (rows - 1)) / rows)
+		for index in range(count):
+			var origin := Vector2(float(index % columns) * (cell.x + gap), float(floori(float(index) / columns)) * (cell.y + gap))
+			_card(Rect2(origin, cell), str(StoryRecords.KINDS[index]), font, narrow)
 
-	func _card(rect: Rect2, kind: String, font: Font) -> void:
+	func _card(rect: Rect2, kind: String, font: Font, narrow := false) -> void:
 		draw_rect(rect, PAPER, true)
 		draw_rect(rect, FRAME, false, 1.0)
 		var left := rect.position.x + PAD
 		var room := rect.size.x - PAD * 2.0
-		draw_string(font, Vector2(left, rect.position.y + 26.0), str(StoryRecords.TITLES[kind]),
-			HORIZONTAL_ALIGNMENT_LEFT, room, TITLE_SIZE, INK)
-		draw_string(font, Vector2(left, rect.position.y + 44.0), str(HINTS.get(kind, "")), HORIZONTAL_ALIGNMENT_LEFT,
-			room, HINT_SIZE, INK_DIM)
-		draw_line(Vector2(left, rect.position.y + HEADER - 4.0), Vector2(rect.end.x - PAD, rect.position.y + HEADER - 4.0),
+		var header := NARROW_HEADER if narrow else HEADER
+		var title_y := rect.position.y + (24.0 if narrow else 26.0)
+		draw_string(font, Vector2(left, title_y), str(StoryRecords.TITLES[kind]), HORIZONTAL_ALIGNMENT_LEFT, room,
+			TITLE_SIZE, INK)
+		var hint := str(HINTS.get(kind, ""))
+		if narrow:
+			var hint_width := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, HINT_SIZE).x
+			draw_string(font, Vector2(rect.end.x - PAD - hint_width, title_y), hint, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				HINT_SIZE, INK_DIM)
+		else:
+			draw_string(font, Vector2(left, rect.position.y + 44.0), hint, HORIZONTAL_ALIGNMENT_LEFT, room, HINT_SIZE, INK_DIM)
+		draw_line(Vector2(left, rect.position.y + header - 4.0), Vector2(rect.end.x - PAD, rect.position.y + header - 4.0),
 			RULE, 1.0)
 		var listed: Array = _rows.get(kind, [])
 		if listed.is_empty():
 			var none := "пока никого"
 			var width := font.get_string_size(none, HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE).x
-			draw_string(font, Vector2(rect.get_center().x - width * 0.5, rect.position.y + HEADER + 48.0), none,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE, INK_DIM)
+			draw_string(font, Vector2(rect.get_center().x - width * 0.5, rect.position.y + header + (28.0 if narrow else 48.0)),
+				none, HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE, INK_DIM)
 			return
+		var row_height := NARROW_ROW if narrow else ROW
+		var step := row_height + (NARROW_ROW_GAP if narrow else ROW_GAP)
 		for place in range(listed.size()):
-			var row_rect := Rect2(rect.position.x + 4.0, rect.position.y + HEADER + place * (ROW + ROW_GAP),
-				rect.size.x - 8.0, ROW)
+			var row_rect := Rect2(rect.position.x + 4.0, rect.position.y + header + place * step, rect.size.x - 8.0, row_height)
 			_row(row_rect, place, listed[place], kind, font)
 
 	func _row(rect: Rect2, place: int, row: Dictionary, kind: String, font: Font) -> void:
@@ -510,6 +591,8 @@ class TraitsView:
 	const GAP := 22.0
 	const LEFT := 46.0
 	const RIGHT := 50.0
+	## Narrower than this, the charts stand one under another.
+	const NARROW := 600.0
 
 	var history = null
 	var species: Array = []
@@ -531,20 +614,25 @@ class TraitsView:
 			draw_string(font, Vector2(8.0, 30.0), "В этом мире черты не наследуются.", HORIZONTAL_ALIGNMENT_LEFT,
 				-1, 15, INK_DIM)
 			return
+		# Narrow (the reserve upright): what the lines are on a line of its own, the charts one under another.
+		var narrow := size.x < NARROW
 		var x := 0.0
 		for entry in species:
 			draw_string(font, Vector2(x, 15.0), str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, entry["color"])
 			x += font.get_string_size(str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 18.0
-		draw_string(font, Vector2(x + 6.0, 15.0), "— средние по виду, от начала мира", HORIZONTAL_ALIGNMENT_LEFT,
-			-1, 13, INK_DIM)
+		var about := Vector2(0.0, 33.0) if narrow else Vector2(x + 6.0, 15.0)
+		draw_string(font, about, "— средние по виду, от начала мира", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
+		var top := 48.0 if narrow else 30.0
 		if history.points.size() < 2:
-			draw_string(font, Vector2(0.0, 48.0), "Собираем данные: точка раз в %d с." % int(history.interval),
+			draw_string(font, Vector2(0.0, top + 18.0), "Собираем данные: точка раз в %d с." % int(history.interval),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK_DIM)
 			return
-		var top := 30.0
-		var cell := Vector2((size.x - GAP) * 0.5, (size.y - top - GAP) * 0.5)
-		for index in range(HudText.TRAIT_LABELS.size()):
-			var origin := Vector2(float(index % 2) * (cell.x + GAP), top + float(floori(index / 2.0)) * (cell.y + GAP))
+		var columns := 1 if narrow else 2
+		var count := HudText.TRAIT_LABELS.size()
+		var rows := ceili(float(count) / columns)
+		var cell := Vector2((size.x - GAP * (columns - 1)) / columns, (size.y - top - GAP * (rows - 1)) / rows)
+		for index in range(count):
+			var origin := Vector2(float(index % columns) * (cell.x + GAP), top + float(floori(float(index) / columns)) * (cell.y + GAP))
 			_chart(Rect2(origin, cell), index, font)
 
 	func _chart(rect: Rect2, index: int, font: Font) -> void:
