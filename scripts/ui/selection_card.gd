@@ -112,8 +112,8 @@ func _on_pin_button_pressed() -> void:
 
 
 ## «Мать: Ветка · Отец: Бурый» with the names as links, then «Поколение 2 · детей: 3, живы 2 ·
-## родословная» - the last a link to the chronicle - and «Живых потомков: 5» once there are
-## grandchildren. A parent who died is marked so,
+## родословная» - the last a link to the chronicle, «добыча: 4» before it for a hunter - and
+## «Живых потомков: 5» once there are grandchildren. A parent who died is marked so,
 ## «погибла» to a hunter and «умерла» otherwise.
 static func family_line(story_book, agent) -> String:
 	var entry: Dictionary = story_book.lineage.entry(agent.id)
@@ -130,6 +130,10 @@ static func family_line(story_book, agent) -> String:
 		if not story_book.lineage.is_dead(int(child)):
 			living += 1
 	var kids := "детей нет" if children.is_empty() else "детей: %d, живы %d" % [children.size(), living]
+	# A hunter's tally, as its epitaph will tell it.
+	var kills: int = story_book.lineage.kills(agent.id)
+	if kills > 0:
+		kids += " · добыча: %d" % kills
 	var lines := [" · ".join(parents), "Поколение %d · %s · [url=tree:%d]родословная[/url]" % [
 		int(entry.get("generation", 1)), kids, agent.id]]
 	# A viewer's ward, in the living reserve.
@@ -167,6 +171,41 @@ static func territory_line(world, story_book, agent) -> String:
 	if agent.age < grown and "natal_territory_id" in agent and int(agent.natal_territory_id) != -1:
 		return "Растёт на родительском участке"
 	return "Своего участка нет"
+
+
+## How old the animal is, after its name: «2 года», «3 сезона», «меньше сезона», and «, старая»
+## once it is past its prime. Whole years only from the first year on - the seasons with them do
+## not fit the title line, and are in its tooltip. `calendar` is `Climate.calendar()`.
+static func age_line(agent, calendar: Array = [120.0, 4]) -> String:
+	var year := maxf(0.001, float(calendar[0])) * maxi(1, int(calendar[1]))
+	var age := float(agent.age)
+	var text := HudText.age_text(age if age < year else floorf(age / year) * year, calendar)
+	if agent.has_method("get_age_stage") and agent.get_age_stage() == "old":
+		text += ", " + HudText.age_label("old", str(agent.sex))
+	return text
+
+
+## «Ветка ♀ · олениха · 2 года», or «Костяничка ♀ · 3 года, старая» when the name is too long
+## for the noun too: the tag over the animal still says what it is. On the title line rather
+## than a line of its own, since a line more pushes the herd card out with three pins up.
+func _fitted_title(agent, calendar: Array) -> String:
+	var name: String = "" if story == null else story.name_of(agent)
+	var age := age_line(agent, calendar)
+	var full := "%s · %s" % [AgentReadout.title(agent, name), age]
+	var font := title_label.get_theme_font("font")
+	var width := title_label.size.x
+	if name == "" or font == null or width <= 0.0 \
+			or font.get_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, -1.0, title_label.get_theme_font_size("font_size")).x <= width:
+		return full
+	return "%s %s · %s" % [name, HudText.sex_glyph(agent.sex), age]
+
+
+func _calendar() -> Array:
+	if story != null:
+		return story.calendar()
+	if simulation_manager != null:
+		return Climate.calendar(simulation_manager.config_bundle.get("world", {}).get("climate", {}))
+	return [120.0, 4]
 
 
 ## What the animal inherited, the two traits it differs in most (`HudText.traits_brief()`): one
@@ -246,7 +285,9 @@ func refresh() -> void:
 
 	visible = true
 	if title_label != null:
-		title_label.text = AgentReadout.title(agent, "" if story == null else story.name_of(agent))
+		var calendar := _calendar()
+		title_label.text = _fitted_title(agent, calendar)
+		title_label.tooltip_text = "Возраст: " + HudText.age_text(agent.age, calendar)
 	if family_text != null:
 		family_text.text = "" if story == null else family_line(story, agent)
 		var ground := territory_line(simulation_manager.world_state, story, agent)

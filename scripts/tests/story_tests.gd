@@ -22,6 +22,7 @@ func run(a) -> void:
 	_test_pins_follow_an_animal_anywhere(a)
 	_test_story_survives_a_save(a)
 	_test_card_and_list_words(a)
+	_test_card_tells_age_and_tally(a)
 	_test_feed_tells_what_is_looked_at(a)
 	_test_feed_folds_and_sums_up(a)
 	_test_feed_shows_the_newest(a)
@@ -246,6 +247,29 @@ func _test_story_survives_a_save(a) -> void:
 	old.begin({})
 	a.is_true(old.pins.is_empty() and old.name_of(calf) != "", "a save without a story starts one")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Helpers.destroy_manager(manager)
+
+
+## The card's title says how old the animal is - seasons in its first year, whole years after,
+## and «старая» past its prime - and a hunter's family line its tally.
+func _test_card_tells_age_and_tally(a) -> void:
+	var manager = Helpers.create_manager(677)
+	var world = manager.world_state
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var calendar := [120.0, 4]
+	var doe = Helpers.spawn_herbivore(world, Vector2(100.0, 100.0), 0)
+	doe.trait_longevity = 1.0
+	for case in [[30.0, "меньше сезона"], [250.0, "2 сезона"], [480.0, "1 год"], [700.0, "1 год"],
+			[960.0, "2 года"], [1100.0, "2 года, старая"]]:
+		doe.age = float(case[0])
+		a.equal(SelectionCardScript.age_line(doe, calendar), str(case[1]), "age at %d s" % int(case[0]))
+	var fox = Helpers.spawn_species(world, "predator", Vector2(300.0, 300.0), 0, Helpers.AgentBaseScript.SEX_MALE)
+	a.is_true(not SelectionCardScript.family_line(book, fox).contains("добыча"), "no tally before a kill")
+	world.kill_agent(doe, "predation", fox.id)
+	a.is_true(SelectionCardScript.family_line(book, fox).contains("детей нет · добыча: 1 · [url=tree:"),
+		"a kill counted: %s" % SelectionCardScript.family_line(book, fox))
 	Helpers.destroy_manager(manager)
 
 
