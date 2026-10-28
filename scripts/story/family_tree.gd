@@ -1,13 +1,98 @@
 class_name FamilyTree
 extends RefCounted
 
-## Three generations around one animal, for the chronicle's «Родословная»: its four
-## grandparents, its two parents, the animal, and its children - the first few, with how many
-## more there are. Read off the family tree (`Lineage`); -1 where a relative is not known. Each
-## relative comes with what its box says: name and sex, kind, age or «†» and how it died.
+## An animal's family, for the chronicle's «Родословная»: the whole of it known (`whole`), its
+## ancestors up and its descendants down, for the tree that zooms; or three generations about it
+## (`around`), its four grandparents, two parents and first few children. Read off the family tree
+## (`Lineage`); -1 where a relative is not known. Each relative comes with what its box says:
+## name and sex, kind, age or «†» and how it died.
 
-## Children shown before «и ещё N».
+## Children `around` gives before «и ещё N».
 const MAX_CHILDREN := 8
+## Generations `whole` walks up and down at most, and boxes it gives each side at most: a box
+## whose relatives are past either says how many more there are (`hidden`).
+const MAX_GENERATIONS := 12
+const MAX_ANCESTORS := 254
+const MAX_DESCENDANTS := 500
+
+
+## The whole known family about an animal: `{focus, nodes, ancestors, descendants}`, node 0 the
+## animal. Each node `{id, gen, link, role, up, down, hidden}`: `gen` the generation from the
+## animal (-1 its parents, 2 its grandchildren), `link` the node it hangs from - an ancestor from
+## the child it is a parent of, a descendant from its parent - `role` «focus», «mother», «father»
+## or «child», `up` its parents' nodes (mother first) and `down` its children's (the living
+## first, then by birth), `hidden` how many of them are past the limits. Ancestors are a pedigree:
+## an animal whose parents were kin stands in it more than once. A descendant stands once, under
+## the first of its parents met, even when both are the animal's. Where one of the animal's own
+## parents is known and the other not, the other is a node of id -1, «мать неизвестна».
+static func whole(book, agent_id: int) -> Dictionary:
+	var lineage = book.lineage
+	var nodes: Array = [_node(agent_id, 0, -1, "focus")]
+	var ancestors := 0
+	var frontier: Array = [0]
+	var depth := 0
+	while not frontier.is_empty():
+		depth += 1
+		var next: Array = []
+		for index in frontier:
+			var entry: Dictionary = lineage.entry(int(nodes[index]["id"]))
+			var parents := [int(entry.get("mother", -1)), int(entry.get("father", -1))]
+			var known: Array = parents.filter(func(parent): return parent >= 0 and lineage.knows(parent))
+			if known.is_empty():
+				continue
+			if depth > MAX_GENERATIONS or ancestors + known.size() > MAX_ANCESTORS:
+				nodes[index]["hidden"] = known.size()
+				continue
+			for side in range(2):
+				var parent: int = parents[side]
+				if not known.has(parent) and index != 0:
+					continue
+				var added := nodes.size()
+				nodes.append(_node(parent if known.has(parent) else -1, -depth, index, ["mother", "father"][side]))
+				nodes[index]["up"].append(added)
+				if known.has(parent):
+					next.append(added)
+					ancestors += 1
+		frontier = next
+	var descendants := 0
+	var seen := {agent_id: true}
+	frontier = [0]
+	depth = 0
+	while not frontier.is_empty():
+		depth += 1
+		var next: Array = []
+		for index in frontier:
+			for child in _children_sorted(lineage, int(nodes[index]["id"])):
+				if seen.has(child):
+					continue
+				if depth > MAX_GENERATIONS or descendants >= MAX_DESCENDANTS:
+					nodes[index]["hidden"] += 1
+					continue
+				seen[child] = true
+				var added := nodes.size()
+				nodes.append(_node(child, depth, index, "child"))
+				nodes[index]["down"].append(added)
+				next.append(added)
+				descendants += 1
+		frontier = next
+	return {"focus": agent_id, "nodes": nodes, "ancestors": ancestors, "descendants": descendants}
+
+
+static func _node(agent_id: int, gen: int, link: int, role: String) -> Dictionary:
+	return {"id": agent_id, "gen": gen, "link": link, "role": role, "up": [], "down": [], "hidden": 0}
+
+
+## An animal's children, the living first, then by birth, so a row leads with who can still be
+## visited.
+static func _children_sorted(lineage, agent_id: int) -> Array:
+	var children: Array = lineage.children(agent_id).duplicate()
+	children.sort_custom(func(a, b):
+		var dead_a: bool = lineage.is_dead(int(a))
+		var dead_b: bool = lineage.is_dead(int(b))
+		if dead_a != dead_b:
+			return not dead_a
+		return int(a) < int(b))
+	return children
 
 
 ## `{focus, parents: [mother, father], grandparents: [mother's mother, mother's father, father's
@@ -22,14 +107,7 @@ static func around(book, agent_id: int) -> Dictionary:
 		var parent_entry: Dictionary = lineage.entry(parent) if parent >= 0 else {}
 		grandparents.append(int(parent_entry.get("mother", -1)))
 		grandparents.append(int(parent_entry.get("father", -1)))
-	var children: Array = lineage.children(agent_id).duplicate()
-	# The living first, then by birth, so the box row leads with who can still be visited.
-	children.sort_custom(func(a, b):
-		var dead_a: bool = lineage.is_dead(int(a))
-		var dead_b: bool = lineage.is_dead(int(b))
-		if dead_a != dead_b:
-			return not dead_a
-		return int(a) < int(b))
+	var children: Array = _children_sorted(lineage, agent_id)
 	return {"focus": agent_id, "parents": [mother, father], "grandparents": grandparents,
 		"children": children.slice(0, MAX_CHILDREN), "more": maxi(0, children.size() - MAX_CHILDREN)}
 

@@ -173,7 +173,9 @@ func _park_on_agent() -> void:
 		_manager.select_agent_at_position(target.position, radius)
 	if _preset == "chronicle" or _preset == "records":
 		# A family made up around the animal, since a fresh world has only founders: two
-		# parents, three grandparents, five young, one of them dead. The harness only.
+		# parents, three grandparents and two great-grandparents, five young, one of them dead,
+		# and grandchildren by two of them. The harness only. `TREE_PNG=<path>` also saves the
+		# tree's picture there; `TREE_VIEW=whole` shoots the whole tree, `TREE_VIEW=0.3` at that zoom.
 		var book = _main.story_book
 		var lineage = book.lineage
 		var t := float(_manager.simulation_time)
@@ -182,6 +184,9 @@ func _park_on_agent() -> void:
 			lineage.note_birth(relative[0], "herbivore", relative[1], 0.0, 0, [])
 			lineage.entry(relative[0])["born"] = -1.0
 			lineage.note_animal(relative[0], "herbivore", relative[1], 0, -float(relative[2]), t)
+		for elder in [[900020, "female"], [900021, "male"]]:
+			lineage.note_birth(elder[0], "herbivore", elder[1], 0.0, 0, [])
+		lineage.note_birth(900001, "herbivore", "female", 0.0, 0, [900020, 900021])
 		lineage.note_birth(900010, "herbivore", "female", 0.0, 0, [900001, 900002])
 		lineage.note_birth(900011, "herbivore", "male", 0.0, 0, [900003])
 		lineage.note_death(900002, t, "predation", -1, target.position)
@@ -191,8 +196,20 @@ func _park_on_agent() -> void:
 		for child in range(5):
 			lineage.note_birth(900100 + child, "herbivore", "male" if child % 2 == 0 else "female", t, 0, [target.id, 900011])
 		lineage.note_death(900103, t, "starvation", -1, target.position)
+		lineage.note_birth(900500, "herbivore", "female", t, 0, [])
+		for grandchild in range(6):
+			var parents: Array = [900100, 900500] if grandchild < 4 else [900101, 900011]
+			lineage.note_birth(900600 + grandchild, "herbivore", "female" if grandchild % 2 == 0 else "male", t, 0, parents)
+		lineage.note_birth(900700, "herbivore", "male", t, 0, [900600])
 		if _preset == "chronicle":
 			_main.open_chronicle(target.id)
+			var tree_view = _main.chronicle_window._tree
+			if OS.get_environment("TREE_VIEW") == "whole":
+				tree_view.fit_whole(false)
+			elif OS.get_environment("TREE_VIEW").is_valid_float():
+				tree_view.zoom_at(tree_view.size * 0.5, float(OS.get_environment("TREE_VIEW")))
+			if OS.get_environment("TREE_PNG") != "":
+				tree_view.export_png(OS.get_environment("TREE_PNG"))
 	if _preset == "records":
 		# Long lives that ended and hunters with their kills, made up on top of that family.
 		var lineage = _main.story_book.lineage

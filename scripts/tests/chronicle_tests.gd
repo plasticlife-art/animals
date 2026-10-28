@@ -16,6 +16,7 @@ const EpitaphCardScript := preload("res://scripts/ui/epitaph_card.gd")
 const PinnedBarScript := preload("res://scripts/ui/pinned_bar.gd")
 const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
 const ChronicleWindowScript := preload("res://scripts/ui/chronicle_window.gd")
+const FamilyTreeViewScript := preload("res://scripts/ui/family_tree_view.gd")
 const PlayerBarScript := preload("res://scripts/ui/player_bar.gd")
 const ActionSelectorScript := preload("res://scripts/agents/ai/action_selector.gd")
 const UtilityEvaluatorScript := preload("res://scripts/agents/ai/utility_evaluator.gd")
@@ -72,6 +73,9 @@ func run(a) -> void:
 	_test_records_raise_few_epitaphs(a)
 	_test_epitaph_card_queue(a)
 	_test_family_tree_model(a)
+	_test_whole_family(a)
+	_test_family_tree_layout(a)
+	_test_family_tree_view(a)
 	_test_chronicle_window(a)
 	_test_why_from_real_reasons(a)
 	_test_card_keeps_the_last_reason(a)
@@ -573,6 +577,190 @@ func _test_family_tree_model(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
+## A family for the whole-tree tests: four founders, their children 10 and 11, their daughter
+## 20 with ten calves by 11 (30 dead) and one (40) by nobody known, a grandchild 61 of two of
+## her calves and a great-grandchild 70.
+func _whole_family_book(manager):
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var lineage = book.lineage
+	for founder in [[1, "female"], [2, "male"], [3, "female"], [4, "male"]]:
+		lineage.note_birth(founder[0], "herbivore", founder[1], 0.0, 0, [])
+	lineage.note_birth(10, "herbivore", "female", 100.0, 0, [1, 2])
+	lineage.note_birth(11, "herbivore", "male", 100.0, 0, [3, 4])
+	lineage.note_birth(20, "herbivore", "female", 200.0, 0, [10, 11])
+	for child in range(30, 40):
+		lineage.note_birth(child, "herbivore", "male", 300.0, 0, [20, 11])
+	lineage.note_death(30, 350.0, "predation", -1, Vector2.ZERO)
+	lineage.note_birth(40, "herbivore", "female", 300.0, 0, [20])
+	lineage.note_birth(61, "herbivore", "female", 400.0, 0, [40, 31])
+	lineage.note_birth(70, "herbivore", "male", 500.0, 0, [61])
+	return book
+
+
+static func _ids_at(tree: Dictionary, gen: int) -> Array:
+	var ids: Array = []
+	for node in tree["nodes"]:
+		if int(node["gen"]) == gen:
+			ids.append(int(node["id"]))
+	return ids
+
+
+## The whole family: ancestors a pedigree, mother first; every descendant once, the living
+## first; an unknown parent of the animal's own a box of its own; the cut says how many more.
+func _test_whole_family(a) -> void:
+	var manager = Helpers.create_manager(883)
+	var book = _whole_family_book(manager)
+	var tree: Dictionary = FamilyTreeScript.whole(book, 20)
+	var nodes: Array = tree["nodes"]
+	a.equal(int(nodes[0]["id"]), 20, "the animal first")
+	a.equal(_ids_at(tree, -1), [10, 11], "mother, then father")
+	a.equal(_ids_at(tree, -2), [1, 2, 3, 4], "the mother's parents, then the father's")
+	var children := _ids_at(tree, 1)
+	a.equal(children.size(), 11, "every child, none cut: %s" % str(children))
+	a.equal(children.back(), 30, "the dead calf last")
+	a.equal(_ids_at(tree, 2), [61], "a grandchild of two of her calves, once")
+	a.equal(_ids_at(tree, 3), [70], "and its young")
+	a.equal([int(tree["ancestors"]), int(tree["descendants"])], [6, 13], "how many each way")
+	var calf: Dictionary = FamilyTreeScript.whole(book, 40)
+	var calf_parents: Array = calf["nodes"][0]["up"]
+	a.equal([int(calf["nodes"][calf_parents[0]]["id"]), int(calf["nodes"][calf_parents[1]]["id"])], [20, -1],
+		"a father nobody knows: a box saying so")
+	a.equal(_ids_at(calf, -2), [10, 11], "and no box for his parents")
+	var lineage = book.lineage
+	for link in range(FamilyTreeScript.MAX_GENERATIONS + 2):
+		lineage.note_birth(101 + link, "herbivore", "female", 600.0 + link, 0, [100 + link] if link > 0 else [70])
+	var long: Dictionary = FamilyTreeScript.whole(book, 70)
+	var deepest := 0
+	var hidden := 0
+	for node in long["nodes"]:
+		deepest = maxi(deepest, int(node["gen"]))
+		hidden += int(node["hidden"])
+	a.equal(deepest, FamilyTreeScript.MAX_GENERATIONS, "a line down cut at the limit")
+	a.equal(hidden, 1, "where it says «ещё 1»")
+	Helpers.destroy_manager(manager)
+
+
+## The tidy layout: the animal at the middle, a generation a row, parents over their child,
+## a brood under its parent, and no two boxes of a row overlapping.
+func _test_family_tree_layout(a) -> void:
+	var manager = Helpers.create_manager(884)
+	var book = _whole_family_book(manager)
+	var tree: Dictionary = FamilyTreeScript.whole(book, 20)
+	var nodes: Array = tree["nodes"]
+	var at: Array = FamilyTreeViewScript.layout(tree)
+	a.equal(at[0], Vector2.ZERO, "the animal at the middle")
+	var rows_right := true
+	var centred := true
+	for index in range(nodes.size()):
+		rows_right = rows_right and is_equal_approx(Vector2(at[index]).y, float(nodes[index]["gen"]) * FamilyTreeViewScript.ROW_PITCH)
+		for key in ["up", "down"]:
+			var branch: Array = nodes[index][key]
+			if branch.size() >= 1:
+				var middle := (Vector2(at[branch[0]]).x + Vector2(at[branch.back()]).x) * 0.5
+				centred = centred and absf(middle - Vector2(at[index]).x) < 0.01
+	a.is_true(rows_right, "a generation a row")
+	a.is_true(centred, "each node centred over (or under) its own")
+	var clear := true
+	for i in range(nodes.size()):
+		for j in range(i + 1, nodes.size()):
+			if int(nodes[i]["gen"]) != int(nodes[j]["gen"]):
+				continue
+			var half := (FamilyTreeViewScript.FOCUS_BOX.x if i == 0 else FamilyTreeViewScript.BOX.x) * 0.5 \
+				+ FamilyTreeViewScript.BOX.x * 0.5
+			clear = clear and absf(Vector2(at[i]).x - Vector2(at[j]).x) >= half + FamilyTreeViewScript.SIBLING_GAP - 0.01
+	a.is_true(clear, "no two boxes of a row overlap")
+	Helpers.destroy_manager(manager)
+
+
+## The view opens on grandparents to grandchildren, all of them on the sheet; the wheel zooms
+## about the pointer; «Всё дерево» shows everything; a brood too wide to read whole opens on the
+## animal at a readable size; the picture is never wider than the limit.
+func _test_family_tree_view(a) -> void:
+	var manager = Helpers.create_manager(885)
+	var book = _whole_family_book(manager)
+	var view = FamilyTreeViewScript.new()
+	view.story = book
+	view.size = Vector2(1164.0, 650.0)
+	view.show_family(FamilyTreeScript.whole(book, 20), 600.0, [120.0, 4])
+	var sheet := Rect2(Vector2.ZERO, view.size)
+	var nodes: Array = view._nodes
+	var in_view := true
+	var great_grand_in := false
+	for index in range(nodes.size()):
+		var rect := Rect2(view.to_screen(view.node_rect(index).position), view.box_size(index) * view.zoom())
+		if absi(int(nodes[index]["gen"])) <= FamilyTreeViewScript.DEFAULT_GENERATIONS:
+			in_view = in_view and sheet.encloses(rect)
+		elif sheet.encloses(rect):
+			great_grand_in = true
+	a.is_true(in_view, "grandparents, parents, children and grandchildren all on the sheet (zoom %.2f)" % view.zoom())
+	a.is_true(view.zoom() >= FamilyTreeViewScript.DEFAULT_MIN_ZOOM, "at a size the names can be read")
+	var pointer := Vector2(300.0, 200.0)
+	var under: Vector2 = view.to_world(pointer)
+	view.zoom_at(pointer, view.zoom() * 1.7)
+	a.is_true(view.to_world(pointer).distance_to(under) < 0.01, "the wheel zooms about the pointer")
+	var picks: Array = []
+	view.picked.connect(func(agent_id: int) -> void: picks.append(agent_id))
+	var father_at: Vector2 = view.to_screen(view.node_positions()[view._nodes[0]["up"][1]])
+	_click(view, father_at, father_at)
+	a.equal(picks, [11], "a click on a relative picks it")
+	var before: Vector2 = view.center()
+	_click(view, father_at, father_at + Vector2(120.0, 40.0))
+	a.is_true(picks.size() == 1 and view.center().distance_to(before - Vector2(120.0, 40.0) / view.zoom()) < 0.01,
+		"a drag pans and picks nothing (%s -> %s)" % [before, view.center()])
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	wheel.pressed = true
+	wheel.position = pointer
+	var was: float = view.zoom()
+	view._gui_input(wheel)
+	a.is_true(view.zoom() < was, "the wheel down zooms out")
+	view.fit_whole(false)
+	var all_in := true
+	for index in range(nodes.size()):
+		all_in = all_in and sheet.encloses(Rect2(view.to_screen(view.node_rect(index).position), view.box_size(index) * view.zoom()))
+	a.is_true(all_in, "«Всё дерево»: everything on the sheet")
+	var lineage = book.lineage
+	for child in range(200, 240):
+		lineage.note_birth(child, "herbivore", "female", 700.0, 0, [70])
+	view.show_family(FamilyTreeScript.whole(book, 70), 800.0, [120.0, 4])
+	a.is_true(is_equal_approx(view.zoom(), FamilyTreeViewScript.DEFAULT_MIN_ZOOM) and is_equal_approx(view.center().x, 0.0),
+		"forty calves: the animal in the middle at a readable size (%.2f, %s)" % [view.zoom(), view.center()])
+	a.equal([FamilyTreeViewScript.generation_name(-2), FamilyTreeViewScript.generation_name(2),
+		FamilyTreeViewScript.generation_name(-6)], ["бабушки и деды", "внуки", "предки, 6-е колено"], "the bands' names")
+	var wide := Vector2(60000.0, 900.0)
+	var scale: float = FamilyTreeViewScript.export_scale(wide)
+	a.is_true((wide.x + FamilyTreeViewScript.EXPORT_MARGIN * 2.0) * scale <= FamilyTreeViewScript.EXPORT_MAX_PIXELS + 0.5,
+		"a huge tree's picture within the limit")
+	a.equal(FamilyTreeViewScript.export_scale(Vector2(1200.0, 700.0)), FamilyTreeViewScript.EXPORT_SCALE,
+		"a small one's at twice the size")
+	view.folder_override = "user://tree-test"
+	a.is_true(view.export_path().begins_with("user://tree-test/Родословная ") and view.export_path().ends_with(".png"),
+		"the picture's file: %s" % view.export_path())
+	view.free()
+	Helpers.destroy_manager(manager)
+
+
+## A press at `from`, the pointer moved to `to`, a release there.
+static func _click(view, from: Vector2, to: Vector2) -> void:
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = from
+	view._gui_input(press)
+	if to != from:
+		var move := InputEventMouseMotion.new()
+		move.position = to
+		move.relative = to - from
+		view._gui_input(move)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	release.position = to
+	view._gui_input(release)
+
+
 ## The window opens on an animal's family, a click on a relative moves to it and asks for the
 ## camera, «Назад» comes back, and the records list the record holders.
 func _test_chronicle_window(a) -> void:
@@ -592,22 +780,6 @@ func _test_chronicle_window(a) -> void:
 	window.focus_requested.connect(func(agent_id: int) -> void: asked.append(agent_id))
 	window.open(10)
 	a.is_true(window.visible and window._tree.visible and window.focus_id() == 10, "open on the animal's family")
-	var rows: Dictionary = window._tree.layout(500.0)
-	a.is_true(float(rows["grand"]) < 0.0 and float(rows["parents"]) >= 0.0 and rows["children"].is_empty(),
-		"no grandparents known: no row for them (%s)" % str(rows))
-	a.is_true(float(rows["parents"]) > 100.0, "and what there is stands in the middle, not at the top")
-	window._tree.show_family({"focus": 10, "parents": [1, 2], "grandparents": [-1, -1, -1, -1],
-		"children": [1, 2, 3, 10, 1, 2], "more": 0}, 300.0, [120.0, 4])
-	var tree_rows: Dictionary = window._tree.layout(500.0)
-	a.equal(tree_rows["children"].size(), 2, "six children in two rows")
-	var first_row: Array = []
-	for index in range(4):
-		first_row.append(window._tree._child_x(index, 6, 760.0))
-	var down: float = window._tree._gap_x(first_row, 760.0)
-	var clear := true
-	for x in first_row:
-		clear = clear and absf(float(x) - down) > ChronicleWindowScript.TreeView.CHILD_BOX.x * 0.5
-	a.is_true(clear, "the line to the second row passes between the boxes of the first (%s at %.0f)" % [str(first_row), down])
 	window.refresh()
 	window._on_relative_picked(1)
 	a.is_true(window.focus_id() == 1 and asked == [1], "a relative clicked: the tree moves to her and the camera is asked")
