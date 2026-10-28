@@ -615,14 +615,16 @@ func _test_chronicle_window(a) -> void:
 	window.go_back()
 	a.is_true(window.focus_id() == 10 and asked == [1, 10], "back to where it was")
 	window.show_tab("records")
-	a.is_true(window._records_scroll.visible and not window._tree.visible, "the records tab")
-	var texts: Array = []
-	for child in window._records_box.get_children():
-		if child is Button:
-			texts.append(child.text)
+	a.is_true(window._records.visible and not window._tree.visible, "the records tab")
+	var texts: Array = window._records.texts()
 	a.is_true(texts.has("%s · лис — добыча: 1" % book.name_of_id(3)), "the hunter with his kill: %s" % str(texts))
 	a.equal(ChronicleWindowScript.record_text({"name": "Ветка", "species": "herbivore", "sex": "female", "value": 600.0,
 		"dead": true}, "longest"), "Ветка · олениха † — 1 год и 1 сезон", "a record's words")
+	a.equal(ChronicleWindowScript.record_parts({"name": "Ветка", "species": "herbivore", "sex": "female", "value": 600.0,
+		"dead": true}, "longest"), {"name": "Ветка †", "noun": "олениха", "value": "1 год и 1 сезон", "caption": "прожила"},
+		"a record's card row")
+	a.equal(ChronicleWindowScript.record_parts({"name": "Рыжик", "species": "predator", "sex": "male", "value": 3.0},
+		"family")["caption"], "живых потомка", "a family counted in words")
 	window._open_record(3)
 	a.is_true(window.focus_id() == 3 and window._tree.visible and asked.back() == 3, "a record opens that family")
 	window.close_window()

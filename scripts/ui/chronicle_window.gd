@@ -29,8 +29,7 @@ var _focus_id := -1
 var _history: Array = []
 var _tabs: Dictionary = {}
 var _tree: TreeView
-var _records_scroll: ScrollContainer
-var _records_box: VBoxContainer
+var _records: RecordsView
 var _traits_view: TraitsView
 var _seasons_scroll: ScrollContainer
 var _seasons_box: VBoxContainer
@@ -87,14 +86,10 @@ func _init() -> void:
 	_tree.custom_minimum_size = BODY_SIZE
 	_tree.picked.connect(_on_relative_picked)
 	root.add_child(_tree)
-	_records_scroll = ScrollContainer.new()
-	_records_scroll.custom_minimum_size = BODY_SIZE
-	_records_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(_records_scroll)
-	_records_box = VBoxContainer.new()
-	_records_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_records_box.add_theme_constant_override("separation", 4)
-	_records_scroll.add_child(_records_box)
+	_records = RecordsView.new()
+	_records.custom_minimum_size = BODY_SIZE
+	_records.picked.connect(_open_record)
+	root.add_child(_records)
 	_traits_view = TraitsView.new()
 	_traits_view.custom_minimum_size = BODY_SIZE
 	root.add_child(_traits_view)
@@ -169,7 +164,7 @@ func refresh() -> void:
 	var family := _tab == "family"
 	_tree.visible = family and _focus_id >= 0
 	_empty.visible = family and _focus_id < 0
-	_records_scroll.visible = _tab == "records"
+	_records.visible = _tab == "records"
 	_traits_view.visible = _tab == "traits"
 	_seasons_scroll.visible = _tab == "seasons"
 	_back.visible = family and not _history.is_empty()
@@ -206,36 +201,10 @@ func _on_relative_picked(agent_id: int) -> void:
 
 
 func _fill_records() -> void:
-	for child in _records_box.get_children():
-		_records_box.remove_child(child)
-		child.queue_free()
-	var rows: Dictionary = StoryRecordsScript.all(story, _now())
-	var any := false
-	for kind in StoryRecordsScript.KINDS:
-		var title := Label.new()
-		title.text = str(StoryRecordsScript.TITLES[kind])
-		title.add_theme_font_size_override("font_size", 17)
-		_records_box.add_child(title)
-		var listed: Array = rows.get(kind, [])
-		if listed.is_empty():
-			var none := Label.new()
-			none.text = "    пока никого"
-			none.modulate = Color(1.0, 1.0, 1.0, 0.55)
-			_records_box.add_child(none)
-		for row in listed:
-			any = true
-			var button := Button.new()
-			button.text = record_text(row, kind, _calendar())
-			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			button.flat = true
-			button.focus_mode = Control.FOCUS_NONE
-			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-			button.pressed.connect(_open_record.bind(int(row["id"])))
-			_records_box.add_child(button)
-	if not any:
-		var quiet := Label.new()
-		quiet.text = "Рекордов пока нет: мир только начался."
-		_records_box.add_child(quiet)
+	var colors := {}
+	for species_id in HudText.ANIMALS.keys():
+		colors[species_id] = _species_color(str(species_id))
+	_records.show_records(StoryRecordsScript.all(story, _now()), _calendar(), colors)
 
 
 ## «Сезоны»: the season going on top, refreshed in place, then every closed one, newest first -
@@ -324,6 +293,29 @@ static func record_text(row: Dictionary, kind: String, calendar: Array = [120.0,
 	return "%s — %s" % [who, what]
 
 
+## A record's row in its parts, as the card draws it: `{name, noun, value, caption}` -
+## «Хват †», «лис», «14», «добыча».
+static func record_parts(row: Dictionary, kind: String, calendar: Array = [120.0, 4]) -> Dictionary:
+	var sex := str(row.get("sex", ""))
+	var value := float(row.get("value", 0.0))
+	var parts := {"name": "%s%s" % [row.get("name", ""), " †" if bool(row.get("dead", false)) else ""],
+		"noun": HudText.animal_noun(str(row.get("species", "")), sex), "value": "", "caption": ""}
+	match kind:
+		"oldest":
+			parts["value"] = HudText.age_text(value, calendar)
+			parts["caption"] = "возраст"
+		"longest":
+			parts["value"] = HudText.age_text(value, calendar)
+			parts["caption"] = "прожила" if sex == "female" else "прожил"
+		"family":
+			parts["value"] = str(int(value))
+			parts["caption"] = HudText.plural(int(value), ["живой потомок", "живых потомка", "живых потомков"])
+		"hunters":
+			parts["value"] = str(int(value))
+			parts["caption"] = "добыча"
+	return parts
+
+
 func _now() -> float:
 	return 0.0 if simulation_manager == null else float(simulation_manager.simulation_time)
 
@@ -331,13 +323,18 @@ func _now() -> float:
 ## `[{id, label, color}]` for the species that inherit traits.
 func _heredity_entries() -> Array:
 	var entries: Array = []
+	for species_id in story.heredity_species:
+		entries.append({"id": str(species_id), "label": HudText.species_label(str(species_id)),
+			"color": _species_color(str(species_id))})
+	return entries
+
+
+## A species' interface colour, darkened to read on parchment.
+func _species_color(species_id: String) -> Color:
 	var visuals: Dictionary = {} if simulation_manager == null else \
 		simulation_manager.config_bundle.get("visuals", {}).get("species", {})
-	for species_id in story.heredity_species:
-		var rgb: Array = visuals.get(species_id, {}).get("ui_color", [0.5, 0.5, 0.5])
-		entries.append({"id": str(species_id), "label": HudText.species_label(str(species_id)),
-			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2])).darkened(SPECIES_DARKEN)})
-	return entries
+	var rgb: Array = visuals.get(species_id, {}).get("ui_color", [0.5, 0.5, 0.5])
+	return Color(float(rgb[0]), float(rgb[1]), float(rgb[2])).darkened(SPECIES_DARKEN)
 
 
 func _calendar() -> Array:
@@ -613,6 +610,153 @@ class TreeView:
 		if note != "":
 			draw_string(font, Vector2(left, rect.position.y + 74.0), note, HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE,
 				INK_DIM if founder else KIN)
+
+
+## The records as four cards, two a row: a card a kind, its title and what it is ranked by, then
+## up to three animals best first - a medal with the place, the name over the kind of animal in its
+## species' colour, the value over what it counts on the right. The dead are dimmed; a click on a
+## row opens that animal's family (`picked`).
+class RecordsView:
+	extends Control
+
+	signal picked(agent_id: int)
+
+	const INK := Color(0.20, 0.13, 0.08)
+	const INK_DIM := Color(0.20, 0.13, 0.08, 0.55)
+	const PAPER := Color(0.91, 0.86, 0.72)
+	const PAPER_HOVER := Color(0.85, 0.79, 0.63)
+	const FRAME := Color(0.20, 0.13, 0.08, 0.35)
+	const RULE := Color(0.20, 0.13, 0.08, 0.15)
+	const MEDALS := [Color(0.78, 0.55, 0.12), Color(0.55, 0.53, 0.50), Color(0.62, 0.38, 0.20)]
+	const HINTS := {"oldest": "живые, по возрасту", "longest": "ушедшие, по прожитому",
+		"family": "по живым потомкам", "hunters": "по числу добычи"}
+	const GAP := 18.0
+	const PAD := 14.0
+	const HEADER := 58.0
+	const ROW := 52.0
+	const ROW_GAP := 4.0
+	const MEDAL := 13.0
+	const TITLE_SIZE := 17
+	const NAME_SIZE := 15
+	const LINE_SIZE := 13
+	const HINT_SIZE := 12
+
+	var _rows: Dictionary = {}
+	var _calendar: Array = [120.0, 4]
+	var _colors: Dictionary = {}
+	var _hits: Array = []
+	var _hover := -1
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	func show_records(rows: Dictionary, calendar: Array, colors: Dictionary) -> void:
+		_rows = rows
+		_calendar = calendar
+		_colors = colors
+		queue_redraw()
+
+	## Every row's words, card by card - what a reader would find here.
+	func texts() -> Array:
+		var out: Array = []
+		for kind in StoryRecords.KINDS:
+			for row in _rows.get(kind, []):
+				out.append(ChronicleWindow.record_text(row, kind, _calendar))
+		return out
+
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseMotion:
+			var over := _row_at(event.position)
+			if over != _hover:
+				_hover = over
+				mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if over >= 0 else Control.CURSOR_ARROW
+				queue_redraw()
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			var hit := _row_at(event.position)
+			if hit >= 0:
+				picked.emit(hit)
+				accept_event()
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_MOUSE_EXIT and _hover >= 0:
+			_hover = -1
+			queue_redraw()
+
+	func _get_tooltip(at_position: Vector2) -> String:
+		return "" if _row_at(at_position) < 0 else "Открыть семью"
+
+	func _row_at(point: Vector2) -> int:
+		for hit in _hits:
+			if (hit[0] as Rect2).has_point(point):
+				return int(hit[1])
+		return -1
+
+	func _draw() -> void:
+		_hits.clear()
+		var font := get_theme_default_font()
+		if font == null:
+			return
+		var cell := Vector2((size.x - GAP) * 0.5, (size.y - GAP) * 0.5)
+		for index in range(StoryRecords.KINDS.size()):
+			var origin := Vector2(float(index % 2) * (cell.x + GAP), float(floori(index / 2.0)) * (cell.y + GAP))
+			_card(Rect2(origin, cell), str(StoryRecords.KINDS[index]), font)
+
+	func _card(rect: Rect2, kind: String, font: Font) -> void:
+		draw_rect(rect, PAPER, true)
+		draw_rect(rect, FRAME, false, 1.0)
+		var left := rect.position.x + PAD
+		var room := rect.size.x - PAD * 2.0
+		draw_string(font, Vector2(left, rect.position.y + 26.0), str(StoryRecords.TITLES[kind]),
+			HORIZONTAL_ALIGNMENT_LEFT, room, TITLE_SIZE, INK)
+		draw_string(font, Vector2(left, rect.position.y + 44.0), str(HINTS.get(kind, "")), HORIZONTAL_ALIGNMENT_LEFT,
+			room, HINT_SIZE, INK_DIM)
+		draw_line(Vector2(left, rect.position.y + HEADER - 4.0), Vector2(rect.end.x - PAD, rect.position.y + HEADER - 4.0),
+			RULE, 1.0)
+		var listed: Array = _rows.get(kind, [])
+		if listed.is_empty():
+			var none := "пока никого"
+			var width := font.get_string_size(none, HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE).x
+			draw_string(font, Vector2(rect.get_center().x - width * 0.5, rect.position.y + HEADER + 48.0), none,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE, INK_DIM)
+			return
+		for place in range(listed.size()):
+			var row_rect := Rect2(rect.position.x + 4.0, rect.position.y + HEADER + place * (ROW + ROW_GAP),
+				rect.size.x - 8.0, ROW)
+			_row(row_rect, place, listed[place], kind, font)
+
+	func _row(rect: Rect2, place: int, row: Dictionary, kind: String, font: Font) -> void:
+		var agent_id := int(row.get("id", -1))
+		_hits.append([rect, agent_id])
+		if agent_id == _hover:
+			draw_rect(rect, PAPER_HOVER, true)
+		var dead := bool(row.get("dead", false))
+		var parts: Dictionary = ChronicleWindow.record_parts(row, kind, _calendar)
+		var center := Vector2(rect.position.x + PAD + MEDAL - 4.0, rect.get_center().y)
+		var medal: Color = MEDALS[mini(place, MEDALS.size() - 1)]
+		draw_circle(center, MEDAL, medal)
+		var number := str(place + 1)
+		var number_width := font.get_string_size(number, HORIZONTAL_ALIGNMENT_LEFT, -1, LINE_SIZE).x
+		draw_string(font, Vector2(center.x - number_width * 0.5, center.y + 5.0), number, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			LINE_SIZE, PAPER)
+		var right := rect.end.x - PAD + 4.0
+		var value := str(parts["value"])
+		var caption := str(parts["caption"])
+		var value_width := font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_SIZE).x
+		var caption_width := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, HINT_SIZE).x
+		var ink := INK_DIM if dead else INK
+		draw_string(font, Vector2(right - value_width, rect.position.y + 22.0), value, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			NAME_SIZE, ink)
+		draw_string(font, Vector2(right - caption_width, rect.position.y + 40.0), caption, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			HINT_SIZE, INK_DIM)
+		var left := center.x + MEDAL + 10.0
+		var room := maxf(40.0, right - maxf(value_width, caption_width) - 12.0 - left)
+		draw_string(font, Vector2(left, rect.position.y + 22.0), str(parts["name"]), HORIZONTAL_ALIGNMENT_LEFT, room,
+			NAME_SIZE, ink)
+		var noun_color: Color = _colors.get(str(row.get("species", "")), INK_DIM)
+		if dead:
+			noun_color.a = 0.6
+		draw_string(font, Vector2(left, rect.position.y + 40.0), str(parts["noun"]), HORIZONTAL_ALIGNMENT_LEFT, room,
+			LINE_SIZE, noun_color)
 
 
 ## Each species' inherited traits over the world's life (`TraitHistory`): four small charts, one

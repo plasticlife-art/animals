@@ -10,7 +10,7 @@ extends SceneTree
 # three years, `ponds` / `ponds_iso` shows watering holes at made-up levels (a quarter dry, the
 # rest a tenth, a third and three quarters full) top-down or isometric, `season` shows a made-up
 # summer's card with an epitaph under it, `seasons` opens the chronicle's «Сезоны» on two
-# made-up years,
+# made-up years, `records` opens the chronicle's «Рекорды» on made-up lives, families and hunts,
 # `scaled` is `story` under a 125 % interface (applied, not saved),
 # `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
 # the setup screen.
@@ -63,7 +63,7 @@ func _process(_delta: float) -> bool:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
-					"epitaph", "scaled", "settings", "traits", "ponds", "ponds_iso", "season", "seasons"]:
+					"epitaph", "scaled", "settings", "traits", "ponds", "ponds_iso", "season", "seasons", "records"]:
 				selection["style"] = _preset
 			if _preset == "ponds_iso":
 				selection["style"] = "isometric_craftpix"
@@ -140,7 +140,7 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits", "season", "seasons"]
+	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits", "season", "seasons", "records"]
 	if _preset == "scaled":
 		SettingsStore.apply({"fullscreen": false, "ui_scale": 1.25}, root, _camera)
 	if _preset == "settings":
@@ -171,7 +171,7 @@ func _park_on_agent() -> void:
 		# Centring is not selecting, and the tag and card only exist for a selection.
 		var radius := float(_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
 		_manager.select_agent_at_position(target.position, radius)
-	if _preset == "chronicle":
+	if _preset == "chronicle" or _preset == "records":
 		# A family made up around the animal, since a fresh world has only founders: two
 		# parents, three grandparents, five young, one of them dead. The harness only.
 		var book = _main.story_book
@@ -191,7 +191,27 @@ func _park_on_agent() -> void:
 		for child in range(5):
 			lineage.note_birth(900100 + child, "herbivore", "male" if child % 2 == 0 else "female", t, 0, [target.id, 900011])
 		lineage.note_death(900103, t, "starvation", -1, target.position)
-		_main.open_chronicle(target.id)
+		if _preset == "chronicle":
+			_main.open_chronicle(target.id)
+	if _preset == "records":
+		# Long lives that ended and hunters with their kills, made up on top of that family.
+		var lineage = _main.story_book.lineage
+		var t := float(_manager.simulation_time)
+		var lives := [[900201, "herbivore", "female", 1450.0], [900202, "predator", "male", 1210.0],
+			[900203, "scavenger", "female", 990.0]]
+		for life in lives:
+			lineage.note_animal(life[0], life[1], life[2], 0, life[3], t)
+			lineage.note_death(life[0], t, "old_age", -1, target.position)
+		var hunters: Array = []
+		for agent in agents:
+			if agent.species_type == "predator" and hunters.size() < 3:
+				hunters.append(agent.id)
+		for index in range(hunters.size()):
+			for kill in range([14, 9, 6][index]):
+				var prey := 900300 + index * 50 + kill
+				lineage.note_animal(prey, "herbivore", "male", 0, 200.0, t)
+				lineage.note_death(prey, t, "predation", hunters[index], target.position)
+		_main.chronicle_window.open(target.id, "records")
 	if _preset == "traits":
 		# Three years of drift made up, since a fresh world has one point. The harness only.
 		var history = _main.story_book.trait_history
