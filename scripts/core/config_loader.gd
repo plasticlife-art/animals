@@ -50,6 +50,19 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	return bundle
 
 
+## `saved`, the bundle a reserve was saved with, with today's powers (`load_reserve_bundle()`'s)
+## and the carcass causes it lacks. A reserve runs for weeks on one world: one saved before its
+## powers changed - before it became an island, with newcomers from the edge - plays on with the
+## powers it has now, its land and animals as they were.
+static func with_reserve_powers(saved: Dictionary, reserve: Dictionary) -> Dictionary:
+	var bundle: Dictionary = saved.duplicate(true)
+	var today := load_reserve_bundle(reserve)
+	bundle["powers"] = today["powers"].duplicate(true)
+	var causes: Dictionary = bundle.get("balance", {}).get("carcass", {}).get("meat_by_cause", {})
+	causes.merge(today["balance"]["carcass"]["meat_by_cause"], false)
+	return bundle
+
+
 ## Loads every config file and overlays the chosen setup options.
 ##
 ## `selection` maps a group id to an option id; any group it omits falls back to

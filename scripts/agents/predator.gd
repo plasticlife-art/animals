@@ -1255,8 +1255,9 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 ## every `look_seconds` it picks the nearest territory with its slot open - not the one it was
 ## born on - and makes for it ("disperse", `_resolve_patrol_goal()`); within `claim_radii` of
 ## the den it takes the slot, and the one holding the other is its mate. With none open it is
-## a vagrant, and looks again - for `emigrate_after_seconds` in all, after which it leaves the map
-## (true: gone, as a death of cause `emigrated`, with no body). The clock runs from when it
+## a vagrant, and looks again - for `emigrate_after_seconds` in all, after which it dies worn out
+## by its wandering (true: a death of cause `emigrated`, leaving a lean body - the world is an
+## island, there is nowhere else to go). The clock runs from when it
 ## began to look, open slots or not: one open slot drew a crowd of vagrants and only one took
 ## it, so a clock that stopped while there was one to make for hardly ever ran out.
 func _seek_ground(world) -> bool:

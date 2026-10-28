@@ -9,7 +9,7 @@ extends RefCounted
 ## age makes for an open territory not its birthplace and takes it. Asleep the same: a pair
 ## sleeps as its territory's group and keeps to it, drawing nothing from the stream; only
 ## holders breed; and a vagrant of age settles where a slot is open. One that has looked for
-## `emigrate_after_seconds` leaves the map, awake or asleep, with no body. Holders hunting asleep
+## `emigrate_after_seconds` dies of its wandering, awake or asleep, leaving a lean body. Holders hunting asleep
 ## count by `dormant_kill_scale`. The feed tells, in view: a
 ## pair taking a territory, a young one setting out, a kill by a pair, a herd going back to its
 ## season's pasture - and not one fox taking a slot alone.
@@ -33,7 +33,7 @@ func run(a) -> void:
 	_test_only_holders_breed_asleep(a)
 	_test_a_sleeping_vagrant_settles(a)
 	_test_the_feed_tells_it(a)
-	_test_a_vagrant_with_nowhere_leaves(a)
+	_test_a_vagrant_with_nowhere_dies(a)
 	_test_sleeping_holders_kill_by_the_scale(a)
 	_test_dens_in_cover(a)
 
@@ -392,7 +392,7 @@ func _test_the_feed_tells_it(a) -> void:
 	a.is_true(str(log.lines[0]["text"]).contains("идёт на летние угодья"), "a herd going back to its pasture (%s)" % str(log.lines[0]["text"]))
 
 
-func _test_a_vagrant_with_nowhere_leaves(a) -> void:
+func _test_a_vagrant_with_nowhere_dies(a) -> void:
 	for asleep in [false, true]:
 		var manager = _small(9998 + int(asleep), true)
 		var world = manager.world_state
@@ -414,14 +414,14 @@ func _test_a_vagrant_with_nowhere_leaves(a) -> void:
 			var sector_key: Vector2i = world._get_sector_key(den)
 			world._sleep_sector(sector_key)
 			_coarse_steps(world, sector_key, 20)
-			a.is_true(not _records(world, sector_key).has(vagrant.id), "asleep, looking too long it leaves")
+			a.is_true(not _records(world, sector_key).has(vagrant.id), "asleep, looking too long it dies")
 		else:
 			for step in range(20):
 				world.current_time += 1.0
 				vagrant._seek_ground(world)
-			a.is_true(not vagrant.is_alive, "looking too long, though one slot was open far off, it leaves the map")
-		a.equal([int(manager.stats_system.counters.get("deaths_emigrated", 0)), world.carcasses.size()], [1, carcasses],
-			"counted as gone, with no body%s" % (" (asleep)" if asleep else ""))
+			a.is_true(not vagrant.is_alive, "looking too long, though one slot was open far off, it dies of its wandering")
+		a.equal([int(manager.stats_system.counters.get("deaths_emigrated", 0)), world.carcasses.size()], [1, carcasses + 1],
+			"counted as worn out by wandering, with a body: the island has nowhere to go%s" % (" (asleep)" if asleep else ""))
 		Helpers.destroy_manager(manager)
 
 

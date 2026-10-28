@@ -172,10 +172,7 @@ static func card(book, agent_id: int, now: float, calendar: Array = [120.0, 4]) 
 	var age: float = book.lineage.age_at(agent_id, now)
 	var status := HudText.age_text(age, calendar) if age >= 0.0 else ""
 	var cause := str(entry["cause"])
-	if dead and cause == "emigrated":
-		# Gone from the map, not dead: no cross.
-		status = HudText.verb(sex, "ушёл с карты", "ушла с карты")
-	elif dead:
+	if dead:
 		# The cause alone: the age it died at is in its epitaph, and a box has one short line.
 		status = "† %s" % (HudText.cause_label(cause) if cause != "" else HudText.verb(sex, "умер", "умерла"))
 	var traits = entry.get("traits", null)

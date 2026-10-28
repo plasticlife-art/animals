@@ -10,11 +10,12 @@ extends RefCounted
 ## - «!1», «!2»...: a vote (`VoteRound`); the winner is carried out at the close.
 ## - «!водопой», «!повести», «!отстрел»: the steward's powers, on the focus herd - a pond by it,
 ##   a walk to the best grass in reach, a cull of the foxes nearest it.
-## - «!олени», «!лисы», «!волки»: backing a fund; every so often the fund with most active
-##   members has its perk carried out.
+## - «!олени», «!лисы», «!волки», «!зайцы»: backing a fund; every so often the fund with most
+##   active members has its perk carried out - for most, a year of bigger litters (`good_litter`).
 ##
 ## Per-viewer cooldowns, in simulated seconds, sit on top of each power's own (`powers.json`).
-## A species about to be lost gets newcomers from the edge on its own (`rescue`).
+## The reserve is an island: no one comes from outside, and a species that has none left is told
+## of once (`extinct`) and is gone for good.
 ## A ward's death and a ward's young are told too (`ward_death`, `ward_born`).
 ## `told` carries a line for the overlay and the banner: `{text, kind}`.
 
@@ -35,9 +36,9 @@ var vote = VoteRoundScript.new()
 ## empty, or gone, the biggest herd of deer.
 var focus: Dictionary = {}
 var _teams_counted_at: float = -1.0
-var _rescue_checked_at: float = -INF
-## When each species last had newcomers sent to save it.
-var _rescued_at: Dictionary = {}
+var _census_at: float = -INF
+## The species the island has lost, in the order it lost them.
+var lost: Array = []
 ## Orders given and not yet answered: `{seq: {key, user, kind, label}}`.
 var _pending: Dictionary = {}
 ## Each fund's perks this year, `{team: count}`, and the year they count.
@@ -87,11 +88,11 @@ func hear(message: Dictionary) -> void:
 ## Votes and funds as their times come; call once a tick, or a frame.
 func tick() -> void:
 	var won: Dictionary = vote.tick(now(), config)
-	if not won.is_empty() and not _crowded(str(won.get("power", "")), won.get("params", {}), "Голосование: %s" % str(won.get("label", ""))):
+	if not won.is_empty():
 		_order(str(won.get("power", "")), won.get("params", {}), {"key": "", "user": "", "kind": "vote",
 			"label": str(won.get("label", ""))})
 	_count_teams()
-	_rescue()
+	_count_species()
 
 
 func _adopt(key: String, user: String, raw_name: String) -> void:
@@ -248,8 +249,6 @@ func _count_teams() -> void:
 	if winner == "":
 		return
 	var perk: Dictionary = funds[winner].get("perk", {})
-	if _crowded(str(perk.get("power", "")), perk.get("params", {}), str(funds[winner].get("label", winner))):
-		return
 	_order(str(perk.get("power", "")), perk.get("params", {}), {"key": "", "user": "", "kind": "team",
 		"label": str(funds[winner].get("label", winner)), "members": int(counts[winner])})
 	_count_perk(winner)
@@ -264,42 +263,22 @@ func _count_perk(team: String) -> void:
 	year_perks[team] = int(year_perks.get(team, 0)) + 1
 
 
-## Every `rescue.every_seconds`, each species the world began with that is down to fewer than its
-## `rescue.below` has newcomers ordered from the edge (`immigrate`), no sooner than
-## `rescue.gap_seconds` after its last; in the order `below` lists them.
-func _rescue() -> void:
-	var settings: Dictionary = config.get("rescue", {})
-	if settings.is_empty() or now() < _rescue_checked_at + float(settings.get("every_seconds", 30.0)):
+## Every `census_seconds`, each species the world began with that has none left, awake or asleep,
+## is told of once - «Волков на острове больше нет» - and kept in `lost`.
+func _count_species() -> void:
+	if now() < _census_at + float(config.get("census_seconds", 30.0)):
 		return
 	var counts := census()
 	if counts.is_empty():
 		return
-	_rescue_checked_at = now()
+	_census_at = now()
 	var spawns: Dictionary = manager.world_state.config_bundle.get("world", {}).get("spawns", {})
-	var below: Dictionary = settings.get("below", {})
-	for species in below.keys():
-		if int(spawns.get("%s_count" % species, 0)) <= 0 or int(counts.get(species, 0)) >= int(below[species]):
+	for species in manager.world_state.species_registry.ids():
+		if int(spawns.get("%s_count" % species, 0)) <= 0 or int(counts.get(species, 1)) > 0 or species in lost:
 			continue
-		if now() < float(_rescued_at.get(species, -INF)) + float(settings.get("gap_seconds", 600.0)):
-			continue
-		_rescued_at[species] = now()
-		_order("immigrate", {"species": species}, {"key": "", "user": "", "kind": "rescue", "label": str(species),
-			"count": int(counts.get(species, 0))})
-
-
-## Whether newcomers of `power` (`release`) would come to a species already at its `ceilings`; if
-## so, told, with `about` before it, and not ordered.
-func _crowded(power: String, params: Dictionary, about: String) -> bool:
-	if power != "release":
-		return false
-	var species := str(params.get("species", "predator"))
-	var ceiling := int(config.get("ceilings", {}).get(species, 1 << 30))
-	var count := int(census().get(species, 0))
-	if count < ceiling:
-		return false
-	_tell("%s — но %s и так много, пришлые не пришли" % [about, str(HudTextScript.ANIMALS.get(species, {}).get("count", ["", "", species])[2])],
-		"refused")
-	return true
+		lost.append(species)
+		var many := str(HudTextScript.ANIMALS.get(species, {}).get("count", ["", "", species])[2])
+		_tell("%s на острове больше нет" % (many.left(1).to_upper() + many.substr(1)), "extinct")
 
 
 ## How many are left of the species a cull takes.
@@ -314,7 +293,8 @@ func _cull_species_left() -> int:
 ## How many of each species live, awake or asleep: `{species: count}`. In the game the view's world
 ## holds the animals about the camera only, the sleeping ones staying with the worker, so the
 ## count is the stats' (`<species>_population`, from the worker each tick); stepped inline, as in a
-## test or a soak, the world itself is counted. Empty while the stats have no count yet.
+## test or a soak, the world itself is counted, every species in it, none left as 0. Empty while
+## the stats have no count yet.
 func census() -> Dictionary:
 	var world = manager.world_state
 	var counts := {}
@@ -324,6 +304,8 @@ func census() -> Dictionary:
 			if snapshot.has("%s_population" % species):
 				counts[species] = int(snapshot["%s_population" % species])
 		return counts
+	for species in world.species_registry.ids():
+		counts[species] = 0
 	for agent in world.get_living_agents():
 		if agent != null and agent.is_alive:
 			counts[agent.species_type] = int(counts.get(agent.species_type, 0)) + 1
@@ -374,10 +356,6 @@ func _on_world_event(event: Dictionary) -> void:
 			_tell("Голосование: %s%s" % [str(about.get("label", "")), "" if ok else " — не вышло"], "vote")
 		"team":
 			_tell("%s: %s%s" % [str(about.get("label", "")), _perk_text(data), "" if ok else " — не вышло"], "team")
-		"rescue":
-			if ok:
-				_tell("Осталось %s — с края карты пришли новые" % HudTextScript.animal_count(str(about.get("label", "")),
-					int(about.get("count", 0))), "rescue")
 		_:
 			var kind := str(about.get("kind", ""))
 			_tell("%s: %s — %s%s" % [user, POWER_LABELS.get(kind, kind), str(about.get("label", "")), "" if ok else ", не вышло"], "power")
@@ -435,8 +413,8 @@ static func _perk_text(data: Dictionary) -> String:
 	match str(data.get("power", "")):
 		"bloom":
 			return "буйная трава"
-		"release":
-			return "с края карты пришли новые звери"
+		"good_litter":
+			return "удачный выводок на год"
 	return str(data.get("power", ""))
 
 
@@ -446,7 +424,7 @@ func _tell(text: String, kind: String) -> void:
 
 func export_state() -> Dictionary:
 	return {"book": book.export_state(), "vote": vote.export_state(), "focus": focus.duplicate(true),
-		"teams_counted_at": _teams_counted_at, "rescued_at": _rescued_at.duplicate(), "year_perks": year_perks.duplicate(),
+		"teams_counted_at": _teams_counted_at, "lost": lost.duplicate(), "year_perks": year_perks.duplicate(),
 		"perks_year": _perks_year}
 
 
@@ -455,6 +433,6 @@ func import_state(data: Dictionary) -> void:
 	vote.import_state(data.get("vote", {}))
 	focus = data.get("focus", {}).duplicate(true)
 	_teams_counted_at = float(data.get("teams_counted_at", -1.0))
-	_rescued_at = data.get("rescued_at", {}).duplicate()
+	lost = data.get("lost", []).duplicate()
 	year_perks = data.get("year_perks", {}).duplicate()
 	_perks_year = int(data.get("perks_year", -1))

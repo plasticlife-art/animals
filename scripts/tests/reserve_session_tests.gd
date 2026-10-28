@@ -5,8 +5,8 @@ extends RefCounted
 ## asked too soon ignored; a vote won and carried out; a fund's perk; a steward's power on the
 ## focus herd; «!моё» asking the camera for the ward; the session back from a save; lines of
 ## JSON read off the local port; the director's shots (`ReserveDirector`); the overlay's text; and
-## the reserve's saves, in slots of its own; a species about to be lost rescued; the viewers long
-## unseen forgotten; no cull of the last foxes, no newcomers to a crowded species, the reserve's
+## the reserve's saves, in slots of its own; a species lost told of, with no newcomers; the
+## viewers long unseen forgotten; no cull of the last foxes, the reserve's
 ## own power settings and a shorter story; a ward's death and young told, the banner's order, the
 ## tables and the year's summary, the wards' tags; an autosave written in the background.
 
@@ -36,7 +36,7 @@ func run(a) -> void:
 	_test_the_director(a)
 	_test_the_overlay_text(a)
 	_test_its_own_slots(a)
-	_test_a_rescue(a)
+	_test_an_island(a)
 	_test_counting_with_a_worker(a)
 	_test_forgetting_viewers(a)
 	_test_floors_and_ceilings(a)
@@ -352,7 +352,8 @@ func _test_its_own_slots(a) -> void:
 	Helpers.destroy_manager(loaded)
 
 
-func _test_a_rescue(a) -> void:
+## The reserve is an island: a species that has none left is told of once, and no one comes.
+func _test_an_island(a) -> void:
 	var bundle: Dictionary = ReserveCommandTestsScript._bundle(9938)
 	bundle["world"]["spawns"]["herbivore_count"] = 10
 	var manager = Helpers.create_manager_with(bundle, 9938)
@@ -360,26 +361,38 @@ func _test_a_rescue(a) -> void:
 	var session = ReserveSessionScript.new()
 	session.configure(manager, _config())
 	var lines: Array = []
-	session.told.connect(func(line: Dictionary) -> void: lines.append(str(line["text"])))
-	var before := int(session.census().get("herbivore", 0))
-	for _tick in range(int(manager.tick_rate * 2.0)):
-		manager.step_once()
-		session.tick()
-	var arrived := int(session.census().get("herbivore", 0)) - before
-	a.is_true(before < 40 and arrived >= 8 and lines.size() == 1 and lines[0].begins_with("Осталось %s" % HudText.animal_count("herbivore", before)),
-		"a species about to be lost gets newcomers, told (%d arrived, %s)" % [arrived, str(lines)])
+	session.told.connect(func(line: Dictionary) -> void: lines.append([str(line["text"]), str(line["kind"])]))
+	manager.step_once()
+	session.tick()
+	a.equal(lines, [], "nothing to tell while every species is alive")
+	for agent in manager.world_state.get_living_agents():
+		if agent.species_type == "herbivore":
+			manager.world_state.kill_agent(agent, "culled")
 	for _tick in range(int(manager.tick_rate * 35.0)):
 		manager.step_once()
 		session.tick()
-	a.equal(lines.size(), 1, "and no more before the gap")
-	a.is_true(not session.census().has("wolf") and manager.world_state.player.journal.filter(
-		func(entry) -> bool: return str(entry["params"].get("species", "")) == "wolf").is_empty(),
-		"none for a species the world did not begin with")
+	a.is_true(lines == [["Оленей на острове больше нет", "extinct"]] and session.lost == ["herbivore"],
+		"the last deer gone, told once (%s)" % str(lines))
+	for _tick in range(int(manager.tick_rate * 35.0)):
+		manager.step_once()
+		session.tick()
+	a.is_true(lines.size() == 1 and int(session.census().get("herbivore", -1)) == 0 and manager.world_state.player.journal.is_empty(),
+		"and no newcomers come, nor is it told again (%s)" % str(lines))
+	a.is_true(not session.lost.has("wolf"), "a species the world did not begin with is not lost")
 	Helpers.destroy_manager(manager)
+	var old: Dictionary = ConfigLoaderScript.load_reserve_bundle(_config())
+	old["powers"]["offered"] = ["adopt", "rain", "release", "immigrate"]
+	old["balance"]["carcass"]["meat_by_cause"].erase("emigrated")
+	old["balance"]["carcass"]["meat_by_cause"]["predation"] = 0.9
+	var resumed := ConfigLoaderScript.with_reserve_powers(old, _config())
+	var causes: Dictionary = resumed["balance"]["carcass"]["meat_by_cause"]
+	a.is_true(resumed["powers"]["offered"].has("good_litter") and not resumed["powers"]["offered"].has("release")
+		and causes.has("emigrated") and is_equal_approx(float(causes["predation"]), 0.9),
+		"a reserve saved before the island plays on with today's powers, its own balance kept")
 
 
 ## In the game the view's world holds the animals about the camera only: the count is the
-## worker's, its stats' totals. Counting the view sent newcomers to every species at the start.
+## worker's, its stats' totals. Counting the view would have lost every species at the start.
 func _test_counting_with_a_worker(a) -> void:
 	var bundle: Dictionary = ReserveCommandTestsScript._bundle(9939)
 	bundle["world"]["spawns"]["herbivore_count"] = 10
@@ -390,13 +403,13 @@ func _test_counting_with_a_worker(a) -> void:
 	session.told.connect(func(line: Dictionary) -> void: lines.append(str(line["text"])))
 	manager._worker = RefCounted.new()
 	manager.stats_system.latest_snapshot = {}
-	session._rescue()
-	a.is_true(session.census().is_empty() and lines.is_empty(), "nothing counted, nobody sent, before the worker's first count")
+	session._count_species()
+	a.is_true(session.census().is_empty() and lines.is_empty(), "nothing counted, nothing lost, before the worker's first count")
 	manager.stats_system.latest_snapshot = {"tick": 3, "herbivore_population": 160, "predator_population": 30}
 	a.is_true(int(session.census().get("herbivore", 0)) == 160 and int(session.census().get("predator", 0)) == 30,
 		"the worker's totals: %s" % str(session.census()))
-	session._rescue()
-	a.is_true(lines.is_empty(), "and none sent where there are plenty: %s" % str(lines))
+	session._count_species()
+	a.is_true(lines.is_empty() and session.lost.is_empty(), "and none lost where there are plenty: %s" % str(lines))
 	manager._worker = null
 	Helpers.destroy_manager(manager)
 
@@ -413,17 +426,12 @@ func _test_forgetting_viewers(a) -> void:
 
 
 func _test_floors_and_ceilings(a) -> void:
-	var config := _config()
-	config["ceilings"]["herbivore"] = 3
-	var made := _reserve(9939, config)
+	var made := _reserve(9939, _config())
 	var manager = made[0]
 	var session = made[1]
 	session.hear(_message("1", "Вася", "!отстрел"))
 	a.is_true(manager.pending_commands().is_empty() and str(made[2][-1]).contains("лис и так мало"),
 		"no cull while the foxes are below the floor (%s)" % str(made[2]))
-	a.is_true(session._crowded("release", {"species": "herbivore"}, "Голосование: Пришлое стадо")
-		and str(made[2][-1]) == "Голосование: Пришлое стадо — но оленей и так много, пришлые не пришли"
-		and not session._crowded("release", {"species": "predator"}, "Фонд лис"), "no newcomers to a species at its ceiling")
 	Helpers.destroy_manager(manager)
 	var bundle: Dictionary = ConfigLoaderScript.load_reserve_bundle(_config())
 	a.equal(float(bundle["powers"]["powers"]["cull"]["cooldown_seconds"]), 240.0, "the reserve's own power settings")

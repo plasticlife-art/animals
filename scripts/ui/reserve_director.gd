@@ -7,7 +7,7 @@ extends RefCounted
 ## `asked_dwell_seconds`), for something weightier near (after `near_dwell_seconds`) or for
 ## something weighty anywhere (after `min_dwell_seconds`). The next scene is the best of: what a
 ## viewer asked for; a hunt going on among the animals awake; the recent moments (a kill, a ward
-## taken, newcomers, a pair or a pack on the hunt, a birth, a territory taken), the near first;
+## taken, a pair or a pack on the hunt, a birth, a territory taken), the near first;
 ## the wards, those not seen for a while first; the focus herd - not the subject it just left.
 ## A far scene is reached through the map: the view widens until both places are in it, holds,
 ## and closes on the new one; a near one is reached by panning. Each scene opens with a caption,
@@ -18,7 +18,7 @@ extends RefCounted
 
 signal caption_changed(text: String, seconds: float)
 
-const WEIGHTS := {"adopt": 7, "PredationSuccess": 6, "Release": 5, "PairHunt": 5, "AgentBorn": 3, "HerdAlarm": 3,
+const WEIGHTS := {"adopt": 7, "PredationSuccess": 6, "PairHunt": 5, "AgentBorn": 3, "HerdAlarm": 3,
 	"TerritoryClaimed": 2}
 const ASKED_WEIGHT := 10
 const HUNT_WEIGHT := 6
@@ -83,16 +83,12 @@ func _hear(event: Dictionary) -> void:
 		if str(data.get("power", "")) == "adopt" and bool(data.get("ok", false)):
 			kind = "adopt"
 			agent_id = int(data.get("agent_id", -1))
-		elif str(data.get("power", "")) == "release" and bool(data.get("ok", false)):
-			kind = "Release"
 	var weight := int(WEIGHTS.get(kind, 0))
 	# Nothing to see of what happened asleep, far off: it was settled in aggregate.
 	if weight <= 0 or bool(data.get("dormant", false)):
 		return
 	var at: Dictionary = event.get("position", {})
 	var where := Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
-	if kind == "Release":
-		where = Vector2(data.get("position", where))
 	_moments.append({"kind": kind, "weight": weight, "agent_id": agent_id, "species": str(data.get("species", event.get("species", ""))),
 		"other_id": int(event.get("other_agent_id", -1)), "position": where, "at": _now()})
 	if _moments.size() > 32:
@@ -278,8 +274,6 @@ func caption_for(kind: String, id: int, agent, position: Vector2, moment: Dictio
 					str(ward.get("viewer_name", ""))]
 		"AgentBorn":
 			what = "Пополнение: %s" % who
-		"Release":
-			what = "С края карты пришли новые звери"
 		"TerritoryClaimed":
 			what = "Пара заняла участок: %s" % who
 		"herd":

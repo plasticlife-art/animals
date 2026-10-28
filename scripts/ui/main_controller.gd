@@ -353,6 +353,8 @@ func _start_reserve(fresh: bool) -> void:
 	var config := ConfigLoader.load_reserve_config()
 	var path := SaveSystem.latest_slot(SaveSystem.KIND_RESERVE)
 	var data := SaveSystem.read(path) if path != "" and not fresh else {}
+	if data.has("config_bundle"):
+		data["config_bundle"] = ConfigLoader.with_reserve_powers(data["config_bundle"], config)
 	if not data.is_empty() and SaveSystem.restore(simulation_manager, data):
 		_selection = data.get("selection", {})
 		_pending_story = data.get("story", {})

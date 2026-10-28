@@ -573,7 +573,7 @@ func _test_family_tree_model(a) -> void:
 		"a calf of a brother and a sister")
 	lineage.note_death(51, 520.0, "emigrated", -1, Vector2.ZERO)
 	var gone: Dictionary = FamilyTreeScript.card(book, 51, 600.0)
-	a.is_true(bool(gone["dead"]) and str(gone["status"]) == "ушёл с карты", "gone from the map, without a cross: %s" % gone["status"])
+	a.is_true(bool(gone["dead"]) and str(gone["status"]) == "† скитания", "dead of its wandering, with a cross: %s" % gone["status"])
 	Helpers.destroy_manager(manager)
 
 

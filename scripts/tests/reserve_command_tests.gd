@@ -1,15 +1,17 @@
 extends RefCounted
 
-## The reserve's orders to the world (`adopt`, `rain`, `drought`, `cold_snap`, `bloom`, `release`):
+## The reserve's orders to the world (`adopt`, `rain`, `drought`, `cold_snap`, `bloom`, `good_litter`):
 ## a viewer takes the nearest animal no one cares for, awake or asleep, and only one living at a
 ## time; the weather fills or empties the ponds and, for a while, quickens hunger or the grass;
-## newcomers walk in from the edge, grown, the pair taking a free territory; the wards and the
+## a good litter gives a species one young more a litter for a year, and no one walks in from
+## outside the island; the wards and the
 ## weather come back with a save; the worker carries the orders out as an inline tick does; and
 ## a world that does not offer them refuses them.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
-const RESERVE_POWERS := ["dig_pond", "lead_herd", "cull", "adopt", "rain", "drought", "cold_snap", "bloom", "release", "immigrate"]
+const ClimateScript := preload("res://scripts/world/climate.gd")
+const RESERVE_POWERS := ["dig_pond", "lead_herd", "cull", "adopt", "rain", "drought", "cold_snap", "bloom", "good_litter"]
 const AT := Vector2(1500.0, 1500.0)
 
 
@@ -17,7 +19,7 @@ func run(a) -> void:
 	_test_adoption(a)
 	_test_adopting_a_sleeper(a)
 	_test_the_weather(a)
-	_test_newcomers(a)
+	_test_a_good_litter(a)
 	_test_kept_and_alike(a)
 	_test_not_offered(a)
 	_test_kept_short(a)
@@ -117,27 +119,40 @@ func _test_the_weather(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
-func _test_newcomers(a) -> void:
-	var manager = _world(9944)
+func _test_a_good_litter(a) -> void:
+	var bundle := _bundle(9944)
+	# The fixture breeds no one by season; foxes do here, as shipped.
+	bundle["species"]["predator"]["breeding"] = ConfigLoaderScript.load_config_bundle()["species"]["predator"]["breeding"].duplicate(true)
+	var manager = Helpers.create_manager_with(bundle, 9944)
+	manager.set_lod_enabled(false)
 	var world = manager.world_state
-	for species in ["predator", "wolf", "herbivore"]:
-		var seq: int = manager.enqueue_command("release", {"species": species})
-		manager.step_once()
-		var result := _result(world, seq)
-		var arrived: Array = []
-		for agent in world.get_living_agents():
-			if agent.species_type == species:
-				arrived.append(agent)
-		var edge: Vector2 = result.get("position", Vector2.ZERO)
-		var near_edge: bool = minf(minf(edge.x, world.bounds.end.x - edge.x), minf(edge.y, world.bounds.end.y - edge.y)) < 400.0
-		a.is_true(bool(result.get("ok", false)) and arrived.size() == int(world.player.settings("release")["counts"][species]) and near_edge,
-			"%s walk in from the edge (%d, at %s)" % [species, arrived.size(), str(edge)])
-		if species == "predator":
-			var registry = world.territory_registry("predator")
-			a.is_true(arrived[0].preferred_mate_id == arrived[1].id and (registry == null or registry.territory_of(arrived[0].id) != -1),
-				"the pair are mates, holding a free territory")
-		if species != "predator":
-			a.is_true(arrived[0].group_id >= 0 and arrived[0].group_id == arrived[arrived.size() - 1].group_id, "%s as one group" % species)
+	var plain: Array = []
+	for pair in range(1, 40):
+		plain.append(world.litter_size("predator", pair, pair + 1000))
+	var seq: int = manager.enqueue_command("good_litter", {"species": "predator"})
+	manager.step_once()
+	var result := _result(world, seq)
+	var good: Array = []
+	for pair in range(1, 40):
+		good.append(world.litter_size("predator", pair, pair + 1000))
+	var calendar: Array = ClimateScript.calendar(world.config_bundle["world"]["climate"])
+	a.is_true(bool(result.get("ok", false)) and is_equal_approx(float(result.get("seconds", 0.0)), float(calendar[0]) * float(calendar[1])),
+		"a good litter lasts a year (%s)" % str(result))
+	var more := true
+	for index in range(plain.size()):
+		more = more and int(good[index]) == int(plain[index]) + 1
+	a.is_true(more, "and every fox litter has one young more (%s -> %s)" % [str(plain.slice(0, 5)), str(good.slice(0, 5))])
+	a.equal(world.litter_size("herbivore", 1, 1001), world.litter_size("herbivore", 1, 1001), "other species as they were")
+	manager.enqueue_command("good_litter", {"species": "predator"})
+	manager.step_once()
+	a.equal(world.world_events.filter(func(event) -> bool: return str(event.get("kind", "")) == "good_litter").size(), 1,
+		"a second one starts the year anew, not adding to it")
+	var refused: int = manager.enqueue_command("good_litter", {"species": "dragon"})
+	var outside: int = manager.enqueue_command("release", {"species": "wolf"})
+	manager.step_once()
+	a.equal([str(_result(world, refused).get("reason", "")), str(_result(world, outside).get("reason", ""))],
+		[PlayerCommands.REFUSED_BAD_TARGET, PlayerCommands.REFUSED_UNKNOWN],
+		"no good litter for a species not on the island, and no newcomers from outside it")
 	Helpers.destroy_manager(manager)
 
 
@@ -160,7 +175,7 @@ func _test_kept_and_alike(a) -> void:
 	threaded.enable_interactive_worker()
 	threaded.begin_interactive_stepping()
 	for manager_pair in [inline, threaded]:
-		manager_pair.enqueue_command("release", {"species": "wolf"})
+		manager_pair.enqueue_command("good_litter", {"species": "wolf"})
 		manager_pair.enqueue_command("cold_snap", {})
 	for _tick in range(30):
 		inline.step_once()
@@ -183,7 +198,7 @@ func _test_not_offered(a) -> void:
 
 
 ## What a reserve running for days would pile up is kept short: the dead wards to the latest
-## `keep_dead`, the journal to `JOURNAL_LIMIT`. And `immigrate` brings any species it lists.
+## `keep_dead`, the journal to `JOURNAL_LIMIT`.
 func _test_kept_short(a) -> void:
 	var world = _world(9841).world_state
 	for index in range(5):
@@ -198,7 +213,3 @@ func _test_kept_short(a) -> void:
 		world.player.record({"seq": index, "type": "rain", "params": {}}, index, {"ok": true})
 	a.is_true(world.player.journal.size() == PlayerState.JOURNAL_LIMIT
 		and int(world.player.journal[-1]["seq"]) == PlayerState.JOURNAL_LIMIT + 4, "the journal keeps the latest orders")
-	var grouse_before: int = world.get_living_agents().filter(func(agent): return agent.species_type == "scavenger").size()
-	world._apply_player_commands([PlayerCommands.make(1, "immigrate", {"species": "scavenger"})])
-	var grouse_after: int = world.get_living_agents().filter(func(agent): return agent.species_type == "scavenger").size()
-	a.equal(grouse_after - grouse_before, 8, "newcomers to save a species, of any it lists")

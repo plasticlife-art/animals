@@ -48,7 +48,8 @@
       "predation": 1.0,
       "old_age": 0.5,
       "thirst": 0.5,
-      "starvation": 0.2
+      "starvation": 0.2,
+      "emigrated": 0.2
     }
   },
   "ai": {

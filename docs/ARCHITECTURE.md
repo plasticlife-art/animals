@@ -697,7 +697,7 @@ A world on a stream that its viewers act on through the chat. Launched with
 
 - **The world** comes from `ConfigLoader.load_reserve_bundle()`: the setup options of
   `reserve.json` `selection` over the defaults (wolves on), the powers `offered` (the steward's
-  three, `adopt`, the weather, `release`, `immigrate`) with the settings `reserve.json` `powers`
+  three, `adopt`, the weather, `good_litter`) with the settings `reserve.json` `powers`
   changes (a cull's cooldown, which many viewers share), and a `reserve` key in the bundle. That
   key is what `SaveSystem.kind_of()` reads: the reserve saves to `reserve_a/b.dat`, which
   `latest_slot()` without a kind (Continue) never opens, and goes on from the newest on start.
@@ -713,9 +713,11 @@ A world on a stream that its viewers act on through the chat. Launched with
   - `rain` and `drought` move every pond's level by `share`.
   - `cold_snap` and `bloom` are timed `world_events` that scale metabolism or regrowth while
     they last; they are saved.
-  - `release` brings a pair, a herd or a pack in from an edge point hashed from the tick, grown
-    and in no state to breed on arrival; a pair takes the nearest vacant territory.
-    `immigrate` is the same handler with its own settings, used only by the rescue.
+  - `good_litter` gives one species `extra` young more in each litter (and that many past its
+    `litter_max`) for a year, a timed `world_event` that `WorldState.litter_size()` reads, awake
+    and asleep; a second one for the same species starts the year anew.
+  - **The reserve is an island.** No power brings an animal in from outside: every animal is
+    born on it or was there at the start, and a species lost stays lost.
 - **`ReserveSession`** turns chat lines into those orders and tells back what came of them
   (`told`). It is kept apart from any window, so a server can run it later.
   - `ChatCommands` parses «!word arg» through `reserve.json` `commands` and cleans ward names:
@@ -726,14 +728,13 @@ A world on a stream that its viewers act on through the chat. Launched with
     it is saved every two minutes, for days.
   - `VoteRound` opens a vote of three events every `every_seconds` for `open_seconds`; the most
     votes win and are carried out.
-  - Funds (`teams`) count their members active since the last count; the biggest has its perk.
+  - Funds (`teams`) count their members active since the last count; the biggest has its perk:
+    a bloom for the deer, a good litter for the others.
   - The steward's powers aim at the focus herd: a pond in the nearest free spot (at most
     `steward.max_ponds`), the best grass within the lead's reach, the foxes nearest it - none
     while fewer than `steward.cull_floor` are left.
-  - Newcomers by a vote or a fund's perk do not come to a species at its `ceilings`.
-  - The **rescue** checks every `every_seconds`: a species the world began with that is down to
-    fewer than its `below` has `immigrate` ordered, at most once per `gap_seconds`. A reserve
-    that runs for days cannot lose a species for good.
+  - Every `census_seconds` the session counts the species; one the world began with that has
+    none left is told once («Волков на острове больше нет», `extinct`) and kept in `lost`.
   - All times are simulated seconds, so a saved reserve picks up where it stopped.
 - **`ViewerLink`** listens on 127.0.0.1 (`link`) for one JSON object per line. The bridge
   `tools/stream_bridge/bridge.py` (standard library only) writes them, reading Twitch's IRC
@@ -743,7 +744,7 @@ A world on a stream that its viewers act on through the chat. Launched with
   seconds), in order of priority:
   1. an animal a viewer asked for (`!моё`);
   2. the weightiest moment of the last `moment_seconds` whose animal is still about: an
-     adoption, a kill, an arrival, a pair's or pack's hunt, a herd alarm, a territory taken, a
+     adoption, a kill, a pair's or pack's hunt, a herd alarm, a territory taken, a
      birth;
   3. by turns, each living ward and the focus herd.
 
@@ -766,7 +767,7 @@ A world on a stream that its viewers act on through the chat. Launched with
 - **`ReserveBanner`** shows the big news across the top for 4 s each, the weightiest waiting
   first: a ward's death or young (told by the session from `AgentDied`, `AgentReproduced` and
   `AgentBorn`), the year's summary (`ReserveRecords.year_summary()`, when the climate's year
-  turns), a vote's outcome, newcomers, a fund's perk.
+  turns), a species lost, a vote's outcome, a fund's perk.
 - **Autosaves do not stop the screen.** On the autosave tick the view asks for the world
   (`SimulationManager.request_world_export()`). The worker exports and deep-copies it on its own
   thread right after the next tick; `world_exported` hands it over on the main thread, while the
@@ -1206,8 +1207,9 @@ species in `WorldState.territories`, saved, the view's copy sent when its revisi
   waits counting `mate_pull` times nearer - walks there («ищет свой участок», `disperse`) and
   takes it within `claim_radii`; with none open it is a vagrant. Past that age kin cohesion
   keeps only to the mate. After `emigrate_after_seconds` of looking, from the moment it began
-  whether a slot was open or not, it leaves the map (cause `emigrated`, no body, «не нашла
-  своего участка и ушла с карты»). Without that sink the young the land could not hold piled
+  whether a slot was open or not, it dies of its wandering (cause `emigrated`, a lean body like
+  a starved one's, «не нашла своего участка и сгинула в скитаниях»): the world is an island,
+  with nowhere else to go. Without that sink the young the land could not hold piled
   up as vagrants for years - foxes do not starve while there are grouse and carcasses - and
   with the cap lifted the foxes doubled (47 -> 87) and the deer halved.
 - Asleep, a group keeping to a territory kills and stalks by `dormant_kill_scale`: it sits

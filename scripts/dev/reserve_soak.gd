@@ -4,7 +4,7 @@ extends SceneTree
 ## with LOD on, a crowd of made-up viewers giving every command (`ReserveSession`), the story the
 ## view would keep (`StoryBook`), the autosave of `autosave_seconds`. The view looks where the
 ## director would, by turns at a ward and at the focus herd. A line every `sample` simulated
-## seconds: each species, the rescues, the wards, what the save and the story weigh, memory, the
+## seconds: each species, the species lost, the wards, what the save and the story weigh, memory, the
 ## tick's cost. At the end it saves, loads into a new world and compares the two at the load and
 ## after running on.
 ##
@@ -47,7 +47,7 @@ func _initialize() -> void:
 	var told: Dictionary = {}
 	session.told.connect(func(line: Dictionary) -> void:
 		told[str(line["kind"])] = int(told.get(str(line["kind"]), 0)) + 1
-		if str(line["kind"]) == "rescue":
+		if str(line["kind"]) == "extinct":
 			print("  %6.0f s  %s" % [session.now(), str(line["text"])]))
 	SaveSystem.save_dir = SOAK_SAVES
 	var autosave_ticks: int = maxi(1, int(float(config.get("autosave_seconds", 120.0)) * manager.tick_rate))

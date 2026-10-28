@@ -2,13 +2,13 @@ class_name ReserveBanner
 extends PanelContainer
 
 ## The reserve's big news, across the top of the screen for a few seconds each: a ward's death or
-## young, a vote's outcome, newcomers, a fund's perk, the year's summary. One at a time, in large
+## young, a vote's outcome, a species lost, a fund's perk, the year's summary. One at a time, in large
 ## type; waiting news is shown weightiest first, and a full queue drops the lightest.
 
 ## How heavily each kind of `ReserveSession.told` line weighs; kinds not here are not shown.
-const WEIGHTS := {"ward_death": 6, "year": 5, "ward_born": 4, "vote": 3, "rescue": 3, "team": 2}
+const WEIGHTS := {"extinct": 7, "ward_death": 6, "year": 5, "ward_born": 4, "vote": 3, "team": 2}
 const COLORS := {"ward_death": Color(0.86, 0.32, 0.26), "ward_born": Color(0.52, 0.78, 0.38),
-	"vote": Color(0.36, 0.6, 0.9), "rescue": Color(0.95, 0.74, 0.3), "team": Color(0.95, 0.74, 0.3),
+	"vote": Color(0.36, 0.6, 0.9), "extinct": Color(0.62, 0.6, 0.58), "team": Color(0.95, 0.74, 0.3),
 	"year": Color(0.95, 0.88, 0.6)}
 const SHOW_SECONDS := 4.0
 const FADE_SECONDS := 0.35

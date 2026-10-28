@@ -276,8 +276,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player_command_handlers["drought"] = _command_drought
 	player_command_handlers["cold_snap"] = _command_cold_snap
 	player_command_handlers["bloom"] = _command_bloom
-	player_command_handlers["release"] = _command_release
-	player_command_handlers["immigrate"] = _command_release
+	player_command_handlers["good_litter"] = _command_good_litter
 	adoptions.clear()
 	adoptions_revision = 0
 	world_events.clear()
@@ -727,13 +726,18 @@ func can_breed(agent) -> bool:
 	return agent.can_reproduce() and is_fertile(agent.id, agent.sex, agent.species_type)
 
 
-## How many young the pair has (`Breeding.litter()`); one for a species without a season.
+## How many young the pair has (`Breeding.litter()`), more in a good litter's year
+## (`good_litter`); one for a species without a season.
 func litter_size(species_type: String, parent_a: int, parent_b: int) -> int:
 	var settings: Dictionary = _breeding_settings.get(species_type, {})
 	if settings.is_empty():
 		return 1
-	return BreedingScript.litter(parent_a, parent_b, climate.year, float(settings["litter_mean"]),
-		int(settings["litter_max"]), trait_world)
+	var extra := 0.0
+	for event in world_events:
+		if str(event.get("kind", "")) == "good_litter" and str(event.get("species", "")) == species_type:
+			extra += float(event.get("extra", 0.0))
+	return BreedingScript.litter(parent_a, parent_b, climate.year, float(settings["litter_mean"]) + extra,
+		int(settings["litter_max"]) + int(ceil(extra)), trait_world)
 
 
 func has_reproductive_capacity(species_type: String) -> bool:
@@ -1861,76 +1865,27 @@ func _apply_world_events() -> void:
 	world_events = lasting
 
 
-## Newcomers walk in from the edge of the map (`release`): a pair of foxes, a pack of wolves or a
-## herd of deer (`species`, among the power's `species`), grown, the pair or the pack's leaders
-## taking the nearest territory with both slots open if there is one. Where on the edge is a hash
-## of the tick, never the world's stream. `immigrate` is the same with its own settings: the
-## reserve's rescue of a species about to be lost.
-func _command_release(command: Dictionary) -> Dictionary:
-	var settings := player.settings(str(command.get("type", "release")))
-	var species := str(command.get("params", {}).get("species", "predator"))
-	if species not in settings.get("species", ["predator", "wolf", "herbivore"]) or not species_registry.ids().has(species):
+## A good litter (`good_litter`): for a year from now, every litter of `species` (among the
+## power's `species`) has one young more on average (`extra`) and may have that many past its
+## `litter_max`. The world is an island: no one comes from outside, so a species is helped by
+## its own births or not at all. A second good litter of the same species starts the year anew
+## rather than adding to it.
+func _command_good_litter(command: Dictionary) -> Dictionary:
+	var settings := player.settings("good_litter")
+	var species := str(command.get("params", {}).get("species", ""))
+	if species not in settings.get("species", []) or not _breeding_settings.has(species):
 		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
-	var at := _edge_point(_dormant_hash_unit(current_tick, 0x8E1EA5E))
-	var count := int(settings.get("counts", {}).get(species, 2))
-	var social: String = species_registry.social(species)
-	var group := -1
-	if social == SpeciesRegistryScript.SOCIAL_HERD or social == SpeciesRegistryScript.SOCIAL_PACK:
-		group = _next_group_id(species)
-	var species_config: Dictionary = config_bundle.get("species", {}).get(species, {})
-	var grown := maxf(float(species_config.get("reproduction", {}).get("maturity_age", 0.0)) + 10.0,
-		float(species_config.get("aging", {}).get("old_age_start", 600.0)) * 0.25)
-	var young := float(territory_config(species).get("dispersal_age_seconds", grown)) * 0.5
-	var arrived: Array = []
-	for index in range(count):
-		var offset := Vector2.from_angle(TAU * float(index) / float(maxi(1, count))) * 40.0
-		var sex := AgentBaseScript.SEX_MALE if index % 2 == 0 else AgentBaseScript.SEX_FEMALE
-		var agent = spawn_agent(species, get_nearest_walkable_position(clamp_position(at + offset)), group, sex,
-			{"reason": "release"})
-		if agent == null:
-			continue
-		agent.age = grown if (social != SpeciesRegistryScript.SOCIAL_PACK or index < 2) else minf(grown, young)
-		# Fresh from a journey: no litter on arrival.
-		agent.reproduction_cooldown = float(species_config.get("reproduction", {}).get("cooldown", 60.0))
-		arrived.append(agent)
-	if arrived.size() >= 2 and arrived[0].has_method("set_preferred_mate_id"):
-		arrived[0].set_preferred_mate_id(arrived[1].id)
-		arrived[1].set_preferred_mate_id(arrived[0].id)
-		var registry := territory_registry(species)
-		if registry != null:
-			var best := -1
-			var best_distance := INF
-			for territory in registry.territories:
-				if registry.is_vacant(int(territory["id"])):
-					var distance: float = at.distance_squared_to(territory["den"])
-					if distance < best_distance:
-						best_distance = distance
-						best = int(territory["id"])
-			if best != -1:
-				claim_territory(arrived[0], best)
-				claim_territory(arrived[1], best)
-	if arrived.is_empty():
-		return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
-	_rebuild_group_state_cache()
-	return {"ok": true, "species": species, "count": arrived.size(), "position": at, "group_id": group}
-
-
-## A point on the map's edge, two cells in, at `fraction` of the way round from the top left.
-func _edge_point(fraction: float) -> Vector2:
-	var inset := terrain_system.cell_size * 2.0
-	var inner := bounds.grow(-inset)
-	var perimeter := 2.0 * (inner.size.x + inner.size.y)
-	var along := fraction * perimeter
-	if along < inner.size.x:
-		return inner.position + Vector2(along, 0.0)
-	along -= inner.size.x
-	if along < inner.size.y:
-		return inner.position + Vector2(inner.size.x, along)
-	along -= inner.size.y
-	if along < inner.size.x:
-		return inner.end - Vector2(along, 0.0)
-	along -= inner.size.x
-	return inner.position + Vector2(0.0, inner.size.y - along)
+	var calendar: Array = ClimateScript.calendar(config_bundle.get("world", {}).get("climate", {}))
+	var seconds := float(calendar[0]) * float(calendar[1])
+	var extra := float(settings.get("extra", 1.0))
+	var lasting: Array = []
+	for event in world_events:
+		if str(event.get("kind", "")) != "good_litter" or str(event.get("species", "")) != species:
+			lasting.append(event)
+	lasting.append({"kind": "good_litter", "species": species, "until": current_time + seconds, "extra": extra})
+	world_events = lasting
+	world_events_revision += 1
+	return {"ok": true, "species": species, "seconds": seconds, "extra": extra}
 
 
 ## The player's state as a worker frame brings it (`PlayerState.presentation_block()`), with the
@@ -2836,7 +2791,7 @@ func _maybe_spawn_carcass(agent, cause: String) -> void:
 func _spawn_carcass(species_type: String, position: Vector2, cause: String, source_agent_id: int) -> int:
 	if not species_registry.leaves_carcass(species_type):
 		return -1
-	if cause not in ["predation", "old_age", "starvation", "thirst"]:
+	if cause not in ["predation", "old_age", "starvation", "thirst", "emigrated"]:
 		return -1
 	var carcass_config: Dictionary = config_bundle.get("balance", {}).get("carcass", {})
 	# How the animal died decides how much is left on it: a kill is a whole body, an
@@ -5486,7 +5441,7 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 			continue
 		var position: Vector2 = record.get("position", aggregate.get("center", Vector2.ZERO))
 		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
-		# Looking for `emigrate_after_seconds` in all, it leaves the map, as one awake does.
+		# Looking for `emigrate_after_seconds` in all, it dies of its wandering, as one awake does.
 		var since := float(record.get("homeless_since", -1.0))
 		if since < 0.0:
 			record["homeless_since"] = current_time
@@ -6466,7 +6421,7 @@ func _take_dormant_victims(aggregate: Dictionary, bucket: Array) -> Array:
 
 ## The record a death of `cause` takes: nearest the hunters for predation, the
 ## hungriest for starvation, the thirstiest for thirst, the oldest for old age, one marked
-## to leave for `emigrated`. Ties
+## as worn out by its wandering for `emigrated`. Ties
 ## go to the lower id, so the choice never depends on array order or float noise.
 func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -> int:
 	var best_index := -1
@@ -6475,7 +6430,7 @@ func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -
 	var near: Vector2 = entry.get("near", Vector2.ZERO)
 	for index in range(candidates.size()):
 		var record: Dictionary = candidates[index]
-		# Leaving the map is the ones that gave up looking (`_settle_dormant_vagrants()`), no other.
+		# Dying of wandering is the ones that looked too long (`_settle_dormant_vagrants()`), no other.
 		if cause == "emigrated" and not bool(record.get("emigrate", false)):
 			continue
 		# Inherited traits weigh the choice, not the count: a slow, short-sighted animal is

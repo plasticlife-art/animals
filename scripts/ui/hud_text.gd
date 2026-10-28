@@ -21,7 +21,7 @@ const BIOMES := {"meadow": "Луг", "forest": "Лес", "drought": "Засух�
 ## The biomes the strip reports, in the order it reports them.
 const BIOME_ORDER := ["meadow", "forest", "drought", "swamp"]
 const CAUSES := {"starvation": "голод", "thirst": "жажда", "predation": "хищник", "old_age": "старость",
-	"culled": "отстрел", "emigrated": "ушли"}
+	"culled": "отстрел", "emigrated": "скитания"}
 ## «умер от …»: the cause after «от».
 const CAUSES_FROM := {"starvation": "голода", "thirst": "жажды", "predation": "хищника", "old_age": "старости",
 	"culled": "отстрела", "emigrated": "скитаний"}
@@ -265,12 +265,13 @@ static func traits_brief(values: Array) -> String:
 	return "Черты: " + ", ".join(parts)
 
 
-## «погибла» to a hunter, «отстреляна» by the player's cull, «умерла» of hunger, thirst or age.
+## «погибла» to a hunter, «отстреляна» by the player's cull, «сгинула» wandering without ground of
+## its own, «умерла» of hunger, thirst or age.
 static func died(sex: String, cause: String) -> String:
 	if cause == "culled":
 		return verb(sex, "отстрелян", "отстреляна")
 	if cause == "emigrated":
-		return verb(sex, "ушёл", "ушла")
+		return verb(sex, "сгинул", "сгинула")
 	return verb(sex, "погиб", "погибла") if cause == "predation" else verb(sex, "умер", "умерла")
 
 
