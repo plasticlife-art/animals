@@ -22,6 +22,7 @@ extends RefCounted
 ## An animal dropped to stay within `capacity`, the longest dead first, so its name goes too.
 signal forgotten(agent_id: int)
 
+const TraitsScript := preload("res://scripts/agents/traits.gd")
 ## Past this many animals the ones that died longest ago are forgotten first.
 const CAPACITY := 30000
 ## Ancestors walked for one birth or death at most; a deep family is far below it.
@@ -99,10 +100,12 @@ func note_birth(agent_id: int, species: String, sex: String, time: float, group:
 
 
 ## What an animal inherited (`Traits`), for its box in the family tree. Kept the first time it is
-## told: traits never change.
+## told: traits never change. One told before the marker was added has four, and readers take
+## the marker as unknown there.
 func note_traits(agent_id: int, values) -> void:
 	var known: Dictionary = _animals.get(agent_id, {})
-	if known.is_empty() or known.has("traits") or values == null or values.size() != 4:
+	if known.is_empty() or known.has("traits") or values == null or values.size() < 4 \
+			or values.size() > TraitsScript.NAMES.size():
 		return
 	known["traits"] = PackedFloat32Array(values)
 

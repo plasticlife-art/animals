@@ -44,12 +44,14 @@ var kin_ids: Array = []
 var last_known_kin_center = null
 var last_action_reason: String = ""
 ## What this animal inherited (`Traits`): multipliers on its species' speed, sight, metabolic
-## rate and lifespan, 1.0 being the species as written. Never written into the shared species
-## dictionaries. `trait_hunger` and `trait_run_cost` are what they cost, cached.
+## rate and lifespan, 1.0 being the species as written, and the marker, which does nothing.
+## Never written into the shared species dictionaries. `trait_hunger` and `trait_run_cost` are
+## what they cost, cached.
 var trait_speed: float = 1.0
 var trait_vision: float = 1.0
 var trait_appetite: float = 1.0
 var trait_longevity: float = 1.0
+var trait_marker: float = 1.0
 var trait_hunger: float = 1.0
 var trait_run_cost: float = 1.0
 var trait_settings: Dictionary = {}
@@ -876,18 +878,19 @@ func apply_save_state(state_data: Dictionary) -> void:
 
 ## Its inherited multipliers (`Traits.NAMES` order), and their cost on its needs and runs.
 func set_traits(values: Array) -> void:
-	var known: Array = values if values.size() == TraitsScript.NAMES.size() else TraitsScript.NEUTRAL
+	var known: Array = TraitsScript.padded(values)
 	trait_speed = float(known[TraitsScript.SPEED])
 	trait_vision = float(known[TraitsScript.VISION])
 	trait_appetite = float(known[TraitsScript.APPETITE])
 	trait_longevity = float(known[TraitsScript.LONGEVITY])
+	trait_marker = float(known[TraitsScript.MARKER])
 	var settings := trait_settings if not trait_settings.is_empty() else TraitsScript.DEFAULTS
 	trait_hunger = TraitsScript.hunger_factor(known, settings)
 	trait_run_cost = TraitsScript.run_cost_factor(known, settings)
 
 
 func traits() -> Array:
-	return [trait_speed, trait_vision, trait_appetite, trait_longevity]
+	return [trait_speed, trait_vision, trait_appetite, trait_longevity, trait_marker]
 
 
 func export_runtime_state() -> Dictionary:

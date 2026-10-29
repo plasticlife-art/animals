@@ -120,7 +120,7 @@ func tick(now: float) -> void:
 	meet_living()
 	feed.tick(now)
 	if manager != null and manager.stats_system != null:
-		trait_history.sample(now, manager.stats_system.latest_snapshot, heredity_species)
+		trait_history.sample(now, manager.stats_system.latest_snapshot, heredity_species, lineage)
 
 
 ## Closes the season on the tick it ends (`SeasonLedger.observe()`) and tells it.
@@ -165,6 +165,8 @@ func hear(event: Dictionary) -> void:
 			lineage.note_birth(born, species, sex, time, int(data.get("group_id", -1)), parents)
 			if data.has("traits"):
 				lineage.note_traits(born, data["traits"])
+			# Asleep, the parents come with the birth; awake, with `AgentReproduced` after it.
+			_tally_parents(species, parents)
 			names.name_of(born, species, sex)
 		"AgentReproduced":
 			var child: Dictionary = lineage.entry(agent_id)
@@ -178,6 +180,7 @@ func hear(event: Dictionary) -> void:
 					name_of(manager.world_state.get_agent(parent_id))
 			lineage.note_birth(agent_id, str(child["species"]), str(child["sex"]), float(child["born"]),
 				int(child["group"]), parents)
+			_tally_parents(str(child["species"]), parents)
 		"AgentDied":
 			var died := agent_id if agent_id >= 0 else int(data.get("record_id", -1))
 			if died < 0:
@@ -196,6 +199,8 @@ func hear(event: Dictionary) -> void:
 			var position := Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
 			# The records it holds are read while it still counts among the living.
 			var held := _held_records(died, time)
+			if heredity_species.has(species):
+				trait_history.hear_death(species, str(data.get("cause", "")), lineage.entry(died).get("traits", null))
 			lineage.note_death(died, time, str(data.get("cause", "")), killer, position, float(data.get("age", -1.0)))
 			if _outlived_everyone(died, time):
 				held.append("longest")
@@ -217,6 +222,20 @@ func hear(event: Dictionary) -> void:
 				places.name_new_ponds(manager.world_state, int(manager.seed))
 	# After the names and the family tree, which the line is written from.
 	feed.hear(event)
+
+
+## The parents of a young one of `species`, by id, told to the traits' tally (`TraitHistory`) with
+## what the family tree knows they inherited.
+func _tally_parents(species: String, parents: Array) -> void:
+	if not heredity_species.has(species):
+		return
+	var known: Array = []
+	for parent_id in parents:
+		var traits = lineage.entry(int(parent_id)).get("traits", null)
+		if int(parent_id) >= 0 and traits != null:
+			known.append(traits)
+	if not known.is_empty():
+		trait_history.hear_birth(species, known)
 
 
 ## The animal's name, given now if it had none, and the animal noted in the family tree -

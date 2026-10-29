@@ -13,6 +13,7 @@ extends RefCounted
 
 const HUNTING_STATES := ["seek_prey", "chase", "search_last_seen", "attack", "flank"]
 const HudTextScript := preload("res://scripts/ui/hud_text.gd")
+const TraitsScript := preload("res://scripts/agents/traits.gd")
 ## The seasons' adjectives for a herd's pastures, by the climate's season ids.
 const PASTURE_SEASONS := {"spring": "Весенние", "summer": "Летние", "autumn": "Осенние", "winter": "Зимние"}
 
@@ -24,17 +25,17 @@ static func has_herd(world, agent) -> bool:
 
 
 ## `{awake, sleeping, total, young, hunger, thirst, energy, hunters, traits}` for `group_id` of
-## `species`: the needs and the inherited traits (`Traits`, four multipliers) are means over every
+## `species`: the needs and the inherited traits (`Traits`, multipliers) are means over every
 ## member, awake or asleep.
 static func summarize(world, species: String, group_id: int) -> Dictionary:
 	var summary := {"awake": 0, "sleeping": 0, "total": 0, "young": 0,
-		"hunger": 0.0, "thirst": 0.0, "energy": 0.0, "hunters": 0, "traits": [1.0, 1.0, 1.0, 1.0]}
+		"hunger": 0.0, "thirst": 0.0, "energy": 0.0, "hunters": 0, "traits": TraitsScript.NEUTRAL.duplicate()}
 	if world == null or group_id < 0:
 		return summary
 	var hunger := 0.0
 	var thirst := 0.0
 	var energy := 0.0
-	var traits := [0.0, 0.0, 0.0, 0.0]
+	var traits := TraitsScript.zeros()
 	var members := {}
 	for agent in world.get_living_agents():
 		if agent == null or not agent.is_alive or agent.species_type != species or int(agent.group_id) != group_id:
@@ -63,7 +64,7 @@ static func summarize(world, species: String, group_id: int) -> Dictionary:
 			energy += float(aggregate.get("avg_energy", 0.0)) * count
 			var means: Array = aggregate.get("avg_traits", [])
 			for index in range(traits.size()):
-				traits[index] += (float(means[index]) if means.size() == traits.size() else 1.0) * count
+				traits[index] += (float(means[index]) if index < means.size() else 1.0) * count
 	summary["total"] = int(summary["awake"]) + int(summary["sleeping"])
 	var whole := float(maxi(1, int(summary["total"])))
 	summary["hunger"] = hunger / whole
@@ -129,7 +130,7 @@ static func counts_text(summary: Dictionary) -> String:
 ## The herd's inherited traits on average, for the head count's tooltip: «Черты в среднем» and the
 ## four on two lines.
 static func traits_tooltip(summary: Dictionary) -> String:
-	return "Черты в среднем\n%s" % HudTextScript.traits_text(summary.get("traits", [1.0, 1.0, 1.0, 1.0]))
+	return "Черты в среднем\n%s" % HudTextScript.traits_text(summary.get("traits", TraitsScript.NEUTRAL))
 
 
 static func hunters_text(hunters: int) -> String:

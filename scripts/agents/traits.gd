@@ -1,9 +1,11 @@
 class_name Traits
 extends RefCounted
 
-## What an animal inherited: four multipliers on its species' values, 1.0 being the species as
+## What an animal inherited: multipliers on its species' values, 1.0 being the species as
 ## `species.json` writes it. `speed` scales how fast it walks and runs, `vision` how far it
-## sees, `appetite` its metabolic rate, `longevity` its lifespan.
+## sees, `appetite` its metabolic rate, `longevity` its lifespan. `marker` scales nothing: it is
+## inherited and mutates like the others, so how far it wanders is how far chance alone moves a
+## trait - the chronicle's yardstick for telling selection from drift (`TraitInsights`).
 ##
 ## Every advantage has a price, so a population has somewhere to settle instead of climbing to
 ## the cap: a fast runner burns its energy by the square of its speed when it runs and gets
@@ -21,13 +23,16 @@ extends RefCounted
 ## off - or all at 1.0 - a world plays exactly as it did before there were any. Per species in
 ## `species.<id>.traits`.
 
-const NAMES := ["speed", "vision", "appetite", "longevity"]
+const NAMES := ["speed", "vision", "appetite", "longevity", "marker"]
 const SPEED := 0
 const VISION := 1
 const APPETITE := 2
 const LONGEVITY := 3
-const NEUTRAL := [1.0, 1.0, 1.0, 1.0]
-const SALTS := [0x5BEE, 0x515E, 0xA99E, 0x10AE]
+const MARKER := 4
+const NEUTRAL := [1.0, 1.0, 1.0, 1.0, 1.0]
+## One per trait: a trait's draws never move another's, so a trait added later leaves the first
+## ones as they were.
+const SALTS := [0x5BEE, 0x515E, 0xA99E, 0x10AE, 0x3A4C]
 const DEFAULTS := {
 	"enabled": false,
 	"founder_spread": 0.08,
@@ -65,8 +70,8 @@ static func founder(agent_id: int, species_config: Dictionary, world := 0) -> Ar
 ## the world. A missing parent counts as the other.
 static func inherit(child_id: int, parent_a: Array, parent_b: Array, species_config: Dictionary, world := 0) -> Array:
 	var config := settings(species_config)
-	var a: Array = parent_a if parent_a.size() == NAMES.size() else (parent_b if parent_b.size() == NAMES.size() else NEUTRAL)
-	var b: Array = parent_b if parent_b.size() == NAMES.size() else a
+	var a: Array = padded(parent_a if not parent_a.is_empty() else parent_b)
+	var b: Array = padded(parent_b) if not parent_b.is_empty() else a
 	var mutation := float(config["mutation"])
 	var values: Array = []
 	for index in range(NAMES.size()):
@@ -99,8 +104,28 @@ static func run_cost_factor(values: Array, config: Dictionary) -> float:
 
 ## A record's traits (`export_runtime_state()`), neutral when it has none.
 static func of_record(record: Dictionary) -> Array:
-	var values: Array = record.get("traits", NEUTRAL)
-	return values if values.size() == NAMES.size() else NEUTRAL
+	return padded(record.get("traits", NEUTRAL))
+
+
+## `values` with one for every trait: a save from before a trait was added has fewer, and the
+## missing ones are the species (1.0); none at all is the species throughout.
+static func padded(values) -> Array:
+	if values == null or values.size() == 0:
+		return NEUTRAL.duplicate()
+	if values.size() == NAMES.size():
+		return Array(values)
+	var out: Array = []
+	for index in range(NAMES.size()):
+		out.append(float(values[index]) if index < values.size() else 1.0)
+	return out
+
+
+## Zeros, one per trait: the start of a sum over animals.
+static func zeros() -> Array:
+	var out: Array = []
+	out.resize(NAMES.size())
+	out.fill(0.0)
+	return out
 
 
 ## A value in [0, 1) from an id, a salt and a world seed, the same on every machine.

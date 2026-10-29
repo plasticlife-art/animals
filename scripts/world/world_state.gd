@@ -545,7 +545,7 @@ func get_population_metrics() -> Dictionary:
 			"active_hunger": 0.0, "dormant_hunger": 0.0,
 			"dormant_thirst": 0.0, "dormant_energy": 0.0,
 			"starvation_risk": 0, "thirst_risk": 0,
-			"traits": [0.0, 0.0, 0.0, 0.0],
+			"traits": TraitsScript.zeros(),
 		}
 
 	for agent in living_agents:
@@ -560,10 +560,9 @@ func get_population_metrics() -> Dictionary:
 		totals["active"] += 1
 		totals["active_hunger"] += agent.hunger
 		var trait_sums: Array = totals["traits"]
-		trait_sums[0] += agent.trait_speed
-		trait_sums[1] += agent.trait_vision
-		trait_sums[2] += agent.trait_appetite
-		trait_sums[3] += agent.trait_longevity
+		var own_traits: Array = agent.traits()
+		for index in range(trait_sums.size()):
+			trait_sums[index] += float(own_traits[index])
 		if agent.hunger >= critical_hunger:
 			totals["starvation_risk"] += 1
 		if agent.thirst >= critical_thirst:
@@ -589,7 +588,7 @@ func get_population_metrics() -> Dictionary:
 			totals["dormant_hunger"] += avg_hunger * count
 			totals["dormant_thirst"] += float(species_state.get("avg_thirst", 0.0)) * count
 			totals["dormant_energy"] += float(species_state.get("avg_energy", 0.0)) * count
-			var means: Array = species_state.get("avg_traits", TraitsScript.NEUTRAL)
+			var means: Array = TraitsScript.padded(species_state.get("avg_traits", TraitsScript.NEUTRAL))
 			var sleeping_sums: Array = totals["traits"]
 			for index in range(TraitsScript.NAMES.size()):
 				sleeping_sums[index] += float(means[index]) * count
@@ -4834,7 +4833,7 @@ func _build_dormant_species_state(records: Array) -> Dictionary:
 			"avg_thirst": 0.0,
 			"avg_energy": 0.0,
 			"avg_age": 0.0,
-			"avg_traits": [0.0, 0.0, 0.0, 0.0],
+			"avg_traits": TraitsScript.zeros(),
 		})
 		entry["count"] = int(entry.get("count", 0)) + 1
 		var record_traits: Array = TraitsScript.of_record(record)
@@ -4997,7 +4996,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
 	aggregate["peak_hunger"] = maxf(float(aggregate.get("peak_hunger", 0.0)), float(record.get("hunger", 0.0)))
 	# Inherited traits, summed for the group's means (`avg_traits`), which the herd card shows.
-	var trait_sums: Array = aggregate.get("trait_sums", [0.0, 0.0, 0.0, 0.0])
+	var trait_sums: Array = aggregate.get("trait_sums", TraitsScript.zeros())
 	var record_traits: Array = TraitsScript.of_record(record)
 	for index in range(TraitsScript.NAMES.size()):
 		trait_sums[index] += float(record_traits[index])
@@ -5305,7 +5304,7 @@ func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Ca
 ## A sleeping group's mean of one inherited trait (`avg_traits`, `Traits` index), 1.0 without.
 static func _aggregate_trait(aggregate: Dictionary, index: int) -> float:
 	var means: Array = aggregate.get("avg_traits", TraitsScript.NEUTRAL)
-	return float(means[index]) if means.size() == TraitsScript.NAMES.size() else 1.0
+	return float(means[index]) if index < means.size() else 1.0
 
 
 func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictionary:
@@ -6505,7 +6504,7 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	var age_sum := 0.0
 	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count", "peak_hunger", "peak_thirst"]:
 		aggregate[key] = 0
-	aggregate["trait_sums"] = [0.0, 0.0, 0.0, 0.0]
+	aggregate["trait_sums"] = TraitsScript.zeros()
 	for record in members:
 		var position: Vector2 = record.get("position", bounds.get_center())
 		record_ids.append(int(record.get("id", -1)))

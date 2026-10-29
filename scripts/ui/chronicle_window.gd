@@ -3,11 +3,12 @@ extends PanelContainer
 
 ## «Летопись»: the world's story in one window over the map - an animal's family three
 ## generations deep (`FamilyTree`), the records (`StoryRecords`), how each species' inherited
-## traits have moved since the world began (`TraitHistory`), and every season's summary
-## (`SeasonLedger`, in `SeasonReport`'s words), the one still going on top. The world keeps
-## running behind it and the camera can still move. A click on a relative centres the tree on it and
-## sends the camera there (`focus_requested`); «Назад» walks back through the relatives
-## visited; a click on a record opens that animal's family. Esc or «Закрыть» closes it.
+## traits have moved since the world began (`TraitHistory`, drawn by `traits_view.gd`), what the
+## chronicle concludes from that (`TraitInsights`, listed by `insights_view.gd`), and every
+## season's summary (`SeasonLedger`, in `SeasonReport`'s words), the one still going on top. The
+## world keeps running behind it and the camera can still move. A click on a relative centres the
+## tree on it and sends the camera there (`focus_requested`); «Назад» walks back through the
+## relatives visited; a click on a record opens that animal's family. Esc or «Закрыть» closes it.
 
 signal focus_requested(agent_id: int)
 signal closed
@@ -16,9 +17,13 @@ const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
 const StoryRecordsScript := preload("res://scripts/story/story_records.gd")
 const SeasonReportScript := preload("res://scripts/story/season_report.gd")
 const ClimateScript := preload("res://scripts/world/climate.gd")
+const TraitsViewScript := preload("res://scripts/ui/traits_view.gd")
+const InsightsViewScript := preload("res://scripts/ui/insights_view.gd")
+const TraitInsightsScript := preload("res://scripts/story/trait_insights.gd")
 const REFRESH_SECONDS := 1.5
 const BODY_SIZE := Vector2(760.0, 500.0)
-const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты", "seasons": "Сезоны"}
+const TABS := {"family": "Родословная", "records": "Рекорды", "traits": "Черты", "insights": "Выводы",
+	"seasons": "Сезоны"}
 ## Species lines are drawn in the species' interface colour, darkened to read on parchment.
 const SPECIES_DARKEN := 0.45
 
@@ -31,7 +36,12 @@ var _tabs: Dictionary = {}
 var _tree: TreeView
 var _records_scroll: ScrollContainer
 var _records_box: VBoxContainer
-var _traits_view: TraitsView
+var _traits_view
+var _insights_scroll: ScrollContainer
+var _insights_view
+## The conclusions, worked out again only when the traits' history has a new point.
+var _insights: Array = []
+var _insights_key := ""
 var _seasons_scroll: ScrollContainer
 var _seasons_box: VBoxContainer
 ## The season still going, at the top of «Сезоны»: refreshed in place.
@@ -95,9 +105,18 @@ func _init() -> void:
 	_records_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_records_box.add_theme_constant_override("separation", 4)
 	_records_scroll.add_child(_records_box)
-	_traits_view = TraitsView.new()
+	_traits_view = TraitsViewScript.new()
 	_traits_view.custom_minimum_size = BODY_SIZE
+	_traits_view.insight_requested.connect(show_tab.bind("insights"))
 	root.add_child(_traits_view)
+	_insights_scroll = ScrollContainer.new()
+	_insights_scroll.custom_minimum_size = BODY_SIZE
+	_insights_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(_insights_scroll)
+	_insights_view = InsightsViewScript.new()
+	_insights_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_insights_view.show_requested.connect(show_trait)
+	_insights_scroll.add_child(_insights_view)
 	_seasons_scroll = ScrollContainer.new()
 	_seasons_scroll.custom_minimum_size = BODY_SIZE
 	_seasons_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -118,6 +137,7 @@ func bind(story_book, manager) -> void:
 	simulation_manager = manager
 	_tree.story = story_book
 	_seasons_key = ""
+	_insights_key = ""
 
 
 ## Opens on an animal's family, or on `tab`; with no animal, the one already shown, if any.
@@ -134,6 +154,9 @@ func reset() -> void:
 	_history.clear()
 	_focus_id = -1
 	_seasons_key = ""
+	_insights_key = ""
+	_insights.clear()
+	_traits_view.focus("")
 	close_window()
 
 
@@ -149,6 +172,12 @@ func show_tab(tab: String) -> void:
 	for name in _tabs.keys():
 		_tabs[name].set_pressed_no_signal(name == _tab)
 	refresh()
+
+
+## «Черты» on `species_id`'s trait `index` (-1 for its four).
+func show_trait(species_id: String, index := -1) -> void:
+	_traits_view.focus(species_id, index)
+	show_tab("traits")
 
 
 ## Back to the relative visited before this one.
@@ -171,6 +200,7 @@ func refresh() -> void:
 	_empty.visible = family and _focus_id < 0
 	_records_scroll.visible = _tab == "records"
 	_traits_view.visible = _tab == "traits"
+	_insights_scroll.visible = _tab == "insights"
 	_seasons_scroll.visible = _tab == "seasons"
 	_back.visible = family and not _history.is_empty()
 	if story == null:
@@ -180,7 +210,12 @@ func refresh() -> void:
 	elif _tab == "records":
 		_fill_records()
 	elif _tab == "traits":
-		_traits_view.show_history(story.trait_history, _heredity_entries(), _now(), _calendar())
+		_traits_view.show_history(story.trait_history, _heredity_entries(), _now(), _calendar(), story.seasons.closed,
+			story.lineage, _concluded())
+	elif _tab == "insights":
+		var found := _concluded()
+		_insights_view.show_insights(found, _heredity_entries(),
+			"" if story.trait_history.points.size() >= 3 else "Выводов пока нет: летопись только начала считать черты.")
 	elif _tab == "seasons":
 		_fill_seasons()
 
@@ -326,6 +361,24 @@ static func record_text(row: Dictionary, kind: String, calendar: Array = [120.0,
 
 func _now() -> float:
 	return 0.0 if simulation_manager == null else float(simulation_manager.simulation_time)
+
+
+## What the chronicle concludes from the traits (`TraitInsights.conclude()`), kept until the
+## history has a new point.
+func _concluded() -> Array:
+	var history = story.trait_history
+	var key := "%d:%s" % [history.points.size(), "" if history.points.is_empty() else str(history.points[-1]["time"])]
+	if key == _insights_key:
+		return _insights
+	_insights_key = key
+	var eats := {}
+	if simulation_manager != null:
+		var species_config: Dictionary = simulation_manager.config_bundle.get("species", {})
+		for species_id in story.heredity_species:
+			eats[species_id] = species_config.get(species_id, {}).get("role", {}).get("eats_species", [])
+	_insights = TraitInsightsScript.conclude(history, story.heredity_species, eats, _calendar(), story.name_of_id,
+		story.lineage)
+	return _insights
 
 
 ## `[{id, label, color}]` for the species that inherit traits.
@@ -613,104 +666,3 @@ class TreeView:
 		if note != "":
 			draw_string(font, Vector2(left, rect.position.y + 74.0), note, HORIZONTAL_ALIGNMENT_LEFT, room, LINE_SIZE,
 				INK_DIM if founder else KIN)
-
-
-## Each species' inherited traits over the world's life (`TraitHistory`): four small charts, one
-## a trait, a line a species, the species as written (1.0) dashed across the middle. The scale
-## reaches as far as the furthest point, at least `TraitHistory.MIN_SPAN`; the latest value is
-## written at the end of each line.
-class TraitsView:
-	extends Control
-
-	const INK := Color(0.20, 0.13, 0.08)
-	const INK_DIM := Color(0.20, 0.13, 0.08, 0.5)
-	const FRAME := Color(0.20, 0.13, 0.08, 0.2)
-	const GAP := 22.0
-	const LEFT := 46.0
-	const RIGHT := 50.0
-
-	var history = null
-	var species: Array = []
-	var now := 0.0
-	var calendar: Array = [120.0, 4]
-
-	func show_history(trait_history, entries: Array, time: float, world_calendar: Array) -> void:
-		history = trait_history
-		species = entries
-		now = time
-		calendar = world_calendar
-		queue_redraw()
-
-	func _draw() -> void:
-		var font := get_theme_default_font()
-		if history == null or font == null:
-			return
-		if species.is_empty():
-			draw_string(font, Vector2(8.0, 30.0), "В этом мире черты не наследуются.", HORIZONTAL_ALIGNMENT_LEFT,
-				-1, 15, INK_DIM)
-			return
-		var x := 0.0
-		for entry in species:
-			draw_string(font, Vector2(x, 15.0), str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, entry["color"])
-			x += font.get_string_size(str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 18.0
-		draw_string(font, Vector2(x + 6.0, 15.0), "— средние по виду, от начала мира", HORIZONTAL_ALIGNMENT_LEFT,
-			-1, 13, INK_DIM)
-		if history.points.size() < 2:
-			draw_string(font, Vector2(0.0, 48.0), "Собираем данные: точка раз в %d с." % int(history.interval),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK_DIM)
-			return
-		var top := 30.0
-		var cell := Vector2((size.x - GAP) * 0.5, (size.y - top - GAP) * 0.5)
-		for index in range(HudText.TRAIT_LABELS.size()):
-			var origin := Vector2(float(index % 2) * (cell.x + GAP), top + float(floori(index / 2.0)) * (cell.y + GAP))
-			_chart(Rect2(origin, cell), index, font)
-
-	func _chart(rect: Rect2, index: int, font: Font) -> void:
-		draw_string(font, rect.position + Vector2(0.0, 14.0), str(HudText.TRAIT_LABELS[index]),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK)
-		var plot := Rect2(rect.position + Vector2(LEFT, 22.0), rect.size - Vector2(LEFT + RIGHT, 22.0 + 16.0))
-		draw_rect(plot, FRAME, false, 1.0)
-		var reach: float = history.span(index)
-		var middle := plot.get_center().y
-		draw_dashed_line(Vector2(plot.position.x, middle), Vector2(plot.end.x, middle), INK_DIM, 1.0, 4.0)
-		draw_string(font, Vector2(rect.position.x, plot.position.y + 10.0), HudText.percent_change(1.0 + reach),
-			HORIZONTAL_ALIGNMENT_LEFT, LEFT - 4.0, 11, INK_DIM)
-		draw_string(font, Vector2(rect.position.x, middle + 4.0), "вид", HORIZONTAL_ALIGNMENT_LEFT, LEFT - 4.0, 11, INK_DIM)
-		draw_string(font, Vector2(rect.position.x, plot.end.y), HudText.percent_change(1.0 - reach),
-			HORIZONTAL_ALIGNMENT_LEFT, LEFT - 4.0, 11, INK_DIM)
-		var first := float(history.points[0]["time"])
-		var last := maxf(now, float(history.points[-1]["time"]))
-		var duration := maxf(1.0, last - first)
-		var ends: Array = []
-		for entry in species:
-			var line := PackedVector2Array()
-			for point in history.points:
-				var means = point["values"].get(entry["id"])
-				if means == null:
-					# Gone for a while: the line breaks rather than bridging the gap.
-					if line.size() >= 2:
-						draw_polyline(line, entry["color"], 2.0, true)
-					line = PackedVector2Array()
-					continue
-				var at_x := plot.position.x + (float(point["time"]) - first) / duration * plot.size.x
-				line.append(Vector2(at_x, _y(plot, middle, reach, float(means[index]))))
-			if line.size() >= 2:
-				draw_polyline(line, entry["color"], 2.0, true)
-			var latest: Array = history.latest(str(entry["id"]))
-			if not latest.is_empty():
-				ends.append([_y(plot, middle, reach, float(latest[index])), HudText.percent_change(float(latest[index])),
-					entry["color"]])
-		# The latest values beside the lines' ends, nudged apart where they would overlap.
-		ends.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
-		var floor_y := -INF
-		for end in ends:
-			var y := maxf(float(end[0]) + 4.0, floor_y + 12.0)
-			draw_string(font, Vector2(plot.end.x + 4.0, y), str(end[1]), HORIZONTAL_ALIGNMENT_LEFT, RIGHT - 4.0, 11, end[2])
-			floor_y = y
-		draw_string(font, Vector2(plot.position.x, plot.end.y + 13.0), "начало", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK_DIM)
-		var age := HudText.age_text(last, calendar)
-		var width := font.get_string_size(age, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
-		draw_string(font, Vector2(plot.end.x - width, plot.end.y + 13.0), age, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK_DIM)
-
-	static func _y(plot: Rect2, middle: float, reach: float, value: float) -> float:
-		return clampf(middle - (value - 1.0) / reach * plot.size.y * 0.5, plot.position.y, plot.end.y)
