@@ -441,11 +441,14 @@ func _animate_shadows(alpha: float) -> void:
 
 
 ## Young animals are visibly smaller and old ones slightly larger. The stage is
-## already tracked by the simulation, so a herd stops looking cloned for free.
+## already tracked by the simulation, so a herd stops looking cloned for free. An inherited
+## size (`Traits.SIZE`, a body's mass against the species) shows as its cube root: a quarter
+## heavier is some eight in a hundred taller.
 func _age_scale_of(agent) -> float:
+	var build := pow(maxf(0.1, float(agent.trait_size)), 1.0 / 3.0) if "trait_size" in agent else 1.0
 	if _age_scale.is_empty() or not agent.has_method("get_age_stage"):
-		return 1.0
-	return float(_age_scale.get(agent.get_age_stage(), 1.0))
+		return build
+	return float(_age_scale.get(agent.get_age_stage(), 1.0)) * build
 
 
 func _fill_carcasses(world, visible_rect: Rect2) -> void:

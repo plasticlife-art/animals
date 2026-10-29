@@ -44,16 +44,23 @@ var kin_ids: Array = []
 var last_known_kin_center = null
 var last_action_reason: String = ""
 ## What this animal inherited (`Traits`): multipliers on its species' speed, sight, metabolic
-## rate and lifespan, 1.0 being the species as written, and the marker, which does nothing.
-## Never written into the shared species dictionaries. `trait_hunger` and `trait_run_cost` are
-## what they cost, cached.
+## rate and lifespan, 1.0 being the species as written, the marker, which does nothing, and its
+## caution, thirst and size. Never written into the shared species dictionaries.
+## `trait_hunger`, `trait_run_cost`, `trait_fill`, `trait_thirst` and `trait_turn` are what they
+## cost and give, cached.
 var trait_speed: float = 1.0
 var trait_vision: float = 1.0
 var trait_appetite: float = 1.0
 var trait_longevity: float = 1.0
 var trait_marker: float = 1.0
+var trait_caution: float = 1.0
+var trait_drought: float = 1.0
+var trait_size: float = 1.0
 var trait_hunger: float = 1.0
 var trait_run_cost: float = 1.0
+var trait_fill: float = 1.0
+var trait_thirst: float = 1.0
+var trait_turn: float = 1.0
 var trait_settings: Dictionary = {}
 var last_action_scores: Dictionary = {}
 var last_action_raw_scores: Dictionary = {}
@@ -297,7 +304,7 @@ func is_drinking_allowed() -> bool:
 func update_needs(delta: float, metabolism_scale: float = 1.0, thirst_scale: float = 1.0) -> void:
 	age += delta
 	hunger = minf(need_max, hunger + float(metabolism.get("hunger_rate", 2.0)) * trait_hunger * metabolism_scale * delta)
-	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * metabolism_scale * thirst_scale * delta)
+	thirst = minf(need_max, thirst + float(metabolism.get("thirst_rate", 2.0)) * trait_thirst * metabolism_scale * thirst_scale * delta)
 	reproduction_cooldown = maxf(0.0, reproduction_cooldown - delta)
 	interaction_timer = maxf(0.0, interaction_timer - delta)
 	attack_cooldown = maxf(0.0, attack_cooldown - delta)
@@ -379,7 +386,8 @@ func move_with_vector(world, move_vector: Vector2, desired_speed: float, delta: 
 ##
 ## A rate of zero disables it, which is what the test fixtures rely on.
 func _damp_turn(new_velocity: Vector2, delta: float) -> Vector2:
-	var max_rate := float(movement.get("max_turn_rate_degrees", 0.0))
+	# A big body turns slower (`Traits`).
+	var max_rate := float(movement.get("max_turn_rate_degrees", 0.0)) * trait_turn
 	if max_rate <= 0.0 or delta <= 0.0:
 		return new_velocity
 	if new_velocity.length_squared() <= 0.0001 or direction.length_squared() <= 0.0001:
@@ -786,8 +794,9 @@ func scavenge_or_feed(world, delta: float, preferred_carcass: Dictionary = {}) -
 			release_carcass_target(world)
 			target_position = null
 			return false
-		# A quick metabolism fills up faster (`Traits`); the strength meat gives is the species'.
-		reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)) * trait_appetite)
+		# A quick metabolism fills up faster and a big body slower (`Traits`); the strength meat
+		# gives is the species'.
+		reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)) * trait_fill)
 		restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
 		var updated: Dictionary = world.get_carcass(target_carcass_id)
 		if updated.is_empty() or float(updated.get("meat_remaining", 0.0)) <= 0.0:
@@ -884,13 +893,20 @@ func set_traits(values: Array) -> void:
 	trait_appetite = float(known[TraitsScript.APPETITE])
 	trait_longevity = float(known[TraitsScript.LONGEVITY])
 	trait_marker = float(known[TraitsScript.MARKER])
+	trait_caution = float(known[TraitsScript.CAUTION])
+	trait_drought = float(known[TraitsScript.DROUGHT])
+	trait_size = float(known[TraitsScript.SIZE])
 	var settings := trait_settings if not trait_settings.is_empty() else TraitsScript.DEFAULTS
 	trait_hunger = TraitsScript.hunger_factor(known, settings)
 	trait_run_cost = TraitsScript.run_cost_factor(known, settings)
+	trait_fill = TraitsScript.fill_factor(known)
+	trait_thirst = TraitsScript.thirst_factor(known)
+	trait_turn = TraitsScript.turn_factor(known, settings)
 
 
 func traits() -> Array:
-	return [trait_speed, trait_vision, trait_appetite, trait_longevity, trait_marker]
+	return [trait_speed, trait_vision, trait_appetite, trait_longevity, trait_marker, trait_caution, trait_drought,
+		trait_size]
 
 
 func export_runtime_state() -> Dictionary:

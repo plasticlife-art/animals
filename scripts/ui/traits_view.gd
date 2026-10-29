@@ -190,42 +190,72 @@ func _draw_list(font: Font) -> void:
 	draw_string(font, Vector2(32.0, y + 4.0), "полоса: разброс", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, INK_DIM)
 
 
-# --- the four charts and the time line ------------------------------------------------------
+# --- the charts and the time line ----------------------------------------------------------
 
 func _draw_overview(font: Font) -> void:
 	var area := Rect2(LIST_WIDTH + 16.0, 0.0, size.x - LIST_WIDTH - 16.0, size.y)
 	var charts := Rect2(area.position, Vector2(area.size.x, area.size.y - STRIP))
-	var cell := Vector2((charts.size.x - GAP) * 0.5, (charts.size.y - GAP) * 0.5)
 	var ids: Array = [shown_species] if shown_species != "" else _ids()
+	var shown := _traits_of(ids)
+	# Four to a square; the newer traits make it three a row, the margins narrower to keep room.
+	var columns := 2 if shown.size() <= 4 else 3
+	var rows := maxi(1, ceili(float(shown.size()) / float(columns)))
+	var margins := Vector2(LEFT, RIGHT) if columns == 2 else Vector2(40.0, 40.0)
+	var cell := Vector2((charts.size.x - GAP * (columns - 1)) / float(columns), (charts.size.y - GAP * (rows - 1)) / float(rows))
 	var shared := 0.0
 	if shared_scale:
-		for index in range(HudTextScript.CARD_TRAITS):
-			shared = maxf(shared, _reach(index, ids))
-	for index in range(HudTextScript.CARD_TRAITS):
-		var origin := charts.position + Vector2(float(index % 2) * (cell.x + GAP), float(floori(index / 2.0)) * (cell.y + GAP))
+		for index in shown:
+			shared = maxf(shared, _reach(index, _having(index, ids)))
+	for position in range(shown.size()):
+		var index: int = shown[position]
+		var origin := charts.position + Vector2(float(position % columns) * (cell.x + GAP),
+			float(floori(float(position) / float(columns))) * (cell.y + GAP))
 		var rect := Rect2(origin, cell)
 		draw_string(font, rect.position + Vector2(0.0, 13.0), str(HudTextScript.TRAIT_LABELS[index]),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK)
-		var plot := Rect2(rect.position + Vector2(LEFT, 20.0), rect.size - Vector2(LEFT + RIGHT, 22.0))
-		var reach := shared if shared_scale else _reach(index, ids)
-		_chart(font, plot, index, ids, reach, true)
-		var picked_index := index
-		_hits.append([plot, func(at: Vector2): _drill_at(picked_index, plot, reach, at)])
-	var strip := Rect2(area.position.x + LEFT, charts.end.y + 6.0, cell.x * 2.0 + GAP - LEFT - RIGHT, STRIP - 8.0)
+			HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, 14 if columns == 2 else 13, INK)
+		var plot := Rect2(rect.position + Vector2(margins.x, 20.0), rect.size - Vector2(margins.x + margins.y, 22.0))
+		var having := _having(index, ids)
+		var reach := shared if shared_scale else _reach(index, having)
+		_chart(font, plot, index, having, reach, true, margins)
+		_hits.append([plot, func(at: Vector2): _drill_at(index, plot, reach, at)])
+	var strip := Rect2(area.position.x + LEFT, charts.end.y + 6.0, area.size.x - LEFT - RIGHT, STRIP - 8.0)
 	_time_line(font, strip, ids)
+
+
+## The traits to chart for the species `ids`: every one any of them has, but the marker, in order.
+func _traits_of(ids: Array) -> Array:
+	var out: Array = []
+	for index in range(HudTextScript.TRAIT_LABELS.size()):
+		if index != HudTextScript.MARKER_TRAIT and not _having(index, ids).is_empty():
+			out.append(index)
+	return out
+
+
+## Those of `ids` that have trait `index` (`{id, traits}` in their entry; all four first ones when
+## an entry does not say).
+func _having(index: int, ids: Array) -> Array:
+	var out: Array = []
+	for id in ids:
+		var known: Array = _entry(str(id)).get("traits", range(HudTextScript.CORE_TRAITS))
+		if known.has(index):
+			out.append(id)
+	return out
 
 
 ## One trait's chart in `plot` for the species `ids`: the dashed line of the species as written,
 ## each species' mean (one alone gets its band and the marker), the latest values at the end.
-func _chart(font: Font, plot: Rect2, index: int, ids: Array, reach: float, compact: bool) -> void:
+## `margins` are the room left of the plot for its scale and right of it for the latest values.
+func _chart(font: Font, plot: Rect2, index: int, ids: Array, reach: float, compact: bool,
+		margins := Vector2(LEFT, RIGHT)) -> void:
 	draw_rect(plot, FRAME, false, 1.0)
 	var middle := plot.get_center().y
+	var left := margins.x
 	draw_dashed_line(Vector2(plot.position.x, middle), Vector2(plot.end.x, middle), INK_DIM, 1.0, 4.0)
-	draw_string(font, Vector2(plot.position.x - LEFT, plot.position.y + 10.0), HudTextScript.percent_change(1.0 + reach),
-		HORIZONTAL_ALIGNMENT_RIGHT, LEFT - 5.0, 11, INK_DIM)
-	draw_string(font, Vector2(plot.position.x - LEFT, middle + 4.0), "вид", HORIZONTAL_ALIGNMENT_RIGHT, LEFT - 5.0, 11, INK_DIM)
-	draw_string(font, Vector2(plot.position.x - LEFT, plot.end.y), HudTextScript.percent_change(1.0 - reach),
-		HORIZONTAL_ALIGNMENT_RIGHT, LEFT - 5.0, 11, INK_DIM)
+	draw_string(font, Vector2(plot.position.x - left, plot.position.y + 10.0), HudTextScript.percent_change(1.0 + reach),
+		HORIZONTAL_ALIGNMENT_RIGHT, left - 5.0, 11, INK_DIM)
+	draw_string(font, Vector2(plot.position.x - left, middle + 4.0), "вид", HORIZONTAL_ALIGNMENT_RIGHT, left - 5.0, 11, INK_DIM)
+	draw_string(font, Vector2(plot.position.x - left, plot.end.y), HudTextScript.percent_change(1.0 - reach),
+		HORIZONTAL_ALIGNMENT_RIGHT, left - 5.0, 11, INK_DIM)
 	if not compact:
 		_event_lines(plot)
 	var alone := ids.size() == 1
@@ -244,7 +274,7 @@ func _chart(font: Font, plot: Rect2, index: int, ids: Array, reach: float, compa
 	var floor_y := -INF
 	for end in ends:
 		var y := maxf(float(end[0]) + 4.0, floor_y + 12.0)
-		draw_string(font, Vector2(plot.end.x + 4.0, y), str(end[1]), HORIZONTAL_ALIGNMENT_LEFT, RIGHT - 4.0, 11, end[2])
+		draw_string(font, Vector2(plot.end.x + 4.0, y), str(end[1]), HORIZONTAL_ALIGNMENT_LEFT, margins.y - 4.0, 11, end[2])
 		floor_y = y
 	_plots.append([plot, ids, index, reach])
 
@@ -609,7 +639,7 @@ func _drill_at(index: int, plot: Rect2, reach: float, at: Vector2) -> void:
 	var point := _nearest_point(plot, at.x)
 	var nearest := ""
 	var best := INF
-	for id in _ids():
+	for id in _having(index, _ids()):
 		var means = point.get("values", {}).get(str(id))
 		if means == null or index >= means.size():
 			continue

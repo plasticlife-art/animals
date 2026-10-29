@@ -60,6 +60,9 @@ func run(a) -> void:
 	_test_insights_tell_selection_from_chance(a)
 	_test_insights_jump_bottleneck_race(a)
 	_test_traits_screen_and_conclusions(a)
+	_test_newer_traits_only_where_listed(a)
+	_test_caution_drought_size_give_and_cost(a)
+	_test_sleepers_pay_for_the_newer_traits(a)
 
 
 func _settings(overrides: Dictionary = {}) -> Dictionary:
@@ -571,7 +574,8 @@ func _test_marker_does_nothing(a) -> void:
 	var settings := TraitsScript.settings(config)
 	a.near(TraitsScript.hunger_factor(marked, settings), 1.0, 0.000001, "the marker costs no hunger")
 	a.near(TraitsScript.run_cost_factor(marked, settings), 1.0, 0.000001, "nor any run")
-	a.equal(TraitsScript.padded([1.1, 0.9, 1.0, 1.05]), [1.1, 0.9, 1.0, 1.05, 1.0], "an old animal's four take the marker as the species")
+	a.equal(TraitsScript.padded([1.1, 0.9, 1.0, 1.05]), [1.1, 0.9, 1.0, 1.05, 1.0, 1.0, 1.0, 1.0],
+		"an old animal's four take the newer traits as the species")
 	a.equal(TraitsScript.of_record({"traits": [1.1, 0.9, 1.0, 1.05]})[TraitsScript.SPEED], 1.1,
 		"an old record keeps its speed")
 	var young := TraitsScript.inherit(9, [1.1, 1.1, 1.1, 1.05], [1.1, 1.1, 1.1, 1.05], config, 3)
@@ -798,3 +802,108 @@ func _test_traits_screen_and_conclusions(a) -> void:
 	list.show_requested.emit("hare", 0)
 	a.equal(asked, [["hare", 0]], "«Показать» asks for the trait")
 	list.free()
+
+
+func _test_newer_traits_only_where_listed(a) -> void:
+	var old_list := {"traits": {"enabled": true}}
+	var founder := TraitsScript.founder(31, old_list, 5)
+	for index in [TraitsScript.CAUTION, TraitsScript.DROUGHT, TraitsScript.SIZE]:
+		a.equal(float(founder[index]), 1.0, "a species without %s in its list stays the species" % TraitsScript.NAMES[index])
+	var listed := {"traits": {"enabled": true, "list": TraitsScript.NAMES}}
+	var spread := TraitsScript.founder(31, listed, 5)
+	a.is_true(float(spread[TraitsScript.SIZE]) != 1.0 and absf(float(spread[TraitsScript.SIZE]) - 1.0) <= 0.08,
+		"listed, size spreads like the rest: %s" % str(spread))
+	for index in range(TraitsScript.MARKER):
+		a.equal(float(spread[index]), float(founder[index]), "and the first ones are the same draws (%s)" % TraitsScript.NAMES[index])
+	var young := TraitsScript.inherit(9, spread, spread, old_list, 5)
+	a.equal(float(young[TraitsScript.SIZE]), 1.0, "a young one of a species without size has none, whatever its parents")
+	a.equal(TraitsScript.indices(listed), range(TraitsScript.NAMES.size()), "every index listed")
+	a.equal(TraitsScript.indices(old_list), [0, 1, 2, 3, 4], "the first five by default")
+	var shipped: Dictionary = ConfigLoader.load_config_bundle(ConfigLoader.default_selection())["species"]
+	a.is_true(TraitsScript.has_trait(TraitsScript.settings(shipped["herbivore"]), TraitsScript.CAUTION),
+		"deer are cautious by heredity")
+	a.is_true(not TraitsScript.has_trait(TraitsScript.settings(shipped["predator"]), TraitsScript.CAUTION),
+		"foxes have no caution to inherit")
+	a.is_true(TraitsScript.has_trait(TraitsScript.settings(shipped["wolf"]), TraitsScript.SIZE), "wolves have size")
+	a.equal(HudText.traits_text([1.06, 0.97, 1.02, 1.04, 1.3, 1.0, 1.1, 0.9]),
+		"Скорость +6 % · Зрение −3 %\nАппетит +2 % · Долголетие +4 %\nЗасухоустойчивость +10 % · Размер −10 %",
+		"the card names the newer traits the animal has, not those its species lacks")
+	a.equal(HudText.traits_brief([1.0, 1.0, 1.0, 1.0, 1.4, 1.2, 1.0, 1.0]), "Черты: осторожность +20 %",
+		"a cautious one's brief")
+
+
+func _test_caution_drought_size_give_and_cost(a) -> void:
+	var settings := TraitsScript.settings({"traits": {"enabled": true}})
+	var dry: Array = TraitsScript.NEUTRAL.duplicate()
+	dry[TraitsScript.DROUGHT] = 1.25
+	a.near(TraitsScript.thirst_factor(dry), 0.8, 0.0001, "a quarter more drought-hardy thirsts a fifth slower")
+	a.near(TraitsScript.hunger_factor(dry, settings), 1.1, 0.0001, "and is a tenth hungrier")
+	var big: Array = TraitsScript.NEUTRAL.duplicate()
+	big[TraitsScript.SIZE] = 1.25
+	a.near(TraitsScript.hunger_factor(big, settings), pow(1.25, -0.25), 0.0001, "a big body's hunger rises slowly")
+	a.near(TraitsScript.fill_factor(big), 0.8, 0.0001, "but a bite fills it less")
+	a.near(TraitsScript.hunger_factor(big, settings) / TraitsScript.fill_factor(big), pow(1.25, 0.75), 0.0001,
+		"so it needs food as its size to the three quarters")
+	a.near(TraitsScript.turn_factor(big, settings), 1.0 / sqrt(1.25), 0.0001, "and turns slower")
+	var wary: Array = TraitsScript.NEUTRAL.duplicate()
+	wary[TraitsScript.CAUTION] = 1.2
+	a.near(TraitsScript.hunger_factor(wary, settings), 1.0, 0.0001, "awake, caution costs no hunger: it costs grazing")
+	a.near(TraitsScript.sleeping_hunger_factor(wary, settings), 1.06, 0.0001, "asleep it is paid in hunger")
+	var manager = Helpers.create_manager(9120)
+	var world = manager.world_state
+	var plain = Helpers.spawn_herbivore(world, Vector2(60.0, 60.0), 1)
+	var hardy = Helpers.spawn_herbivore(world, Vector2(160.0, 160.0), 2)
+	hardy.set_traits(dry)
+	for agent in [plain, hardy]:
+		agent.thirst = 0.0
+		agent.update_needs(1.0)
+	a.near(hardy.thirst / plain.thirst, 0.8, 0.0001, "awake, the drought-hardy thirsts slower")
+	var heavy = Helpers.spawn_herbivore(world, Vector2(200.0, 60.0), 3)
+	heavy.set_traits(big)
+	a.near(heavy.trait_fill, 0.8, 0.0001, "a heavy grazer's bites fill it less")
+	heavy.direction = Vector2.RIGHT
+	plain.direction = Vector2.RIGHT
+	heavy.movement = heavy.movement.duplicate()
+	heavy.movement["max_turn_rate_degrees"] = 90.0
+	plain.movement = plain.movement.duplicate()
+	plain.movement["max_turn_rate_degrees"] = 90.0
+	var turned_heavy: Vector2 = heavy._damp_turn(Vector2.UP * 10.0, 0.5)
+	var turned_plain: Vector2 = plain._damp_turn(Vector2.UP * 10.0, 0.5)
+	a.is_true(absf(turned_heavy.angle()) < absf(turned_plain.angle()), "and it swings round slower")
+	var cautious = Helpers.spawn_herbivore(world, Vector2(300.0, 300.0), 4)
+	cautious.set_traits(wary)
+	a.is_true(world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": 0.5}, 1.0) and
+		world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": 0.5}, cautious.trait_caution),
+		"unfeared ground suits the cautious too")
+	# The test world is fearless; this check needs ground a hunter has marked.
+	world.fear_field.enabled = true
+	world.fear_field.deposit(Vector2.ZERO, 0.45)
+	var risk: float = world.fear_field.risk_at(Vector2.ZERO)
+	var tolerance := risk * 1.1
+	a.is_true(world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": tolerance}, 1.0)
+		and not world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": tolerance}, 1.2),
+		"ground a bold one grazes, a cautious one leaves (risk %.2f)" % risk)
+	Helpers.destroy_manager(manager)
+
+
+func _test_sleepers_pay_for_the_newer_traits(a) -> void:
+	var manager = Helpers.create_manager_with(_heredity_bundle(9121), 9121)
+	var world = manager.world_state
+	var hardy := {"id": 1, "thirst": 10.0, "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.25, 1.0]}
+	var plain := {"id": 2, "thirst": 10.0, "traits": TraitsScript.NEUTRAL}
+	var weigh: Callable = world._dormant_trait_weigh("herbivore", "thirst", 2.0)
+	a.is_true(weigh.is_valid(), "asleep, thirst rising is shared by how quickly each thirsts")
+	world._share_dormant_need_shift([hardy, plain], "thirst", 2.0, 0.0, 100.0, weigh)
+	a.is_true(float(hardy["thirst"]) < float(plain["thirst"]), "the drought-hardy one thirsts less asleep too")
+	a.near(float(hardy["thirst"]) + float(plain["thirst"]), 24.0, 0.0001, "and the group's mean moves by the step")
+	var near := Vector2(100.0, 100.0)
+	var bold := {"id": 3, "position": Vector2(124.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 0.85, 1.0, 1.0]}
+	var wary := {"id": 4, "position": Vector2(120.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.0, 1.0]}
+	a.equal(world._pick_dormant_victim([wary, bold], "predation", {"near": near}), 1,
+		"asleep, hunters take the bold one though the wary stood nearer")
+	var small := {"id": 5, "position": Vector2(124.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.8]}
+	var large := {"id": 6, "position": Vector2(120.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.25]}
+	a.equal(world._pick_dormant_victim([large, small], "predation", {"near": near}), 1, "and the small before the big")
+	var hunger: Callable = world._dormant_trait_weigh("herbivore", "hunger", 2.0)
+	a.near(float(hunger.call(wary)), 1.06, 0.0001, "and the wary pays in hunger")
+	Helpers.destroy_manager(manager)

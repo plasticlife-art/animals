@@ -1431,8 +1431,9 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	# What counts as grass worth heading for depends on how hungry the animal is. A fed
 	# one walks past a grazed-down sward to a good one, which leaves the poor patch to
 	# regrow; a hungry one takes any full bite; a starving one takes scraps.
+	# A cautious one is warier of where hunters have been (`Traits`).
 	var tiers := grass_target_tiers(agent.feeding, urgency_ratio >= 0.45,
-		float(agent.perception.get("risk_tolerance", INF)))
+		float(agent.perception.get("risk_tolerance", INF)) / maxf(0.1, agent.trait_caution))
 
 	# On the move with its herd, a grazer heads for the grass at the destination and
 	# eats on the way (`underfoot_bite_floor()`), rather than turning back to the eaten
@@ -1520,9 +1521,9 @@ func grazer_is_hungry(hunger: float) -> bool:
 
 
 ## Whether a grazer would eat where it stands: always when hungry, otherwise only on
-## ground within its `perception.risk_tolerance`.
-func grazing_ground_is_acceptable(position: Vector2, hunger: float, perception: Dictionary) -> bool:
-	var tolerance := float(perception.get("risk_tolerance", INF))
+## ground within its `perception.risk_tolerance`, less as it is more cautious (`Traits`).
+func grazing_ground_is_acceptable(position: Vector2, hunger: float, perception: Dictionary, caution := 1.0) -> bool:
+	var tolerance := float(perception.get("risk_tolerance", INF)) / maxf(0.1, caution)
 	return tolerance == INF or grazer_is_hungry(hunger) or fear_field.risk_at(position) <= tolerance
 
 
@@ -5282,10 +5283,12 @@ func _get_dormant_travel_speed(species_config: Dictionary, is_directed: bool = t
 ## How a sleeping group shares a change in one need by what its members inherited (`Traits`), or
 ## an invalid Callable for even shares, which is also what a species without heredity gets.
 ## Awake, each animal pays for its traits as it goes; asleep, the group's step is one number, so
-## its members take it unevenly instead: hunger rises by each one's cost (`hunger_factor()`:
-## appetite, speed and sight), and a hunter's or a scavenger's meal goes to the quick and
-## sharp-eyed first, who would have reached it first, and feeds a quick metabolism more.
-## Strength is shared evenly: traits never touch it.
+## its members take it unevenly instead: hunger rises by each one's cost
+## (`sleeping_hunger_factor()`: appetite, speed, sight, slow thirst, size and the caution that
+## would have cost grazing time awake), thirst by how quickly each gets thirsty, and a hunter's or
+## a scavenger's meal goes to the quick and sharp-eyed first, who would have reached it first,
+## and feeds a quick metabolism more - a big hunter takes more of it and is filled less, which
+## comes to the same. Strength is shared evenly: traits never touch it.
 func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Callable:
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 	if shift == 0.0 or not TraitsScript.enabled(species_config):
@@ -5293,7 +5296,10 @@ func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Ca
 	var settings := TraitsScript.settings(species_config)
 	if need == "hunger" and shift > 0.0:
 		return func(record: Dictionary) -> float:
-			return TraitsScript.hunger_factor(TraitsScript.of_record(record), settings)
+			return TraitsScript.sleeping_hunger_factor(TraitsScript.of_record(record), settings)
+	if need == "thirst" and shift > 0.0:
+		return func(record: Dictionary) -> float:
+			return TraitsScript.thirst_factor(TraitsScript.of_record(record))
 	if need == "hunger" and species_registry.diet(species_key) != "grass":
 		return func(record: Dictionary) -> float:
 			var traits: Array = TraitsScript.of_record(record)
@@ -6303,7 +6309,8 @@ func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, 
 		var male_parents_left := 0 if parents_paired else births
 		_share_dormant_need_shift(survivors, "hunger", shift.x, 0.0, need_max,
 			_dormant_trait_weigh(species_key, "hunger", shift.x))
-		_share_dormant_need_shift(survivors, "thirst", shift.y, 0.0, need_max)
+		_share_dormant_need_shift(survivors, "thirst", shift.y, 0.0, need_max,
+			_dormant_trait_weigh(species_key, "thirst", shift.y))
 		_share_dormant_need_shift(survivors, "energy", shift.z, 0.0, max_energy)
 		for record in survivors:
 			record["age"] = float(record.get("age", 0.0)) + elapsed
@@ -6478,8 +6485,10 @@ func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -
 		var score: float
 		match cause:
 			"predation":
+				# A wary one keeps its distance and a big one is hard to bring down.
 				score = -Vector2(record.get("position", near)).distance_squared_to(near) \
-					* pow(float(traits[TraitsScript.SPEED]) * float(traits[TraitsScript.VISION]), 4.0)
+					* pow(float(traits[TraitsScript.SPEED]) * float(traits[TraitsScript.VISION])
+						* float(traits[TraitsScript.CAUTION]) * sqrt(float(traits[TraitsScript.SIZE])), 4.0)
 			"starvation":
 				score = float(record.get("hunger", 0.0))
 			"thirst":
@@ -6686,7 +6695,9 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		var hunger := float(record.get("hunger", 0.0))
 		if hunger <= stop_floor:
 			continue
-		var appetite := float(TraitsScript.of_record(record)[TraitsScript.APPETITE])
+		# How much a bite fills it: a quick metabolism more, a big body less (`Traits`).
+		var appetite := TraitsScript.fill_factor(TraitsScript.of_record(record))
+		var caution := float(TraitsScript.of_record(record)[TraitsScript.CAUTION])
 		var bite := grazing_bite(feeding, hunger, bite_scale, appetite)
 		wanted += bite
 		var position: Vector2 = record.get("position", Vector2.ZERO)
@@ -6709,13 +6720,14 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 			if not crowded:
 				record["position"] = next_position
 			continue
-		if not grazing_ground_is_acceptable(position, hunger, perception):
+		if not grazing_ground_is_acceptable(position, hunger, perception, caution):
 			continue
 		var consumed := consume_grass_cell(cell_index, bite)
 		if consumed <= 0.0:
 			continue
 		eaten += consumed
-		# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
+		# A quick metabolism fills up faster and a big body slower (`Traits`); the strength grass
+		# gives is the species'.
 		var next_hunger := maxf(0.0, hunger - consumed * nutrition * appetite)
 		hunger_removed += hunger - next_hunger
 		record["hunger"] = next_hunger

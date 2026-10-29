@@ -381,15 +381,18 @@ func _concluded() -> Array:
 	return _insights
 
 
-## `[{id, label, color}]` for the species that inherit traits.
+## `[{id, label, color, traits}]` for the species that inherit traits, `traits` the indices of
+## those each has (`Traits.indices()`).
 func _heredity_entries() -> Array:
 	var entries: Array = []
 	var visuals: Dictionary = {} if simulation_manager == null else \
 		simulation_manager.config_bundle.get("visuals", {}).get("species", {})
+	var species_config: Dictionary = {} if simulation_manager == null else simulation_manager.config_bundle.get("species", {})
 	for species_id in story.heredity_species:
 		var rgb: Array = visuals.get(species_id, {}).get("ui_color", [0.5, 0.5, 0.5])
 		entries.append({"id": str(species_id), "label": HudText.species_label(str(species_id)),
-			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2])).darkened(SPECIES_DARKEN)})
+			"color": Color(float(rgb[0]), float(rgb[1]), float(rgb[2])).darkened(SPECIES_DARKEN),
+			"traits": Traits.indices(species_config.get(species_id, {}))})
 	return entries
 
 

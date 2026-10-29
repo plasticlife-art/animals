@@ -44,10 +44,13 @@ const NARROWED := 0.7
 const GROUP_WHO := {"parents": "У родителей детёнышей", "predation": "У съеденных хищниками",
 	"need": "У умерших от голода и жажды", "old_age": "У умерших от старости", "culled": "У отстрелянных",
 	"emigrated": "У ушедших"}
-const TRAIT_UP := ["стали быстрее", "стали зорче", "стали прожорливее", "стали жить дольше"]
-const TRAIT_DOWN := ["стали медленнее", "стали хуже видеть", "стали экономнее", "стали жить меньше"]
-const ROSE := ["выросла", "выросло", "вырос", "выросло"]
-const FELL := ["упала", "упало", "упал", "упало"]
+## By `Traits` index; the marker's are never said.
+const TRAIT_UP := ["стали быстрее", "стали зорче", "стали прожорливее", "стали жить дольше", "", "стали осторожнее",
+	"стали легче переносить жажду", "стали крупнее"]
+const TRAIT_DOWN := ["стали медленнее", "стали хуже видеть", "стали экономнее", "стали жить меньше", "", "стали смелее",
+	"стали чаще хотеть пить", "стали мельче"]
+const ROSE := ["выросла", "выросло", "вырос", "выросло", "выросла", "выросла", "выросла", "вырос"]
+const FELL := ["упала", "упало", "упал", "упало", "упала", "упала", "упала", "упал"]
 
 
 ## Every conclusion the history allows, the surest and latest first: `[{kind, species, trait,
@@ -64,7 +67,7 @@ static func conclude(history, species_ids: Array, eats: Dictionary = {}, calenda
 		var series := _series(history, str(species_id))
 		if series.size() < 3:
 			continue
-		for index in range(HudTextScript.CARD_TRAITS):
+		for index in _told(series):
 			var said := _trait_finding(history, str(species_id), index, series, calendar)
 			if not said.is_empty():
 				found.append(said)
@@ -110,7 +113,7 @@ static func _series(history, species_id: String) -> Array:
 	var out: Array = []
 	for point in history.points:
 		var means: Array = point["values"].get(species_id, [])
-		if means.size() < HudTextScript.CARD_TRAITS:
+		if means.size() < HudTextScript.CORE_TRAITS:
 			continue
 		out.append({"time": float(point["time"]), "means": means,
 			"spread": point.get("spread", {}).get(species_id, []),
@@ -194,7 +197,7 @@ static func _jump(history, species_id: String, series: Array, calendar: Array, n
 	for position in range(1, series.size()):
 		var before: Dictionary = series[position - 1]
 		var after: Dictionary = series[position]
-		for index in range(HudTextScript.CARD_TRAITS):
+		for index in _told([before, after]):
 			var step := float(after["means"][index]) - float(before["means"][index])
 			var spread: Array = after["spread"]
 			var floor_size := maxf(JUMP, (float(spread[index]) * JUMP_SHARE) if index < spread.size() else 0.0)
@@ -305,6 +308,18 @@ static func _races(history, species_ids: Array, eats: Dictionary, calendar: Arra
 	return out
 
 
+## The traits worth a word in `series`: every one its points have, but the marker.
+static func _told(series: Array) -> Array:
+	var out: Array = []
+	var known: int = series[0]["means"].size()
+	for entry in series:
+		known = mini(known, entry["means"].size())
+	for index in range(mini(known, HudTextScript.TRAIT_LABELS.size())):
+		if index != TraitsScript.MARKER:
+			out.append(index)
+	return out
+
+
 static func _late_move(series: Array, index: int) -> float:
 	var middle: Dictionary = series[series.size() / 2]
 	return float(series[-1]["means"][index]) - float(middle["means"][index])
@@ -315,7 +330,9 @@ static func _spread_over(series: Array) -> float:
 	var known := 0
 	for entry in series:
 		var spread: Array = entry["spread"]
-		for index in range(mini(HudTextScript.CARD_TRAITS, spread.size())):
+		for index in range(spread.size()):
+			if index == TraitsScript.MARKER or float(spread[index]) <= 0.0:
+				continue
 			total += float(spread[index])
 			known += 1
 	return 0.0 if known == 0 else total / float(known)

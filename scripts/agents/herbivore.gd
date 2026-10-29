@@ -62,7 +62,8 @@ func tick(world, delta: float) -> void:
 	)
 	if not predators.is_empty():
 		last_threat_position = _nearest_threat_position(predators)
-		threat_memory_until = world.current_time + float(perception.get("threat_memory_seconds", 2.0))
+		# A cautious one stays scared longer (`Traits`).
+		threat_memory_until = world.current_time + float(perception.get("threat_memory_seconds", 2.0)) * trait_caution
 		world.raise_herd_alarm(self, predators)
 	elif world.current_time >= threat_memory_until:
 		# Seeing nothing itself: its herd's alarm, once that has reached it (`herd.flight`).
@@ -234,7 +235,7 @@ func _seek_or_eat(world, delta: float, neighbors: Array) -> bool:
 ## A mouthful of cell `eat_index`, if it holds one: the grass taken, the hunger and strength it
 ## gives, the pause to chew. False if there was nothing to take.
 func _take_bite(world, eat_index: int) -> bool:
-	var bite: float = world.grazing_bite(feeding, hunger, 1.0, trait_appetite)
+	var bite: float = world.grazing_bite(feeding, hunger, 1.0, trait_fill)
 	var consumed := 0.0
 	if world.resource_system.get_available_biomass(eat_index) >= minf(bite, WorldState.GRASS_SCRAP_BIOMASS):
 		consumed = world.consume_grass_cell(eat_index, bite)
@@ -243,9 +244,10 @@ func _take_bite(world, eat_index: int) -> bool:
 	set_state("eat", world.current_tick)
 	clear_navigation()
 	interaction_timer = float(feeding.get("eat_duration", 0.55))
-	# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
+	# A quick metabolism fills up faster and a big body slower (`Traits`); the strength grass gives
+	# is the species'.
 	var nourishment := consumed * float(feeding.get("nutrition_gain", 0.8))
-	var hunger_reduction := nourishment * trait_appetite
+	var hunger_reduction := nourishment * trait_fill
 	reduce_hunger(hunger_reduction)
 	if world.has_method("record_herbivore_hunger_reduction"):
 		world.record_herbivore_hunger_reduction(hunger_reduction)
@@ -288,7 +290,7 @@ func _move_to_grass_target(world, delta: float, neighbors: Array, grass: Diction
 		# `eat_duration` on nearly bare ground instead of walking to the patch they had
 		# chosen. Hungry, less will do (`underfoot_bite_floor()`).
 		if world.resource_system.get_available_biomass(current_cell_index) >= world.underfoot_bite_floor(feeding, metabolism, hunger) \
-				and world.grazing_ground_is_acceptable(position, hunger, perception):
+				and world.grazing_ground_is_acceptable(position, hunger, perception, trait_caution):
 			eat_index = current_cell_index
 			reached_target_cell = true
 	if reached_target_cell or reached_target_radius:
@@ -359,7 +361,7 @@ func _flee(world, delta: float, predators: Array, neighbors: Array) -> void:
 	if not alarm.is_empty() and _flee_with_herd(world, delta, alarm, flee_vector if sees_one else Vector2.ZERO, neighbors):
 		return
 	var escape_target := get_escape_destination(world, flee_vector,
-		world.terrain_system.cell_size * float(perception.get("escape_distance_cells", 2.5)), predators)
+		world.terrain_system.cell_size * float(perception.get("escape_distance_cells", 2.5)) * trait_caution, predators)
 	target_position = escape_target
 	var waypoint: Vector2 = world.get_next_waypoint(position, escape_target, id)
 	move_with_vector(world, Steering.seek(position, waypoint), float(movement.get("sprint_speed", 115.0)), delta)

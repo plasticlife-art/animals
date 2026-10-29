@@ -198,14 +198,18 @@ static func age_text(seconds: float, calendar: Array = [120.0, 4]) -> String:
 
 
 ## The inherited traits (`Traits.NAMES`), as the cards and the chronicle name them.
-const TRAIT_LABELS := ["Скорость", "Зрение", "Аппетит", "Долголетие", "Метка"]
-## The first so many are what an animal's cards tell: the marker changes nothing in an animal and
-## is the chronicle's alone.
-const CARD_TRAITS := 4
+const TRAIT_LABELS := ["Скорость", "Зрение", "Аппетит", "Долголетие", "Метка", "Осторожность", "Засухоустойчивость",
+	"Размер"]
+## The first four every species with heredity has; the marker (`Traits.MARKER`) changes nothing in an
+## animal and is the chronicle's alone.
+const CORE_TRAITS := 4
+const MARKER_TRAIT := 4
 ## What each costs and gives, for the tooltips, broken by hand: a tooltip does not wrap.
 const TRAITS_HINT := "Наследуемые черты против вида: детёныш берёт\nсреднее родителей и чуть меняется." \
 	+ "\nБыстрые тратят больше сил на бег и сильнее голодают,\nзоркие голодают чуть сильнее," \
-	+ "\nс большим аппетитом голодают быстрее, но и наедаются быстрее,\nдолгожители позже взрослеют и реже приносят детёнышей."
+	+ "\nс большим аппетитом голодают быстрее, но и наедаются быстрее,\nдолгожители позже взрослеют и реже приносят детёнышей," \
+	+ "\nосторожные дольше убегают и меньше пасутся,\nзасухоустойчивые реже пьют, но сильнее голодают," \
+	+ "\nкрупных труднее добыть, но им нужно больше еды."
 
 
 ## A multiplier against the species as a change in whole percent: «+6 %», «−3 %», «0 %».
@@ -218,23 +222,38 @@ static func percent_change(value: float) -> String:
 	return "0 %"
 
 
-## An animal's traits on two lines: «Скорость +6 % · Зрение −3 %», «Аппетит +2 % · Долголетие +4 %».
+## The traits an animal's cards tell, by index: the first four, and of the newer ones those its
+## species has - one it lacks stays at exactly 1.0. Never the marker.
+static func card_indices(values: Array) -> Array:
+	var out: Array = []
+	if values.size() < CORE_TRAITS:
+		return out
+	for index in range(mini(values.size(), TRAIT_LABELS.size())):
+		if index == MARKER_TRAIT or (index > MARKER_TRAIT and float(values[index]) == 1.0):
+			continue
+		out.append(index)
+	return out
+
+
+## An animal's traits two to a line: «Скорость +6 % · Зрение −3 %», «Аппетит +2 % · Долголетие +4 %».
 static func traits_text(values: Array) -> String:
-	if values.size() < CARD_TRAITS:
-		return ""
-	var parts: Array = []
-	for index in range(CARD_TRAITS):
-		parts.append("%s %s" % [TRAIT_LABELS[index], percent_change(float(values[index]))])
-	return "%s · %s\n%s · %s" % parts
+	var lines: Array = []
+	var shown := card_indices(values)
+	for position in range(0, shown.size(), 2):
+		var pair: Array = []
+		for index in shown.slice(position, position + 2):
+			pair.append("%s %s" % [TRAIT_LABELS[index], percent_change(float(values[index]))])
+		lines.append(" · ".join(pair))
+	return "\n".join(lines)
 
 
 ## A group's traits in one line, the two that stand out most: «Черты: скорость +3 %, долголетие
 ## −2 %», or «Черты: как у вида» when none differs by a whole percent.
 static func traits_brief(values: Array) -> String:
-	if values.size() < CARD_TRAITS:
+	if values.size() < CORE_TRAITS:
 		return ""
 	var order: Array = []
-	for index in range(CARD_TRAITS):
+	for index in card_indices(values):
 		if int(round((float(values[index]) - 1.0) * 100.0)) != 0:
 			order.append(index)
 	if order.is_empty():

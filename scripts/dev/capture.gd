@@ -241,20 +241,24 @@ func _made_up_traits() -> void:
 	var year := 480.0
 	var length := 89.0 * year
 	var plans := {
-		"herbivore": {"drift": [0.12, 0.15, 0.10, -0.03, 0.02], "count": 250.0, "salt": 1},
-		"predator": {"drift": [0.08, -0.10, -0.04, 0.04, -0.015], "count": 42.0, "salt": 2},
-		"scavenger": {"drift": [0.06, -0.11, 0.06, 0.03, 0.05], "count": 22.0, "salt": 3, "vol": 0.012},
-		"wolf": {"drift": [0.06, 0.0, 0.03, 0.03, 0.01], "count": 11.0, "salt": 4, "vol": 0.008},
-		"hare": {"drift": [0.13, 0.15, -0.02, 0.0, 0.015], "count": 130.0, "salt": 5},
+		"herbivore": {"drift": [0.12, 0.15, 0.10, -0.03, 0.02, 0.09, 0.05, -0.04], "count": 250.0, "salt": 1},
+		"predator": {"drift": [0.08, -0.10, -0.04, 0.04, -0.015, 0.0, 0.03, 0.07], "count": 42.0, "salt": 2},
+		"scavenger": {"drift": [0.06, -0.11, 0.06, 0.03, 0.05, 0.04, -0.03, 0.02], "count": 22.0, "salt": 3, "vol": 0.012},
+		"wolf": {"drift": [0.06, 0.0, 0.03, 0.03, 0.01, 0.0, 0.02, 0.05], "count": 11.0, "salt": 4, "vol": 0.008},
+		"hare": {"drift": [0.13, 0.15, -0.02, 0.0, 0.015, 0.11, 0.0, -0.06], "count": 130.0, "salt": 5},
 	}
 	var walk := {}
 	for species_id in plans.keys():
-		walk[species_id] = [1.0, 1.0, 1.0, 1.0, 1.0]
+		walk[species_id] = TraitsScript.NEUTRAL.duplicate()
+		# Hunters have no caution to inherit (`traits.list`).
+		var lacks: Array = [TraitsScript.CAUTION] if species_id in ["predator", "wolf"] else []
+		plans[species_id]["lacks"] = lacks
 		var founders: Array = []
 		for animal in range(120):
 			var traits: Array = []
-			for index in range(5):
-				traits.append(1.0 + 0.08 * (TraitsScript.unit(animal + 1000 * int(plans[species_id]["salt"]), index) * 2.0 - 1.0))
+			for index in range(TraitsScript.NAMES.size()):
+				traits.append(1.0 if plans[species_id]["lacks"].has(index)
+					else 1.0 + 0.08 * (TraitsScript.unit(animal + 1000 * int(plans[species_id]["salt"]), index) * 2.0 - 1.0))
 			founders.append(traits)
 		history.founders[species_id] = TraitHistoryScript.histograms(founders)
 	for step in range(steps):
@@ -267,7 +271,9 @@ func _made_up_traits() -> void:
 			var plan: Dictionary = plans[species_id]
 			var means: Array = walk[species_id]
 			var vol := float(plan.get("vol", 0.004))
-			for index in range(5):
+			for index in range(TraitsScript.NAMES.size()):
+				if plan["lacks"].has(index):
+					continue
 				var noise := TraitsScript.unit(step * 7 + index, int(plan["salt"]) * 131) - 0.5
 				means[index] = float(means[index]) + float(plan["drift"][index]) / float(steps) + noise * vol
 			if species_id == "wolf" and step == 196:
@@ -280,7 +286,10 @@ func _made_up_traits() -> void:
 				if step >= 108:
 					narrow = 0.55
 			values[species_id] = means.duplicate()
-			spreads[species_id] = [0.045 * narrow, 0.05 * narrow, 0.04 * narrow, 0.025 * narrow, 0.05 * narrow]
+			var spread: Array = [0.045, 0.05, 0.04, 0.025, 0.05, 0.045, 0.04, 0.035]
+			for index in range(spread.size()):
+				spread[index] = 0.0 if plan["lacks"].has(index) else float(spread[index]) * narrow
+			spreads[species_id] = spread
 			counts[species_id] = int(count)
 			var groups := {}
 			var leans: Dictionary = {"herbivore": {"parents": [0, 0.012, 9], "predation": [0, -0.016, 4], "old_age": [1, 0.0, 3]},
@@ -291,13 +300,13 @@ func _made_up_traits() -> void:
 			for group in leans.keys():
 				var lean: Array = leans[group]
 				var tally: Array = []
-				for index in range(5):
+				for index in range(TraitsScript.NAMES.size()):
 					tally.append((float(means[index]) + (float(lean[1]) if index == int(lean[0]) else 0.0)) * float(lean[2]))
 				tally.append(int(lean[2]))
 				groups[group] = tally
 			if species_id == "wolf" and step == 196:
 				var gone: Array = []
-				for index in range(5):
+				for index in range(TraitsScript.NAMES.size()):
 					gone.append((float(means[index]) + (0.14 if index == 2 else 0.0)) * 3.0)
 				gone.append(3)
 				groups["old_age"] = gone
