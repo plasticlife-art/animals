@@ -791,6 +791,8 @@ func _resolve_patrol_goal(world) -> Variant:
 		if not is_unreachable(place_key(den), world.current_time):
 			_patrol_goal = den
 			return _patrol_goal
+		# No way there: another, when it looks next (`_seek_ground()`).
+		_making_for = -1
 	var starvation_threshold := float(balance.get("lifecycle", {}).get("starvation_death_threshold", need_max))
 	var hunger_headroom := maxf(1.0, starvation_threshold - hunger) / maxf(0.01, float(metabolism.get("hunger_rate", 1.6)) * trait_hunger)
 	var reach := maxf(hunger_headroom * float(movement.get("max_speed", 84.0)) * trait_speed * 0.6,
@@ -1260,6 +1262,14 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 ## island, there is nowhere else to go). The clock runs from when it
 ## began to look, open slots or not: one open slot drew a crowd of vagrants and only one took
 ## it, so a clock that stopped while there was one to make for hardly ever ran out.
+## With `territory.stay_while_no_room` one of a pack stays with it, its clock not running, while
+## no territory has its slot open: it is there, grown, when one does. One that left for a slot
+## and lost it to another goes back to the pack it was born in, while that still holds its den -
+## and so does one whose clock ran out, to set out again: only one with no pack to go back to
+## dies of its wandering.
+## Without, the young of a pack whose slots were all taken died before any came free, and a den
+## whose holder died waited for one of its sex that was no longer anywhere. A den it found no
+## way to it passes by (`is_unreachable()`).
 func _seek_ground(world) -> bool:
 	if territory.is_empty() or age < float(territory.get("dispersal_age_seconds", 240.0)):
 		return false
@@ -1268,13 +1278,29 @@ func _seek_ground(world) -> bool:
 		_making_for = -1
 		_homeless_since = -1.0
 		return false
-	# Grown, one of a pack that does not lead it leaves to find its own.
-	if group_id >= 0 and world.species_registry.social(species_type) == SpeciesRegistry.SOCIAL_PACK:
-		world.leave_pack(self)
+	# Grown, one of a pack that does not lead it leaves to find its own - with room for it.
+	if world.species_registry.social(species_type) == SpeciesRegistry.SOCIAL_PACK:
+		var no_room: bool = bool(territory.get("stay_while_no_room", false)) \
+			and registry.open_slot_near(position, sex, natal_territory_id, 1.0, _no_way_to(world)) == -1
+		var home_pack := registry.pack_at(natal_territory_id) if no_room and group_id < 0 else -1
+		if no_room and (group_id >= 0 or home_pack >= 0):
+			if group_id < 0:
+				world.join_pack(self, home_pack)
+			_making_for = -1
+			_homeless_since = -1.0
+			return false
+		if group_id >= 0:
+			world.leave_pack(self)
 	if _homeless_since < 0.0:
 		_homeless_since = world.current_time
 	elif territory.has("emigrate_after_seconds") \
 			and world.current_time - _homeless_since >= float(territory["emigrate_after_seconds"]):
+		var home_pack := registry.pack_at(natal_territory_id) if bool(territory.get("stay_while_no_room", false)) else -1
+		if home_pack >= 0:
+			world.join_pack(self, home_pack)
+			_making_for = -1
+			_homeless_since = -1.0
+			return false
 		world.kill_agent(self, "emigrated")
 		return true
 	if _making_for != -1:
@@ -1289,12 +1315,26 @@ func _seek_ground(world) -> bool:
 			return false
 	if _making_for == -1 and world.current_time - _looked_for_ground_at >= float(territory.get("look_seconds", 2.0)):
 		_looked_for_ground_at = world.current_time
-		_making_for = registry.open_slot_near(position, sex, natal_territory_id, float(territory.get("mate_pull", 1.0)))
+		_making_for = registry.open_slot_near(position, sex, natal_territory_id, float(territory.get("mate_pull", 1.0)),
+			_no_way_to(world))
 		# The first time it sets out: what the feed tells (`DispersalStarted`).
 		if _making_for != -1 and not _set_out:
 			_set_out = true
 			world.emit_event("DispersalStarted", self, -1, {"territory_id": _making_for})
 	return false
+
+
+## Making for an open territory (`_seek_ground()`) with `territory.straight_to_den`: it keeps
+## going, not turning aside to a pond where it saw prey (`INVESTIGATE_WATER`, `PredatorAI`). Fed,
+## a young wolf did that for most of the time it had to find a den, and died of its wandering
+## with dens open.
+func is_making_for_den() -> bool:
+	return _making_for != -1 and bool(territory.get("straight_to_den", false))
+
+
+## Whether it found no way to a den, for `TerritoryRegistry.open_slot_near()`.
+func _no_way_to(world) -> Callable:
+	return func(den: Vector2) -> bool: return is_unreachable(place_key(den), world.current_time)
 
 
 ## The territory it holds, or lives on, while not hungry enough to leave it

@@ -178,6 +178,11 @@ func segment_clear(a: Vector2, b: Vector2, radius: float = 0.0, ponds: bool = tr
 func resolve_motion(a: Vector2, b: Vector2, radius: float) -> Vector2:
 	if segment_clear(a, b, radius):
 		return b
+	# Already inside, past a pond's exact edge before any cell of it was flooded (which steps
+	# animals out, `WorldState._step_out_of_water()`): every way from here starts blocked, and
+	# it stood there for good. It steps towards the nearest free point, as far as it moved.
+	if not segment_clear(a, a, radius):
+		return a.move_toward(nearest_free(a, radius), a.distance_to(b))
 	# Stop at first contact, then project the remaining displacement along its tangent.
 	var lo := 0.0
 	var hi := 1.0

@@ -4204,6 +4204,12 @@ func leave_pack(agent) -> void:
 	emit_event("PackLeft", agent, -1, {"group_id": group})
 
 
+## One that left its pack goes back to `group` (`Predator._seek_ground()`).
+func join_pack(agent, group: int) -> void:
+	agent.group_id = group
+	_rebuild_group_state_cache()
+
+
 ## A group id no animal of `species_key`, awake or asleep, nor any territory, uses yet.
 func _next_group_id(species_key: String) -> int:
 	var highest := -1
@@ -4523,6 +4529,12 @@ func _find_migration_pasture(key: String, species_key: String, center: Vector2, 
 	# hungry to follow: a pasture forty seconds off is one the herd arrives at hungry.
 	var hunger_rate := maxf(0.001, float(species_config.get("metabolism", {}).get("hunger_rate", 2.0)))
 	var headroom := maxf(0.0, float(config.get("exempt_hunger", 50.0)) - mean_hunger) / hunger_rate
+	# Hungrier than that, with `hungry_search`, as far as it walks before it starves. By
+	# `exempt_hunger` alone a herd that ate its pasture down hungry looked nowhere, and starved
+	# where it stood with a third of the map green.
+	if bool(config.get("hungry_search", false)) and mean_hunger >= float(config.get("exempt_hunger", 50.0)):
+		var starving := float(config_bundle.get("balance", {}).get("lifecycle", {}).get("starvation_death_threshold", 100.0))
+		headroom = maxf(0.0, starving - mean_hunger) / hunger_rate
 	var search_radius := minf(float(config.get("search_radius", 2400.0)), headroom * speed * 0.5)
 	var pasture_radius := _pasture_radius(species_key)
 	var claims: Array = []
@@ -5423,10 +5435,15 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 		return
 	var grown := float(settings.get("dispersal_age_seconds", 240.0))
 	var pack: bool = species_registry.social(species_key) == SpeciesRegistryScript.SOCIAL_PACK
-	# A pack's grown young leave it asleep as awake (`Predator._seek_ground()`), to look next step.
+	# A pack's grown young leave it asleep as awake (`Predator._seek_ground()`), to look next step
+	# - or, with `stay_while_no_room`, stay while no territory has their slot open.
 	if pack and int(aggregate.get("group_id", -1)) >= 0:
+		var stay := bool(settings.get("stay_while_no_room", false))
 		for record in members:
 			if float(record.get("age", 0.0)) >= grown and registry.territory_of(int(record.get("id", -1))) == -1:
+				if stay and registry.open_slot_near(Vector2(record.get("position", aggregate.get("center", Vector2.ZERO))),
+						str(record.get("sex", AgentBaseScript.SEX_FEMALE)), int(record.get("natal_territory_id", -1))) == -1:
+					continue
 				var group := int(record.get("group_id", -1))
 				record["group_id"] = -1
 				emit_population_event("PackLeft", species_key, Vector2(record.get("position", Vector2.ZERO)),
@@ -5441,11 +5458,22 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 			continue
 		var position: Vector2 = record.get("position", aggregate.get("center", Vector2.ZERO))
 		var sex := str(record.get("sex", AgentBaseScript.SEX_FEMALE))
-		# Looking for `emigrate_after_seconds` in all, it dies of its wandering, as one awake does.
 		var since := float(record.get("homeless_since", -1.0))
+		var expired := since >= 0.0 and settings.has("emigrate_after_seconds") \
+			and current_time - since >= float(settings["emigrate_after_seconds"])
+		# With no room anywhere, or its clock run out, back to the pack it was born in while that
+		# holds its den (`Predator._seek_ground()`).
+		if pack and bool(settings.get("stay_while_no_room", false)):
+			var natal := int(record.get("natal_territory_id", -1))
+			var home_pack := registry.pack_at(natal)
+			if home_pack >= 0 and (expired or registry.open_slot_near(position, sex, natal) == -1):
+				record["group_id"] = home_pack
+				record["homeless_since"] = -1.0
+				continue
+		# Looking for `emigrate_after_seconds` in all, it dies of its wandering, as one awake does.
 		if since < 0.0:
 			record["homeless_since"] = current_time
-		elif settings.has("emigrate_after_seconds") and current_time - since >= float(settings["emigrate_after_seconds"]):
+		elif expired:
 			if not bool(record.get("emigrate", false)):
 				record["emigrate"] = true
 				leaving += 1

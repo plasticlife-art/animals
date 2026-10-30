@@ -718,6 +718,15 @@ A world on a stream that its viewers act on through the chat. Launched with
     and asleep; a second one for the same species starts the year anew.
   - **The reserve is an island.** No power brings an animal in from outside: every animal is
     born on it or was there at the start, and a species lost stays lost.
+  - Its own ways of its animals (`reserve.json` `species`, over `species.json`): its deer live
+    1680 s, not 1200 - shorter than a fox's 1440 and a wolf's 1920, two springs of young were
+    fewer than old age took. `ConfigLoader.with_reserve_powers()` puts them on a world saved
+    before them, and adds the species settings a save lacks (`_add_missing()`), keeping every
+    one it has. Measured from a reserve save of 150 years, 2400 s on, three draws of chance each:
+    deer 97 at the end (83, 110, 98) with this and `hungry_search`, against 30 with neither and
+    52 with the search alone; wolves 17-21. Bigger litters (2.2, at most 3) gave 93 and fed a
+    fox boom to 70 in one draw; a wolf ceiling of 16 and foxes of 32 gave 113 but left 9-11
+    wolves: neither kept.
 - **`ReserveSession`** turns chat lines into those orders and tells back what came of them
   (`told`). It is kept apart from any window, so a server can run it later.
   - `ChatCommands` parses «!word arg» through `reserve.json` `commands` and cleans ward names:
@@ -1052,6 +1061,12 @@ ground it had eaten until the weakest starved, with fresh pasture a few cells aw
   than the herd covers at half speed before its average member reaches `exempt_hunger`
   - that still hold its need once other migrating herds' shares are taken off, on ground
   within the species' `risk_tolerance`, with water in `water_search_radius`.
+- With `hungry_search` (deer) a herd already past `exempt_hunger` looks as far as it covers
+  before its average member starves (`lifecycle.starvation_death_threshold`), not nowhere. A
+  herd that ate its pasture down hungry used to look no further than zero, and starved where it
+  stood: in a reserve of 150 years 78 deer of 87 starved so in 600 s, each walking, the best
+  grass within 900 px at 1-10 %, a third of the map green. From that save, 2400 s on, the deer
+  ended 52 with it against 30 without.
 - The destination (`herd_migrations`, saved with the world) holds until the herd's
   centre is within the pasture radius of it, another herd has eaten it, or
   `give_up_seconds` pass. On arrival the herd stays `settle_seconds` before it weighs its
@@ -1212,6 +1227,24 @@ species in `WorldState.territories`, saved, the view's copy sent when its revisi
   with nowhere else to go. Without that sink the young the land could not hold piled
   up as vagrants for years - foxes do not starve while there are grouse and carcasses - and
   with the cap lifted the foxes doubled (47 -> 87) and the deer halved.
+- On an island every one of those deaths is a loss for good, and on the reserve's map most
+  were not of the land's holding: they died with dens open. Three things kept them from the
+  dens. With `straight_to_den` one making for a den does not turn aside to a pond where it
+  saw prey (`is_making_for_den()`, the investigation signal nulled in `PredatorAI`): fed, a
+  young wolf spent most of its clock there. A den the route search found no way to (it gives
+  up at `max_search_cells`, short of a ford's detour across the map) is passed by
+  (`open_slot_near()`'s `skip`, the animal's `is_unreachable()`), and one making for it looks
+  again. And a body inside a pond's exact edge - the pond rose round it before any cell was
+  flooded, so `_step_out_of_water()` never ran - steps towards the nearest free point
+  (`ScenerySystem.resolve_motion()`): every way out began blocked, and it stood till it died.
+- With `stay_while_no_room` (wolves) one of a pack stays with it, grown, its clock not
+  running, while no territory has its slot open, and one that left for a slot and lost it, or
+  whose `emigrate_after_seconds` ran out, goes back to the pack it was born in while that holds
+  its den, to set out again - only one with no pack to go back to dies of its wandering (`TerritoryRegistry.pack_at()`,
+  `WorldState.join_pack()`; asleep alike in `_settle_dormant_vagrants()`). Only holders breed,
+  so a pack's grown young help it and wait: when a holder dies one of the right sex is near.
+  Without, the young of packs whose slots were taken died before any came free, and dens held
+  by one waited for a mate of a sex no longer anywhere.
 - Asleep, a group keeping to a territory kills and stalks by `dormant_kill_scale`: it sits
   beside the prey of its ground 2-4 times as many hunter-steps as a pack ranging the map, for
   which the sleeping kill rate was set; at full weight holders killed 76 % more each asleep

@@ -384,11 +384,19 @@ func _test_an_island(a) -> void:
 	old["powers"]["offered"] = ["adopt", "rain", "release", "immigrate"]
 	old["balance"]["carcass"]["meat_by_cause"].erase("emigrated")
 	old["balance"]["carcass"]["meat_by_cause"]["predation"] = 0.9
+	old["species"]["wolf"]["territory"].erase("stay_while_no_room")
+	old["species"]["wolf"]["territory"]["emigrate_after_seconds"] = 123.0
+	old["species"]["herbivore"]["aging"]["max_age"] = 1200.0
 	var resumed := ConfigLoaderScript.with_reserve_powers(old, _config())
 	var causes: Dictionary = resumed["balance"]["carcass"]["meat_by_cause"]
 	a.is_true(resumed["powers"]["offered"].has("good_litter") and not resumed["powers"]["offered"].has("release")
 		and causes.has("emigrated") and is_equal_approx(float(causes["predation"]), 0.9),
 		"a reserve saved before the island plays on with today's powers, its own balance kept")
+	var wolf_territory: Dictionary = resumed["species"]["wolf"]["territory"]
+	a.is_true(bool(wolf_territory.get("stay_while_no_room", false)) and is_equal_approx(float(wolf_territory["emigrate_after_seconds"]), 123.0),
+		"with the species settings added since, and those it had kept")
+	a.is_true(is_equal_approx(float(resumed["species"]["herbivore"]["aging"]["max_age"]),
+		float(_config()["species"]["herbivore"]["aging"]["max_age"])), "but the reserve's own ways of its animals today's")
 
 
 ## In the game the view's world holds the animals about the camera only: the count is the

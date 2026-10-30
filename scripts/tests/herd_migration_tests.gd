@@ -97,11 +97,23 @@ func _test_a_herd_on_bare_ground_sets_out_for_the_nearest_rich_pasture(a) -> voi
 	a.equal(int(manager.stats_system.counters.get("herd_migrations", 0)), 1, "in the run's statistics too")
 	# Starting hungry, the same herd would arrive starving: it looks no further than it
 	# can walk before its average member starts to starve.
+	var migration: Dictionary = world.config_bundle["species"]["herbivore"]["herd"]["migration"]
+	migration["hungry_search"] = false
 	world.herd_migrations.clear()
 	for agent in world.living_agents:
 		agent.hunger = 70.0
 	world._update_herd_migrations()
 	a.is_true(_goal(world) == null, "a hungry herd does not set out for pasture it cannot reach in time")
+	# With `hungry_search` one past `exempt_hunger` looks as far as it walks before it starves,
+	# rather than nowhere - and nowhere only when even that is too far.
+	migration["hungry_search"] = true
+	world._update_herd_migrations()
+	a.is_true(_heads_for(_goal(world), near), "with `hungry_search` it sets out for the pasture it reaches before it starves")
+	world.herd_migrations.clear()
+	for agent in world.living_agents:
+		agent.hunger = 99.0
+	world._update_herd_migrations()
+	a.is_true(_goal(world) == null, "and none when it would starve on the way")
 	Helpers.destroy_manager(manager)
 
 

@@ -257,6 +257,15 @@ func _test_a_young_one_finds_its_own(a) -> void:
 	a.is_true(bound != -1 and bound != 0, "of age, it makes for an open territory not its birthplace (%d)" % bound)
 	cub._patrol(world, manager.tick_duration)
 	a.equal(cub.state, "disperse", "looking for its own")
+	# A pond where it saw prey turns it aside, unless it keeps straight on to the den.
+	var pond: Dictionary = world.water_sources[0].duplicate(true)
+	pond["last_herbivore_seen_time"] = world.current_time
+	cub.remember_water(pond, world.current_time)
+	var turned: float = float(cub._ai_controller.build_context(cub, world).get_value("investigation_signal", 0.0))
+	cub.territory["straight_to_den"] = true
+	var straight: float = float(cub._ai_controller.build_context(cub, world).get_value("investigation_signal", 0.0))
+	cub.territory.erase("straight_to_den")
+	a.is_true(turned > 0.5 and straight == 0.0, "making for a den with `straight_to_den`, a pond with prey does not turn it aside (%.2f -> %.2f)" % [turned, straight])
 	cub.position = registry.get_territory(bound)["den"]
 	cub._seek_ground(world)
 	a.equal([registry.territory_of(cub.id), cub._making_for], [bound, -1], "there, it takes it")

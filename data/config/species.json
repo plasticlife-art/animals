@@ -23,6 +23,7 @@
         "leave_fraction": 0.5,
         "settle_seconds": 30.0,
         "exempt_hunger": 50.0,
+        "hungry_search": true,
         "follow_asleep": false,
         "seasonal": {
           "memory_bonus": 1.5,
@@ -210,6 +211,8 @@
       "claim_radii": 0.5,
       "ring_radii": 0.7,
       "emigrate_after_seconds": 180.0,
+      "mate_pull": 3.0,
+      "straight_to_den": true,
       "dormant_kill_scale": 0.5
     },
     "reproduction": {
@@ -478,7 +481,9 @@
       "claim_radii": 0.5,
       "ring_radii": 0.6,
       "emigrate_after_seconds": 300.0,
-      "mate_pull": 3.0
+      "mate_pull": 3.0,
+      "straight_to_den": true,
+      "stay_while_no_room": true
     }
   },
   "hare": {

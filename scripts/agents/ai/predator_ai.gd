@@ -124,6 +124,9 @@ func build_context(agent, world, snapshot = null):
 		var memory_window := maxf(1.0, float(agent.perception.get("water_memory_duration_seconds", 1.0)))
 		if last_seen >= 0.0:
 			investigation_signal = clampf(1.0 - ((world.current_time - last_seen) / memory_window), 0.0, 1.0)
+	# Making for a den of its own, a pond where prey was is no reason to turn aside.
+	if agent.has_method("is_making_for_den") and agent.is_making_for_den():
+		investigation_signal = 0.0
 
 	var low_urgency := clampf(1.0 - maxf(hunger, maxf(thirst, fatigue)), 0.0, 1.0)
 	var no_targets_score := clampf(1.0 - maxf(prey_quality, maxf(carcass_proximity, investigation_signal)), 0.0, 1.0)

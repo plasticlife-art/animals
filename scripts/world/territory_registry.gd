@@ -207,6 +207,13 @@ func release(agent_id: int, now: float) -> int:
 	return territory_id
 
 
+## The pack living on `territory_id` while someone holds it, or -1.
+func pack_at(territory_id: int) -> int:
+	if territory_id == NOBODY or is_vacant(territory_id):
+		return NOBODY
+	return int(get_territory(territory_id).get("group", NOBODY))
+
+
 func is_vacant(territory_id: int) -> bool:
 	var territory := get_territory(territory_id)
 	return not territory.is_empty() and int(territory["male"]) == NOBODY and int(territory["female"]) == NOBODY
@@ -215,14 +222,18 @@ func is_vacant(territory_id: int) -> bool:
 ## The territory with `sex`'s slot open nearest `position`, by distance to its den and then id,
 ## other than `excluded` (where the animal was born); -1 when there is none. One where a mate
 ## already holds the other slot counts as `mate_pull` times nearer: few and far between, lone
-## dispersers each took an empty territory of their own and never met.
-func open_slot_near(position: Vector2, sex: String, excluded: int = NOBODY, mate_pull: float = 1.0) -> int:
+## dispersers each took an empty territory of their own and never met. `skip`, given a den,
+## says whether to pass it by (one it found no way to).
+func open_slot_near(position: Vector2, sex: String, excluded: int = NOBODY, mate_pull: float = 1.0,
+		skip: Callable = Callable()) -> int:
 	var slot := _slot(sex)
 	var other := "male" if slot == "female" else "female"
 	var best := NOBODY
 	var best_distance := INF
 	for territory in territories:
 		if int(territory["id"]) == excluded or int(territory[slot]) != NOBODY:
+			continue
+		if skip.is_valid() and bool(skip.call(territory["den"])):
 			continue
 		var distance: float = position.distance_squared_to(territory["den"])
 		if mate_pull != 1.0 and int(territory[other]) != NOBODY:

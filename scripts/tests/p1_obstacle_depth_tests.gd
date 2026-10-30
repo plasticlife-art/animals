@@ -188,6 +188,14 @@ func _test_a_body_touching_a_solid_can_leave_it(a) -> void:
 		"an animal touching a trunk walks away from it (x %.1f)" % animal.position.x)
 	var path: PackedVector2Array = world.scenery.local_path(inside, Vector2(160, 128), 6.0)
 	a.is_true(not path.is_empty(), "and can plan a way round it")
+	# Deep inside - a pond's edge rose round a wolf - where even a step away was blocked and it
+	# stood for good, walking into it: it steps out towards the nearest free point.
+	var deep := Vector2(108, 128)
+	animal.position = deep
+	for step in range(30):
+		animal.move_with_vector(world, Vector2.RIGHT, 70.0, 0.1)
+	a.is_true(world.scenery.segment_clear(animal.position, animal.position, 6.0),
+		"an animal deep inside a solid steps out of it (%s)" % str(animal.position))
 	Helpers.destroy_manager(manager)
 
 

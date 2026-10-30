@@ -35,6 +35,8 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	for power in changed.keys():
 		if bundle["powers"]["powers"].has(power):
 			bundle["powers"]["powers"][power].merge(changed[power], true)
+	# The reserve's own ways of its animals over the shipped ones (`species`).
+	_merge_into(bundle["species"], reserve.get("species", {}).duplicate(true))
 	# A species held to a number by births too (`birth_ceilings`): its capacity, the land's (a
 	# territory's) or the regulation's, set to that number over its start.
 	var ceilings: Dictionary = reserve.get("birth_ceilings", {})
@@ -50,17 +52,33 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	return bundle
 
 
-## `saved`, the bundle a reserve was saved with, with today's powers (`load_reserve_bundle()`'s)
-## and the carcass causes it lacks. A reserve runs for weeks on one world: one saved before its
-## powers changed - before it became an island, with newcomers from the edge - plays on with the
-## powers it has now, its land and animals as they were.
+## `saved`, the bundle a reserve was saved with, with today's powers (`load_reserve_bundle()`'s),
+## the carcass causes it lacks and the species settings it lacks. A reserve runs for weeks on one
+## world: one saved before its powers changed - before it became an island, with newcomers from
+## the edge - plays on with the powers it has now, and with the ways of its animals added since
+## (a disperser keeping to its way, a pack keeping its young, a hungry herd looking further), its
+## land and animals and every setting it had as they were.
 static func with_reserve_powers(saved: Dictionary, reserve: Dictionary) -> Dictionary:
 	var bundle: Dictionary = saved.duplicate(true)
 	var today := load_reserve_bundle(reserve)
 	bundle["powers"] = today["powers"].duplicate(true)
 	var causes: Dictionary = bundle.get("balance", {}).get("carcass", {}).get("meat_by_cause", {})
 	causes.merge(today["balance"]["carcass"]["meat_by_cause"], false)
+	if bundle.has("species"):
+		_add_missing(bundle["species"], today["species"])
+		# The reserve's own ways of its animals are its rules, as its powers are: today's.
+		_merge_into(bundle["species"], reserve.get("species", {}).duplicate(true))
 	return bundle
+
+
+## Copies into `target` what `source` has and it does not, all the way down, changing nothing
+## it has.
+static func _add_missing(target: Dictionary, source: Dictionary) -> void:
+	for key in source.keys():
+		if not target.has(key):
+			target[key] = source[key].duplicate(true) if source[key] is Dictionary or source[key] is Array else source[key]
+		elif target[key] is Dictionary and source[key] is Dictionary:
+			_add_missing(target[key], source[key])
 
 
 ## Loads every config file and overlays the chosen setup options.

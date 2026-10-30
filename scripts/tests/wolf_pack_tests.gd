@@ -3,8 +3,9 @@ extends RefCounted
 ## Wolves (`species.wolf`, `role.social` "pack"): packs start at their dens, led by a pair that
 ## holds the territory, the rest its young; a pack hunts together, the nearest driving and the
 ## others fanned out to both sides of the prey (`hunt.pack`); a grown young one leaves its pack
-## and founds another on an open territory; a sleeping pack sleeps as one group and its grown
-## young leave it asleep too; the worker steps a pack hunt as an inline tick does; and the
+## and founds another on an open territory, passing by one it found no way to - and, while
+## none has its slot open, stays with its pack, awake or asleep, or goes back to it; a sleeping pack sleeps as one
+## group and its grown young leave it asleep too; the worker steps a pack hunt as an inline tick does; and the
 ## shipped setup has no wolves unless asked.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
@@ -18,6 +19,7 @@ func run(a) -> void:
 	_test_flankers_fan_out(a)
 	_test_a_pack_hunts_together(a)
 	_test_a_grown_wolf_founds_its_own(a)
+	_test_a_grown_wolf_waits_for_room(a)
 	_test_a_sleeping_pack(a)
 	_test_the_worker_runs_a_pack_alike(a)
 	_test_no_wolves_unless_asked(a)
@@ -134,6 +136,72 @@ func _test_a_grown_wolf_founds_its_own(a) -> void:
 	a.equal(registry.territory_of(young.id), bound, "there it takes it")
 	a.is_true(young.group_id >= 0 and int(registry.get_territory(bound)["group"]) == young.group_id,
 		"and founds a pack of its own there (%d)" % young.group_id)
+	Helpers.destroy_manager(manager)
+
+
+func _test_a_grown_wolf_waits_for_room(a) -> void:
+	var manager = _world(9956, 0, 1, true)
+	var world = manager.world_state
+	var registry: TerritoryRegistry = world.territory_registry("wolf")
+	var home: Vector2 = registry.get_territory(0)["den"]
+	var young = Helpers.spawn_species(world, "wolf", home, 0, AgentBaseScript.SEX_FEMALE)
+	young.age = 500.0
+	young.natal_territory_id = 0
+	world._rebuild_group_state_cache()
+	var nearest := registry.open_slot_near(young.position, young.sex, 0)
+	young.mark_unreachable(young.place_key(registry.get_territory(nearest)["den"]), world.current_time, 60.0)
+	young._seek_ground(world)
+	a.is_true(young._making_for not in [-1, 0, nearest], "of the open territories it passes by one it found no way to")
+	young.group_id = 0
+	young._making_for = -1
+	young._homeless_since = -1.0
+	world._rebuild_group_state_cache()
+	# Every female's slot taken but at its birthplace.
+	for territory_id in range(1, registry.size()):
+		registry.claim(territory_id, 90000 + territory_id, AgentBaseScript.SEX_FEMALE)
+	young._seek_ground(world)
+	a.equal([young.group_id, young._making_for, young._homeless_since], [0, -1, -1.0],
+		"with no room anywhere it stays with its pack, its clock not running")
+	# One that left and lost its slot goes back to the pack it was born in, while that holds its den.
+	registry.claim(0, 91000, AgentBaseScript.SEX_MALE)
+	registry.get_territory(0)["group"] = 0
+	young.group_id = -1
+	young._homeless_since = world.current_time
+	world._rebuild_group_state_cache()
+	young._seek_ground(world)
+	a.equal([young.group_id, young._homeless_since], [0, -1.0], "one that lost its slot goes back to its pack")
+	# One whose clock ran out with a slot open goes back too, to set out again.
+	registry.release(90002, world.current_time)
+	young.group_id = -1
+	world.current_time += 1000.0
+	young._homeless_since = world.current_time - float(young.territory["emigrate_after_seconds"]) - 1.0
+	world._rebuild_group_state_cache()
+	var dead: bool = young._seek_ground(world)
+	a.equal([dead, young.is_alive, young.group_id], [false, true, 0], "one whose clock ran out goes back to its pack, alive")
+	registry.claim(2, 90002, AgentBaseScript.SEX_FEMALE)
+	var freed: int = 1 if nearest != 1 else 2
+	registry.release(90000 + freed, world.current_time)
+	young._looked_for_ground_at = -INF
+	young._seek_ground(world)
+	a.equal([young.group_id, young._making_for], [-1, freed], "and leaves it when a slot comes free")
+	# Asleep alike.
+	registry.claim(freed, 90000 + freed, AgentBaseScript.SEX_FEMALE)
+	young.group_id = 0
+	world._rebuild_group_state_cache()
+	var sector_key: Vector2i = world._get_sector_key(home)
+	world._sleep_sector(sector_key)
+	var step := func() -> int:
+		world.current_tick += 9
+		world.current_time += 0.75
+		world._prepare_navigation_budget()
+		world._apply_dormant_sector_step(sector_key, world._sector_states[sector_key], 0.75)
+		for record in world._sector_states[sector_key].get("dormant_records", []):
+			if int(record["id"]) == young.id:
+				return int(record.get("group_id", -2))
+		return -2
+	var asleep: int = step.call()
+	registry.release(90000 + freed, world.current_time)
+	a.equal([asleep, step.call()], [0, -1], "asleep it stays while there is no room, and leaves when there is")
 	Helpers.destroy_manager(manager)
 
 
