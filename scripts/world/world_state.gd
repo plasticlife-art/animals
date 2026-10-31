@@ -5470,16 +5470,17 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 				record["group_id"] = home_pack
 				record["homeless_since"] = -1.0
 				continue
-		# Looking for `emigrate_after_seconds` in all, it dies of its wandering, as one awake does.
+		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)),
+			float(settings.get("mate_pull", 1.0)))
+		# Looking for `emigrate_after_seconds` in all, it dies of its wandering, as one awake does
+		# - with `look_while_open` only once no slot of its sex is open.
 		if since < 0.0:
 			record["homeless_since"] = current_time
-		elif expired:
+		elif expired and (territory_id == -1 or not bool(settings.get("look_while_open", false))):
 			if not bool(record.get("emigrate", false)):
 				record["emigrate"] = true
 				leaving += 1
 			continue
-		var territory_id := registry.open_slot_near(position, sex, int(record.get("natal_territory_id", -1)),
-			float(settings.get("mate_pull", 1.0)))
 		if territory_id == -1:
 			continue
 		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex):

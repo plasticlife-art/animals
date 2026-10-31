@@ -34,6 +34,7 @@ func run(a) -> void:
 	_test_a_sleeping_vagrant_settles(a)
 	_test_the_feed_tells_it(a)
 	_test_a_vagrant_with_nowhere_dies(a)
+	_test_a_vagrant_looks_while_a_slot_is_open(a)
 	_test_sleeping_holders_kill_by_the_scale(a)
 	_test_dens_in_cover(a)
 
@@ -431,6 +432,50 @@ func _test_a_vagrant_with_nowhere_dies(a) -> void:
 			a.is_true(not vagrant.is_alive, "looking too long, though one slot was open far off, it dies of its wandering")
 		a.equal([int(manager.stats_system.counters.get("deaths_emigrated", 0)), world.carcasses.size()], [1, carcasses + 1],
 			"counted as worn out by wandering, with a body: the island has nowhere to go%s" % (" (asleep)" if asleep else ""))
+		Helpers.destroy_manager(manager)
+
+
+## With `look_while_open` the clock run out ends nothing while a slot of its sex is open: the
+## same vagrant looks on for the far den, awake or asleep, and dies of its wandering once that
+## slot is taken.
+func _test_a_vagrant_looks_while_a_slot_is_open(a) -> void:
+	for asleep in [false, true]:
+		var manager = _small(9996 + int(asleep), true)
+		var world = manager.world_state
+		var settings: Dictionary = world.config_bundle["species"]["predator"]["territory"]
+		settings["emigrate_after_seconds"] = 10.0
+		settings["look_while_open"] = true
+		var registry: TerritoryRegistry = world.territory_registry("predator")
+		var den: Vector2 = registry.get_territory(0)["den"]
+		var farthest := 0
+		for territory in registry.territories:
+			if Vector2(territory["den"]).distance_to(den) > Vector2(registry.get_territory(farthest)["den"]).distance_to(den):
+				farthest = int(territory["id"])
+		for territory in registry.territories:
+			if int(territory["id"]) != farthest:
+				registry.claim(int(territory["id"]), 50000 + int(territory["id"]), AgentBaseScript.SEX_FEMALE)
+		var vagrant = _fox(world, den, AgentBaseScript.SEX_FEMALE)
+		vagrant.territory = settings
+		var sector_key: Vector2i = world._get_sector_key(den)
+		if asleep:
+			world._sleep_sector(sector_key)
+			_coarse_steps(world, sector_key, 20)
+			a.is_true(_records(world, sector_key).has(vagrant.id), "asleep, its clock run out, it looks on while a slot is open")
+		else:
+			for step in range(20):
+				world.current_time += 1.0
+				vagrant._seek_ground(world)
+			a.is_true(vagrant.is_alive, "its clock run out, it looks on while a slot is open far off")
+		a.equal(int(manager.stats_system.counters.get("deaths_emigrated", 0)), 0, "none worn out by wandering%s" % (" (asleep)" if asleep else ""))
+		registry.claim(farthest, 59999, AgentBaseScript.SEX_FEMALE)
+		if asleep:
+			_coarse_steps(world, sector_key, 4)
+			a.is_true(not _records(world, sector_key).has(vagrant.id), "asleep, the last slot taken, it dies")
+		else:
+			world.current_time += 1.0
+			vagrant._seek_ground(world)
+			a.is_true(not vagrant.is_alive, "the last slot taken, it dies of its wandering")
+		a.equal(int(manager.stats_system.counters.get("deaths_emigrated", 0)), 1, "then counted as worn out%s" % (" (asleep)" if asleep else ""))
 		Helpers.destroy_manager(manager)
 
 

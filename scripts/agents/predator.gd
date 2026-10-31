@@ -1266,7 +1266,9 @@ func _water_source_has_herbivore(world, source: Dictionary) -> bool:
 ## no territory has its slot open: it is there, grown, when one does. One that left for a slot
 ## and lost it to another goes back to the pack it was born in, while that still holds its den -
 ## and so does one whose clock ran out, to set out again: only one with no pack to go back to
-## dies of its wandering.
+## dies of its wandering. With `territory.look_while_open` a clock run out ends nothing while a
+## slot of its sex is open where it can go: on an island the young of a pack whose old pair died
+## together died of their wandering with the dens of the dead standing open.
 ## Without, the young of a pack whose slots were all taken died before any came free, and a den
 ## whose holder died waited for one of its sex that was no longer anywhere. A den it found no
 ## way to it passes by (`is_unreachable()`).
@@ -1294,7 +1296,9 @@ func _seek_ground(world) -> bool:
 	if _homeless_since < 0.0:
 		_homeless_since = world.current_time
 	elif territory.has("emigrate_after_seconds") \
-			and world.current_time - _homeless_since >= float(territory["emigrate_after_seconds"]):
+			and world.current_time - _homeless_since >= float(territory["emigrate_after_seconds"]) \
+			and not (bool(territory.get("look_while_open", false))
+				and registry.open_slot_near(position, sex, natal_territory_id, 1.0, _no_way_to(world)) != -1):
 		var home_pack := registry.pack_at(natal_territory_id) if bool(territory.get("stay_while_no_room", false)) else -1
 		if home_pack >= 0:
 			world.join_pack(self, home_pack)
