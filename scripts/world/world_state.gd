@@ -406,6 +406,7 @@ func step(delta: float, tick: int, time_seconds: float, lod_context: Dictionary 
 		_split_oversized_herds()
 	if current_tick % _MIGRATION_CHECK_INTERVAL_TICKS == 0:
 		_update_herd_migrations()
+		_join_lone_holders()
 	performance_counters["phase_dormant_ms"] = float(Time.get_ticks_usec() - phase_started_usec) / 1000.0
 	_flush_carcass_removals()
 	_emit_pond_transitions()
@@ -4166,7 +4167,7 @@ func territory_of(species_key: String, agent_id: int) -> int:
 ## `agent` takes its sex's slot of `territory_id`: `TerritoryClaimed`. False when it is taken.
 func claim_territory(agent, territory_id: int) -> bool:
 	var registry := territory_registry(agent.species_type)
-	if registry == null or not registry.claim(territory_id, agent.id, agent.sex):
+	if registry == null or not registry.claim(territory_id, agent.id, agent.sex, current_time):
 		return false
 	if species_registry.social(agent.species_type) == SpeciesRegistryScript.SOCIAL_PACK:
 		var group := _pack_for(agent.species_type, territory_id, agent.group_id,
@@ -4225,6 +4226,66 @@ func _next_group_id(species_key: String) -> int:
 		for territory in registry.territories:
 			highest = maxi(highest, int(territory.get("group", -1)))
 	return highest + 1
+
+
+## A lone male holding a territory for `territory.lone_join_after_seconds` with no mate come to
+## him, while a lone female holds another - not where he was born - takes the male's slot of hers:
+## her ground is his now, and he makes his way to it as any holder keeps to his own, awake or
+## asleep. On an island a widowed few sat each at a den of their own, waiting for young only a
+## pair could have, and died out with deer all round. Only the male goes, so two never pass.
+func _join_lone_holders() -> void:
+	for species_key in territories.keys():
+		var settings := territory_config(species_key)
+		if not settings.has("lone_join_after_seconds"):
+			continue
+		var wait := float(settings["lone_join_after_seconds"])
+		var registry: TerritoryRegistry = territories[species_key]
+		for territory in registry.territories:
+			var male := int(territory["male"])
+			if male == TerritoryRegistry.NOBODY or int(territory["female"]) != TerritoryRegistry.NOBODY:
+				continue
+			# A world saved before it was kept: alone from now on.
+			if not territory.has("lone_since"):
+				territory["lone_since"] = current_time
+			if current_time - float(territory["lone_since"]) < wait:
+				continue
+			var agent = get_agent(male)
+			var record := {} if agent != null else _dormant_record_of(male)
+			if agent == null and record.is_empty():
+				continue
+			var natal := int(agent.natal_territory_id) if agent != null else int(record.get("natal_territory_id", -1))
+			var position: Vector2 = agent.position if agent != null else Vector2(record.get("position", Vector2.ZERO))
+			var target := registry.waiting_mate_near(position, AgentBaseScript.SEX_MALE, [int(territory["id"]), natal])
+			if target == -1:
+				continue
+			_release_territory(species_key, male)
+			registry.claim(target, male, AgentBaseScript.SEX_MALE, current_time)
+			var mate := registry.partner_of(male)
+			if species_registry.social(species_key) == SpeciesRegistryScript.SOCIAL_PACK:
+				var group := _pack_for(species_key, target, -1, mate)
+				if agent != null:
+					agent.group_id = group
+					_rebuild_group_state_cache()
+				else:
+					record["group_id"] = group
+			if agent != null:
+				agent.set_preferred_mate_id(mate)
+				var partner = get_agent(mate)
+				if partner != null and partner.has_method("set_preferred_mate_id"):
+					partner.set_preferred_mate_id(male)
+			else:
+				record["preferred_mate_id"] = mate
+			emit_population_event("TerritoryClaimed", species_key, position,
+				{"territory_id": target, "record_id": male, "partner_id": mate, "dormant": agent == null, "joined": true})
+
+
+## A sleeping animal's record by its id, or empty.
+func _dormant_record_of(agent_id: int) -> Dictionary:
+	for sector_state in _sector_states.values():
+		for record in sector_state.get("dormant_records", []):
+			if int(record.get("id", -1)) == agent_id:
+				return record
+	return {}
 
 
 ## A holder of `species_key` is gone: its slot is open, and `TerritoryVacated` when the
@@ -5483,7 +5544,7 @@ func _settle_dormant_vagrants(aggregate: Dictionary, members: Array) -> void:
 			continue
 		if territory_id == -1:
 			continue
-		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex):
+		if registry.inside(territory_id, position, claim_reach) and registry.claim(territory_id, int(record.get("id", -1)), sex, current_time):
 			var partner := registry.partner_of(int(record.get("id", -1)))
 			record["homeless_since"] = -1.0
 			if partner != -1:

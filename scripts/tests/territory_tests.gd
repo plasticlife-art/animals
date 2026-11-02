@@ -35,6 +35,7 @@ func run(a) -> void:
 	_test_the_feed_tells_it(a)
 	_test_a_vagrant_with_nowhere_dies(a)
 	_test_a_vagrant_looks_while_a_slot_is_open(a)
+	_test_a_lone_male_joins_a_waiting_female(a)
 	_test_sleeping_holders_kill_by_the_scale(a)
 	_test_dens_in_cover(a)
 
@@ -477,6 +478,51 @@ func _test_a_vagrant_looks_while_a_slot_is_open(a) -> void:
 			a.is_true(not vagrant.is_alive, "the last slot taken, it dies of its wandering")
 		a.equal(int(manager.stats_system.counters.get("deaths_emigrated", 0)), 1, "then counted as worn out%s" % (" (asleep)" if asleep else ""))
 		Helpers.destroy_manager(manager)
+
+
+## With `lone_join_after_seconds` a lone male holder whose mate has not come takes the male's slot
+## of the nearest territory a lone female holds - after the wait, not before, and not where he was
+## born; a lone female waits where she is. Awake and asleep.
+func _test_a_lone_male_joins_a_waiting_female(a) -> void:
+	for asleep in [false, true]:
+		var manager = _small(9994 + int(asleep), true)
+		var world = manager.world_state
+		world.config_bundle["species"]["predator"]["territory"]["lone_join_after_seconds"] = 10.0
+		var registry: TerritoryRegistry = world.territory_registry("predator")
+		var den: Vector2 = registry.get_territory(0)["den"]
+		var male = _fox(world, den, AgentBaseScript.SEX_MALE)
+		a.is_true(world.claim_territory(male, 0), "a lone male holds the first den")
+		var waiting := 1
+		for territory in registry.territories:
+			if int(territory["id"]) > 0 and Vector2(territory["den"]).distance_to(den) \
+					< Vector2(registry.get_territory(waiting)["den"]).distance_to(den):
+				waiting = int(territory["id"])
+		registry.claim(waiting, 60001, AgentBaseScript.SEX_FEMALE, world.current_time)
+		var lone_female := 2 if waiting != 2 else 3
+		registry.claim(lone_female, 60002, AgentBaseScript.SEX_FEMALE, world.current_time)
+		if asleep:
+			world._sleep_sector(world._get_sector_key(den))
+		world.current_time += 5.0
+		world._join_lone_holders()
+		a.equal(registry.territory_of(male.id), 0, "before the wait he stays%s" % (" (asleep)" if asleep else ""))
+		world.current_time += 6.0
+		world._join_lone_holders()
+		a.equal([registry.territory_of(male.id), registry.partner_of(male.id), registry.is_vacant(0)], [waiting, 60001, true],
+			"after it he takes the nearest waiting female's den, and his own stands empty%s" % (" (asleep)" if asleep else ""))
+		a.equal(registry.territory_of(60002), lone_female, "a lone female does not go")
+		Helpers.destroy_manager(manager)
+	var manager = _small(9993, true)
+	var world = manager.world_state
+	world.config_bundle["species"]["predator"]["territory"]["lone_join_after_seconds"] = 10.0
+	var registry: TerritoryRegistry = world.territory_registry("predator")
+	var male = _fox(world, registry.get_territory(0)["den"], AgentBaseScript.SEX_MALE)
+	male.natal_territory_id = 1
+	world.claim_territory(male, 0)
+	registry.claim(1, 60003, AgentBaseScript.SEX_FEMALE, world.current_time)
+	world.current_time += 11.0
+	world._join_lone_holders()
+	a.equal(registry.territory_of(male.id), 0, "not to the den where he was born")
+	Helpers.destroy_manager(manager)
 
 
 ## The kill debt a sleeping pair of holders runs up among deer, at `scale`, and the fear it leaves

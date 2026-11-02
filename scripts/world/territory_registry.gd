@@ -15,8 +15,9 @@ const NOBODY := -1
 
 ## Moves whenever what the view shows changes: a slot taken or let go.
 var revision: int = 0
-## `{id, den, radius, male, female, vacant_since, group}`, by id, which is the index. `group`
-## is the pack living on it, for a species in packs (`role.social` "pack"); -1 otherwise.
+## `{id, den, radius, male, female, vacant_since, group, lone_since}`, by id, which is the index.
+## `group` is the pack living on it, for a species in packs (`role.social` "pack"); -1 otherwise.
+## `lone_since` is when it was last left with one holder (absent before that ever happened).
 var territories: Array = []
 ## Who holds which: agent id -> territory id.
 var _held_by: Dictionary = {}
@@ -173,9 +174,9 @@ static func _slot(sex: String) -> String:
 	return "female" if sex == "female" else "male"
 
 
-## Takes `sex`'s slot of `territory_id` for `agent_id`, letting go of any other it holds.
-## False when that slot is someone else's.
-func claim(territory_id: int, agent_id: int, sex: String) -> bool:
+## Takes `sex`'s slot of `territory_id` for `agent_id`, letting go of any other it holds, at
+## `now`. False when that slot is someone else's.
+func claim(territory_id: int, agent_id: int, sex: String, now: float = 0.0) -> bool:
 	var territory := get_territory(territory_id)
 	if territory.is_empty():
 		return false
@@ -184,9 +185,11 @@ func claim(territory_id: int, agent_id: int, sex: String) -> bool:
 		return true
 	if int(territory[slot]) != NOBODY:
 		return false
-	release(agent_id, 0.0)
+	release(agent_id, now)
 	territory[slot] = agent_id
 	_held_by[agent_id] = territory_id
+	if int(territory["male" if slot == "female" else "female"]) == NOBODY:
+		territory["lone_since"] = now
 	revision += 1
 	return true
 
@@ -203,8 +206,27 @@ func release(agent_id: int, now: float) -> int:
 			territory[slot] = NOBODY
 	if int(territory["male"]) == NOBODY and int(territory["female"]) == NOBODY:
 		territory["vacant_since"] = now
+	else:
+		territory["lone_since"] = now
 	revision += 1
 	return territory_id
+
+
+## The territory nearest `position` held by one of the other sex alone, with `sex`'s slot open -
+## a mate waiting - other than those in `excluded`; -1 when there is none.
+func waiting_mate_near(position: Vector2, sex: String, excluded: Array = []) -> int:
+	var slot := _slot(sex)
+	var other := "male" if slot == "female" else "female"
+	var best := NOBODY
+	var best_distance := INF
+	for territory in territories:
+		if excluded.has(int(territory["id"])) or int(territory[slot]) != NOBODY or int(territory[other]) == NOBODY:
+			continue
+		var distance: float = position.distance_squared_to(territory["den"])
+		if distance < best_distance:
+			best_distance = distance
+			best = int(territory["id"])
+	return best
 
 
 ## The pack living on `territory_id` while someone holds it, or -1.
