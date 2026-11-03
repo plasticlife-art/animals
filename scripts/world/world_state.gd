@@ -2578,7 +2578,7 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 	var needs_repath: bool = force_repath
 	needs_repath = needs_repath or agent.path_cells.is_empty()
 	needs_repath = needs_repath or agent.path_goal_cell != goal_index
-	needs_repath = needs_repath or current_tick - agent.last_repath_tick >= repath_interval
+	var refresh_due: bool = current_tick - agent.last_repath_tick >= repath_interval
 	needs_repath = needs_repath or agent.stuck_timer >= float(repath_interval) * 0.08
 	needs_repath = needs_repath or agent.path_index >= agent.path_cells.size()
 	if not needs_repath and not agent.path_cells.is_empty():
@@ -2588,18 +2588,36 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 			needs_repath = true
 		elif not terrain_system.is_walkable_index(current_path_index):
 			needs_repath = true
+	# A route still being walked is refreshed on the interval only from the cache. A new
+	# search from every cell it passed spent the shared budget on answers the walker did
+	# not need, while others waited in the queue for a first route.
+	if refresh_due and not needs_repath:
+		if terrain_system.has_cached_path_between_indices(start_index, goal_index):
+			needs_repath = true
+		else:
+			agent.last_repath_tick = current_tick
 
 	if needs_repath:
 		var path_result: Dictionary = _find_path_with_budget(start_index, goal_index, agent.id)
-		var path_cells: Array = path_result.get("cells", [])
-		agent.path_cells = path_cells.duplicate()
-		agent.path_goal_cell = goal_index
-		agent.last_repath_tick = current_tick
-		# A search still running is no answer yet; one that finished without the goal is.
-		agent.path_reachable = bool(path_result.get("pending", false)) or bool(path_result.get("reachable", false))
-		agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
-		if agent.path_cells.is_empty():
-			return from_position
+		var pending := bool(path_result.get("pending", false))
+		# While the new search runs, a walker keeps to its old route to the same goal. Dropping
+		# it stood a long-distance walker still for most of every repath interval: each search
+		# starts from a new cell, misses the cache and takes several ticks of shared budget.
+		var keeps_old_route: bool = pending and agent.path_goal_cell == goal_index \
+			and agent.path_index < agent.path_cells.size() \
+			and terrain_system.is_walkable_index(int(agent.path_cells[agent.path_index]))
+		if keeps_old_route:
+			agent.path_reachable = true
+		else:
+			var path_cells: Array = path_result.get("cells", [])
+			agent.path_cells = path_cells.duplicate()
+			agent.path_goal_cell = goal_index
+			agent.last_repath_tick = current_tick
+			# A search still running is no answer yet; one that finished without the goal is.
+			agent.path_reachable = pending or bool(path_result.get("reachable", false))
+			agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
+			if agent.path_cells.is_empty():
+				return from_position
 
 	var waypoint_radius_sq: float = pow(terrain_system.cell_size * 0.42, 2.0)
 	while agent.path_index < agent.path_cells.size():

@@ -30,6 +30,7 @@ func run(a) -> void:
 	_test_sliced_global_path_search(a)
 	_test_every_open_route_is_found(a)
 	_test_path_expansion_budget_caps_a_tick(a)
+	_test_a_walker_keeps_its_route_while_a_search_runs(a)
 	_test_overview_dormant_wake_policy(a)
 	_test_window_edge_stays_asleep(a)
 
@@ -617,6 +618,48 @@ func _test_path_expansion_budget_caps_a_tick(a) -> void:
 		"the request that waited a tick is served first")
 	a.equal(int(terrain._path_searches.get(first_key, {}).get("visited", -1)), 40,
 		"and a saved search resumes where its last slice stopped")
+	Helpers.destroy_manager(manager)
+
+
+## A long route takes several ticks of the shared budget to find, and each search starts from
+## the cell the walker stands on. Dropping the old route for a pending one, on the interval or
+## a step off it, stood dispersing wolves still for over half of every journey.
+func _test_a_walker_keeps_its_route_while_a_search_runs(a) -> void:
+	var bundle := Helpers.build_test_bundle(89)
+	bundle["world"]["world_size"] = {"x": 2048.0, "y": 2048.0}
+	var manager = Helpers.create_manager_with(bundle, 89)
+	var world = manager.world_state
+	var terrain = world.terrain_system
+	world.navigation_config["path_expansions_per_slice"] = 32
+	world.navigation_config["path_expansion_budget_per_tick"] = 40
+	var goal := Vector2(400.0, 400.0)
+	var goal_index: int = terrain.get_index_from_position(goal)
+	var start_index: int = terrain.get_index_from_position(Vector2(1960.0, 1960.0))
+	var route: Array = terrain.find_path_between_indices(start_index, goal_index).get("cells", [])
+	var animal = Helpers.spawn_herbivore(world, terrain.get_cell_center(start_index), 0)
+	animal.path_cells = route.duplicate()
+	animal.path_goal_cell = goal_index
+	animal.path_index = 1
+	animal.last_repath_tick = 0
+	terrain._path_cache.clear()
+	world.current_tick = 100
+	world._prepare_navigation_budget()
+	var waypoint: Vector2 = world._coarse_waypoint(animal.position, goal, animal.id)
+	a.equal(waypoint, terrain.get_cell_center(int(route[1])),
+		"on the interval with nothing cached, the walker goes on along its route")
+	a.is_true(world._pending_global_paths.is_empty() and animal.last_repath_tick == 100,
+		"and asks for no new search")
+	var aside: int = terrain.get_index_from_position(terrain.get_cell_center(start_index) + Vector2(terrain.cell_size * 2.0, 0.0))
+	animal.position = terrain.get_cell_center(aside)
+	world.current_tick = 101
+	world._prepare_navigation_budget()
+	waypoint = world._coarse_waypoint(animal.position, goal, animal.id)
+	a.is_true(not world._pending_global_paths.is_empty(),
+		"a step off the route asks for a new one, which takes more than a tick")
+	a.equal(animal.path_cells.size(), route.size(),
+		"while it runs, the walker keeps the old route")
+	a.is_true(waypoint != animal.position and animal.path_reachable,
+		"and heads for its next cell rather than standing still")
 	Helpers.destroy_manager(manager)
 
 
