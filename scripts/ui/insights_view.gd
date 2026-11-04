@@ -3,7 +3,8 @@ extends Control
 ## The chronicle's «Выводы»: what it concludes from the traits' history (`TraitInsights`), one
 ## card each - what kind of conclusion, the sentence, the numbers behind it and how sure it is -
 ## the surest first. Chips above keep one kind. «Показать» opens the trait in «Черты». Grows to
-## its cards' height inside the chronicle's scroll.
+## its cards' height inside the chronicle's scroll. Narrower than `NARROW` (the reserve upright)
+## the chips wrap and the cards leave out the word «уверенность».
 
 signal show_requested(species_id: String, index: int)
 
@@ -20,6 +21,8 @@ const KIND_COLORS := {"selection": Color(0.25, 0.49, 0.31), "cost": Color(0.66, 
 	"trend": Color(0.45, 0.40, 0.30), "drift": Color(0.54, 0.48, 0.36)}
 const CHIPS_HEIGHT := 34.0
 const CARD_GAP := 8.0
+const CHIP_ROW := 30.0
+const NARROW := 600.0
 
 var found: Array = []
 var species: Array = []
@@ -73,34 +76,50 @@ func _draw() -> void:
 			"Выводов пока нет: черты почти не сдвинулись с тех пор, как летопись их считает.",
 			HORIZONTAL_ALIGNMENT_LEFT, size.x - 16.0, 15, -1, INK_DIM)
 		return
-	_chips(font)
-	var y := CHIPS_HEIGHT + 6.0
+	var y := _chips(font) + 6.0
 	for finding in _shown():
 		y += _card(font, finding, y) + CARD_GAP
 
 
-func _chips(font: Font) -> void:
-	var x := 0.0
-	var kinds: Array = [""]
-	for kind in TraitInsightsScript.KINDS:
-		for finding in found:
-			if str(finding["kind"]) == kind:
-				kinds.append(kind)
-				break
-	for kind in kinds:
-		var word := str(TraitInsightsScript.KIND_LABELS.get(kind, ""))
-		var label := "Все: %d" % found.size() if kind == "" else word.substr(0, 1) + word.substr(1).to_lower()
-		var width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 20.0
-		var rect := Rect2(x, 4.0, width, 24.0)
+## Draws the chips; how tall they stand.
+func _chips(font: Font) -> float:
+	var bottom := CHIPS_HEIGHT
+	for chip in _chip_layout(font):
+		var rect: Rect2 = chip[0]
+		var kind: String = chip[1]
+		var label: String = chip[2]
+		bottom = maxf(bottom, rect.end.y + CHIPS_HEIGHT - 28.0)
 		if kind == kept:
 			draw_rect(rect, INK, true)
 		else:
 			draw_rect(rect, INK, false, 1.0)
 		draw_string(font, rect.position + Vector2(10.0, 17.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
 			Color(1.0, 0.97, 0.86) if kind == kept else INK)
-		var chosen := str(kind)
-		_hits.append([rect, func(): _keep(chosen)])
+		_hits.append([rect, func(): _keep(kind)])
+	return bottom
+
+
+## `[[Rect2, kind, label]]`: «Все» and each kind found, wrapping onto a new row where the width ends.
+func _chip_layout(font: Font) -> Array:
+	var kinds: Array = [""]
+	for kind in TraitInsightsScript.KINDS:
+		for finding in found:
+			if str(finding["kind"]) == kind:
+				kinds.append(kind)
+				break
+	var out: Array = []
+	var x := 0.0
+	var y := 4.0
+	for kind in kinds:
+		var word := str(TraitInsightsScript.KIND_LABELS.get(kind, ""))
+		var label := "Все: %d" % found.size() if kind == "" else word.substr(0, 1) + word.substr(1).to_lower()
+		var width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 20.0
+		if x > 0.0 and size.x > 0.0 and x + width > size.x:
+			x = 0.0
+			y += CHIP_ROW
+		out.append([Rect2(x, y, width, 24.0), str(kind), label])
 		x += width + 8.0
+	return out
 
 
 ## One card at `y`; its height.
@@ -120,16 +139,18 @@ func _card(font: Font, finding: Dictionary, y: float) -> float:
 	var badge_width := font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 14.0
 	draw_rect(Rect2(16.0, y + 11.0, badge_width, 20.0), KIND_COLORS.get(kind, INK_DIM), true)
 	draw_string(font, Vector2(23.0, y + 26.0), badge, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+	var narrow := size.x < NARROW
 	draw_string(font, Vector2(28.0 + badge_width, y + 27.0), str(finding["title"]), HORIZONTAL_ALIGNMENT_LEFT,
-		width - badge_width - 200.0, 17, INK)
+		width - badge_width - (90.0 if narrow else 200.0), 17, INK)
 	draw_multiline_string(font, Vector2(16.0, y + 52.0), detail, HORIZONTAL_ALIGNMENT_LEFT, text_width, 13, -1, INK_DIM)
 	for dot in range(3):
-		var center := Vector2(width - 128.0 + float(dot) * 13.0, y + 21.0)
+		var center := Vector2(width - (52.0 if narrow else 128.0) + float(dot) * 13.0, y + 21.0)
 		if dot < int(finding["confidence"]):
 			draw_circle(center, 4.5, INK)
 		else:
 			draw_arc(center, 4.5, 0.0, TAU, 16, INK, 1.0)
-	draw_string(font, Vector2(width - 84.0, y + 26.0), "уверенность", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, INK_DIM)
+	if not narrow:
+		draw_string(font, Vector2(width - 84.0, y + 26.0), "уверенность", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, INK_DIM)
 	var button := Rect2(width - 140.0, y + height - 34.0, 128.0, 26.0)
 	draw_rect(button, BUTTON_EDGE, true)
 	draw_rect(button.grow(-2.0), BUTTON, true)
@@ -156,7 +177,8 @@ func _height() -> float:
 	var font := get_theme_default_font()
 	if font == null or found.is_empty():
 		return 60.0
-	var height := CHIPS_HEIGHT + 6.0
+	var chips: Array = _chip_layout(font)
+	var height := Rect2(chips[-1][0]).end.y + CHIPS_HEIGHT - 28.0 + 6.0
 	var text_width := maxf(200.0, size.x - 178.0) if size.x > 0.0 else 560.0
 	for finding in _shown():
 		var detail_height := font.get_multiline_string_size(str(finding["detail"]), HORIZONTAL_ALIGNMENT_LEFT, text_width, 13).y

@@ -12,6 +12,9 @@ extends Control
 ## (`TraitInsights`), the founders against the living (`TraitHistory.founders`, the family tree's
 ## living), and who left young and who died of what, set against the living of the time. The
 ## pointer over a chart reads its values off at that time.
+##
+## Narrower than `NARROW` (the reserve upright), the species stand in a grid above the charts,
+## two charts a row, and a trait alone has its parts one under another.
 
 signal insight_requested
 
@@ -44,6 +47,8 @@ const GAP := 18.0
 const LEFT := 40.0
 const RIGHT := 46.0
 const STRIP := 92.0
+## Narrower than this, the species go above the charts and a trait alone stacks its parts.
+const NARROW := 600.0
 
 var history = null
 var species: Array = []
@@ -137,6 +142,8 @@ func _draw() -> void:
 		return
 	if drilled >= 0 and shown_species != "":
 		_draw_drill(font)
+	elif _narrow():
+		_draw_overview(font, _draw_grid(font))
 	else:
 		_draw_list(font)
 		_draw_overview(font)
@@ -190,17 +197,71 @@ func _draw_list(font: Font) -> void:
 	draw_string(font, Vector2(32.0, y + 4.0), "полоса: разброс", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, INK_DIM)
 
 
+## The species list narrow: «Все виды» and each species three to a row, the scale's box and
+## the legend under them. Returns where the charts may start.
+func _draw_grid(font: Font) -> float:
+	var columns := 3
+	var cell := Vector2((size.x - 6.0 * (columns - 1)) / float(columns), 46.0)
+	var items: Array = [""]
+	for entry in species:
+		items.append(str(entry["id"]))
+	for position in range(items.size()):
+		var id: String = items[position]
+		var rect := Rect2(float(position % columns) * (cell.x + 6.0), float(floori(float(position) / float(columns))) * (cell.y + 4.0),
+			cell.x, cell.y)
+		if id == shown_species:
+			draw_rect(rect, PICKED, true)
+		_hits.append([rect, func(_at): focus(id)])
+		if id == "":
+			draw_string(font, rect.position + Vector2(8.0, 18.0), "Все виды", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, INK)
+			continue
+		var entry := _entry(id)
+		if id == shown_species:
+			draw_rect(Rect2(rect.position, Vector2(3.0, rect.size.y)), entry["color"], true)
+		draw_string(font, rect.position + Vector2(8.0, 18.0), str(entry["label"]), HORIZONTAL_ALIGNMENT_LEFT,
+			rect.size.x - 44.0, 14, entry["color"])
+		var counts := _counts(id)
+		if not counts.is_empty():
+			draw_string(font, rect.position + Vector2(8.0, 18.0), str(int(counts[-1].y)), HORIZONTAL_ALIGNMENT_RIGHT,
+				rect.size.x - 14.0, 13, INK)
+			_spark(Rect2(rect.position + Vector2(8.0, 24.0), Vector2(rect.size.x - 16.0, 16.0)), counts, entry["color"])
+	var y := ceilf(float(items.size()) / float(columns)) * (cell.y + 4.0) + 6.0
+	var box := Rect2(8.0, y, 14.0, 14.0)
+	draw_rect(box, INK, false, 1.0)
+	if shared_scale:
+		draw_polyline(PackedVector2Array([box.position + Vector2(3, 7), box.position + Vector2(6, 11),
+			box.position + Vector2(11, 3)]), INK, 2.0)
+	draw_string(font, Vector2(28.0, y + 12.0), "общий масштаб", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK)
+	_hits.append([Rect2(0.0, y - 4.0, 150.0, 22.0), func(_at): _toggle_scale()])
+	draw_string(font, Vector2(0.0, y + 12.0), "щелчок по линии откроет черту вида" if shown_species == ""
+		else "щелчок по графику откроет черту", HORIZONTAL_ALIGNMENT_RIGHT, size.x, 12, INK_DIM)
+	y += 22.0
+	if shown_species != "":
+		y += 8.0
+		draw_dashed_line(Vector2(8.0, y), Vector2(26.0, y), MARKER_INK, 1.4, 3.0)
+		draw_string(font, Vector2(32.0, y + 4.0), "метка: чистый дрейф", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, INK_DIM)
+		var color: Color = _entry(shown_species)["color"]
+		draw_rect(Rect2(196.0, y - 5.0, 18.0, 10.0), Color(color, 0.22), true)
+		draw_string(font, Vector2(220.0, y + 4.0), "полоса: разброс", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, INK_DIM)
+		y += 12.0
+	return y + 10.0
+
+
 # --- the charts and the time line ----------------------------------------------------------
 
-func _draw_overview(font: Font) -> void:
-	var area := Rect2(LIST_WIDTH + 16.0, 0.0, size.x - LIST_WIDTH - 16.0, size.y)
+## The charts right of the list, or narrow under `top` across the whole width.
+func _draw_overview(font: Font, top := 0.0) -> void:
+	var narrow := _narrow()
+	var area := Rect2(0.0, top, size.x, size.y - top) if narrow else \
+		Rect2(LIST_WIDTH + 16.0, 0.0, size.x - LIST_WIDTH - 16.0, size.y)
 	var charts := Rect2(area.position, Vector2(area.size.x, area.size.y - STRIP))
 	var ids: Array = [shown_species] if shown_species != "" else _ids()
 	var shown := _traits_of(ids)
 	# Four to a square; the newer traits make it three a row, the margins narrower to keep room.
-	var columns := 2 if shown.size() <= 4 else 3
+	# Narrow, two a row whatever their number.
+	var columns := 2 if shown.size() <= 4 or narrow else 3
 	var rows := maxi(1, ceili(float(shown.size()) / float(columns)))
-	var margins := Vector2(LEFT, RIGHT) if columns == 2 else Vector2(40.0, 40.0)
+	var margins := Vector2(LEFT, RIGHT) if columns == 2 and not narrow else Vector2(40.0, 40.0)
 	var cell := Vector2((charts.size.x - GAP * (columns - 1)) / float(columns), (charts.size.y - GAP * (rows - 1)) / float(rows))
 	var shared := 0.0
 	if shared_scale:
@@ -428,8 +489,11 @@ func _draw_drill(font: Font) -> void:
 	var back_width := font.get_string_size(back, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
 	draw_string(font, Vector2(0.0, 16.0), back, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, GOOD)
 	_hits.append([Rect2(0.0, 0.0, back_width + 8.0, 22.0), func(_at): focus(shown_species)])
+	var narrow := _narrow()
 	var title := "%s · %s" % [entry["label"], HudTextScript.TRAIT_LABELS[drilled]]
-	draw_string(font, Vector2(back_width + 20.0, 17.0), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, color)
+	# Narrow, the title and its numbers on lines of their own under «Все черты».
+	var title_at := Vector2(0.0, 42.0) if narrow else Vector2(back_width + 20.0, 17.0)
+	draw_string(font, title_at, title, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, color)
 	var title_width := font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
 	var latest: Array = history.latest(shown_species)
 	var spread: Array = history.latest_spread(shown_species)
@@ -438,15 +502,25 @@ func _draw_drill(font: Font) -> void:
 		about = "%s от вида" % HudTextScript.percent_change(float(latest[drilled]))
 	if drilled < spread.size():
 		about += " · разброс ±%s" % TraitInsightsScript.percent(float(spread[drilled]))
-	draw_string(font, Vector2(back_width + 32.0 + title_width, 17.0), about, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
+	var about_at := Vector2(0.0, 62.0) if narrow else Vector2(back_width + 32.0 + title_width, 17.0)
+	draw_string(font, about_at, about, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
 	var card_width := 250.0
-	var plot := Rect2(LEFT, 34.0, size.x - card_width - LEFT - RIGHT - 12.0, 190.0)
+	var plot := Rect2(LEFT, 78.0, size.x - LEFT - RIGHT, 160.0) if narrow else \
+		Rect2(LEFT, 34.0, size.x - card_width - LEFT - RIGHT - 12.0, 190.0)
 	var reach := _reach(drilled, [shown_species])
 	_chart(font, plot, drilled, [shown_species], reach, false)
 	draw_string(font, Vector2(plot.position.x, plot.end.y + 14.0), "начало", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK_DIM)
 	draw_string(font, Vector2(plot.position.x, plot.end.y + 14.0), HudTextScript.age_text(_last_time(), calendar),
 		HORIZONTAL_ALIGNMENT_RIGHT, plot.size.x, 11, INK_DIM)
 	var lower := plot.end.y + 34.0
+	if narrow:
+		# The card, the founders and the traces one under another, the traces taking what is left.
+		_insight_card(font, Rect2(0.0, lower - 8.0, size.x, 160.0))
+		var below := lower + 164.0
+		var traces_height := maxf(210.0, (size.y - below) * 0.5)
+		_histogram(font, Rect2(0.0, below, size.x, size.y - below - traces_height), color)
+		_traces(font, Rect2(0.0, size.y - traces_height, size.x, traces_height), color)
+		return
 	_insight_card(font, Rect2(size.x - card_width, 34.0, card_width, lower - 46.0))
 	_histogram(font, Rect2(0.0, lower, 320.0, size.y - lower), color)
 	_traces(font, Rect2(350.0, lower, size.x - 350.0, size.y - lower), color)
@@ -653,6 +727,10 @@ func _drill_at(index: int, plot: Rect2, reach: float, at: Vector2) -> void:
 
 
 # --- helpers ------------------------------------------------------------------------------
+
+func _narrow() -> bool:
+	return size.x < NARROW
+
 
 func _toggle_scale() -> void:
 	shared_scale = not shared_scale
