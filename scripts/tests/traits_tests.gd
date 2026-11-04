@@ -2,7 +2,8 @@ extends RefCounted
 
 ## Heritable traits: what a founder and a young one inherit, what each trait does to the animal
 ## and what it costs, sleeping births with both parents, selection asleep, the means the stats
-## and the cards show, the chronicle's history, and saves from before there were any.
+## and the cards show, the chronicle's history and what it concludes, the marker that does
+## nothing, and saves from before there were any.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const TraitsScript := preload("res://scripts/agents/traits.gd")
@@ -12,6 +13,10 @@ const StoryBookScript := preload("res://scripts/story/story_book.gd")
 const FamilyTreeScript := preload("res://scripts/story/family_tree.gd")
 const HerdReadoutScript := preload("res://scripts/ui/herd_readout.gd")
 const SelectionCardScript := preload("res://scripts/ui/selection_card.gd")
+const TraitInsightsScript := preload("res://scripts/story/trait_insights.gd")
+const LineageScript := preload("res://scripts/story/lineage.gd")
+const TraitsViewScript := preload("res://scripts/ui/traits_view.gd")
+const InsightsViewScript := preload("res://scripts/ui/insights_view.gd")
 
 
 ## Level ground everywhere, so a run measures the animal and not the cells it crosses.
@@ -49,6 +54,15 @@ func run(a) -> void:
 	_test_trait_history_keeps_the_whole_life(a)
 	_test_trait_words(a)
 	_test_cards_and_tree_show_traits(a)
+	_test_marker_does_nothing(a)
+	_test_history_tallies_who_left_a_trace(a)
+	_test_history_spread_and_founders(a)
+	_test_insights_tell_selection_from_chance(a)
+	_test_insights_jump_bottleneck_race(a)
+	_test_traits_screen_and_conclusions(a)
+	_test_newer_traits_only_where_listed(a)
+	_test_caution_drought_size_give_and_cost(a)
+	_test_sleepers_pay_for_the_newer_traits(a)
 
 
 func _settings(overrides: Dictionary = {}) -> Dictionary:
@@ -542,4 +556,354 @@ func _test_cards_and_tree_show_traits(a) -> void:
 	manager = Helpers.create_manager(9112)
 	var plain = Helpers.spawn_herbivore(manager.world_state, Vector2(60.0, 60.0), 0)
 	a.equal(SelectionCardScript.traits_line(plain), "", "without heredity the card says nothing of it")
+	Helpers.destroy_manager(manager)
+
+
+func _test_marker_does_nothing(a) -> void:
+	var config := {"traits": {"enabled": true}}
+	var founder := TraitsScript.founder(4242, config, 77)
+	a.equal(founder.size(), TraitsScript.NAMES.size(), "a founder has every trait, the marker too")
+	for index in range(TraitsScript.MARKER):
+		# The first four are drawn as they were before the marker: a world plays as it did.
+		var expected := clampf(1.0 + 0.08 * (TraitsScript.unit(4242, TraitsScript.SALTS[index], 77) * 2.0 - 1.0),
+			0.9 if index == TraitsScript.LONGEVITY else 0.75, 1.1 if index == TraitsScript.LONGEVITY else 1.25)
+		a.near(float(founder[index]), expected, 0.000001, "%s is the draw it always was" % TraitsScript.NAMES[index])
+	a.is_true(absf(float(founder[TraitsScript.MARKER]) - 1.0) <= 0.08, "the marker spreads like the others")
+	var marked: Array = TraitsScript.NEUTRAL.duplicate()
+	marked[TraitsScript.MARKER] = 1.2
+	var settings := TraitsScript.settings(config)
+	a.near(TraitsScript.hunger_factor(marked, settings), 1.0, 0.000001, "the marker costs no hunger")
+	a.near(TraitsScript.run_cost_factor(marked, settings), 1.0, 0.000001, "nor any run")
+	a.equal(TraitsScript.padded([1.1, 0.9, 1.0, 1.05]), [1.1, 0.9, 1.0, 1.05, 1.0, 1.0, 1.0, 1.0],
+		"an old animal's four take the newer traits as the species")
+	a.equal(TraitsScript.of_record({"traits": [1.1, 0.9, 1.0, 1.05]})[TraitsScript.SPEED], 1.1,
+		"an old record keeps its speed")
+	var young := TraitsScript.inherit(9, [1.1, 1.1, 1.1, 1.05], [1.1, 1.1, 1.1, 1.05], config, 3)
+	a.is_true(absf(float(young[TraitsScript.SPEED]) - 1.1) <= 0.04 + 0.000001,
+		"a young one of old parents inherits their speed, not the species'")
+	a.equal(HudText.traits_text([1.06, 0.97, 1.02, 1.04, 1.3]),
+		"Скорость +6 % · Зрение −3 %\nАппетит +2 % · Долголетие +4 %", "the cards leave the marker out")
+	var lineage = LineageScript.new()
+	lineage.note_animal(1, "herbivore", "female")
+	lineage.note_animal(2, "herbivore", "male")
+	lineage.note_traits(1, [1.0, 1.0, 1.0, 1.0])
+	lineage.note_traits(2, TraitsScript.NEUTRAL)
+	a.is_true(lineage.entry(1).has("traits") and lineage.entry(2).has("traits"), "the family tree keeps four or five")
+
+
+## A family tree stand-in: the living with their traits.
+func _family(living: Array, species := "herbivore"):
+	var lineage = LineageScript.new()
+	for index in range(living.size()):
+		lineage.note_animal(index + 1, species, "female")
+		lineage.note_traits(index + 1, living[index])
+	return lineage
+
+
+func _test_history_tallies_who_left_a_trace(a) -> void:
+	var history = TraitHistoryScript.new()
+	var metrics := {"herbivore_population": 10, "trait_speed_herbivore": 1.0, "trait_vision_herbivore": 1.0,
+		"trait_appetite_herbivore": 1.0, "trait_longevity_herbivore": 1.0, "trait_marker_herbivore": 1.0}
+	history.sample(0.0, metrics, ["herbivore"])
+	history.hear_birth("herbivore", [[1.10, 1.0, 1.0, 1.0, 1.0], [1.06, 1.0, 1.0, 1.0, 1.0]])
+	history.hear_death("herbivore", "predation", [0.90, 1.0, 1.0, 1.0, 1.0])
+	history.hear_death("herbivore", "predation", [0.94, 1.0, 1.0, 1.0])
+	history.hear_death("herbivore", "", [0.5, 1.0, 1.0, 1.0, 1.0])
+	metrics["trait_speed_herbivore"] = 1.02
+	history.sample(40.0, metrics, ["herbivore"])
+	var parents: Dictionary = history.differential("herbivore", "parents", TraitsScript.SPEED)
+	a.equal(int(parents["count"]), 2, "each parent counted once")
+	a.near(float(parents["diff"]), 0.06, 0.0001, "parents 8 %% ahead of the living's 2 %%: %s" % str(parents))
+	var hunted: Dictionary = history.differential("herbivore", "predation", TraitsScript.SPEED)
+	a.equal(int(hunted["count"]), 2, "an old animal of four counts too; a death of no cause does not")
+	a.near(float(hunted["diff"]), -0.10, 0.0001, "the hunted 8 %% behind the species, 10 behind the living")
+	a.equal(int(history.differential("herbivore", "parents", TraitsScript.SPEED, 40.0)["count"]), 0,
+		"nothing after the last point")
+	# Folded, not lost, when the history thins out.
+	var long = TraitHistoryScript.new()
+	var time := 0.0
+	var told := 0
+	while long.points.size() < TraitHistoryScript.MAX_POINTS or long.interval <= TraitHistoryScript.START_INTERVAL:
+		long.hear_death("herbivore", "old_age", [1.0, 1.0, 1.0, 1.0, 1.0])
+		told += 1
+		long.sample(time, metrics, ["herbivore"])
+		time += long.interval
+	long.sample(time, metrics, ["herbivore"])
+	var counted: int = int(long.differential("herbivore", "old_age", 0)["count"]) + int(long._pending.get("herbivore", {}).get("old_age", [0, 0])[-1])
+	a.equal(counted, told, "thinned out, the history keeps every death it heard (%d of %d)" % [counted, told])
+	var copy = TraitHistoryScript.new()
+	copy.import_state(long.export_state())
+	a.equal(int(copy.differential("herbivore", "old_age", 0)["count"]), int(long.differential("herbivore", "old_age", 0)["count"]),
+		"the tallies are saved with the story")
+
+
+func _test_history_spread_and_founders(a) -> void:
+	var history = TraitHistoryScript.new()
+	var metrics := {"herbivore_population": 4, "trait_speed_herbivore": 1.0, "trait_vision_herbivore": 1.0,
+		"trait_appetite_herbivore": 1.0, "trait_longevity_herbivore": 1.0, "trait_marker_herbivore": 1.0}
+	var family = _family([[0.9, 1.0, 1.0, 1.0, 1.0], [1.1, 1.0, 1.0, 1.0, 1.0], [0.9, 1.0, 1.0, 1.0, 1.0],
+		[1.1, 1.0, 1.0, 1.0]])
+	family.note_animal(9, "herbivore", "male")
+	family.note_traits(9, [2.0, 2.0, 2.0, 2.0, 2.0])
+	family.note_death(9, 1.0, "predation", -1, Vector2.ZERO)
+	history.sample(0.0, metrics, ["herbivore"], family)
+	var spread: Array = history.latest_spread("herbivore")
+	a.near(float(spread[TraitsScript.SPEED]), 0.1, 0.0001, "speed spread among the living, the dead left out")
+	a.near(float(spread[TraitsScript.VISION]), 0.0, 0.0001, "none where they are alike")
+	a.near(float(spread[TraitsScript.MARKER]), 0.0, 0.0001, "the marker of three, the old one standing for none")
+	var founders: Array = history.founders["herbivore"]
+	a.equal(int(founders[TraitsScript.SPEED][TraitHistoryScript.bin_of(0.9)]), 2, "the founders' histogram")
+	a.equal(TraitHistoryScript.bin_of(1.0), TraitHistoryScript.BINS / 2, "the species in the middle bucket")
+	a.equal(TraitHistoryScript.bin_of(5.0), TraitHistoryScript.BINS - 1, "beyond the reach at the edge")
+	history.sample(60.0, metrics, ["herbivore"], _family([[1.0, 1.0, 1.0, 1.0, 1.0]]))
+	a.equal(int(history.founders["herbivore"][TraitsScript.SPEED][TraitHistoryScript.bin_of(0.9)]), 2,
+		"the founders are kept from the first point")
+	a.is_true(history.points[0].has("counts") and int(history.points[0]["counts"]["herbivore"]) == 4, "and the numbers")
+
+
+## A made-up history: `years` of points, each species' means moving by `drift` (per trait over the
+## whole time), with spreads, numbers and tallies as given per species.
+func _made_history(points: int, species: Dictionary):
+	var history = TraitHistoryScript.new()
+	for step in range(points):
+		var share := float(step) / float(points - 1)
+		var values := {}
+		var spread := {}
+		var counts := {}
+		var tallies := {}
+		for id in species.keys():
+			var plan: Dictionary = species[id]
+			var means: Array = []
+			for index in range(TraitsScript.NAMES.size()):
+				var drift: Array = plan.get("drift", [])
+				means.append(1.0 + (float(drift[index]) if index < drift.size() else 0.0) * share)
+			if plan.has("jump") and step >= int(plan["jump"][0]):
+				means[int(plan["jump"][1])] += float(plan["jump"][2])
+			values[id] = means
+			spread[id] = [0.05, 0.05, 0.05, 0.05, 0.05]
+			var count_plan = plan.get("counts", 100)
+			counts[id] = int(count_plan.call(step)) if count_plan is Callable else int(count_plan)
+			if plan.has("spread"):
+				spread[id] = plan["spread"].call(step)
+			var groups := {}
+			for group in plan.get("leans", {}).keys():
+				var lean: Array = plan["leans"][group]
+				var tally: Array = []
+				for index in range(TraitsScript.NAMES.size()):
+					tally.append((float(means[index]) + (float(lean[1]) if index == int(lean[0]) else 0.0)) * float(lean[2]))
+				tally.append(int(lean[2]))
+				groups[group] = tally
+			if plan.has("jump_tally") and step == int(plan["jump"][0]):
+				groups.merge(plan["jump_tally"].call(means), true)
+			tallies[id] = groups
+		history.points.append({"time": float(step) * 120.0, "values": values, "spread": spread, "counts": counts,
+			"tallies": tallies})
+	return history
+
+
+func _test_insights_tell_selection_from_chance(a) -> void:
+	var history = _made_history(40, {
+		# Faster, the parents ahead and the hunted behind: selection.
+		"hare": {"drift": [0.12, 0.0, 0.0, 0.0, 0.01], "leans": {"parents": [0, 0.02, 6], "predation": [0, -0.012, 4]}},
+		# Slower, and the starved quick: what speed costs.
+		"herbivore": {"drift": [0.0, -0.06, 0.0, 0.0, 0.005], "leans": {"starvation": [1, 0.02, 3], "parents": [1, 0.0, 5]}},
+		# A few birds, wandering as far as the marker: chance.
+		"scavenger": {"drift": [0.07, 0.0, 0.0, 0.0, 0.065], "counts": 14, "leans": {"parents": [0, 0.01, 2]}},
+	})
+	var found := TraitInsightsScript.conclude(history, ["hare", "herbivore", "scavenger"])
+	var by_key := {}
+	for finding in found:
+		by_key["%s:%d" % [finding["species"], int(finding["trait"])]] = finding
+	var hare: Dictionary = by_key.get("hare:0", {})
+	a.equal(str(hare.get("kind", "")), "selection", "the hares' speed is selection: %s" % str(hare))
+	a.equal(str(hare.get("title", "")), "Зайцы стали быстрее на 12\u00a0%", "said plainly")
+	a.is_true(str(hare.get("detail", "")).contains("У родителей детёнышей скорость выше") and
+		str(hare.get("detail", "")).contains("У съеденных хищниками скорость ниже"), "with both leans: %s" % str(hare.get("detail", "")))
+	a.equal(int(hare.get("confidence", 0)), 3, "heard often and leaning hard: sure")
+	var deer: Dictionary = by_key.get("herbivore:1", {})
+	a.equal(str(deer.get("kind", "")), "cost", "the deer's sight fell for its cost: %s" % str(deer))
+	a.equal(str(deer.get("title", "")), "Олени стали хуже видеть на 6\u00a0%", "titled as it fell")
+	var birds: Dictionary = by_key.get("scavenger:0", {})
+	a.equal(str(birds.get("kind", "")), "drift", "a few birds' speed is chance: %s" % str(birds))
+	a.is_true(not by_key.has("hare:1"), "a trait that did not move says nothing")
+	a.equal(str(found[0]["kind"]), "selection", "the surest first")
+	a.equal(TraitInsightsScript.percent(0.045), "4,5\u00a0%", "a small lean with its tenth")
+	a.equal(TraitInsightsScript.percent(-0.123), "12\u00a0%", "a large one whole")
+	a.is_true(TraitInsightsScript.conclude(_made_history(2, {"hare": {"drift": [0.2]}}), ["hare"]).is_empty(),
+		"two points are too few to conclude anything")
+
+
+func _test_insights_jump_bottleneck_race(a) -> void:
+	var history = _made_history(40, {
+		"wolf": {"drift": [0.0], "jump": [30, 2, -0.05], "jump_tally": _old_wolves},
+		"hare": {"drift": [0.1, 0.06], "counts": func(step: int) -> int: return 20 if step == 20 else 150,
+			"spread": func(step: int) -> Array: return [0.05, 0.05, 0.05, 0.05, 0.05] if step < 20 else [0.02, 0.02, 0.02, 0.02, 0.02]},
+		"predator": {"drift": [0.08, 0.0]},
+	})
+	var found := TraitInsightsScript.conclude(history, ["wolf", "hare", "predator"], {"predator": ["hare"], "wolf": []})
+	var kinds := {}
+	for finding in found:
+		kinds["%s:%s" % [finding["kind"], finding["species"]]] = finding
+	var jump: Dictionary = kinds.get("jump:wolf", {})
+	a.equal(int(jump.get("trait", -1)), 2, "the wolves' appetite jumped: %s" % str(jump))
+	a.is_true(str(jump.get("title", "")).begins_with("Волки: аппетит упал на 5\u00a0% за"), "titled: %s" % str(jump.get("title", "")))
+	a.is_true(str(jump.get("detail", "")).contains("Умерли от старости 3 зверя"), "with who went: %s" % str(jump.get("detail", "")))
+	var neck: Dictionary = kinds.get("bottleneck:hare", {})
+	a.is_true(str(neck.get("title", "")).contains("20 из 150"), "the hares' bottleneck: %s" % str(neck))
+	var race: Dictionary = kinds.get("race:hare", {})
+	a.equal(str(race.get("partner", "")), "predator", "foxes and hares race: %s" % str(race))
+	a.equal(TraitInsightsScript.about(found, "predator", TraitsScript.SPEED).size() >= 1, true,
+		"the race is about the hunter too")
+
+
+## Three old wolves gone, their appetite 14 % over the pack's after the fall.
+func _old_wolves(means: Array) -> Dictionary:
+	var tally: Array = []
+	for index in range(means.size()):
+		tally.append((float(means[index]) + (0.14 if index == 2 else 0.0)) * 3.0)
+	tally.append(3)
+	return {"old_age": tally}
+
+
+func _test_traits_screen_and_conclusions(a) -> void:
+	var history = _made_history(30, {"hare": {"drift": [0.12], "leans": {"parents": [0, 0.01, 6], "predation": [0, -0.012, 4]}},
+		"predator": {"drift": [0.05]}})
+	history.founders["hare"] = TraitHistoryScript.histograms([[1.0, 1.0, 1.0, 1.0, 1.0]])
+	var entries := [{"id": "hare", "label": "Зайцы", "color": Color(0.5, 0.35, 0.2)},
+		{"id": "predator", "label": "Хищники", "color": Color(0.5, 0.2, 0.1)}]
+	var found := TraitInsightsScript.conclude(history, ["hare", "predator"])
+	var view = TraitsViewScript.new()
+	view.size = Vector2(760.0, 500.0)
+	view.show_history(history, entries, 3600.0, [120.0, 4], [], _family([[1.1, 1.0, 1.0, 1.0, 1.0]], "hare"), found)
+	a.equal(view.shown_species, "", "it opens on every species")
+	view.focus("hare", TraitsScript.SPEED)
+	view.show_history(history, entries, 3600.0, [120.0, 4], [], _family([[1.1, 1.0, 1.0, 1.0, 1.0]], "hare"), found)
+	a.is_true(view.drilled == TraitsScript.SPEED and not view._living_histograms.is_empty(), "a trait opened alone, with the living's histogram")
+	view.focus("")
+	a.is_true(view.shown_species == "" and view.drilled == -1, "and back to all")
+	view.focus("hare")
+	view._drill_at(TraitsScript.VISION, Rect2(0, 0, 100, 100), 0.1, Vector2(50, 50))
+	a.equal(view.drilled, TraitsScript.VISION, "a click on a chart opens that trait")
+	view.focus("")
+	var last: Dictionary = history.points[-1]
+	var plot := Rect2(0, 0, 100, 100)
+	view._drill_at(TraitsScript.SPEED, plot, 0.2, Vector2(99.0, TraitsViewScript._y(plot, 50.0, 0.2,
+		float(last["values"]["hare"][TraitsScript.SPEED]))))
+	a.is_true(view.shown_species == "hare" and view.drilled == TraitsScript.SPEED, "with all, the click picks the nearest line")
+	view.free()
+	var list = InsightsViewScript.new()
+	list.size = Vector2(740.0, 500.0)
+	var asked: Array = []
+	list.show_requested.connect(func(species_id: String, index: int) -> void: asked.append([species_id, index]))
+	list.show_insights(found, entries)
+	a.is_true(list.custom_minimum_size.y > 100.0, "the list grows to its cards")
+	list._keep("selection")
+	a.is_true(list._shown().all(func(finding) -> bool: return finding["kind"] == "selection"), "a chip keeps one kind")
+	list.show_requested.emit("hare", 0)
+	a.equal(asked, [["hare", 0]], "«Показать» asks for the trait")
+	list.free()
+
+
+func _test_newer_traits_only_where_listed(a) -> void:
+	var old_list := {"traits": {"enabled": true}}
+	var founder := TraitsScript.founder(31, old_list, 5)
+	for index in [TraitsScript.CAUTION, TraitsScript.DROUGHT, TraitsScript.SIZE]:
+		a.equal(float(founder[index]), 1.0, "a species without %s in its list stays the species" % TraitsScript.NAMES[index])
+	var listed := {"traits": {"enabled": true, "list": TraitsScript.NAMES}}
+	var spread := TraitsScript.founder(31, listed, 5)
+	a.is_true(float(spread[TraitsScript.SIZE]) != 1.0 and absf(float(spread[TraitsScript.SIZE]) - 1.0) <= 0.08,
+		"listed, size spreads like the rest: %s" % str(spread))
+	for index in range(TraitsScript.MARKER):
+		a.equal(float(spread[index]), float(founder[index]), "and the first ones are the same draws (%s)" % TraitsScript.NAMES[index])
+	var young := TraitsScript.inherit(9, spread, spread, old_list, 5)
+	a.equal(float(young[TraitsScript.SIZE]), 1.0, "a young one of a species without size has none, whatever its parents")
+	a.equal(TraitsScript.indices(listed), range(TraitsScript.NAMES.size()), "every index listed")
+	a.equal(TraitsScript.indices(old_list), [0, 1, 2, 3, 4], "the first five by default")
+	var shipped: Dictionary = ConfigLoader.load_config_bundle(ConfigLoader.default_selection())["species"]
+	a.is_true(TraitsScript.has_trait(TraitsScript.settings(shipped["herbivore"]), TraitsScript.CAUTION),
+		"deer are cautious by heredity")
+	a.is_true(not TraitsScript.has_trait(TraitsScript.settings(shipped["predator"]), TraitsScript.CAUTION),
+		"foxes have no caution to inherit")
+	a.is_true(TraitsScript.has_trait(TraitsScript.settings(shipped["wolf"]), TraitsScript.SIZE), "wolves have size")
+	a.equal(HudText.traits_text([1.06, 0.97, 1.02, 1.04, 1.3, 1.0, 1.1, 0.9]),
+		"Скорость +6 % · Зрение −3 %\nАппетит +2 % · Долголетие +4 %\nЗасухоустойчивость +10 % · Размер −10 %",
+		"the card names the newer traits the animal has, not those its species lacks")
+	a.equal(HudText.traits_brief([1.0, 1.0, 1.0, 1.0, 1.4, 1.2, 1.0, 1.0]), "Черты: осторожность +20 %",
+		"a cautious one's brief")
+
+
+func _test_caution_drought_size_give_and_cost(a) -> void:
+	var settings := TraitsScript.settings({"traits": {"enabled": true}})
+	var dry: Array = TraitsScript.NEUTRAL.duplicate()
+	dry[TraitsScript.DROUGHT] = 1.25
+	a.near(TraitsScript.thirst_factor(dry), 0.8, 0.0001, "a quarter more drought-hardy thirsts a fifth slower")
+	a.near(TraitsScript.hunger_factor(dry, settings), 1.1, 0.0001, "and is a tenth hungrier")
+	var big: Array = TraitsScript.NEUTRAL.duplicate()
+	big[TraitsScript.SIZE] = 1.25
+	a.near(TraitsScript.hunger_factor(big, settings), pow(1.25, -0.25), 0.0001, "a big body's hunger rises slowly")
+	a.near(TraitsScript.fill_factor(big), 0.8, 0.0001, "but a bite fills it less")
+	a.near(TraitsScript.hunger_factor(big, settings) / TraitsScript.fill_factor(big), pow(1.25, 0.75), 0.0001,
+		"so it needs food as its size to the three quarters")
+	a.near(TraitsScript.turn_factor(big, settings), 1.0 / sqrt(1.25), 0.0001, "and turns slower")
+	var wary: Array = TraitsScript.NEUTRAL.duplicate()
+	wary[TraitsScript.CAUTION] = 1.2
+	a.near(TraitsScript.hunger_factor(wary, settings), 1.0, 0.0001, "awake, caution costs no hunger: it costs grazing")
+	a.near(TraitsScript.sleeping_hunger_factor(wary, settings), 1.06, 0.0001, "asleep it is paid in hunger")
+	var manager = Helpers.create_manager(9120)
+	var world = manager.world_state
+	var plain = Helpers.spawn_herbivore(world, Vector2(60.0, 60.0), 1)
+	var hardy = Helpers.spawn_herbivore(world, Vector2(160.0, 160.0), 2)
+	hardy.set_traits(dry)
+	for agent in [plain, hardy]:
+		agent.thirst = 0.0
+		agent.update_needs(1.0)
+	a.near(hardy.thirst / plain.thirst, 0.8, 0.0001, "awake, the drought-hardy thirsts slower")
+	var heavy = Helpers.spawn_herbivore(world, Vector2(200.0, 60.0), 3)
+	heavy.set_traits(big)
+	a.near(heavy.trait_fill, 0.8, 0.0001, "a heavy grazer's bites fill it less")
+	heavy.direction = Vector2.RIGHT
+	plain.direction = Vector2.RIGHT
+	heavy.movement = heavy.movement.duplicate()
+	heavy.movement["max_turn_rate_degrees"] = 90.0
+	plain.movement = plain.movement.duplicate()
+	plain.movement["max_turn_rate_degrees"] = 90.0
+	var turned_heavy: Vector2 = heavy._damp_turn(Vector2.UP * 10.0, 0.5)
+	var turned_plain: Vector2 = plain._damp_turn(Vector2.UP * 10.0, 0.5)
+	a.is_true(absf(turned_heavy.angle()) < absf(turned_plain.angle()), "and it swings round slower")
+	var cautious = Helpers.spawn_herbivore(world, Vector2(300.0, 300.0), 4)
+	cautious.set_traits(wary)
+	a.is_true(world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": 0.5}, 1.0) and
+		world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": 0.5}, cautious.trait_caution),
+		"unfeared ground suits the cautious too")
+	# The test world is fearless; this check needs ground a hunter has marked.
+	world.fear_field.enabled = true
+	world.fear_field.deposit(Vector2.ZERO, 0.45)
+	var risk: float = world.fear_field.risk_at(Vector2.ZERO)
+	var tolerance := risk * 1.1
+	a.is_true(world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": tolerance}, 1.0)
+		and not world.grazing_ground_is_acceptable(Vector2.ZERO, 0.0, {"risk_tolerance": tolerance}, 1.2),
+		"ground a bold one grazes, a cautious one leaves (risk %.2f)" % risk)
+	Helpers.destroy_manager(manager)
+
+
+func _test_sleepers_pay_for_the_newer_traits(a) -> void:
+	var manager = Helpers.create_manager_with(_heredity_bundle(9121), 9121)
+	var world = manager.world_state
+	var hardy := {"id": 1, "thirst": 10.0, "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.25, 1.0]}
+	var plain := {"id": 2, "thirst": 10.0, "traits": TraitsScript.NEUTRAL}
+	var weigh: Callable = world._dormant_trait_weigh("herbivore", "thirst", 2.0)
+	a.is_true(weigh.is_valid(), "asleep, thirst rising is shared by how quickly each thirsts")
+	world._share_dormant_need_shift([hardy, plain], "thirst", 2.0, 0.0, 100.0, weigh)
+	a.is_true(float(hardy["thirst"]) < float(plain["thirst"]), "the drought-hardy one thirsts less asleep too")
+	a.near(float(hardy["thirst"]) + float(plain["thirst"]), 24.0, 0.0001, "and the group's mean moves by the step")
+	var near := Vector2(100.0, 100.0)
+	var bold := {"id": 3, "position": Vector2(124.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 0.85, 1.0, 1.0]}
+	var wary := {"id": 4, "position": Vector2(120.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.0, 1.0]}
+	a.equal(world._pick_dormant_victim([wary, bold], "predation", {"near": near}), 1,
+		"asleep, hunters take the bold one though the wary stood nearer")
+	var small := {"id": 5, "position": Vector2(124.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.8]}
+	var large := {"id": 6, "position": Vector2(120.0, 100.0), "traits": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.25]}
+	a.equal(world._pick_dormant_victim([large, small], "predation", {"near": near}), 1, "and the small before the big")
+	var hunger: Callable = world._dormant_trait_weigh("herbivore", "hunger", 2.0)
+	a.near(float(hunger.call(wary)), 1.06, 0.0001, "and the wary pays in hunger")
 	Helpers.destroy_manager(manager)

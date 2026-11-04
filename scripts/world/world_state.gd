@@ -545,7 +545,7 @@ func get_population_metrics() -> Dictionary:
 			"active_hunger": 0.0, "dormant_hunger": 0.0,
 			"dormant_thirst": 0.0, "dormant_energy": 0.0,
 			"starvation_risk": 0, "thirst_risk": 0,
-			"traits": [0.0, 0.0, 0.0, 0.0],
+			"traits": TraitsScript.zeros(),
 		}
 
 	for agent in living_agents:
@@ -560,10 +560,9 @@ func get_population_metrics() -> Dictionary:
 		totals["active"] += 1
 		totals["active_hunger"] += agent.hunger
 		var trait_sums: Array = totals["traits"]
-		trait_sums[0] += agent.trait_speed
-		trait_sums[1] += agent.trait_vision
-		trait_sums[2] += agent.trait_appetite
-		trait_sums[3] += agent.trait_longevity
+		var own_traits: Array = agent.traits()
+		for index in range(trait_sums.size()):
+			trait_sums[index] += float(own_traits[index])
 		if agent.hunger >= critical_hunger:
 			totals["starvation_risk"] += 1
 		if agent.thirst >= critical_thirst:
@@ -589,7 +588,7 @@ func get_population_metrics() -> Dictionary:
 			totals["dormant_hunger"] += avg_hunger * count
 			totals["dormant_thirst"] += float(species_state.get("avg_thirst", 0.0)) * count
 			totals["dormant_energy"] += float(species_state.get("avg_energy", 0.0)) * count
-			var means: Array = species_state.get("avg_traits", TraitsScript.NEUTRAL)
+			var means: Array = TraitsScript.padded(species_state.get("avg_traits", TraitsScript.NEUTRAL))
 			var sleeping_sums: Array = totals["traits"]
 			for index in range(TraitsScript.NAMES.size()):
 				sleeping_sums[index] += float(means[index]) * count
@@ -1432,8 +1431,9 @@ func _find_grass_target_for_agent(agent) -> Dictionary:
 	# What counts as grass worth heading for depends on how hungry the animal is. A fed
 	# one walks past a grazed-down sward to a good one, which leaves the poor patch to
 	# regrow; a hungry one takes any full bite; a starving one takes scraps.
+	# A cautious one is warier of where hunters have been (`Traits`).
 	var tiers := grass_target_tiers(agent.feeding, urgency_ratio >= 0.45,
-		float(agent.perception.get("risk_tolerance", INF)))
+		float(agent.perception.get("risk_tolerance", INF)) / maxf(0.1, agent.trait_caution))
 
 	# On the move with its herd, a grazer heads for the grass at the destination and
 	# eats on the way (`underfoot_bite_floor()`), rather than turning back to the eaten
@@ -1521,9 +1521,9 @@ func grazer_is_hungry(hunger: float) -> bool:
 
 
 ## Whether a grazer would eat where it stands: always when hungry, otherwise only on
-## ground within its `perception.risk_tolerance`.
-func grazing_ground_is_acceptable(position: Vector2, hunger: float, perception: Dictionary) -> bool:
-	var tolerance := float(perception.get("risk_tolerance", INF))
+## ground within its `perception.risk_tolerance`, less as it is more cautious (`Traits`).
+func grazing_ground_is_acceptable(position: Vector2, hunger: float, perception: Dictionary, caution := 1.0) -> bool:
+	var tolerance := float(perception.get("risk_tolerance", INF)) / maxf(0.1, caution)
 	return tolerance == INF or grazer_is_hungry(hunger) or fear_field.risk_at(position) <= tolerance
 
 
@@ -4834,7 +4834,7 @@ func _build_dormant_species_state(records: Array) -> Dictionary:
 			"avg_thirst": 0.0,
 			"avg_energy": 0.0,
 			"avg_age": 0.0,
-			"avg_traits": [0.0, 0.0, 0.0, 0.0],
+			"avg_traits": TraitsScript.zeros(),
 		})
 		entry["count"] = int(entry.get("count", 0)) + 1
 		var record_traits: Array = TraitsScript.of_record(record)
@@ -4997,7 +4997,7 @@ func _build_dormant_aggregates(records: Array, sector_key: Vector2i, previous_ma
 func _tally_dormant_member(aggregate: Dictionary, record: Dictionary) -> void:
 	aggregate["peak_hunger"] = maxf(float(aggregate.get("peak_hunger", 0.0)), float(record.get("hunger", 0.0)))
 	# Inherited traits, summed for the group's means (`avg_traits`), which the herd card shows.
-	var trait_sums: Array = aggregate.get("trait_sums", [0.0, 0.0, 0.0, 0.0])
+	var trait_sums: Array = aggregate.get("trait_sums", TraitsScript.zeros())
 	var record_traits: Array = TraitsScript.of_record(record)
 	for index in range(TraitsScript.NAMES.size()):
 		trait_sums[index] += float(record_traits[index])
@@ -5283,10 +5283,12 @@ func _get_dormant_travel_speed(species_config: Dictionary, is_directed: bool = t
 ## How a sleeping group shares a change in one need by what its members inherited (`Traits`), or
 ## an invalid Callable for even shares, which is also what a species without heredity gets.
 ## Awake, each animal pays for its traits as it goes; asleep, the group's step is one number, so
-## its members take it unevenly instead: hunger rises by each one's cost (`hunger_factor()`:
-## appetite, speed and sight), and a hunter's or a scavenger's meal goes to the quick and
-## sharp-eyed first, who would have reached it first, and feeds a quick metabolism more.
-## Strength is shared evenly: traits never touch it.
+## its members take it unevenly instead: hunger rises by each one's cost
+## (`sleeping_hunger_factor()`: appetite, speed, sight, slow thirst, size and the caution that
+## would have cost grazing time awake), thirst by how quickly each gets thirsty, and a hunter's or
+## a scavenger's meal goes to the quick and sharp-eyed first, who would have reached it first,
+## and feeds a quick metabolism more - a big hunter takes more of it and is filled less, which
+## comes to the same. Strength is shared evenly: traits never touch it.
 func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Callable:
 	var species_config: Dictionary = config_bundle.get("species", {}).get(species_key, {})
 	if shift == 0.0 or not TraitsScript.enabled(species_config):
@@ -5294,7 +5296,10 @@ func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Ca
 	var settings := TraitsScript.settings(species_config)
 	if need == "hunger" and shift > 0.0:
 		return func(record: Dictionary) -> float:
-			return TraitsScript.hunger_factor(TraitsScript.of_record(record), settings)
+			return TraitsScript.sleeping_hunger_factor(TraitsScript.of_record(record), settings)
+	if need == "thirst" and shift > 0.0:
+		return func(record: Dictionary) -> float:
+			return TraitsScript.thirst_factor(TraitsScript.of_record(record))
 	if need == "hunger" and species_registry.diet(species_key) != "grass":
 		return func(record: Dictionary) -> float:
 			var traits: Array = TraitsScript.of_record(record)
@@ -5305,7 +5310,7 @@ func _dormant_trait_weigh(species_key: String, need: String, shift: float) -> Ca
 ## A sleeping group's mean of one inherited trait (`avg_traits`, `Traits` index), 1.0 without.
 static func _aggregate_trait(aggregate: Dictionary, index: int) -> float:
 	var means: Array = aggregate.get("avg_traits", TraitsScript.NEUTRAL)
-	return float(means[index]) if means.size() == TraitsScript.NAMES.size() else 1.0
+	return float(means[index]) if index < means.size() else 1.0
 
 
 func _select_dormant_goal(sector_key: Vector2i, aggregate: Dictionary) -> Dictionary:
@@ -6304,7 +6309,8 @@ func _reconcile_dormant_records(sector_key: Vector2i, sector_state: Dictionary, 
 		var male_parents_left := 0 if parents_paired else births
 		_share_dormant_need_shift(survivors, "hunger", shift.x, 0.0, need_max,
 			_dormant_trait_weigh(species_key, "hunger", shift.x))
-		_share_dormant_need_shift(survivors, "thirst", shift.y, 0.0, need_max)
+		_share_dormant_need_shift(survivors, "thirst", shift.y, 0.0, need_max,
+			_dormant_trait_weigh(species_key, "thirst", shift.y))
 		_share_dormant_need_shift(survivors, "energy", shift.z, 0.0, max_energy)
 		for record in survivors:
 			record["age"] = float(record.get("age", 0.0)) + elapsed
@@ -6479,8 +6485,10 @@ func _pick_dormant_victim(candidates: Array, cause: String, entry: Dictionary) -
 		var score: float
 		match cause:
 			"predation":
+				# A wary one keeps its distance and a big one is hard to bring down.
 				score = -Vector2(record.get("position", near)).distance_squared_to(near) \
-					* pow(float(traits[TraitsScript.SPEED]) * float(traits[TraitsScript.VISION]), 4.0)
+					* pow(float(traits[TraitsScript.SPEED]) * float(traits[TraitsScript.VISION])
+						* float(traits[TraitsScript.CAUTION]) * sqrt(float(traits[TraitsScript.SIZE])), 4.0)
 			"starvation":
 				score = float(record.get("hunger", 0.0))
 			"thirst":
@@ -6505,7 +6513,7 @@ func _read_dormant_group_back(aggregate: Dictionary, members: Array) -> void:
 	var age_sum := 0.0
 	for key in ["mature_males", "mature_females", "ready_males", "ready_females", "old_age_count", "max_age_count", "peak_hunger", "peak_thirst"]:
 		aggregate[key] = 0
-	aggregate["trait_sums"] = [0.0, 0.0, 0.0, 0.0]
+	aggregate["trait_sums"] = TraitsScript.zeros()
 	for record in members:
 		var position: Vector2 = record.get("position", bounds.get_center())
 		record_ids.append(int(record.get("id", -1)))
@@ -6687,7 +6695,9 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 		var hunger := float(record.get("hunger", 0.0))
 		if hunger <= stop_floor:
 			continue
-		var appetite := float(TraitsScript.of_record(record)[TraitsScript.APPETITE])
+		# How much a bite fills it: a quick metabolism more, a big body less (`Traits`).
+		var appetite := TraitsScript.fill_factor(TraitsScript.of_record(record))
+		var caution := float(TraitsScript.of_record(record)[TraitsScript.CAUTION])
 		var bite := grazing_bite(feeding, hunger, bite_scale, appetite)
 		wanted += bite
 		var position: Vector2 = record.get("position", Vector2.ZERO)
@@ -6710,13 +6720,14 @@ func _graze_dormant_members(aggregate: Dictionary, members: Array, feeding: Dict
 			if not crowded:
 				record["position"] = next_position
 			continue
-		if not grazing_ground_is_acceptable(position, hunger, perception):
+		if not grazing_ground_is_acceptable(position, hunger, perception, caution):
 			continue
 		var consumed := consume_grass_cell(cell_index, bite)
 		if consumed <= 0.0:
 			continue
 		eaten += consumed
-		# A quick metabolism fills up faster (`Traits`); the strength grass gives is the species'.
+		# A quick metabolism fills up faster and a big body slower (`Traits`); the strength grass
+		# gives is the species'.
 		var next_hunger := maxf(0.0, hunger - consumed * nutrition * appetite)
 		hunger_removed += hunger - next_hunger
 		record["hunger"] = next_hunger

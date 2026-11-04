@@ -7,10 +7,12 @@ extends SceneTree
 # second), `herd` selects a grazer in a herd so its herd card shows, `story` also pins it
 # and two others, `chronicle` then opens the chronicle on it, `epitaph` tells the death of one
 # pinned animal far away, `traits` opens the chronicle's «Черты» on a made-up history of
-# three years, `ponds` / `ponds_iso` shows watering holes at made-up levels (a quarter dry, the
-# rest a tenth, a third and three quarters full) top-down or isometric, `season` shows a made-up
-# summer's card with an epitaph under it, `seasons` opens the chronicle's «Сезоны» on two
-# made-up years, `records` opens the chronicle's «Рекорды» on made-up lives, families and hunts,
+# eighty-nine years (`traits_species` on one species, `traits_drill` on one trait alone,
+# `insights` on «Выводы» drawn from it), `ponds` / `ponds_iso` shows watering holes at made-up
+# levels (a quarter dry, the rest a tenth, a third and three quarters full) top-down or isometric,
+# `season` shows a made-up summer's card with an epitaph under it, `seasons` opens the
+# chronicle's «Сезоны» on two made-up years, `records` opens the chronicle's «Рекорды» on made-up
+# lives, families and hunts,
 # `scaled` is `story` under a 125 % interface (applied, not saved),
 # `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
 # the setup screen.
@@ -32,6 +34,9 @@ var _preset := ""
 var _hide_overlays := false
 var _parked_msec := 0
 
+const TraitsScript := preload("res://scripts/agents/traits.gd")
+const TraitHistoryScript := preload("res://scripts/story/trait_history.gd")
+const TraitsViewScript := preload("res://scripts/ui/traits_view.gd")
 const PARK_FRAME := 90
 const SETTLE_FRAMES := 300
 
@@ -63,7 +68,8 @@ func _process(_delta: float) -> bool:
 			var selection: Dictionary = ConfigLoader.default_selection()
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
-					"epitaph", "scaled", "settings", "traits", "ponds", "ponds_iso", "season", "seasons", "records"]:
+					"epitaph", "scaled", "settings", "traits", "traits_species", "traits_drill", "insights", "ponds",
+					"ponds_iso", "season", "seasons", "records"]:
 				selection["style"] = _preset
 			if _preset == "ponds_iso":
 				selection["style"] = "isometric_craftpix"
@@ -140,7 +146,8 @@ func _park_on_agent() -> void:
 		push_error("capture: no living agents even after settling")
 		return
 	var target = agents[agents.size() / 2]
-	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits", "season", "seasons", "records"]
+	var story_like := _preset in ["story", "chronicle", "epitaph", "scaled", "traits", "traits_species", "traits_drill",
+		"insights", "season", "seasons", "records"]
 	if _preset == "scaled":
 		SettingsStore.apply({"fullscreen": false, "ui_scale": 1.25}, root, _camera)
 	if _preset == "settings":
@@ -229,25 +236,19 @@ func _park_on_agent() -> void:
 				lineage.note_animal(prey, "herbivore", "male", 0, 200.0, t)
 				lineage.note_death(prey, t, "predation", hunters[index], target.position)
 		_main.chronicle_window.open(target.id, "records")
-	if _preset == "traits":
-		# Three years of drift made up, since a fresh world has one point. The harness only.
-		var history = _main.story_book.trait_history
-		history.clear()
-		var drift := {"herbivore": [0.07, 0.02, -0.03, 0.012], "predator": [0.045, 0.055, 0.02, -0.018],
-			"scavenger": [0.01, -0.025, -0.04, 0.006]}
-		for step in range(97):
-			var time := float(step) * 15.0
-			var values := {}
-			for species_id in drift.keys():
-				var means: Array = []
-				for index in range(4):
-					var wobble := 0.006 * sin(time * 0.013 + float(index) * 1.7 + float(species_id.length()))
-					means.append(1.0 + float(drift[species_id][index]) * time / 1440.0 + wobble)
-				values[species_id] = means
-			history.points.append({"time": time, "values": values})
-		# No real point after the made-up ones.
-		history._next_at = INF
-		_main.chronicle_window.open(target.id, "traits")
+	if _preset in ["traits", "traits_species", "traits_drill", "insights"]:
+		_made_up_traits()
+		var heredity: Array = _main.story_book.heredity_species
+		var shown := "hare" if heredity.has("hare") else "herbivore"
+		if _preset == "traits_species":
+			_main.chronicle_window.show_trait(shown)
+			# The pointer over the first chart, three quarters along, for its reading.
+			_main.chronicle_window._traits_view._hover = Vector2(TraitsViewScript.LIST_WIDTH + 16.0 + 40.0 + 120.0, 80.0)
+		elif _preset == "traits_drill":
+			_main.chronicle_window.show_trait("herbivore", 0)
+		else:
+			_main.chronicle_window.open(target.id, "insights" if _preset == "insights" else "traits")
+		_main.chronicle_window.visible = true
 	if _preset == "season":
 		_main.story_book.season_closed.emit(_made_up_season(5, true))
 	if _preset == "seasons":
@@ -263,6 +264,104 @@ func _park_on_agent() -> void:
 			in_frame += 1
 	print("tick=%d camera=%s zoom=%s agents_in_frame=%d/%d" % [
 		_manager.current_tick, _camera.global_position, _camera.zoom, in_frame, agents.size()])
+
+
+## Eighty-nine years of traits made up, since a fresh world has one point: means that wander and
+## drift, spreads, numbers, who left young and who died of what, the founders, and the seasons with
+## droughts and a cull. Deer grow faster as foxes take the slow, foxes lose their sight to hunger,
+## a few grouse wander by chance, three old wolves take the pack's appetite with them, and the
+## hares pass a bottleneck. The harness only.
+func _made_up_traits() -> void:
+	var book = _main.story_book
+	var history = book.trait_history
+	history.clear()
+	var steps := 220
+	var year := 480.0
+	var length := 89.0 * year
+	var plans := {
+		"herbivore": {"drift": [0.12, 0.15, 0.10, -0.03, 0.02, 0.09, 0.05, -0.04], "count": 250.0, "salt": 1},
+		"predator": {"drift": [0.08, -0.10, -0.04, 0.04, -0.015, 0.0, 0.03, 0.07], "count": 42.0, "salt": 2},
+		"scavenger": {"drift": [0.06, -0.11, 0.06, 0.03, 0.05, 0.04, -0.03, 0.02], "count": 22.0, "salt": 3, "vol": 0.012},
+		"wolf": {"drift": [0.06, 0.0, 0.03, 0.03, 0.01, 0.0, 0.02, 0.05], "count": 11.0, "salt": 4, "vol": 0.008},
+		"hare": {"drift": [0.13, 0.15, -0.02, 0.0, 0.015, 0.11, 0.0, -0.06], "count": 130.0, "salt": 5},
+	}
+	var walk := {}
+	for species_id in plans.keys():
+		walk[species_id] = TraitsScript.NEUTRAL.duplicate()
+		# Hunters have no caution to inherit (`traits.list`).
+		var lacks: Array = [TraitsScript.CAUTION] if species_id in ["predator", "wolf"] else []
+		plans[species_id]["lacks"] = lacks
+		var founders: Array = []
+		for animal in range(120):
+			var traits: Array = []
+			for index in range(TraitsScript.NAMES.size()):
+				traits.append(1.0 if plans[species_id]["lacks"].has(index)
+					else 1.0 + 0.08 * (TraitsScript.unit(animal + 1000 * int(plans[species_id]["salt"]), index) * 2.0 - 1.0))
+			founders.append(traits)
+		history.founders[species_id] = TraitHistoryScript.histograms(founders)
+	for step in range(steps):
+		var time := float(step) / float(steps - 1) * length
+		var values := {}
+		var spreads := {}
+		var counts := {}
+		var tallies := {}
+		for species_id in plans.keys():
+			var plan: Dictionary = plans[species_id]
+			var means: Array = walk[species_id]
+			var vol := float(plan.get("vol", 0.004))
+			for index in range(TraitsScript.NAMES.size()):
+				if plan["lacks"].has(index):
+					continue
+				var noise := TraitsScript.unit(step * 7 + index, int(plan["salt"]) * 131) - 0.5
+				means[index] = float(means[index]) + float(plan["drift"][index]) / float(steps) + noise * vol
+			if species_id == "wolf" and step == 196:
+				means[2] = float(means[2]) - 0.05
+			var count := float(plan["count"]) * (1.0 + 0.15 * sin(float(step) * 0.21 + float(plan["salt"])))
+			var narrow := 1.0
+			if species_id == "hare":
+				if step >= 100 and step < 116:
+					count = 31.0 + absf(float(step) - 108.0) * 9.0
+				if step >= 108:
+					narrow = 0.55
+			values[species_id] = means.duplicate()
+			var spread: Array = [0.045, 0.05, 0.04, 0.025, 0.05, 0.045, 0.04, 0.035]
+			for index in range(spread.size()):
+				spread[index] = 0.0 if plan["lacks"].has(index) else float(spread[index]) * narrow
+			spreads[species_id] = spread
+			counts[species_id] = int(count)
+			var groups := {}
+			var leans: Dictionary = {"herbivore": {"parents": [0, 0.012, 9], "predation": [0, -0.016, 4], "old_age": [1, 0.0, 3]},
+				"predator": {"parents": [1, -0.006, 2], "starvation": [1, 0.02, 2]},
+				"scavenger": {"parents": [0, 0.004, 1]},
+				"wolf": {"old_age": [2, 0.0, 1]},
+				"hare": {"parents": [0, 0.015, 6], "predation": [0, -0.02, 5]}}[species_id]
+			for group in leans.keys():
+				var lean: Array = leans[group]
+				var tally: Array = []
+				for index in range(TraitsScript.NAMES.size()):
+					tally.append((float(means[index]) + (float(lean[1]) if index == int(lean[0]) else 0.0)) * float(lean[2]))
+				tally.append(int(lean[2]))
+				groups[group] = tally
+			if species_id == "wolf" and step == 196:
+				var gone: Array = []
+				for index in range(TraitsScript.NAMES.size()):
+					gone.append((float(means[index]) + (0.14 if index == 2 else 0.0)) * 3.0)
+				gone.append(3)
+				groups["old_age"] = gone
+			tallies[species_id] = groups
+		history.points.append({"time": time, "values": values, "spread": spreads, "counts": counts, "tallies": tallies})
+	# No real point after the made-up ones.
+	history._next_at = INF
+	book.seasons.closed.clear()
+	var season := year / 4.0
+	var first := maxi(0, int(length / season) - 200)
+	for ordinal in range(first, int(length / season)):
+		var summary := _made_up_season(ordinal, (ordinal / 4) % 5 == 2)
+		summary["start"] = float(ordinal) * season
+		summary["end"] = float(ordinal + 1) * season
+		if ordinal == int(length / season) - 30:
+			summary["species"]["predator"]["deaths"]["culled"] = 6
+		book.seasons.closed.append(summary)
 
 
 ## A season's summary made up for the shots, with the world's own pond names and a hunter's.

@@ -568,6 +568,8 @@ func _attack(world, prey, delta: float) -> bool:
 	chance += energy_ratio * float(attack_config.get("predator_energy_bonus", 0.18))
 	chance += isolation * float(attack_config.get("prey_isolation_bonus", 0.2))
 	chance -= prey_speed_ratio * float(attack_config.get("prey_escape_penalty", 0.16))
+	# A big hunter strikes surer and a big prey is harder to bring down (`Traits`).
+	chance += (trait_size - prey.trait_size) * float(trait_settings.get("size_attack", 0.0))
 	if with_mate:
 		chance += float(_party_config().get("attack_bonus", 0.12)) * float(helpers)
 	chance = clampf(chance, 0.08, 0.92)
@@ -617,7 +619,7 @@ func _consume_kill_bite(world) -> void:
 	var consumed: float = world.consume_carcass(target_carcass_id, bite, id)
 	if consumed <= 0.0:
 		return
-	reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)) * trait_appetite)
+	reduce_hunger(consumed * float(feeding.get("carcass_nutrition_gain", 1.0)) * trait_fill)
 	restore_energy(consumed * float(feeding.get("carcass_energy_gain", 0.5)))
 
 
