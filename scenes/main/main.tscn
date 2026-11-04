@@ -386,7 +386,9 @@ theme_override_constants/separation = 6
 [node name="TitleLabel" type="Label" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000005]
 unique_name_in_owner = true
 layout_mode = 2
+mouse_filter = 1
 text = "Никто не выбран"
+text_overrun_behavior = 3
 
 [node name="BarsView" type="Control" parent="CanvasLayer/HUD/CardStack/SelectionCard/MarginContainer/VBox" unique_id=900000006]
 unique_name_in_owner = true
