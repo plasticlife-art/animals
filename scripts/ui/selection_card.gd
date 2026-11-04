@@ -34,11 +34,13 @@ const BAR_SPACING := 8.0
 const VALUE_COLUMN := 74.0
 
 var simulation_manager: SimulationManager
-## The short card of the reserve on a phone: the name, the bars, what it does and a link to its
-## family tree, no more.
+## The short card of the reserve on a phone: the name, the bars side by side without their
+## numbers, what it does and a ward's guardian, no more, in tighter margins.
 var compact := false:
 	set(value):
 		compact = value
+		_fit_bars()
+		_fit_margins()
 		refresh()
 ## The world's names and family tree (`StoryBook`); without it the card shows numbers.
 var story = null
@@ -61,15 +63,33 @@ func _ready() -> void:
 		family_text.meta_clicked.connect(_on_family_meta)
 	if bars_view != null:
 		bars_view.draw.connect(_on_bars_view_draw)
-		# The strip is drawn, so nothing about it reaches the container's own sizing.
-		# Three rows of label-over-bar, measured off the theme font rather than
-		# guessed, or the card clips its last bar at a different font size.
-		var line_height := 16.0
-		var font := bars_view.get_theme_default_font()
-		if font != null:
-			line_height = font.get_height(bars_view.get_theme_default_font_size())
-		bars_view.custom_minimum_size.y = 3.0 * (line_height + 2.0 + BAR_HEIGHT + BAR_SPACING)
+		_fit_bars()
 	visible = false
+
+
+## The strip is drawn, so nothing about it reaches the container's own sizing: three rows of
+## label-over-bar, or one row of them when compact, measured off the theme font rather than
+## guessed, or the card clips its last bar at a different font size.
+func _fit_bars() -> void:
+	if bars_view == null:
+		return
+	var line_height := 16.0
+	var font := bars_view.get_theme_default_font()
+	if font != null:
+		line_height = font.get_height(bars_view.get_theme_default_font_size())
+	var rows := 1.0 if compact else 3.0
+	bars_view.custom_minimum_size.y = rows * (line_height + 2.0 + BAR_HEIGHT) + (rows - 1.0) * BAR_SPACING + (0.0 if compact else BAR_SPACING)
+
+
+func _fit_margins() -> void:
+	var margin := get_node_or_null("MarginContainer") as MarginContainer
+	if margin != null:
+		for side in ["left", "top", "right", "bottom"]:
+			margin.add_theme_constant_override("margin_" + side, 6 if compact else 10)
+	var column := get_node_or_null("MarginContainer/VBox") as VBoxContainer
+	if column != null:
+		column.add_theme_constant_override("separation", 2 if compact else 6)
+	reset_size()
 
 
 func bind_manager(manager: SimulationManager) -> void:
@@ -243,13 +263,12 @@ func why_line(agent, now_msec := -1) -> String:
 	return "Почему: " + _why if _why != "" else ""
 
 
-## The short card's family line: «Опекун: Костя · родословная», or the link alone.
+## The short card's family line: «Опекун: Костя · родословная» for a ward, else nothing.
 static func compact_family_line(story_book, agent) -> String:
-	var link := "[url=tree:%d]родословная[/url]" % agent.id
 	var ward: Dictionary = story_book.ward_of(agent.id)
 	if not ward.is_empty() and str(ward.get("viewer_name", "")) != "":
-		return "Опекун: %s · %s" % [str(ward["viewer_name"]), link]
-	return link
+		return "Опекун: %s · [url=tree:%d]родословная[/url]" % [str(ward["viewer_name"]), agent.id]
+	return ""
 
 
 func _on_family_meta(meta) -> void:
@@ -322,7 +341,7 @@ func refresh() -> void:
 		for row in [why_label, traits_label, buttons]:
 			if row != null:
 				row.visible = false
-		# The family cut to its link (and a ward's guardian), so the tree opens from the short card too.
+		# The family cut to a ward's guardian: a viewer cannot click the tree, the admin opens it with L.
 		if family_text != null:
 			family_text.text = "" if story == null else compact_family_line(story, agent)
 			family_text.visible = family_text.text != ""
@@ -345,6 +364,18 @@ func _on_bars_view_draw() -> void:
 	if font == null:
 		return
 
+	if compact:
+		# Side by side, label over bar, no numbers: the bars say it on a phone.
+		var gap := 10.0
+		var column := (bars_view.size.x - gap * float(_vitals.size() - 1)) / float(_vitals.size())
+		for index in range(_vitals.size()):
+			var entry: Dictionary = _vitals[index]
+			var x := (column + gap) * float(index)
+			var label_height := font.get_string_size(entry["label"], HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).y
+			bars_view.draw_string(font, Vector2(x, label_height * 0.8), entry["label"],
+				HORIZONTAL_ALIGNMENT_LEFT, column, font_size, PixelUiTheme.INK)
+			AgentReadout.draw_bars(bars_view, Vector2(x, label_height + 2.0), column, BAR_HEIGHT, 0.0, [entry])
+		return
 	var bar_width: float = maxf(40.0, bars_view.size.x - VALUE_COLUMN)
 	var y := 0.0
 	for entry in _vitals:

@@ -96,6 +96,9 @@ var _settings_return: String = ""
 ## them aside, and the herd card's height when last shown.
 var _climate_offsets := Vector2.ZERO
 var _strip_offsets := Vector2.ZERO
+## The scene's season bar across and down, and the strip's top, for lying down again.
+var _climate_landscape := Vector4.ZERO
+var _strip_top := 0.0
 var _herd_height: float = 0.0
 var _overview_mode: bool = false
 ## The living reserve (`--reserve`), when this window is one: its viewers, the port their chat
@@ -136,6 +139,9 @@ func _ready() -> void:
 	_landscape_canvas = get_window().content_scale_size
 	_cards_top = epitaph_card.offset_top
 	_strip_offsets = Vector2(ecology_strip.offset_left, ecology_strip.offset_right)
+	_climate_landscape = Vector4(climate_indicator.offset_left, climate_indicator.offset_top,
+		climate_indicator.offset_right, climate_indicator.offset_bottom)
+	_strip_top = ecology_strip.offset_top
 	# Before the first frame, so the window opens at the size and scale the player left it.
 	_settings = SettingsStore.load_settings()
 	SettingsStore.apply(_settings, get_window(), world_camera)
@@ -543,6 +549,7 @@ func set_reserve_portrait(on: bool) -> void:
 	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND if on else Window.CONTENT_SCALE_ASPECT_KEEP
 	selection_card.compact = on
 	ecology_strip.compact = on
+	_fit_top_bars(on)
 	if _reserve_overlay != null:
 		_reserve_overlay.compact = on
 		_banner.compact = on
@@ -562,6 +569,19 @@ func set_reserve_portrait(on: bool) -> void:
 		window.position = usable.position + (usable.size - window.size) / 2
 	else:
 		window.mode = Window.MODE_MAXIMIZED
+
+
+## Upright the season bar is one line, wider and higher up, the species line right under it.
+func _fit_top_bars(on: bool) -> void:
+	climate_indicator.compact = on
+	var top := 6.0 if on else _climate_landscape.y
+	_climate_offsets = Vector2(-150.0, 150.0) if on else Vector2(_climate_landscape.x, _climate_landscape.z)
+	climate_indicator.offset_left = _climate_offsets.x
+	climate_indicator.offset_right = _climate_offsets.y
+	climate_indicator.offset_top = top
+	climate_indicator.offset_bottom = top + climate_indicator.compact_height() if on else _climate_landscape.w
+	ecology_strip.offset_top = climate_indicator.offset_bottom + 4.0 if on else _strip_top
+	ecology_strip.set_expanded(ecology_strip.expanded)
 
 
 ## «Трансляция»: the setup over the start menu's place; it goes back to the menu or starts the

@@ -14,7 +14,10 @@ const MAX_LINES := 2
 const PAGE_SECONDS := 15.0
 const WIDTH := 420.0
 const GAP := 12.0
+const TITLE := "Живой заповедник"
 const HINT := "Правила и команды: напишите !помощь"
+## The hint beside the next vote on a phone, where the long one does not fit.
+const COMPACT_HINT := "Правила и команды: !помощь"
 const INK := Color(0.20, 0.13, 0.08)
 const DIM := Color(0.20, 0.13, 0.08, 0.62)
 const COMMAND := Color(0.56, 0.22, 0.05)
@@ -33,15 +36,20 @@ var story = null
 ## What the admin must see - a chat that is not being read («Telegram: неверный токен бота») - in
 ## red under the title.
 var problems: Array = []
-## The reserve on a phone: the title, where the rules are (or the commands when asked), an open
-## vote and the latest line - no tables, no counts - and no wider than the canvas.
+## The reserve on a phone: where the rules are in the title's place beside the next vote (the
+## title back over the commands when asked), an open vote and the latest line - no tables, no
+## counts - in tighter margins, across the canvas.
 var compact := false:
 	set(value):
 		compact = value
+		_fit_spacing()
 		refresh()
 ## The card the panel must stop above while it is shown (the selected animal's), or null.
 var avoid: Control = null
+var _margin: MarginContainer
 var _box: VBoxContainer
+var _title: Label
+var _title_size := 0
 var _next_vote: Label
 var _problems: Label
 var _vote: Label
@@ -59,17 +67,18 @@ var _refresh_left := 0.0
 func _init() -> void:
 	custom_minimum_size = Vector2(WIDTH, 0.0)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var margin := MarginContainer.new()
-	for side in ["left", "top", "right", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 10)
-	add_child(margin)
+	_margin = MarginContainer.new()
+	add_child(_margin)
 	_box = VBoxContainer.new()
-	_box.add_theme_constant_override("separation", 4)
-	margin.add_child(_box)
+	_margin.add_child(_box)
 	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
 	_box.add_child(head)
-	var title := _label(head, "Живой заповедник", INK, 4)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title = _label(head, TITLE, INK, 4)
+	_title_size = _title.get_theme_font_size("font_size")
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title.clip_text = true
+	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_next_vote = _label(head, "", DIM, -2)
 	_next_vote.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_problems = _label(_box, "", PROBLEM, -2)
@@ -95,6 +104,17 @@ func _init() -> void:
 		told.clip_text = true
 		told.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		_lines.append(told)
+	_fit_spacing()
+
+
+func _fit_spacing() -> void:
+	for side in ["left", "top", "right", "bottom"]:
+		_margin.add_theme_constant_override("margin_" + side, _margin_size())
+	_box.add_theme_constant_override("separation", 2 if compact else 4)
+
+
+func _margin_size() -> int:
+	return 6 if compact else 10
 
 
 func _label(parent: Control, text: String, color: Color, size_step := 0) -> Label:
@@ -139,7 +159,12 @@ func refresh() -> void:
 	_next_vote.text = "" if open else "голосование через %s" % clock(maxf(0.0, float(session.vote.next_at) - session.now()))
 	_vote.text = vote_text(session) if open else ""
 	var helping := help_shown(session)
-	_hint.text = "" if helping else str(session.config.get("overlay", {}).get("hint", HINT))
+	var hint := str(session.config.get("overlay", {}).get("hint", HINT))
+	_hint.text = "" if helping or compact else hint
+	var title := COMPACT_HINT if compact and not helping else TITLE
+	if _title.text != title:
+		_title.text = title
+		_title.add_theme_font_size_override("font_size", _title_size - (4 if title == COMPACT_HINT else 0))
 	_help.visible = helping
 	var page := int(Time.get_ticks_msec() / (PAGE_SECONDS * 1000.0))
 	var table := "" if helping or compact else ReserveRecords.page_text(page, world, story, session,
@@ -158,7 +183,7 @@ func refresh() -> void:
 	for index in range(MAX_LINES):
 		_lines[index].text = str(shown_lines[index]) if index < shown_lines.size() else ""
 	if is_inside_tree():
-		custom_minimum_size.x = minf(WIDTH, get_viewport_rect().size.x - 24.0) if compact else WIDTH
+		custom_minimum_size.x = get_viewport_rect().size.x - 24.0 if compact else WIDTH
 	_fit()
 
 
@@ -184,8 +209,9 @@ func _fit() -> void:
 		control.visible = false
 		if control == _table:
 			_table_title.visible = false
-	# A container grows with what it holds but does not shrink back by itself.
-	if size.y > _height() + 1.0:
+	# A container grows with what it holds but does not shrink back by itself: in height as rows
+	# drop, in width when the canvas narrows (the reserve stood upright).
+	if size.y > _height() + 1.0 or size.x > get_combined_minimum_size().x + 1.0:
 		reset_size()
 
 
@@ -199,7 +225,7 @@ func _room() -> float:
 
 ## The panel's height for what is visible now, from its labels: a container's own size lags a frame.
 func _height() -> float:
-	var frame := 20.0
+	var frame := 2.0 * float(_margin_size())
 	var style := get_theme_stylebox("panel")
 	if style != null:
 		frame += style.get_minimum_size().y

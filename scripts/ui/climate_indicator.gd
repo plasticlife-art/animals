@@ -10,8 +10,16 @@ extends Control
 const PADDING := 10.0
 const BAR_HEIGHT := 8.0
 const ARC_HEIGHT := 18.0
+const COMPACT_PADDING := 5.0
+const COMPACT_BAR_HEIGHT := 4.0
 
 var simulation_manager: SimulationManager
+## The reserve on a phone: one line - the season, the weather, the sun or the moon and the clock -
+## over a thin year bar, no day strip (`compact_height`).
+var compact := false:
+	set(value):
+		compact = value
+		queue_redraw()
 
 var _season_colors: Array = []
 var _season_labels: Array = []
@@ -65,14 +73,15 @@ func _draw() -> void:
 
 	var line_height: float = font.get_height(font_size)
 	var ink := Color(0.88, 0.9, 0.92)
-	var baseline: float = PADDING + line_height
+	var pad := COMPACT_PADDING if compact else PADDING
+	var baseline: float = pad + font.get_ascent(font_size) if compact else PADDING + line_height
 
 	var title := "%s · Год %d" % [climate.season_label, climate.year + 1]
 	# The weather, when the world has one and it is not plain (`Weather`).
 	var weather := Weather.label(simulation_manager.world_state.weather_config, climate.weather_kind)
 	if weather != "" and climate.weather_kind != "clear":
 		title += " · " + weather
-	draw_string(font, Vector2(PADDING, baseline), title,
+	draw_string(font, Vector2(pad, baseline), title,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
 
 	# Right-aligned from its measured width, so a wide font cannot push the
@@ -80,9 +89,14 @@ func _draw() -> void:
 	var clock := climate.clock_text()
 	var clock_width: float = font.get_string_size(
 		clock, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
-	draw_string(font, Vector2(size.x - PADDING - clock_width, baseline), clock,
+	draw_string(font, Vector2(size.x - pad - clock_width, baseline), clock,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, ink)
 
+	if compact:
+		var glyph_x: float = size.x - pad - clock_width - 12.0
+		_draw_sky_glyph(Vector2(glyph_x, pad + line_height * 0.5), line_height * 0.22, climate)
+		_draw_season_bar(Rect2(pad, pad + line_height + 3.0, size.x - pad * 2.0, COMPACT_BAR_HEIGHT), climate)
+		return
 	var bar_top: float = baseline + 6.0
 	_draw_season_bar(Rect2(PADDING, bar_top, size.x - PADDING * 2.0, BAR_HEIGHT), climate)
 	_draw_day_arc(Rect2(PADDING, bar_top + BAR_HEIGHT + 6.0, size.x - PADDING * 2.0, ARC_HEIGHT), climate)
@@ -125,11 +139,23 @@ func _draw_day_arc(rect: Rect2, climate) -> void:
 	draw_rect(rect, Color(0.24, 0.27, 0.29), false, 1.0)
 
 	var marker_x: float = rect.position.x + rect.size.x * climate.day_phase
-	var marker_y: float = rect.position.y + rect.size.y * 0.5
+	_draw_sky_glyph(Vector2(marker_x, rect.position.y + rect.size.y * 0.5), rect.size.y * 0.3, climate)
+
+
+## The sun by day, the moon by night.
+func _draw_sky_glyph(centre: Vector2, radius: float, climate) -> void:
 	var glyph := Color(0.35, 0.42, 0.66) if climate.is_night else Color(1.0, 0.86, 0.45)
-	draw_circle(Vector2(marker_x, marker_y), rect.size.y * 0.3, glyph)
-	draw_arc(Vector2(marker_x, marker_y), rect.size.y * 0.3, 0.0, TAU, 12,
-		Color(0.95, 0.96, 0.98, 0.8), 1.0)
+	draw_circle(centre, radius, glyph)
+	draw_arc(centre, radius, 0.0, TAU, 12, Color(0.95, 0.96, 0.98, 0.8), 1.0)
+
+
+## The compact panel's height for the theme's font.
+func compact_height() -> float:
+	var line := 20.0
+	var font := get_theme_default_font()
+	if font != null:
+		line = font.get_height(get_theme_default_font_size())
+	return COMPACT_PADDING * 2.0 + line + 3.0 + COMPACT_BAR_HEIGHT
 
 
 func _on_tick_completed(tick: int, _snapshot: Dictionary) -> void:

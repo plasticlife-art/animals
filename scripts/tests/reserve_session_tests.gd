@@ -314,7 +314,8 @@ func _test_the_overlay_text(a) -> void:
 	var full_has_funds: bool = panel._funds.text != ""
 	panel.compact = true
 	a.is_true(full_has_funds and panel._funds.text == "" and panel._table.text == "" and panel._wards.text == ""
-		and panel._hint.text != "", "on a phone: where the rules are, no tables, no counts")
+		and panel._title.text == ReserveOverlayScript.COMPACT_HINT and panel._hint.text == "",
+		"on a phone: where the rules are in the title's place, no tables, no counts")
 	panel.free()
 	Helpers.destroy_manager(manager)
 
@@ -498,7 +499,7 @@ func _test_the_banner_and_tables(a) -> void:
 	Helpers.destroy_manager(manager)
 
 
-## Upright (a 540x960 screen): the short card links to the tree, long news wraps, and the chronicle
+## Upright (a 540x960 screen): a ward's short card links to the tree, long news wraps, and the chronicle
 ## and the help fit the screen - and are as before on a wide one.
 func _test_upright_fits(a) -> void:
 	var made := _two_wards(9942)
@@ -509,6 +510,12 @@ func _test_upright_fits(a) -> void:
 	var ward = manager.world_state.get_agent(made[3])
 	a.equal(SelectionCardScript.compact_family_line(book, ward), "Опекун: Вася · [url=tree:%d]родословная[/url]" % ward.id,
 		"the short card: the guardian and the way to the tree")
+	var stranger = null
+	for agent in manager.world_state.get_living_agents():
+		if book.ward_of(agent.id).is_empty():
+			stranger = agent
+			break
+	a.equal(SelectionCardScript.compact_family_line(book, stranger), "", "and nothing for an animal nobody watches over")
 	Helpers.destroy_manager(manager)
 	var screen := SubViewport.new()
 	screen.size = Vector2i(540, 960)
