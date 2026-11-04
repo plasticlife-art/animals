@@ -11,6 +11,7 @@ const PinnedBarScript := preload("res://scripts/ui/pinned_bar.gd")
 const SaveSystemScript := preload("res://scripts/core/save_system.gd")
 const StoryLogScript := preload("res://scripts/story/story_log.gd")
 const StoryFeedScript := preload("res://scripts/ui/story_feed.gd")
+const AnimalMenuScript := preload("res://scripts/ui/animal_menu.gd")
 
 
 func run(a) -> void:
@@ -23,6 +24,7 @@ func run(a) -> void:
 	_test_story_survives_a_save(a)
 	_test_card_and_list_words(a)
 	_test_card_tells_age_and_tally(a)
+	_test_menu_offers_what_the_animal_has(a)
 	_test_feed_tells_what_is_looked_at(a)
 	_test_feed_folds_and_sums_up(a)
 	_test_feed_shows_the_newest(a)
@@ -313,6 +315,43 @@ func _test_card_and_list_words(a) -> void:
 		"cause": "predation"}), "† Ветка · олениха — погибла", "taken by a hunter")
 	a.equal(PinnedBarScript.row_text({"name": "Ветка", "species": "herbivore", "sex": "female", "dead": true,
 		"cause": "old_age"}), "† Ветка · олениха — умерла", "died of age")
+	Helpers.destroy_manager(manager)
+
+
+## The right click's menu: follow it or stop, its herd's follow for a herd animal, pin it (not
+## past the pins' limit), its tree, its parents by name - a dead one marked - and its species'
+## traits.
+func _test_menu_offers_what_the_animal_has(a) -> void:
+	var manager = Helpers.create_manager(677)
+	var world = manager.world_state
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	var mother = Helpers.spawn_herbivore(world, Vector2(100.0, 100.0), 0)
+	var father = Helpers.spawn_species(world, "herbivore", Vector2(110.0, 100.0), 0, Helpers.AgentBaseScript.SEX_MALE)
+	world.queue_spawn_agent("herbivore", Vector2(105.0, 105.0), 0, mother, father)
+	world._flush_spawns()
+	var calf = world.get_agent(world.next_agent_id - 1)
+	world.kill_agent(father, "predation")
+	var texts := func(rows: Array) -> Array:
+		var found: Array = []
+		for row in rows:
+			found.append(str(row.get("text", "—")))
+		return found
+	a.equal(texts.call(AnimalMenuScript.items(calf, book, "off", true)), ["Следить", "Следить за стадом", "Закрепить", "—",
+		"Родословная", "Мать: %s" % book.name_of_id(mother.id), "Отец: %s †" % book.name_of_id(father.id), "Черты вида"],
+		"a calf in a herd, nothing followed")
+	var parent_row: Dictionary = AnimalMenuScript.items(calf, book, "off", true)[5]
+	a.equal([parent_row["action"], parent_row["target"]], ["parent", mother.id], "the mother's row goes to her")
+	var followed: Array = texts.call(AnimalMenuScript.items(calf, book, "agent", false))
+	a.is_true(followed[0] == "Не следить" and not followed.has("Следить за стадом"), "followed, and no herd to follow: %s" % [followed])
+	a.equal(texts.call(AnimalMenuScript.items(calf, book, "flock", true)).slice(0, 2), ["Следить", "Не следить за стадом"],
+		"its herd followed")
+	for index in range(book.MAX_PINS):
+		book.pins.append(10000 + index)
+	var pin_row: Dictionary = AnimalMenuScript.items(calf, book, "off", true)[2]
+	a.is_true(pin_row["text"] == "Закрепить" and bool(pin_row["disabled"]), "no pinning past the limit")
+	a.equal(texts.call(AnimalMenuScript.items(mother, null, "off", false)), ["Следить", "Черты вида"], "without a story")
 	Helpers.destroy_manager(manager)
 
 

@@ -9,6 +9,9 @@ extends Node2D
 ## state labels - all cheap, all debug-adjacent - plus click-to-select, which
 ## has to live on a node that receives world input.
 
+## A right click on an animal: its id and where the pointer is on the canvas.
+signal menu_requested(agent_id: int, at: Vector2)
+
 var simulation_manager: SimulationManager
 var debug_flags: Dictionary = {}
 var input_enabled: bool = true
@@ -40,11 +43,22 @@ func request_refresh() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if simulation_manager == null or not input_enabled:
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		var selection_radius := float(simulation_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
-		# The click arrives in screen space; selection happens in simulation
-		# space, so it goes back through the projection seam.
-		var world_position: Vector2 = WorldProjection.to_world(get_global_mouse_position())
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	var selection_radius := float(simulation_manager.config_bundle.get("debug", {}).get("selection_radius", 18.0))
+	# The click arrives in screen space; selection happens in simulation
+	# space, so it goes back through the projection seam.
+	var world_position: Vector2 = WorldProjection.to_world(get_global_mouse_position())
+	# A right click - a two-finger tap on a Mac's trackpad, or Ctrl+click - on an animal asks for
+	# what can be done with it. Not marked handled: an aimed power still cancels on it.
+	var menu: bool = event.button_index == MOUSE_BUTTON_RIGHT \
+		or (event.button_index == MOUSE_BUTTON_LEFT and event.ctrl_pressed)
+	if menu:
+		var agent = simulation_manager.agent_at_position(world_position, selection_radius)
+		if agent != null:
+			menu_requested.emit(agent.id, get_viewport().get_mouse_position())
+		return
+	if event.button_index == MOUSE_BUTTON_LEFT:
 		simulation_manager.select_agent_at_position(world_position, selection_radius)
 
 

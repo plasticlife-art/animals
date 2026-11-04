@@ -86,6 +86,8 @@ var story_book = preload("res://scripts/story/story_book.gd").new()
 var _pending_story: Dictionary = {}
 ## An animal asked for while asleep, selected as soon as it wakes.
 var _pending_focus_id: int = -1
+## What can be done with an animal, on a right click on it (`AnimalMenu`).
+var _animal_menu: AnimalMenu = null
 ## Where `_close_help()` goes back to: "start", "pause", "game", or "" when the
 ## help screen is down.
 var _help_return: String = ""
@@ -659,6 +661,12 @@ func _bind_view() -> void:
 	photo_mode.set_theme_for_bar(PixelUiTheme.build(true))
 	photo_mode.pause_toggled.connect(_on_pause_toggled)
 	selection_card.tree_requested.connect(open_chronicle)
+	if _animal_menu == null:
+		_animal_menu = AnimalMenu.new()
+		_animal_menu.theme = result_window.theme
+		add_child(_animal_menu)
+		_animal_menu.chosen.connect(_on_animal_menu)
+		world_view.menu_requested.connect(_open_animal_menu)
 	story_book.feed.context_provider = _story_context
 	selection_card.family_clicked.connect(_focus_animal)
 	pinned_bar.focus_requested.connect(_focus_animal)
@@ -1274,6 +1282,43 @@ func _focus_animal(agent_id: int) -> void:
 		world_camera.move_to_world_position(at)
 	if not bool(status.get("dead", false)):
 		_pending_focus_id = agent_id
+
+
+## A right click on an animal: it is selected - the camera stays as it was, following or not -
+## and its menu opens at the pointer. Not while a power is being aimed: the click takes the aim
+## back.
+func _open_animal_menu(agent_id: int, at: Vector2) -> void:
+	if power_targeting.aim.is_armed():
+		return
+	if not simulation_manager.select_agent_by_id(agent_id, false):
+		return
+	var agent = simulation_manager.get_selected_agent()
+	var world = simulation_manager.world_state
+	var herd: bool = world.species_registry.social(agent.species_type) == "herd"
+	_animal_menu.open_for(agent, story_book, simulation_manager.focus_mode, herd, at)
+
+
+func _on_animal_menu(action: String, agent_id: int) -> void:
+	match action:
+		"follow":
+			_focus_animal(agent_id)
+		"follow_herd":
+			if simulation_manager.select_agent_by_id(agent_id, false):
+				_apply_focus_mode("flock")
+		"unfollow":
+			_apply_focus_mode("off")
+		"pin":
+			story_book.toggle_pin(simulation_manager.world_state.get_agent(agent_id))
+			selection_card.refresh()
+		"tree":
+			open_chronicle(agent_id)
+		"parent":
+			_focus_animal(agent_id)
+		"traits":
+			var agent = simulation_manager.world_state.get_agent(agent_id)
+			if agent != null:
+				chronicle_window.open(agent_id, "traits")
+				chronicle_window.show_trait(agent.species_type)
 
 
 ## «Где это» on the epitaph card: the camera to where the animal died.

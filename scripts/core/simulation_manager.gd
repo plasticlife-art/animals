@@ -453,22 +453,29 @@ func _lod_view_key(rect: Rect2, center: Vector2, is_overview: bool) -> PackedInt
 func select_agent_at_position(position: Vector2, radius: float) -> void:
 	if world_state == null:
 		return
-	var nearby: Array = world_state.query_agents(position, radius, "", -1)
-	if nearby.is_empty():
+	var nearest = agent_at_position(position, radius)
+	if nearest == null:
 		selected_agent_id = -1
 		clear_focus()
 	else:
-		var nearest = nearby[0]
-		var nearest_distance_sq: float = nearest.position.distance_squared_to(position)
-		for candidate in nearby:
-			var distance_sq: float = candidate.position.distance_squared_to(position)
-			if distance_sq < nearest_distance_sq:
-				nearest = candidate
-				nearest_distance_sq = distance_sq
 		selected_agent_id = nearest.id
 		set_focus_mode("agent")
 	_refresh_lod_assignments()
 	selection_changed.emit(selected_agent_id)
+
+
+## The animal nearest `position` within `radius`, or null.
+func agent_at_position(position: Vector2, radius: float):
+	if world_state == null:
+		return null
+	var nearest = null
+	var nearest_distance_sq := INF
+	for candidate in world_state.query_agents(position, radius, "", -1):
+		var distance_sq: float = candidate.position.distance_squared_to(position)
+		if distance_sq < nearest_distance_sq:
+			nearest = candidate
+			nearest_distance_sq = distance_sq
+	return nearest
 
 
 ## Selects the animal with this id if it is awake, and puts the camera on it with `follow`.

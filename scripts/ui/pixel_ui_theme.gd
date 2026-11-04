@@ -110,6 +110,9 @@ static func build(compact: bool = false) -> Theme:
 		theme.set_stylebox("panel", "PopupMenu", popup)
 	theme.set_color("font_color", "PopupMenu", INK)
 	theme.set_color("font_hover_color", "PopupMenu", BUTTON_INK)
+	theme.set_color("font_disabled_color", "PopupMenu", INK_DIM)
+	theme.set_color("font_separator_color", "PopupMenu", INK)
+	theme.set_constant("v_separation", "PopupMenu", 6)
 	# Tooltips - the minimap's place names, the epitaph on a dead pinned animal - on the same
 	# parchment; Godot's default is a dark grey box that belongs to no part of this HUD.
 	var tip := _stretched(PANEL_TEXTURE, 4, 4, 4, 4)
