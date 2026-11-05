@@ -717,6 +717,7 @@ func _test_family_tree_view(a) -> void:
 	view._gui_input(wheel)
 	a.is_true(view.zoom() < was, "the wheel down zooms out")
 	view.fit_whole(false)
+	nodes = view._nodes
 	var all_in := true
 	for index in range(nodes.size()):
 		all_in = all_in and sheet.encloses(Rect2(view.to_screen(view.node_rect(index).position), view.box_size(index) * view.zoom()))
@@ -727,6 +728,32 @@ func _test_family_tree_view(a) -> void:
 	view.show_family(FamilyTreeScript.whole(book, 70), 800.0, [120.0, 4])
 	a.is_true(is_equal_approx(view.zoom(), FamilyTreeViewScript.DEFAULT_MIN_ZOOM) and is_equal_approx(view.center().x, 0.0),
 		"forty calves: the animal in the middle at a readable size (%.2f, %s)" % [view.zoom(), view.center()])
+	var deep: Dictionary = FamilyTreeScript.whole(book, 70)
+	var cut: Dictionary = FamilyTreeViewScript.pruned(deep, 2)
+	var linked := true
+	for index in range(cut["nodes"].size()):
+		var node: Dictionary = cut["nodes"][index]
+		linked = linked and int(node["gen"]) >= -2 and (index == 0 or int(node["link"]) < index)
+		for branch in node["up"] + node["down"]:
+			linked = linked and int(cut["nodes"][int(branch)]["link"]) == index
+	var hidden: Array = []
+	for node in cut["nodes"]:
+		if int(node["gen"]) == -2:
+			hidden.append([int(node["id"]), int(node["hidden"])])
+	a.is_true(linked and hidden == [[40, 7], [31, 10]] and FamilyTreeViewScript.pruned(deep, 9) == deep,
+		"cut at grandparents: the rest counted on them, the links renumbered (%s)" % [hidden])
+	view.size = Vector2(504.0, 760.0)
+	view.show_family(deep, 800.0, [120.0, 4])
+	var lowest := 0
+	for node in view._nodes:
+		lowest = mini(lowest, int(node["gen"]))
+	view.fit_whole(false)
+	var whole_lowest := 0
+	for node in view._nodes:
+		whole_lowest = mini(whole_lowest, int(node["gen"]))
+	a.equal([lowest, whole_lowest], [-2, -5], "upright: grandparents at first, every ancestor with «Всё дерево»")
+	view.fit_default(false)
+	a.equal(view._nodes.size(), cut["nodes"].size(), "«Вписать» cuts them again")
 	a.equal([FamilyTreeViewScript.generation_name(-2), FamilyTreeViewScript.generation_name(2),
 		FamilyTreeViewScript.generation_name(-6)], ["бабушки и деды", "внуки", "предки, 6-е колено"], "the bands' names")
 	var wide := Vector2(60000.0, 900.0)

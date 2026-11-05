@@ -4,7 +4,9 @@ extends Control
 ## The chronicle's «Родословная»: the whole known family about one animal (`FamilyTree.whole`)
 ## on a sheet that zooms and pans - its ancestors above, a generation a band, its descendants
 ## below. It opens on five generations, grandparents to grandchildren, as close as they fit and
-## never so far that the names cannot be read. The wheel, two fingers or a pinch zoom about the
+## never so far that the names cannot be read, with the ancestors cut at `ANCESTOR_DEPTH` (a
+## pedigree doubles each generation up, and the farthest row would push the parents off the
+## sheet), «ещё N» on the last of them; «Всё дерево» and the picture have every one. The wheel, two fingers or a pinch zoom about the
 ## pointer as on the map; a drag pans, or two fingers with Shift. The buttons zoom, fit the five
 ## generations again («Вписать») or the whole tree («Всё дерево»), and «PNG» saves the whole
 ## tree as one picture in the Pictures folder (`PhotoMode.pictures_folder`). A click on a
@@ -59,6 +61,11 @@ const MIN_ZOOM := 0.03
 const MAX_ZOOM := 2.5
 ## The first view of a family: these generations each way, but never further than this.
 const DEFAULT_GENERATIONS := 2
+## Ancestors shown before «Всё дерево»: great-grandparents, on a sheet narrower than `NARROW`
+## (the reserve upright) grandparents.
+const ANCESTOR_DEPTH := 3
+const NARROW_ANCESTOR_DEPTH := 2
+const NARROW := 600.0
 const DEFAULT_MIN_ZOOM := 0.5
 ## Fits never enlarge past this.
 const FIT_MAX_ZOOM := 1.0
@@ -88,6 +95,10 @@ var title_text := ""
 var subtitle_text := ""
 
 var _tree: Dictionary = {}
+## The family as `FamilyTree.whole` gave it; `_tree` is what is shown of it (`_whole`).
+var _full: Dictionary = {}
+var _whole := false
+var _depth := ANCESTOR_DEPTH
 var _nodes: Array = []
 var _pos: Array = []
 var _cards: Dictionary = {}
@@ -176,29 +187,18 @@ func _button(text: String, tip: String, action: Callable) -> Button:
 func show_family(tree: Dictionary, now: float, calendar: Array) -> void:
 	var focus := int(tree.get("focus", -1))
 	var changed := focus != _focus
-	_tree = tree
+	_full = tree
 	_focus = focus
-	_nodes = tree.get("nodes", [])
 	_cards.clear()
-	_kinds.clear()
-	for node in _nodes:
+	for node in tree.get("nodes", []):
 		var agent_id := int(node["id"])
 		if not _cards.has(agent_id):
 			_cards[agent_id] = FamilyTree.card(story, agent_id, now, calendar)
-	for node in _nodes:
-		var card: Dictionary = _cards[int(node["id"])]
-		var kind := str(card.get("kind", ""))
-		if str(node["role"]) == "child" and bool(card.get("known", false)):
-			var mate := FamilyTree.mate_line(story, int(node["id"]), int(_nodes[int(node["link"])]["id"]))
-			if mate != "":
-				kind = mate
-		_kinds.append(kind)
 	_focus_line = FamilyTree.focus_line(story, focus) if focus >= 0 and story != null else ""
 	_kinship = FamilyTree.parents_kinship(FamilyTree.around(story, focus)) if focus >= 0 and story != null else ""
-	_pos = layout(tree)
-	_bounds = bounds_of(_nodes, _pos)
-	if _hover >= _nodes.size():
-		_hover = -1
+	if changed:
+		_whole = false
+	_shape()
 	if changed:
 		_hover = -1
 		_fitted = true
@@ -212,6 +212,73 @@ func show_family(tree: Dictionary, now: float, calendar: Array) -> void:
 	elif _fitted:
 		fit_default(false)
 	queue_redraw()
+
+
+## Lays out what is shown of the family: all of it, or its ancestors cut at `ANCESTOR_DEPTH`.
+func _shape() -> void:
+	_depth = ancestor_depth()
+	_tree = _full if _whole else pruned(_full, _depth)
+	_nodes = _tree.get("nodes", [])
+	_kinds = kinds_of(story, _nodes, _cards)
+	_pos = layout(_tree)
+	_bounds = bounds_of(_nodes, _pos)
+	if _hover >= _nodes.size():
+		_hover = -1
+
+
+func ancestor_depth() -> int:
+	return NARROW_ANCESTOR_DEPTH if size.x > 0.0 and size.x < NARROW else ANCESTOR_DEPTH
+
+
+## What each node's box says under the name: its card's line, or for a child the mate it had it
+## with.
+static func kinds_of(book, nodes: Array, cards: Dictionary) -> Array:
+	var kinds: Array = []
+	for node in nodes:
+		var card: Dictionary = cards.get(int(node["id"]), {})
+		var kind := str(card.get("kind", ""))
+		if str(node["role"]) == "child" and bool(card.get("known", false)) and book != null:
+			var mate := FamilyTree.mate_line(book, int(node["id"]), int(nodes[int(node["link"])]["id"]))
+			if mate != "":
+				kind = mate
+		kinds.append(kind)
+	return kinds
+
+
+## `tree` with no ancestors past `depth` generations up; each ancestor at `depth` counts the
+## known ones above it in its «ещё N». The nodes keep their order, renumbered.
+static func pruned(tree: Dictionary, depth: int) -> Dictionary:
+	var nodes: Array = tree.get("nodes", [])
+	var index_of := {}
+	var kept: Array = []
+	for index in range(nodes.size()):
+		if int(nodes[index]["gen"]) >= -depth:
+			index_of[index] = kept.size()
+			kept.append(nodes[index].duplicate())
+	if kept.size() == nodes.size():
+		return tree
+	for node in kept:
+		if int(node["link"]) >= 0:
+			node["link"] = index_of[int(node["link"])]
+		if int(node["gen"]) == -depth and not node["up"].is_empty():
+			node["hidden"] = int(node["hidden"]) + _known_above(nodes, node["up"])
+			node["up"] = []
+		else:
+			node["up"] = node["up"].map(func(branch): return index_of[int(branch)])
+		node["down"] = node["down"].map(func(branch): return index_of[int(branch)])
+	var out := tree.duplicate()
+	out["nodes"] = kept
+	return out
+
+
+static func _known_above(nodes: Array, branch: Array) -> int:
+	var count := 0
+	for index in branch:
+		var node: Dictionary = nodes[int(index)]
+		if int(node["id"]) >= 0:
+			count += 1
+		count += int(node["hidden"]) + _known_above(nodes, node["up"])
+	return count
 
 
 func focus_id() -> int:
@@ -238,6 +305,9 @@ func tree_bounds() -> Rect2:
 ## further than `DEFAULT_MIN_ZOOM` - then centred on the animal across.
 func fit_default(animate := true) -> void:
 	_fitted = true
+	if _whole:
+		_whole = false
+		_shape()
 	var rect := Rect2()
 	var any := false
 	for index in range(_nodes.size()):
@@ -253,6 +323,9 @@ func fit_default(animate := true) -> void:
 ## The whole tree in the view, however small that makes it.
 func fit_whole(animate := true) -> void:
 	_fitted = false
+	if not _whole:
+		_whole = true
+		_shape()
 	if not _nodes.is_empty():
 		_fit(_bounds, MIN_ZOOM, animate)
 
@@ -323,6 +396,8 @@ func _process(delta: float) -> void:
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED and not _full.is_empty() and not _whole and ancestor_depth() != _depth:
+		_shape()
 	if what == NOTIFICATION_RESIZED and _fitted and not _nodes.is_empty():
 		fit_default(false)
 
@@ -568,6 +643,12 @@ func _draw() -> void:
 			_draw_box(index, rect, font)
 		if int(_nodes[index]["hidden"]) > 0:
 			_draw_more(index, rect, font)
+	if not exporting:
+		# The toolbar and the hint stand on the sheet's own paper, not over the boxes.
+		for strip in [Rect2(0.0, 0.0, size.x, TOP_ROOM), Rect2(0.0, size.y - BOTTOM_ROOM, size.x, BOTTOM_ROOM)]:
+			draw_rect(strip, SHEET, true)
+		draw_line(Vector2(0.0, TOP_ROOM), Vector2(size.x, TOP_ROOM), SHEET_EDGE, 1.0)
+		draw_line(Vector2(0.0, size.y - BOTTOM_ROOM), Vector2(size.x, size.y - BOTTOM_ROOM), SHEET_EDGE, 1.0)
 	_draw_bands(font, true)
 	if exporting:
 		_draw_title(font)
@@ -595,7 +676,9 @@ func _draw_bands(font: Font, names: bool) -> void:
 		if name == "" or bottom - top < label_size * 1.6:
 			continue
 		var text_size := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, label_size)
-		var at := Vector2(8.0 * (_zoom if exporting else 1.0), maxf(top, 0.0) + label_size + 4.0)
+		var at := Vector2(8.0 * (_zoom if exporting else 1.0), maxf(top, 0.0 if exporting else TOP_ROOM) + label_size + 4.0)
+		if not exporting and at.y > minf(bottom, size.y - BOTTOM_ROOM):
+			continue
 		draw_rect(Rect2(at + Vector2(-4.0, -label_size - 1.0), text_size + Vector2(8.0, 4.0)), Color(SHEET, 0.85), true)
 		draw_string(font, at, name, HORIZONTAL_ALIGNMENT_LEFT, -1, label_size, INK_FAINT)
 
@@ -744,8 +827,9 @@ func _draw_pin(rect: Rect2) -> void:
 
 ## «ещё 5»: the relatives past the limits, in a tag beyond the box.
 func _draw_more(index: int, rect: Rect2, font: Font) -> void:
-	var text_size := floori(11 * _zoom)
-	if text_size < MIN_TEXT:
+	# Kept readable as far out as the names are: it says the tree goes on.
+	var text_size := maxi(floori(11 * _zoom), FAR_NAME_SIZE)
+	if rect.size.x < MIN_DETAIL_WIDTH:
 		return
 	var text := "ещё %d" % int(_nodes[index]["hidden"])
 	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, text_size).x + 12.0 * _zoom
@@ -801,11 +885,11 @@ func _export_titles() -> Array:
 		title += ", %s" % card.get("kind", "")
 	var gens_up := 0
 	var gens_down := 0
-	for node in _nodes:
+	for node in _full.get("nodes", []):
 		gens_up = maxi(gens_up, -int(node["gen"]))
 		gens_down = maxi(gens_down, int(node["gen"]))
-	var ancestors := int(_tree.get("ancestors", 0))
-	var descendants := int(_tree.get("descendants", 0))
+	var ancestors := int(_full.get("ancestors", 0))
+	var descendants := int(_full.get("descendants", 0))
 	var subtitle := "%d %s в %d %s вверх · %d %s в %d %s вниз" % [
 		ancestors, HudText.plural(ancestors, ["предок", "предка", "предков"]),
 		gens_up, HudText.plural(gens_up, ["поколении", "поколениях", "поколениях"]),
@@ -819,8 +903,11 @@ func _export_titles() -> Array:
 func export_png(path: String) -> bool:
 	if _nodes.is_empty() or DisplayServer.get_name() == "headless":
 		return false
-	var scale := export_scale(_bounds.size)
-	var sheet := (_bounds.size + Vector2(EXPORT_MARGIN * 2.0, EXPORT_MARGIN * 2.0 + EXPORT_HEADER)) * scale
+	var nodes: Array = _full.get("nodes", [])
+	var positions := layout(_full)
+	var bounds := bounds_of(nodes, positions)
+	var scale := export_scale(bounds.size)
+	var sheet := (bounds.size + Vector2(EXPORT_MARGIN * 2.0, EXPORT_MARGIN * 2.0 + EXPORT_HEADER)) * scale
 	var viewport := SubViewport.new()
 	viewport.size = Vector2i(ceili(sheet.x), ceili(sheet.y))
 	viewport.transparent_bg = false
@@ -831,19 +918,21 @@ func export_png(path: String) -> bool:
 	var titles := _export_titles()
 	painter.title_text = titles[0]
 	painter.subtitle_text = titles[1]
-	painter._tree = _tree
-	painter._nodes = _nodes
-	painter._pos = _pos
+	painter._tree = _full
+	painter._full = _full
+	painter._whole = true
+	painter._nodes = nodes
+	painter._pos = positions
 	painter._cards = _cards
-	painter._kinds = _kinds
-	painter._bounds = _bounds
+	painter._kinds = kinds_of(story, nodes, _cards)
+	painter._bounds = bounds
 	painter._focus = _focus
 	painter._focus_line = _focus_line
 	painter._kinship = _kinship
 	painter._zoom = scale
 	painter._fitted = false
 	# The tree's top-left at the margin under the header; the view's middle is the sheet's.
-	painter._center = _bounds.position + (sheet * 0.5 - Vector2(EXPORT_MARGIN, EXPORT_MARGIN + EXPORT_HEADER) * scale) / scale
+	painter._center = bounds.position + (sheet * 0.5 - Vector2(EXPORT_MARGIN, EXPORT_MARGIN + EXPORT_HEADER) * scale) / scale
 	viewport.add_child(painter)
 	painter.size = sheet
 	add_child(viewport)
