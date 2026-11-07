@@ -353,6 +353,16 @@ func _test_map_sizes_scale_the_large_map(a) -> void:
 		var search := float(bundle["species"]["herbivore"]["perception"]["water_search_radius"])
 		a.is_true(search >= furthest, "%s: a deer anywhere looks far enough to find a pond (%.0f against %.0f)"
 			% [size, search, furthest])
+		# The water in natural shapes (`WaterBodies`) is the large map's scaled: as many waters, each
+		# the size the map's scale makes it, and nowhere further from one than a deer looks.
+		var bodies: Dictionary = bundle["world"].get("water_bodies", {})
+		if bool(bodies.get("enabled", false)):
+			var scale := float(bodies.get("scale", 1.0))
+			var ratio := float(world_size["x"]) / float(large["world"]["world_size"]["x"])
+			a.near(scale, ratio, 0.01, "%s: its lakes and ponds scaled as the map is (%.3f)" % [size, scale])
+			var gap := float(bodies.get("ponds", {}).get("max_gap", 1300.0)) * scale
+			a.is_true(search >= gap, "%s: a deer anywhere looks further than the ponds' gap (%.0f against %.0f)"
+				% [size, search, gap])
 
 
 ## «Лёгкая» and «Суровая» set a deer's hunger and thirst to 0.7 and 1.4 times «Обычная»'s. They

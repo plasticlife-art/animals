@@ -332,6 +332,18 @@
     "hare_group_count": 10,
     "initial_carcass_count": 40
   },
+  "water_bodies": {
+    "_comment": "The map's standing water in natural shapes (`WaterBodies`), in place of `water_generation`'s round ponds while `enabled`: `lakes.count` lakes, each a chain of overlapping lobes along a winding spine `length_min`..`length_max` long and `radius_min`..`radius_max` wide at its middle, with up to `arms_max` bays; `marshes.count` marshes of `lobes_min`..`lobes_max` lobes, `by_lake` of them off a lake's end; then ponds of one to `lobes_max` lobes, each where the map lies furthest from water, until nowhere lies further than `max_gap` (at least `count_min`, at most `count_max`). Every body keeps `border` from the map's edge and `spacing` from another's bank. Lengths are the large map's, times `scale`. Then `streams.count` streams (`TerrainSystem`), each from a spring on high ground down to the nearest lake, marsh, pond or river `length_min`..`length_max` away, winding (`wiggle`), `half_width_cells` either side, shallow and walked across anywhere; animals drink at a point on it every `access_every_cells`, and a stream never runs dry. A lake never falls below `water_levels.lake_floor`; a marsh is walked through slowly (swamp) and drunk from anywhere. A generator of its own (`seed` added to the world's), so each world has its own water; the scenarios keep their round ponds.",
+    "enabled": true,
+    "scale": 1.0,
+    "seed": 0,
+    "border": 360.0,
+    "spacing": 420.0,
+    "lakes": {"count": 3, "length_min": 1400.0, "length_max": 2800.0, "radius_min": 240.0, "radius_max": 400.0, "arms_max": 3},
+    "marshes": {"count": 3, "radius_min": 170.0, "radius_max": 260.0, "lobes_min": 8, "lobes_max": 14, "by_lake": 0.6},
+    "ponds": {"count_min": 8, "count_max": 18, "radius_min": 130.0, "radius_max": 230.0, "lobes_max": 3, "max_gap": 1300.0},
+    "streams": {"count": 7, "half_width_cells": 0.3, "length_min": 900.0, "length_max": 3200.0, "wiggle": 3.0, "wiggle_frequency": 0.09, "access_every_cells": 4.0}
+  },
   "water_generation": {
     "sources_per_million_units": 0.45,
     "radius_min": 180.0,
@@ -368,7 +380,8 @@
     "dry_level": 0.02,
     "wet_level": 0.10,
     "drought_chance": 0.25,
-    "drought_strength": 1.4
+    "drought_strength": 1.4,
+    "lake_floor": 0.4
   },
   "scenery": {
     "enabled": true,

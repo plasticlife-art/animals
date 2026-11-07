@@ -18,7 +18,16 @@ extends RefCounted
 ## size and difficulty, whatever their radii and thirst rates.
 ##
 ## A pond keeps its `bank_radius` and `index`; its `radius` - what every drinker, query and
-## drawing reads - is the water's edge, `bank_radius * sqrt(level)`. It counts as dry at
+## drawing reads - is the water's edge, `bank_radius * sqrt(level)`.
+##
+## A lake or a marsh (`WaterBodies`) is several round lobes, each a source of its own, sharing
+## one body (`body` on each): one level, capacity and dry state for them all, measured by the
+## body's area as a round pond of that area would be. Its water's edge stands in from every lobe's
+## bank by the same `(R - R * sqrt(level))`, R its largest lobe's bank - what a round pond of R
+## loses - so the narrow bays and arms go dry first and the deep basin last; a lobe left with no
+## water counts as dry while the rest of its body holds water. A lake (`kind` "lake") never falls
+## below `lake_floor`: springs feed it, and at the floor it gives what is asked. A pond on its own
+## is a body of one lobe, as every pond was before. It counts as dry at
 ## `dry_level` and wet again only at `wet_level`, so a pond at the brink does not flicker; each
 ## change is kept in `transitions` for the world to tell. Nothing is drawn from the world's
 ## rng: the drought years are a hash of the year and the world's seed. Off (`world.water_levels`,
@@ -41,6 +50,8 @@ const DEFAULTS := {
 	"drought_years": [],
 	# How full the ponds start, 0 to 1; a scenario may start them low.
 	"initial_level": 1.0,
+	# The lowest a lake (`WaterBodies`, kind "lake") falls; 0 lets it dry like a pond.
+	"lake_floor": 0.0,
 }
 
 var enabled: bool = false
@@ -60,6 +71,13 @@ var transitions: Array = []
 var _sources: Array = []
 var _index_by_position: Dictionary = {}
 var _wet_count: int = 0
+## Each source's body, and each body's lobes, its largest first (its anchor).
+var body_of := PackedInt32Array()
+var _bodies: Array = []
+## Per body: its largest lobe's bank, and the level it never falls below.
+var _body_bank := PackedFloat32Array()
+var _body_floor := PackedFloat32Array()
+var _body_dry := PackedByteArray()
 
 
 ## `sources` are the world's ponds (`WorldState.water_sources`), given their `index` and
@@ -92,39 +110,69 @@ func initialize(water_config: Dictionary, sources: Array, demand_unit_value: flo
 	capacity = PackedFloat32Array()
 	size_factor = PackedFloat32Array()
 	transitions.clear()
-	var radius_sum := 0.0
-	var ponds := 0
 	for index in range(sources.size()):
 		var source: Dictionary = sources[index]
 		source["index"] = index
 		source["bank_radius"] = float(source.get("radius", 0.0))
 		_index_by_position[source["position"]] = index
+	_build_bodies(sources)
+	# Measured body by body, each as a round pond of its area; the mean is the ponds' (a body of a
+	# kind other than "pond" - a lake, a marsh - is measured against them, not counted in it), so
+	# a pond on a map of lakes lasts as a pond of its size always has.
+	var equivalent := PackedFloat32Array()
+	equivalent.resize(_bodies.size())
+	var radius_sum := 0.0
+	var ponds := 0
+	var others_sum := 0.0
+	var others := 0
+	for body in range(_bodies.size()):
+		var anchor: Dictionary = sources[_bodies[body][0]]
+		equivalent[body] = _equivalent_radius(sources, _bodies[body])
 		# A river's bank (`permanent`) is no pond: it is not measured, and it never fills or dries.
-		if not bool(source.get("permanent", false)):
-			radius_sum += float(source["bank_radius"])
+		if bool(anchor.get("permanent", false)):
+			continue
+		if str(anchor.get("kind", "pond")) == "pond":
+			radius_sum += equivalent[body]
 			ponds += 1
-	mean_radius = radius_sum / float(maxi(1, ponds))
+		else:
+			others_sum += equivalent[body]
+			others += 1
+	mean_radius = radius_sum / float(ponds) if ponds > 0 else others_sum / float(maxi(1, others))
 	var reference := maxf(1.0, mean_radius)
 	var initial := clampf(float(settings["initial_level"]), 0.0, 1.0)
+	levels.resize(sources.size())
+	dry.resize(sources.size())
+	capacity.resize(sources.size())
+	size_factor.resize(sources.size())
+	_body_dry.resize(_bodies.size())
+	_body_floor.resize(_bodies.size())
 	_wet_count = 0
-	for source in sources:
-		if bool(source.get("permanent", false)):
-			levels.append(1.0)
-			dry.append(0)
-			capacity.append(INF)
-			size_factor.append(0.0)
+	for body in range(_bodies.size()):
+		var lobes: PackedInt32Array = _bodies[body]
+		var anchor: Dictionary = sources[lobes[0]]
+		var level := 1.0
+		var body_capacity := INF
+		var factor := 0.0
+		var floor_level := 0.0
+		if not bool(anchor.get("permanent", false)):
+			var relative := maxf(0.01, equivalent[body] / reference)
+			if str(anchor.get("kind", "")) == "lake":
+				floor_level = clampf(float(settings["lake_floor"]), 0.0, 1.0)
+			level = maxf(initial, floor_level)
+			body_capacity = _capacity_for(relative)
+			factor = pow(1.0 / relative, float(settings["size_exponent"]))
+		_body_floor[body] = floor_level
+		_body_dry[body] = 1 if body_capacity != INF and level <= float(settings["dry_level"]) else 0
+		if _body_dry[body] == 0:
 			_wet_count += 1
-			continue
-		var relative := maxf(0.01, float(source["bank_radius"]) / reference)
-		levels.append(initial)
-		dry.append(1 if initial <= float(settings["dry_level"]) else 0)
-		capacity.append(_capacity_for(relative))
-		size_factor.append(pow(1.0 / relative, float(settings["size_exponent"])))
-		if dry[dry.size() - 1] == 0:
-			_wet_count += 1
+		for lobe in lobes:
+			levels[lobe] = level
+			capacity[lobe] = body_capacity
+			size_factor[lobe] = factor
+			dry[lobe] = _body_dry[body]
 	if initial < 1.0:
-		for index in range(sources.size()):
-			_set_shore(index)
+		for body in range(_bodies.size()):
+			_refresh_body(body)
 
 
 ## A pond added while the world runs (`WorldState._add_pond_source()`), already appended to the
@@ -137,13 +185,85 @@ func add_source(source: Dictionary, level: float) -> void:
 	source["bank_radius"] = float(source.get("bank_radius", source.get("radius", 0.0)))
 	_index_by_position[source["position"]] = index
 	var relative := maxf(0.01, float(source["bank_radius"]) / maxf(1.0, mean_radius))
+	var body := _bodies.size()
+	body_of.append(body)
+	_bodies.append(PackedInt32Array([index]))
+	_body_bank.append(float(source["bank_radius"]))
+	_body_floor.append(0.0)
 	levels.append(clampf(level, 0.0, 1.0))
 	dry.append(1 if levels[index] <= float(settings["dry_level"]) else 0)
+	_body_dry.append(dry[index])
 	capacity.append(_capacity_for(relative))
 	size_factor.append(pow(1.0 / relative, float(settings["size_exponent"])))
 	if dry[index] == 0:
 		_wet_count += 1
 	_set_shore(index)
+
+
+## The sources grouped into bodies: the lobes sharing a `body` tag, every other source (a pond, a
+## river's bank) a body of its own, in the order the sources first come; each body's lobes its
+## largest first. A lobe of a body of several is told its body's number (`body`) and its anchor's
+## centre (`anchor`): where the body is known by - a memory, a route given up - whichever lobe was
+## seen.
+func _build_bodies(sources: Array) -> void:
+	_bodies = []
+	body_of = PackedInt32Array()
+	body_of.resize(sources.size())
+	var by_tag := {}
+	for index in range(sources.size()):
+		var source: Dictionary = sources[index]
+		var tag = source.get("body", null)
+		if tag == null or bool(source.get("permanent", false)):
+			body_of[index] = _bodies.size()
+			_bodies.append(PackedInt32Array([index]))
+		elif by_tag.has(tag):
+			body_of[index] = int(by_tag[tag])
+			_bodies[int(by_tag[tag])].append(index)
+		else:
+			by_tag[tag] = _bodies.size()
+			body_of[index] = _bodies.size()
+			_bodies.append(PackedInt32Array([index]))
+	_body_bank = PackedFloat32Array()
+	_body_bank.resize(_bodies.size())
+	for body in range(_bodies.size()):
+		var lobes: Array = Array(_bodies[body])
+		lobes.sort_custom(func(a, b): return float(sources[a]["bank_radius"]) > float(sources[b]["bank_radius"]) \
+			or (float(sources[a]["bank_radius"]) == float(sources[b]["bank_radius"]) and a < b))
+		_bodies[body] = PackedInt32Array(lobes)
+		_body_bank[body] = float(sources[lobes[0]]["bank_radius"])
+		if sources[lobes[0]].has("body"):
+			for lobe in lobes:
+				sources[lobe]["body"] = body
+				if lobes.size() > 1:
+					sources[lobe]["anchor"] = sources[lobes[0]]["position"]
+
+
+## The radius of a round pond of the body's area: its bank for one lobe, else measured on a grid a
+## quarter of its smallest lobe across.
+static func _equivalent_radius(sources: Array, lobes: PackedInt32Array) -> float:
+	if lobes.size() == 1:
+		return float(sources[lobes[0]]["bank_radius"])
+	var box := Rect2()
+	var smallest := INF
+	for lobe in lobes:
+		var centre: Vector2 = sources[lobe]["position"]
+		var radius := float(sources[lobe]["bank_radius"])
+		var disc := Rect2(centre - Vector2.ONE * radius, Vector2.ONE * radius * 2.0)
+		box = disc if lobe == lobes[0] else box.merge(disc)
+		smallest = minf(smallest, radius)
+	var step := maxf(1.0, smallest * 0.25)
+	var inside := 0
+	var y := box.position.y + step * 0.5
+	while y < box.end.y:
+		var x := box.position.x + step * 0.5
+		while x < box.end.x:
+			for lobe in lobes:
+				if Vector2(x, y).distance_squared_to(sources[lobe]["position"]) <= pow(float(sources[lobe]["bank_radius"]), 2.0):
+					inside += 1
+					break
+			x += step
+		y += step
+	return sqrt(float(inside) * step * step / PI)
 
 
 func _capacity_for(relative: float) -> float:
@@ -154,13 +274,13 @@ func _capacity_for(relative: float) -> float:
 func add_to_all(amount: float) -> void:
 	if not enabled or amount == 0.0:
 		return
-	for index in range(levels.size()):
-		if size_factor[index] == 0.0:
+	for body in range(_bodies.size()):
+		var anchor: int = _bodies[body][0]
+		if size_factor[anchor] == 0.0:
 			continue
-		var next := clampf(levels[index] + amount, 0.0, 1.0)
-		if next != levels[index]:
-			levels[index] = next
-			_settle(index)
+		var next := clampf(levels[anchor] + amount, _body_floor[body], 1.0)
+		if next != levels[anchor]:
+			_set_level(body, next)
 
 
 ## One tick: the season's balance on every pond. `climate` is the world's `Climate`, sampled.
@@ -175,11 +295,11 @@ func step(delta: float, climate) -> void:
 	var rate := balance / season_length * delta
 	if rate == 0.0:
 		return
-	for index in range(levels.size()):
-		var next := clampf(levels[index] + rate * size_factor[index], 0.0, 1.0)
-		if next != levels[index]:
-			levels[index] = next
-			_settle(index)
+	for body in range(_bodies.size()):
+		var anchor: int = _bodies[body][0]
+		var next := clampf(levels[anchor] + rate * size_factor[anchor], _body_floor[body], 1.0)
+		if next != levels[anchor]:
+			_set_level(body, next)
 
 
 ## What a drinker that wants `wanted` thirst points takes from pond `index`: all of it while
@@ -192,14 +312,51 @@ func drink(index: int, wanted: float) -> float:
 	# A river's bank: as much as wanted, and it stays full.
 	if is_inf(capacity[index]):
 		return wanted
-	var granted := minf(wanted, levels[index] * capacity[index])
-	levels[index] = maxf(0.0, levels[index] - granted / capacity[index])
-	_settle(index)
+	var body := body_of[index]
+	var anchor: int = _bodies[body][0]
+	# A lake gives what is asked: at its floor the springs make it up.
+	if _body_floor[body] > 0.0:
+		_set_level(body, maxf(_body_floor[body], levels[anchor] - wanted / capacity[anchor]))
+		return wanted
+	var granted := minf(wanted, levels[anchor] * capacity[anchor])
+	_set_level(body, maxf(0.0, levels[anchor] - granted / capacity[anchor]))
 	return granted
 
 
 func is_dry(index: int) -> bool:
 	return enabled and index >= 0 and index < dry.size() and dry[index] != 0
+
+
+## The lobes of the body pond `index` belongs to, its anchor first: just `index` for a pond on its own.
+func lobes_of(index: int) -> PackedInt32Array:
+	if index < 0 or index >= body_of.size():
+		return PackedInt32Array()
+	return _bodies[body_of[index]]
+
+
+func body_count() -> int:
+	return _bodies.size()
+
+
+## Body `body`'s anchor: its largest lobe's index.
+func body_anchor(body: int) -> int:
+	return _bodies[body][0]
+
+
+## Pond `index`'s body, or -1.
+func body_index(index: int) -> int:
+	return body_of[index] if index >= 0 and index < body_of.size() else -1
+
+
+## How far body `body`'s water stands in from its banks: `dry_margin` past its largest bank while
+## it is dry, else what its lobes have lost - for the ground's shader, which moves each body's
+## field in by it.
+func body_shrink(body: int, dry_margin: float) -> float:
+	var anchor: int = _bodies[body][0]
+	var bank := float(_sources[anchor]["bank_radius"])
+	if enabled and _body_dry[body] != 0:
+		return bank + dry_margin
+	return maxf(0.0, bank - float(_sources[anchor].get("radius", bank)))
 
 
 ## The pond at exactly `position` (a pond's centre, as goals and memories hold it), or -1.
@@ -221,22 +378,24 @@ func nearest_wet(position: Vector2) -> Dictionary:
 	return best
 
 
+## The bodies holding water - a lake of many lobes is one - the rivers' banks among them.
 func wet_count() -> int:
-	return _wet_count if enabled else _sources.size()
+	return _wet_count if enabled else _bodies.size()
 
 
 func dry_count() -> int:
-	return _sources.size() - wet_count()
+	return _bodies.size() - wet_count()
 
 
-## The ponds' mean level; the rivers' banks, always full, are not counted.
+## The ponds' mean level, a body counted once; the rivers' banks, always full, are not counted.
 func mean_level() -> float:
 	var total := 0.0
 	var ponds := 0
-	for index in range(levels.size()):
-		if size_factor[index] == 0.0 and is_inf(capacity[index]):
+	for body in range(_bodies.size()):
+		var anchor: int = _bodies[body][0]
+		if size_factor[anchor] == 0.0 and is_inf(capacity[anchor]):
 			continue
-		total += levels[index]
+		total += levels[anchor]
 		ponds += 1
 	return 1.0 if ponds == 0 else total / float(ponds)
 
@@ -274,25 +433,56 @@ func import_state(data: Dictionary) -> void:
 	levels = PackedFloat32Array(saved_levels)
 	dry = PackedByteArray(saved_dry)
 	_wet_count = 0
-	for index in range(levels.size()):
-		if dry[index] == 0:
+	# A body's anchor goes dry only with the body: its lobe is the last the water leaves.
+	for body in range(_bodies.size()):
+		_body_dry[body] = dry[_bodies[body][0]]
+		if _body_dry[body] == 0:
 			_wet_count += 1
-		_set_shore(index)
+		_refresh_body(body)
 
 
-## The water's edge and the dry/wet state after the level moved.
+## Body `body`'s level, on every lobe, and what follows from it.
+func _set_level(body: int, level: float) -> void:
+	for lobe in _bodies[body]:
+		levels[lobe] = level
+	_settle_body(body)
+
+
+## The water's edge and the dry/wet state after pond `index`'s level moved (its body's, all of it).
 func _settle(index: int) -> void:
-	_set_shore(index)
-	if dry[index] == 0 and levels[index] <= float(settings["dry_level"]):
-		dry[index] = 1
+	var body := body_of[index]
+	var level := levels[index]
+	for lobe in _bodies[body]:
+		levels[lobe] = level
+	_settle_body(body)
+
+
+func _settle_body(body: int) -> void:
+	var anchor: int = _bodies[body][0]
+	if _body_dry[body] == 0 and levels[anchor] <= float(settings["dry_level"]):
+		_body_dry[body] = 1
 		_wet_count -= 1
-		transitions.append([index, "dried"])
-	elif dry[index] != 0 and levels[index] >= float(settings["wet_level"]):
-		dry[index] = 0
+		transitions.append([anchor, "dried"])
+	elif _body_dry[body] != 0 and levels[anchor] >= float(settings["wet_level"]):
+		_body_dry[body] = 0
 		_wet_count += 1
-		transitions.append([index, "refilled"])
+		transitions.append([anchor, "refilled"])
+	_refresh_body(body)
+
+
+## Every lobe's edge, and each dry with its body or once the water has left it.
+func _refresh_body(body: int) -> void:
+	for lobe in _bodies[body]:
+		_set_shore(lobe)
+		dry[lobe] = 1 if _body_dry[body] != 0 or (_bodies[body].size() > 1 and float(_sources[lobe]["radius"]) <= 0.0) else 0
 
 
 func _set_shore(index: int) -> void:
 	var source: Dictionary = _sources[index]
-	source["radius"] = float(source["bank_radius"]) * sqrt(maxf(0.0, levels[index]))
+	var lobes: PackedInt32Array = _bodies[body_of[index]] if index < body_of.size() else PackedInt32Array([index])
+	if lobes.size() <= 1:
+		source["radius"] = float(source["bank_radius"]) * sqrt(maxf(0.0, levels[index]))
+		return
+	var body_bank := _body_bank[body_of[index]]
+	var lost := body_bank - body_bank * sqrt(maxf(0.0, levels[index]))
+	source["radius"] = maxf(0.0, float(source["bank_radius"]) - lost)

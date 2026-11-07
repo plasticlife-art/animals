@@ -47,6 +47,7 @@ const SUITES := [
 	{"name": "HareTests", "script": preload("res://scripts/tests/hare_tests.gd")},
 	{"name": "RiverTests", "script": preload("res://scripts/tests/river_tests.gd")},
 	{"name": "PondTests", "script": preload("res://scripts/tests/pond_tests.gd")},
+	{"name": "WaterBodyTests", "script": preload("res://scripts/tests/water_body_tests.gd")},
 	{"name": "StreamChatTests", "script": preload("res://scripts/tests/stream_chat_tests.gd")},
 ]
 

@@ -203,6 +203,8 @@ func _draw() -> void:
 		return
 	if _show_water and _water_levels_on(simulation_manager.world_state):
 		_draw_live_water(map_rect, simulation_manager.world_state)
+	if _show_water:
+		_draw_streams(map_rect, simulation_manager.world_state)
 
 	if _dots_dirty:
 		_rebuild_dot_batch(map_rect)
@@ -505,10 +507,16 @@ func _draw_live_water(map_rect: Rect2, world) -> void:
 	if world_bounds.size.x <= 0.0:
 		return
 	var scale := map_rect.size.x / world_bounds.size.x
+	# The lobes of lakes and marshes (`WaterBodies`) drawn as one water: beds, then every lobe's rim,
+	# then every lobe's water over the rims, so no rim shows inside a lake.
+	var lobes: Array = []
 	for index in range(world.water_sources.size()):
 		var source: Dictionary = world.water_sources[index]
 		# A river's banks: the river itself is in the terrain picture.
 		if bool(source.get("permanent", false)):
+			continue
+		if source.has("anchor"):
+			lobes.append(index)
 			continue
 		var center := _world_to_map_point(source["position"], map_rect)
 		if world.water.is_dry(index):
@@ -517,15 +525,50 @@ func _draw_live_water(map_rect: Rect2, world) -> void:
 		var radius := maxf(1.0, float(source["radius"]) * scale)
 		draw_circle(center, radius, WATER_FILL_COLOR)
 		draw_arc(center, radius, 0.0, TAU, 24, WATER_OUTLINE_COLOR, 1.0)
+	for index in lobes:
+		var source: Dictionary = world.water_sources[index]
+		draw_circle(_world_to_map_point(source["position"], map_rect), maxf(1.0, float(source.get("bank_radius", 0.0)) * scale),
+			DRY_BED_COLOR)
+	for pass_index in range(2):
+		for index in lobes:
+			var source: Dictionary = world.water_sources[index]
+			if world.water.is_dry(index):
+				continue
+			var radius := float(source["radius"]) * scale + (1.0 if pass_index == 0 else 0.0)
+			draw_circle(_world_to_map_point(source["position"], map_rect), maxf(1.0, radius),
+				WATER_OUTLINE_COLOR if pass_index == 0 else WATER_FILL_COLOR)
+
+
+## The streams (`TerrainSystem.streams`), a thread each: too narrow for the terrain picture.
+func _draw_streams(map_rect: Rect2, world) -> void:
+	if world.terrain_system == null:
+		return
+	for stream in world.terrain_system.streams:
+		var points := PackedVector2Array()
+		for point in stream["points"]:
+			points.append(_world_to_map_point(point, map_rect))
+		if points.size() >= 2:
+			draw_polyline(points, WATER_FILL_COLOR, 1.0)
 
 
 func _rasterize_water(image: Image, world) -> void:
+	var lobes: Array = []
 	for source in world.water_sources:
 		if bool(source.get("permanent", false)):
+			continue
+		if source.has("anchor"):
+			lobes.append(source)
 			continue
 		var center := _world_to_texture_point(source["position"], image.get_size())
 		var radius := float(source["radius"]) * _get_texture_scale(image.get_size())
 		_draw_circle_on_image(image, center, radius, WATER_FILL_COLOR, WATER_OUTLINE_COLOR)
+	# A lake's lobes as one water: every rim first, then every lobe's water over them.
+	for pass_index in range(2):
+		for source in lobes:
+			var center := _world_to_texture_point(source["position"], image.get_size())
+			var radius := float(source["radius"]) * _get_texture_scale(image.get_size()) + (1.0 if pass_index == 0 else 0.0)
+			var colour := WATER_OUTLINE_COLOR if pass_index == 0 else WATER_FILL_COLOR
+			_draw_circle_on_image(image, center, radius, colour, colour)
 
 
 func _world_rect_to_texture_rect(world_rect: Rect2, texture_size: Vector2i) -> Rect2i:

@@ -38,6 +38,8 @@ const WATER_NONE := 0
 const WATER_DEEP := 1
 const WATER_FORD := 2
 const RIVER_SALT := 0x51BE5
+const WaterBodiesScript = preload("res://scripts/world/water_bodies.gd")
+const STREAM_SALT := 0x5713A
 
 var world_size: Vector2 = Vector2.ZERO
 var cell_size: float = 32.0
@@ -74,6 +76,8 @@ var _path_cache_hit_count: int = 0
 ## bed from source to mouth, how far either side of it the water runs, and where it may be
 ## crossed. Empty, with `_water` empty too, in a world without rivers.
 var rivers: Array = []
+## Streams (`water_bodies.streams`): `{points, half_width}`, shallow, walked across anywhere.
+var streams: Array = []
 var _water: PackedByteArray = PackedByteArray()
 ## What crossing a ford costs, over the ground's own cost, in the route search and on the legs.
 var _ford_cost: float = 1.0
@@ -147,6 +151,7 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_path_query_count = 0
 	_path_cache_hit_count = 0
 	rivers.clear()
+	streams.clear()
 	_water = PackedByteArray()
 	_ford_cost = 1.0
 	var pond_config: Dictionary = terrain_config.get("ponds", {})
@@ -165,9 +170,12 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	flood_epoch = 0
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
+	_paint_marshes(water_sources)
 	_generate_heights(height_config, rng)
 	_apply_obstacles(terrain_config.get("obstacles", {}), rng)
+	_clear_water_beds(water_sources)
 	_generate_rivers(terrain_config.get("rivers", {}), rng, water_sources)
+	_generate_streams(world_config.get("water_bodies", {}), rng, water_sources)
 	_connect_walkable_regions()
 	_refresh_cached_values()
 	_ensure_biome_presence(rng)
@@ -178,9 +186,44 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 		_flooded.fill(0)
 		_near_ponds.resize(cell_count)
 		_near_ponds.fill(0)
-		# Dry for now: the world lays their water once it knows their levels.
+		# Dry for now: the world lays their water once it knows their levels. A marsh's shallows are
+		# walked through (`_paint_marshes()`), not kept out of.
 		for pond in range(water_sources.size()):
-			add_pond(pond, water_sources[pond]["position"], float(water_sources[pond].get("radius", 0.0)))
+			if not WaterBodiesScript.is_shallow(water_sources[pond]):
+				add_pond(pond, water_sources[pond]["position"], float(water_sources[pond].get("radius", 0.0)))
+
+
+## A marsh's ground (`WaterBodies`, kind "marsh"): every cell whose centre lies within one of its
+## lobes is swamp - slow going, thin grass - walked through and drunk from anywhere.
+func _paint_marshes(water_sources: Array) -> void:
+	for source in water_sources:
+		if WaterBodiesScript.is_shallow(source):
+			for index in _cells_within(source["position"], float(source.get("radius", 0.0))):
+				_set_biome(index, "swamp")
+
+
+## No cliff or thicket stands in a lake's or a generated pond's bed (`WaterBodies`): cleared once the
+## obstacles are laid, so the bed is open ground where the water goes down. The map's ponds of old
+## keep what they had.
+func _clear_water_beds(water_sources: Array) -> void:
+	for source in water_sources:
+		if source.has("kind") and not WaterBodiesScript.is_shallow(source):
+			for index in _cells_within(source["position"], float(source.get("radius", 0.0))):
+				if _obstacles[index] != "":
+					_clear_obstacle(index)
+
+
+## The cells whose centre lies within `radius` of `centre`.
+func _cells_within(centre: Vector2, radius: float) -> PackedInt32Array:
+	var cells := PackedInt32Array()
+	var low := Vector2i(((centre - Vector2.ONE * radius) / cell_size).floor())
+	var high := Vector2i(((centre + Vector2.ONE * radius) / cell_size).floor())
+	for y in range(maxi(0, low.y), mini(rows - 1, high.y) + 1):
+		for x in range(maxi(0, low.x), mini(cols - 1, high.x) + 1):
+			var index := y * cols + x
+			if get_cell_center(index).distance_to(centre) <= radius:
+				cells.append(index)
+	return cells
 
 
 func get_cell_count() -> int:
@@ -1309,6 +1352,122 @@ func _generate_rivers(config: Dictionary, rng: RandomNumberGenerator, water_sour
 		for index in range(get_cell_count()):
 			if _water[index] != WATER_NONE:
 				grid.set_point_weight_scale(get_cell_coords(index), 200.0)
+
+
+## Streams (`water_bodies.streams`, with the water in natural shapes): `count` of them, each from a
+## spring on the highest of a few open cells down to the nearest standing water - a lake, a marsh,
+## a pond of `WaterBodies` - or a river's bed, `length_min`..`length_max` away (times `scale`). The
+## bed winds over a noise of its own (`wiggle`) along low ground, round cliffs, thickets and standing
+## water, clear of the streams before it; smoothed (Chaikin), it is `half_width_cells` either side
+## of the line. Shallow: the ground stays as it was, walked across anywhere, no ford needed. A
+## generator of its own, seeded from the world's seed, as the rivers' is.
+func _generate_streams(config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
+	if not bool(config.get("enabled", false)):
+		return
+	var block: Dictionary = config.get("streams", {})
+	if int(block.get("count", 0)) <= 0:
+		return
+	var scale := maxf(0.01, float(config.get("scale", 1.0)))
+	var random := RandomNumberGenerator.new()
+	random.seed = (int(rng.seed) ^ STREAM_SALT) + int(config.get("seed", 0))
+	var noise := FastNoiseLite.new()
+	noise.seed = random.randi()
+	noise.frequency = float(block.get("wiggle_frequency", 0.09))
+	var grid := AStarGrid2D.new()
+	grid.region = Rect2i(0, 0, cols, rows)
+	grid.cell_size = Vector2.ONE
+	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ALWAYS
+	grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	grid.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	grid.update()
+	var wiggle := float(block.get("wiggle", 3.0))
+	var standing: Array = []
+	for source in water_sources:
+		if source.has("kind") and not bool(source.get("permanent", false)):
+			standing.append(source)
+	for index in range(get_cell_count()):
+		var coords := get_cell_coords(index)
+		var weight := 1.0 + wiggle * (noise.get_noise_2d(float(coords.x), float(coords.y)) + 1.0) * 0.5
+		if height_levels > 1:
+			weight += float(_heights[index]) * 1.5
+		grid.set_point_weight_scale(coords, weight)
+		if _walkable[index] == 0 or _in_standing_water(get_cell_center(index), standing):
+			grid.set_point_solid(coords, true)
+	var river_cells := PackedInt32Array()
+	for index in range(_water.size()):
+		if _water[index] == WATER_DEEP:
+			river_cells.append(index)
+	var half_width := float(block.get("half_width_cells", 0.3)) * cell_size
+	var length_min := float(block.get("length_min", 900.0)) * scale
+	var length_max := float(block.get("length_max", 3200.0)) * scale
+	for _stream in range(int(block["count"])):
+		var route := _stream_route(grid, random, standing, river_cells, length_min, length_max)
+		if route.size() < 2:
+			continue
+		streams.append({"points": _chaikin(route, 3), "half_width": half_width})
+		# The next stream keeps out of this one's bed rather than running down it.
+		for point in route:
+			var cell := get_index_from_position(point)
+			if cell >= 0:
+				grid.set_point_weight_scale(get_cell_coords(cell), 40.0)
+
+
+## Whether `point` lies within the bank of a lake or a pond of `standing`; a marsh's shallows not.
+static func _in_standing_water(point: Vector2, standing: Array) -> bool:
+	for source in standing:
+		if not WaterBodiesScript.is_shallow(source) and point.distance_to(source["position"]) <= float(source.get("radius", 0.0)):
+			return true
+	return false
+
+
+## One stream's way, cell centres from its spring to a point a little into the water it runs to;
+## empty when no try gave one.
+func _stream_route(grid: AStarGrid2D, random: RandomNumberGenerator, standing: Array, river_cells: PackedInt32Array,
+		length_min: float, length_max: float) -> PackedVector2Array:
+	for _attempt in range(30):
+		var spring := -1
+		var best_height := -INF
+		for _probe in range(8):
+			var coords := Vector2i(random.randi_range(2, cols - 3), random.randi_range(2, rows - 3))
+			if grid.is_point_solid(coords) or is_water_index(coords.y * cols + coords.x):
+				continue
+			var height := float(_heights[coords.y * cols + coords.x]) + random.randf() * 0.5
+			if height > best_height:
+				best_height = height
+				spring = coords.y * cols + coords.x
+		if spring < 0:
+			continue
+		var start := get_cell_center(spring)
+		# The mouth: a little inside the nearest bank, or the nearest cell of a river's bed.
+		var mouth := Vector2.INF
+		var nearest := INF
+		for source in standing:
+			var centre: Vector2 = source["position"]
+			var radius := float(source.get("radius", 0.0))
+			var gap := start.distance_to(centre) - radius
+			if gap < nearest and start != centre:
+				nearest = gap
+				mouth = centre + (start - centre).normalized() * radius * 0.85
+		for cell in river_cells:
+			var gap := start.distance_to(get_cell_center(cell))
+			if gap < nearest:
+				nearest = gap
+				mouth = get_cell_center(cell)
+		if mouth == Vector2.INF or nearest < length_min or nearest > length_max:
+			continue
+		var target := get_cell_coords(get_index_from_position(mouth))
+		var was_solid := grid.is_point_solid(target)
+		grid.set_point_solid(target, false)
+		var ids: Array[Vector2i] = grid.get_id_path(get_cell_coords(spring), target)
+		grid.set_point_solid(target, was_solid)
+		if ids.size() < 3:
+			continue
+		var route := PackedVector2Array()
+		for id in ids:
+			route.append(get_cell_center(id.y * cols + id.x))
+		route[route.size() - 1] = mouth
+		return route
+	return PackedVector2Array()
 
 
 static func _near_pond(point: Vector2, water_sources: Array, margin: float) -> bool:
