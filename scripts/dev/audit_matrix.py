@@ -2,7 +2,7 @@
 """Compare balance variants over many seeds, seed by seed.
 
     python3 scripts/dev/audit_matrix.py --out DIR [--seeds 1-8] [--mode lod|off]
-        [--seconds 1440] [--jobs 4]
+        [--seconds 1440] [--jobs 2]
         --variant base
         --variant slow_hunger species.herbivore.metabolism.hunger_rate=0.5 ...
         [--variant other_code @path=/path/to/another/worktree]
@@ -23,6 +23,11 @@ Reports land in DIR/<variant>/seed-NN.json, with the Godot log beside each. A ru
 whose report already matches its seed, mode, length and overrides is not repeated, so
 an interrupted matrix resumes where it stopped. The summary is printed and written to
 DIR/summary.md and DIR/summary.json. `--summary-only` rebuilds it from the reports.
+
+Every Godot run waits for a slot in the machine-wide queue (`scripts/dev/heavy.sh`: two
+slots shared with the other projects on this laptop), so more `--jobs` than slots only
+line runs up, and after ten minutes in line the extra ones start anyway. On a free
+machine `HEAVY_SLOTS=4 ... --jobs 4` lets four run at once.
 """
 
 from __future__ import annotations
@@ -38,6 +43,8 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
 GODOT = Path(os.environ.get("GODOT", "/Applications/Godot.app/Contents/MacOS/Godot"))
+# Each Godot run waits for a slot in the machine-wide queue (see heavy.sh).
+HEAVY = Path(__file__).with_name("heavy.sh")
 AUDIT = "res://scripts/dev/ecology_audit.gd"
 
 # Two-sided 95% critical values of Student's t, by degrees of freedom.
@@ -216,7 +223,7 @@ def run_one(out: Path, variant: dict, seed: int, lod: bool, seconds: float) -> d
         cached = json.loads(report_path.read_text(encoding="utf-8"))
         if matches(cached, seed, lod, seconds, variant["overrides"]):
             return cached
-    command = [str(GODOT), "--headless", "--path", str(variant["path"]), "--script", AUDIT, "--",
+    command = [str(HEAVY), str(GODOT), "--headless", "--path", str(variant["path"]), "--script", AUDIT, "--",
                str(seed), "lod" if lod else "off", str(seconds), str(report_path), *variant["overrides"]]
     # Output goes straight to the log file, not through a pipe: if this matrix is stopped,
     # runs already going keep writing and finish their reports, which the next matrix
@@ -338,7 +345,7 @@ def main() -> int:
     parser.add_argument("--seeds", default="1-8")
     parser.add_argument("--mode", choices=["lod", "off"], default="lod")
     parser.add_argument("--seconds", type=float, default=1440.0)
-    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--variant", nargs="+", action="append", metavar="NAME [key=value | @path=DIR]",
                         help="a name, then its overrides; repeat per variant (default: one variant, base)")
     parser.add_argument("--baseline")

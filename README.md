@@ -124,10 +124,11 @@ still carries a chat in from another machine. Settings: `data/config/reserve.jso
 
 ### Built-In Tests
 
-Run the internal AI and simulation regression suites with:
+Run the internal AI and simulation regression suites from the project folder, through the
+shared queue (see «Heavy runs and the shared queue» below):
 
 ```sh
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/plasticlife/Documents/Projects/Animals res://scenes/tests/test_runner.tscn
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://scenes/tests/test_runner.tscn
 ```
 
 The runner exits `0` when every check passes and `1` when any suite reports a
@@ -139,11 +140,44 @@ pipeline instead, which reports success even when tests fail:
 
 ```sh
 # Wrong: $? belongs to tail, so a failing suite still looks like a pass.
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://scenes/tests/test_runner.tscn | tail -5; echo $?
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://scenes/tests/test_runner.tscn | tail -5; echo $?
 
 # Right: redirect to a file, check the status, then read the output.
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://scenes/tests/test_runner.tscn > tests.log 2>&1; echo $?
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://scenes/tests/test_runner.tscn > tests.log 2>&1; echo $?
 ```
+
+### Heavy runs and the shared queue
+
+Every Godot batch run - the test suite, an audit, a probe, a capture, a benchmark, `--import`, an
+export - goes through `scripts/dev/heavy.sh`. It queues the command in the machine-wide pool of
+[heavy](https://github.com/mokevnin/heavy): two slots shared with every project on this laptop that
+uses it (lottery-bot's `scripts/heavy.sh` takes the same ones), so a dozen agent sessions take turns
+instead of all simulating at once. After ten minutes without a slot the command runs anyway; without
+heavy installed it runs at once. The exit status is the command's own.
+
+```sh
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --import
+heavy --status                            # who holds the machine slots
+heavy --pool animals-user-data --status   # who holds the test lock
+```
+
+- The test suite, `check_save.gd` and `check_autosave.gd` first take the single slot of pool
+  `animals-user-data`: every checkout of the project shares one `user://` folder, and two suites at
+  once overwrite each other's saves. The next one waits up to 20 minutes
+  (`HEAVY_USER_DATA_TIMEOUT`, seconds) and then fails with status 75 instead of running into the
+  first one's files.
+- `run_p0_matrix.sh`, `run_p3_matrix.py` and `audit_matrix.py` queue each Godot run on its own, so
+  more `--jobs` than slots only line runs up. On a free machine `HEAVY_SLOTS=4` in front of the
+  runner lets four go at once.
+- The queue limits how many heavy runs share the machine; it does not give one of them the whole
+  machine. Timings (the P0 matrix, the soak) still need the load checked first (`uptime`). The
+  ecology audits are deterministic: under load they only run slower.
+- In Claude Code sessions a `PreToolUse` hook, `~/.claude/hooks/animals-heavy-guard.sh` (its cases:
+  `animals-heavy-guard.test.sh` beside it), stops a Godot batch command that skips the queue.
+  Interactive launches (`Godot --path .`, `-- --reserve`, the editor) and `--version` pass. Start a
+  long queued run in the background: the wait for a slot counts against the shell's timeout.
+- Settings: `HEAVY_SLOTS` (2), `HEAVY_TIMEOUT` (600 s), `HEAVY_ON_TIMEOUT` (`run`), `HEAVY_LOG`
+  (`$TMPDIR/heavy.log`, one JSON line per queued run with how long it waited and ran).
 
 ## Controls
 
@@ -456,11 +490,11 @@ machine-readable JSON. A headless LOD run represents the whole-map overview;
 the LOD-off run is its full-fidelity control:
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
   --script res://scripts/dev/headless_benchmark.gd -- \
   topdown_kenney large balanced true /private/tmp/animals-lod.json 90 600 1337
 
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
   --script res://scripts/dev/headless_benchmark.gd -- \
   topdown_kenney large balanced false /private/tmp/animals-full.json 90 600 1337
 ```
@@ -472,8 +506,9 @@ three times at 1600x900 logical resolution and combines the reports:
 scripts/dev/run_p0_matrix.sh /private/tmp/animals-p0-matrix 3 720 1337
 ```
 
-The runner pauses two seconds between fresh Godot processes by default to limit
-thermal carry-over (`COOLDOWN_SECONDS=0` disables it). `standard-acceptance.json`
+Each run waits for its own slot in the shared queue. The runner pauses two
+seconds between fresh Godot processes by default to limit thermal carry-over
+(`COOLDOWN_SECONDS=0` disables it). `standard-acceptance.json`
 is the release gate for balanced, few-predator, and small-herd presets;
 `extreme-report.json` keeps the same uncensored timing and dropped-time fields for
 large herds and many predators.
@@ -481,14 +516,15 @@ large herds and many predators.
 The worker soak enforces a minimum 30-minute measured interval after warmup:
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --path . \
   --script res://scripts/dev/worker_soak.gd -- \
   topdown_kenney large balanced /private/tmp/animals-soak.json 1800 1337
 ```
 
 The 30-minute soak and the complete 90-run matrix are release gates. Short P0
 regression runs should be made without unrelated CPU-heavy jobs so the report
-describes this build rather than external contention.
+describes this build rather than external contention. The queue does not see to
+that: it still lets one other heavy run share the machine, so check the load first.
 
 ## P1 obstacle and depth verification
 
@@ -502,11 +538,11 @@ The focused visual scene places animals before and behind solids, inside a bush,
 and at the same depth as another species and a carcass. Run it once per style:
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --path . \
   --script res://scripts/dev/p1_visual_audit.gd -- \
   topdown_kenney /private/tmp/animals-p1-visual 1337
 
-/Applications/Godot.app/Contents/MacOS/Godot --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --path . \
   --script res://scripts/dev/p1_visual_audit.gd -- \
   isometric_craftpix /private/tmp/animals-p1-visual 1337
 ```
@@ -523,7 +559,7 @@ a lost-sight failure.
 The headless behavior gate checks both flows and writes a machine-readable report:
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
   --script res://scripts/dev/p2_behavior_audit.gd -- \
   /private/tmp/animals-p2-behavior.json 2201
 ```
@@ -532,11 +568,11 @@ The visual scene covers a fleeing animal behind a tree, an animal inside a bush,
 and predators searching last-seen positions. Run it once per style:
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --path . \
   --script res://scripts/dev/p2_visual_audit.gd -- \
   topdown_kenney /private/tmp/animals-p2-visual 2301
 
-/Applications/Godot.app/Contents/MacOS/Godot --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --path . \
   --script res://scripts/dev/p2_visual_audit.gd -- \
   isometric_craftpix /private/tmp/animals-p2-visual 2301
 ```
@@ -547,7 +583,7 @@ and predators searching last-seen positions. Run it once per style:
 writes how the player's herd fared (`docs/ARCHITECTURE.md`, Scenarios):
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
+scripts/dev/heavy.sh /Applications/Godot.app/Contents/MacOS/Godot --headless --path . \
   --script res://scripts/dev/scenario_probe.gd -- \
   long_drought both/0.05/1500 herd -1 120 /private/tmp/drought.json
 ```

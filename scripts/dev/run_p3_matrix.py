@@ -12,6 +12,8 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
 GODOT = Path("/Applications/Godot.app/Contents/MacOS/Godot")
+# Each Godot run waits for a slot in the machine-wide queue (see heavy.sh).
+HEAVY = Path(__file__).with_name("heavy.sh")
 AUDIT = "res://scripts/dev/ecology_audit.gd"
 
 
@@ -45,7 +47,7 @@ def run_one(output: Path, seconds: float, seed: int, mode: str) -> dict:
         ):
             return cached
     command = [
-        str(GODOT), "--headless", "--path", str(PROJECT), "--script", AUDIT,
+        str(HEAVY), str(GODOT), "--headless", "--path", str(PROJECT), "--script", AUDIT,
         "--", str(seed), mode, str(seconds), str(report_path),
     ]
     completed = subprocess.run(command, cwd=PROJECT, text=True, capture_output=True)
