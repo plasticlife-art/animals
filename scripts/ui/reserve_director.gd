@@ -111,6 +111,9 @@ func _hear(event: Dictionary) -> void:
 			agent_id = int(data.get("agent_id", -1))
 		elif str(data.get("power", "")) == "release" and bool(data.get("ok", false)):
 			kind = "Release"
+	# One fox taking a slot alone is no pair, and «Пара заняла участок» would say it was.
+	if kind == "TerritoryClaimed" and int(data.get("partner_id", -1)) < 0:
+		return
 	var weight := int(WEIGHTS.get(kind, 0))
 	# Nothing to see of what happened asleep, far off: it was settled in aggregate. And only a
 	# young one born is a birth: newcomers from the map's edge are told by their release.
