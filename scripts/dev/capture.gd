@@ -15,7 +15,8 @@ extends SceneTree
 # lives, families and hunts,
 # `scaled` is `story` under a 125 % interface (applied, not saved),
 # `settings` shoots the settings panel, `water` turns on the minimap's water, `menu` shoots
-# the setup screen.
+# the setup screen, `island` the whole island from above (`island_iso` isometric), `coast` a
+# stretch of its beach where a river runs into the sea (`coast_iso` isometric).
 # Loads the real main scene, parks the camera, waits for
 # LOD sectors around it to reify, then writes a PNG.
 #
@@ -69,9 +70,9 @@ func _process(_delta: float) -> bool:
 			# Anything that is not one of the shots below names an art style.
 			if _preset != "" and _preset not in ["selected", "selected_hud", "hud", "water", "herd", "story", "chronicle",
 					"epitaph", "scaled", "settings", "traits", "traits_species", "traits_drill", "insights", "ponds",
-					"ponds_iso", "season", "seasons", "records"]:
+					"ponds_iso", "season", "seasons", "records", "island", "island_iso", "coast", "coast_iso"]:
 				selection["style"] = _preset
-			if _preset == "ponds_iso":
+			if _preset in ["ponds_iso", "island_iso", "coast_iso"]:
 				selection["style"] = "isometric_craftpix"
 			menu.start_requested.emit(selection)
 	if _preset == "menu":
@@ -130,6 +131,15 @@ func _aim(world_position: Vector2) -> void:
 	_camera.force_update_scroll()
 
 
+## Where the first river meets the sea, a little inland; the middle of the map without a river.
+func _river_mouth(world) -> Vector2:
+	var rivers: Array = world.terrain_system.rivers
+	if rivers.is_empty():
+		return _focus
+	var points: PackedVector2Array = rivers[0]["points"]
+	return points[maxi(0, points.size() - 12)]
+
+
 func _height_at(world_position: Vector2) -> int:
 	var terrain = _manager.world_state.terrain_system
 	return 0 if terrain == null else terrain.get_height_at_position(world_position)
@@ -140,6 +150,16 @@ func _park_on_agent() -> void:
 	if _preset.begins_with("ponds"):
 		_set_made_up_levels()
 		_aim(world.water_sources[2]["position"] if world.water_sources.size() > 2 else _focus)
+		return
+	if _preset.begins_with("island"):
+		_camera.reset_to_world(world.bounds)
+		var fit: float = _camera.zoom_to_fit(world.bounds)
+		_camera.zoom = Vector2(fit, fit)
+		_camera.global_position = WorldProjection.to_screen(world.bounds.get_center())
+		_camera.force_update_scroll()
+		return
+	if _preset.begins_with("coast"):
+		_aim(_river_mouth(world))
 		return
 	var agents: Array = world.get_living_agents()
 	if agents.is_empty():

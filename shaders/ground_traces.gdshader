@@ -55,6 +55,13 @@ uniform float bed_fade = 30.0;
 // shallow there over a bar of sand and pebbles, the sand showing through and the stones breaking
 // the water white, so a crossing reads at a glance.
 uniform float water_fords = 0.0;
+// The island's sea (`WaterMask.SEA_ID` in `water_id_tex`): open water past `sea_depth` all
+// `sea_color`, and a beach `sea_shore_width` wide of `sea_shore_color`.
+uniform float water_sea = 0.0;
+uniform vec4 sea_color : source_color = vec4(0.07, 0.21, 0.38, 1.0);
+uniform vec4 sea_shore_color : source_color = vec4(0.85, 0.77, 0.55, 0.80);
+uniform float sea_depth = 480.0;
+uniform float sea_shore_width = 78.0;
 uniform vec4 ford_color : source_color = vec4(0.74, 0.72, 0.54, 0.90);
 uniform vec4 ford_stone_color : source_color = vec4(0.46, 0.44, 0.39, 0.95);
 
@@ -133,18 +140,35 @@ float shrunk_distance(vec2 uv) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// How much of a ford the fragment is in, 0 to 1, blended between the four texels about it.
-float ford_share(vec2 uv) {
+// Whether the texel's owner id lies in [low, high]: 1 or 0.
+float id_in(ivec2 at, float low, float high) {
+	float id = texelFetch(water_id_tex, at, 0).r;
+	return step(low, id) * step(id, high);
+}
+
+// How much of the fragment's water is owned by an id in [low, high], 0 to 1, blended between
+// the four texels about it.
+float id_share(vec2 uv, float low, float high) {
 	ivec2 size = textureSize(water_id_tex, 0);
 	vec2 p = uv * vec2(size) - 0.5;
 	ivec2 i = ivec2(floor(p));
 	vec2 f = p - vec2(i);
 	ivec2 hi = size - ivec2(1);
-	float a = step(texelFetch(water_id_tex, clamp(i, ivec2(0), hi), 0).r, -1.5);
-	float b = step(texelFetch(water_id_tex, clamp(i + ivec2(1, 0), ivec2(0), hi), 0).r, -1.5);
-	float c = step(texelFetch(water_id_tex, clamp(i + ivec2(0, 1), ivec2(0), hi), 0).r, -1.5);
-	float d = step(texelFetch(water_id_tex, clamp(i + ivec2(1, 1), ivec2(0), hi), 0).r, -1.5);
+	float a = id_in(clamp(i, ivec2(0), hi), low, high);
+	float b = id_in(clamp(i + ivec2(1, 0), ivec2(0), hi), low, high);
+	float c = id_in(clamp(i + ivec2(0, 1), ivec2(0), hi), low, high);
+	float d = id_in(clamp(i + ivec2(1, 1), ivec2(0), hi), low, high);
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// How much of a ford (`WaterMask.FORD_ID`) the fragment is in.
+float ford_share(vec2 uv) {
+	return id_share(uv, -2.5, -1.5);
+}
+
+// How much of the island's sea or its beach (`WaterMask.SEA_ID`) the fragment is in.
+float sea_share(vec2 uv) {
+	return id_share(uv, -3.5, -2.5);
 }
 
 float hash(vec2 p) {
@@ -352,11 +376,19 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 	// `d` to the bank, where the sand is; `w` to the water's edge, the bank itself while ponds
 	// have no levels.
 	float d = bilinear(water_tex, world / water_extent) + edge;
-	if (d > shore_width + pixel) {
+	float sea = 0.0;
+	float shore = shore_width;
+	vec4 shore_tint = shore_color;
+	if (water_sea > 0.5) {
+		sea = sea_share(world / water_extent);
+		shore = mix(shore_width, sea_shore_width, sea);
+		shore_tint = mix(shore_color, sea_shore_color, sea);
+	}
+	if (d > shore + pixel) {
 		return ground;
 	}
-	float sand = (1.0 - smoothstep(0.0, shore_width, d)) * shore_color.a;
-	vec4 result = over(vec4(shore_color.rgb, sand), ground);
+	float sand = (1.0 - smoothstep(0.0, shore, d)) * shore_tint.a;
+	vec4 result = over(vec4(shore_tint.rgb, sand), ground);
 	float w = d;
 	if (water_levels > 0.5) {
 		w = shrunk_distance(world / water_extent) + edge;
@@ -369,10 +401,14 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 	}
 	d = w;
 	vec4 water = mix(shallow_color, deep_color, smoothstep(0.0, 1.0, -d / water_depth));
+	// Out at sea the water deepens on to the open sea's own colour, opaque: no ground under it.
+	water = mix(water, sea_color, sea * smoothstep(water_depth * 0.5, sea_depth, -d));
 	vec2 flow = TIME * ripple_speed * vec2(1.0, 0.73);
 	float ripple = value_noise(world / ripple_size + flow) - value_noise(world / (ripple_size * 0.61) - flow);
 	water.rgb += ripple_strength * ripple;
-	float foam = (1.0 - smoothstep(0.0, foam_width, -d)) * (0.6 + 0.4 * sin(TIME * 1.3 + d * 0.15));
+	// The surf on a beach runs wider than a pond's ring of foam.
+	float surf = mix(foam_width, foam_width * 2.5, sea);
+	float foam = (1.0 - smoothstep(0.0, surf, -d)) * (0.6 + 0.4 * sin(TIME * 1.3 + d * 0.15));
 	water = over(vec4(foam_color.rgb, foam * foam_color.a), water);
 	if (water_fords > 0.5) {
 		float ford = smoothstep(0.3, 0.7, ford_share(world / water_extent) + (noise - 0.5) * 0.4);

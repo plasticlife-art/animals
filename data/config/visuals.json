@@ -31,7 +31,11 @@
     "ripple_speed": 0.06,
     "ripple_strength": 0.06,
     "bed_color": [0.50, 0.40, 0.28, 0.70],
-    "bed_px": 10.0
+    "bed_px": 10.0,
+    "sea_color": [0.07, 0.21, 0.38, 1.0],
+    "sea_shore_color": [0.85, 0.77, 0.55, 0.80],
+    "sea_depth_px": 160.0,
+    "sea_shore_px": 26.0
   },
   "borders": {
     "enabled": true,

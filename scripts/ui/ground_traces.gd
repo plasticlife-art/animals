@@ -69,9 +69,15 @@ const WATER_DEFAULTS := {
 	"ripple_strength": 0.06,
 	"bed_color": [0.50, 0.40, 0.28, 0.70],
 	"bed_px": 10.0,
+	# The island's sea (`WaterMask.stamp_sea()`): past `sea_depth_px` from the coast all
+	# `sea_color`, opaque; a beach of `sea_shore_color` `sea_shore_px` wide.
+	"sea_color": [0.07, 0.21, 0.38, 1.0],
+	"sea_shore_color": [0.85, 0.77, 0.55, 0.80],
+	"sea_depth_px": 160.0,
+	"sea_shore_px": 26.0,
 }
 const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color", "bed_color",
-	"ford_color", "ford_stone_color"]
+	"ford_color", "ford_stone_color", "sea_color", "sea_shore_color"]
 ## How often a pond's shrink is handed to the shader while ponds have levels: a level moves a
 ## few hundredths a second at most.
 const WATER_REFRESH_TICKS := 18
@@ -86,7 +92,8 @@ const BiomeFieldScript := preload("res://scripts/ui/biome_field.gd")
 const BORDER_BIOMES := ["meadow", "forest", "drought", "swamp"]
 ## Shader uniform each `_px` length becomes, in world units.
 const WATER_LENGTHS := {"depth_px": "water_depth", "shore_px": "shore_width", "foam_px": "foam_width",
-	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size", "bed_px": "bed_fade"}
+	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size", "bed_px": "bed_fade", "sea_depth_px": "sea_depth",
+	"sea_shore_px": "sea_shore_width"}
 
 ## Layer-local units a row mesh is sorted after the tiles of its own row. Rows are half
 ## a tile apart, so this lands between one row and the next.
@@ -267,10 +274,21 @@ func _apply_water(world, water: Dictionary) -> void:
 	# The field only has to reach as far as anything is drawn: the shore, how far the
 	# noise can push it, and two texels for the blend.
 	var texel := maxf(1.0, cell_size * float(water["texel_cells"]))
-	var reach := (float(water["shore_px"]) + float(water["edge_noise_px"])) * scale + texel * 2.0
+	var terrain = world.terrain_system
+	var shore := float(water["shore_px"])
+	if terrain.has_island():
+		shore = maxf(shore, float(water["sea_shore_px"]))
+	var reach := (shore + float(water["edge_noise_px"])) * scale + texel * 2.0
 	var rivers_config: Dictionary = world.config_bundle.get("world", {}).get("terrain", {}).get("rivers", {})
 	var ford_half := maxf(0.5, float(rivers_config.get("ford_width_cells", 2.5))) * cell_size * 0.5
-	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach, world.terrain_system.rivers, ford_half)
+	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach, terrain.rivers, ford_half)
+	_material.set_shader_parameter("water_sea", 1.0 if terrain.has_island() else 0.0)
+	if terrain.has_island():
+		var sea := PackedByteArray()
+		sea.resize(terrain.get_cell_count())
+		for index in range(sea.size()):
+			sea[index] = 1 if terrain.is_sea_index(index) else 0
+		WaterMaskScript.stamp_sea(_water_mask, sea, terrain.cols, terrain.rows, cell_size, reach)
 	_baked_ponds = world.water_sources.size()
 	_water_reach = reach
 	_material.set_shader_parameter("water_extent", Vector2(_water_mask["cols"], _water_mask["rows"]) * texel)
@@ -293,7 +311,7 @@ func _upload_water_field(world) -> void:
 		fords_on = fords_on or not river.get("fords", []).is_empty()
 	_material.set_shader_parameter("water_levels", 1.0 if levels_on else 0.0)
 	_material.set_shader_parameter("water_fords", 1.0 if fords_on else 0.0)
-	if levels_on or fords_on:
+	if levels_on or fords_on or world.terrain_system.has_island():
 		_material.set_shader_parameter("water_id_tex", ImageTexture.create_from_image(
 			_float_image(_water_mask["ids"], cols, rows)))
 	if levels_on:

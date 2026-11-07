@@ -128,6 +128,48 @@ Current terrain features:
 - biome-dependent forage initialization and regrowth multipliers
 - obstacle blocking and chokepoint creation
 
+### The island (`terrain.island`)
+
+The world is an island: sea all round a land of its own shape, so on screen as in the rules
+nothing walks off the map and nothing comes onto it. `IslandMask.build()` lays it per terrain
+cell before the ponds, from a generator of its own seeded from the world's seed (the world's
+stream is not drawn from); off (no block or `enabled` false), the world is bit for bit the one
+without it (`IslandTests`).
+
+- **The shape.** A superellipse over the map (`shape_power`, so it fills 16:9 as a square)
+  broken by a warped fbm noise (`noise_frequency` per cell, `noise_amplitude`, `noise_octaves`,
+  `warp` cells); the land is the `land_share` of the map lowest in that field, never within
+  `min_sea_cells` of the edge and rising to the sea over `edge_band_cells` inside that (without
+  the band a coast near the edge ran straight along it). Two rounds of cellular smoothing, then
+  only the largest four-way land kept and every lake inside it filled: ponds are the lakes. With
+  it the coast's distance per cell (a 3-4 chamfer): `TerrainSystem.coast_cells_at_index()`,
+  `coast_distance_at()`.
+- **The map is 1.35× the land on each side** (19440×10935 on the large map, the presets alike),
+  so the land is what the 14400×8100 rectangle was. At 1.2× (31 % sea) the island came out a
+  rounded rectangle with no room to wind. Seeds 3/5/7/11 against the rectangle: walkable land
+  −1.6..+3.7 %, ponds 49-55 against 52, wolf dens 6-7 against 6-7, fox dens 16-21 against 15-18.
+  `scripts/dev/island_map.gd` builds a map without running it and reports these, with a picture.
+- **The sea** is laid after the obstacles (so the clearance along the map's edge cannot open a
+  walk round it) and before the rivers: deep water like a river's (obstacle `water`, `_water`
+  deep, no grass), so movement, routes, sleeping herds, the minimap and the ground mesh need
+  nothing more. It is never a ford, never cut through by the passages that join the land (they go
+  the shortest four-way way over the land, `_ways_to()`), and never drunk: drinking spots come from
+  the rivers' banks only. Within `beach_cells` the ground is open (no cliff, no thicket, no prop),
+  and where the map has relief it climbs from the shore a level every two cells.
+- **On the land.** Ponds keep a cell clear of the sea; rivers run from a source at least 12 cells
+  inland (drawn from the cells that may hold one) to the sea cell where the straight way in from
+  the edge first meets the land, over the land, and one cell on; no ford within three cells of the
+  sea. `random_point()` draws again at sea (snapped, every offshore draw put herds on the beach);
+  dens keep half a radius from the sea; a flight weighs the sea as the edge it is. Districts are
+  named on the land only.
+- **Drawn.** `WaterMask.stamp_sea()` adds the distance to the coast - where the cells' land,
+  blended between their centres, is half: their edges with the corners rounded - negative out at
+  sea, owned by `SEA_ID` (-3). The shader draws water there as anywhere, deepening on to the open
+  sea's `sea_color`, opaque, past `sea_depth_px`; the beach is `sea_shore_color`, `sea_shore_px`
+  wide, and the surf wider than a pond's foam. No frame is drawn round an island's map.
+- **The scenarios** keep the medium map's old rectangle (9600×5400, no island): their goals were
+  tuned on it. The test fixtures keep it off.
+
 ### Rivers (`terrain.rivers`)
 
 Rivers are part of the terrain (`TerrainSystem._generate_rivers`), laid after the obstacles and
@@ -136,7 +178,8 @@ world's seed, so the world's stream is not drawn from; off (no block or `enabled
 world is bit for bit the one without them.
 
 - **The bed.** Each of `count` rivers runs from a source inland, away from the ponds, to the
-  map's edge at least `min_length_fraction` of the map away. It follows the cheapest way
+  map's edge (on an island, to the sea) at least `min_length_fraction` of the map away (of a map
+  the land's area and shape, on an island). It follows the cheapest way
   (`AStarGrid2D`, eight-way) over noise that makes it wind, round the ponds, along low ground
   where the map has relief, and clear of the rivers before it, smoothed by three rounds of
   Chaikin into `rivers[i].points`.

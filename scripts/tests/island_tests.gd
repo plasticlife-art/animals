@@ -10,6 +10,7 @@ extends RefCounted
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const TerrainSystemScript := preload("res://scripts/world/terrain_system.gd")
 const PlaceNamesScript := preload("res://scripts/story/place_names.gd")
+const WaterMaskScript := preload("res://scripts/ui/water_mask.gd")
 
 
 func run(a) -> void:
@@ -22,6 +23,7 @@ func run(a) -> void:
 	_test_dens_off_the_sea(a)
 	_test_flight_stays_ashore(a)
 	_test_districts_on_land(a)
+	_test_the_sea_drawn(a)
 
 
 static func _island(extra: Dictionary = {}) -> Dictionary:
@@ -259,3 +261,49 @@ func _test_districts_on_land(a) -> void:
 	a.is_true(places.districts.size() >= 2 and ashore, "the districts lie on the land (%d)" % places.districts.size())
 	a.is_true(sea_unnamed and land_named, "the sea is no district, all the land is in one")
 	Helpers.destroy_manager(manager)
+
+
+## The water field takes the sea: under water out at sea, owned by `SEA_ID`, dry inland, and the
+## beach the sea's.
+func _test_the_sea_drawn(a) -> void:
+	var manager = Helpers.create_manager_with(_bundle(9982, _island()), 9982)
+	var world = manager.world_state
+	var terrain = world.terrain_system
+	var texel: float = terrain.cell_size * 0.5
+	var reach: float = texel * 4.0
+	var mask: Dictionary = WaterMaskScript.bake([], world.bounds.end, texel, reach)
+	var sea := PackedByteArray()
+	sea.resize(terrain.get_cell_count())
+	for index in range(sea.size()):
+		sea[index] = 1 if terrain.is_sea_index(index) else 0
+	WaterMaskScript.stamp_sea(mask, sea, terrain.cols, terrain.rows, terrain.cell_size, reach)
+	var cols: int = mask["cols"]
+	var deep_right := true
+	var inland_dry := true
+	var beach_sea := false
+	for index in range(terrain.get_cell_count()):
+		var centre: Vector2 = terrain.get_cell_center(index)
+		var texel_index := int(floor(centre.y / texel)) * cols + int(floor(centre.x / texel))
+		var coast: float = terrain.coast_cells_at_index(index)
+		if terrain.is_sea_index(index) and _sea_cells_around(terrain, index) == 9:
+			deep_right = deep_right and mask["cells"][texel_index] < 0.0 and mask["ids"][texel_index] == WaterMaskScript.SEA_ID
+		elif coast >= 4.0:
+			inland_dry = inland_dry and mask["cells"][texel_index] >= reach
+		elif coast <= 1.0 and mask["ids"][texel_index] == WaterMaskScript.SEA_ID and mask["cells"][texel_index] > 0.0:
+			beach_sea = true
+	a.is_true(deep_right, "out at sea the field is under water, the sea's")
+	a.is_true(inland_dry, "inland it is dry")
+	a.is_true(beach_sea, "and the beach is the sea's shore")
+	Helpers.destroy_manager(manager)
+
+
+static func _sea_cells_around(terrain, index: int) -> int:
+	var at: Vector2i = terrain.get_cell_coords(index)
+	var count := 0
+	for dy in [-1, 0, 1]:
+		for dx in [-1, 0, 1]:
+			var x: int = at.x + dx
+			var y: int = at.y + dy
+			if x >= 0 and y >= 0 and x < terrain.cols and y < terrain.rows and terrain.is_sea_index(y * terrain.cols + x):
+				count += 1
+	return count

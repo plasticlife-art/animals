@@ -69,8 +69,10 @@ func _draw() -> void:
 	var world = simulation_manager.world_state
 	# The terrain tiles cover every cell inside the bounds now, so only the
 	# border outline is drawn here. Under a non-identity projection the world
-	# rectangle is no longer a screen rectangle, so it is stroked as a polygon.
-	_draw_world_border(world.bounds)
+	# rectangle is no longer a screen rectangle, so it is stroked as a polygon. An island has
+	# its sea for a border: a frame round the sea would draw a wall nothing walks to.
+	if world.terrain_system == null or not world.terrain_system.has_island():
+		_draw_world_border(world.bounds)
 
 
 	if bool(debug_flags.get("show_state_labels", false)):

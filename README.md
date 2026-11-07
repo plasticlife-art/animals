@@ -29,6 +29,7 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - Predator behavior: `alive/engaged/dead` AI states with utility-driven hunt, scavenge, drink, rest, investigate water, pair cohesion, and patrol actions; mates hunt as a pair, one driving and one cutting the prey off (`hunt.pair`), and pairs hold territories round their dens (`territory`)
 - Weather in spells of 40 s (clear, rain, downpour, fog, snow in winter, heat in summer), drawn on the map and named in the season bar; it fills or dries the ponds, speeds or slows the grass, and dims sight and slows pace, evened out so each season keeps its averages (`world.weather`; off in the scenarios)
 - Hares: small grass-eaters living alone, quick to breed and short-lived, quick on the dash; foxes' second prey (`species.hare`; a setup option, on by default, off in the scenarios)
+- The world is an island (`terrain.island`; off in the scenarios): sea all round, nobody comes or leaves, a species lost is lost for good; the sea is salt, rivers run down to it, and the map is 1.35x the land so the land is what the old rectangle was
 - Rivers with fords (`terrain.rivers`; a setup option, on by default, off in the scenarios): deep water blocks the way but for shallow fords, and the banks never run dry
 - Ponds are water, not ground (`terrain.ponds`): animals go round them and drink from the shore, nothing grows in a pond's bed but its shores are wet meadows, and as a pond falls its bed comes out and greens over
 - Wolves, off unless the setup asks: packs on large territories that hunt together, fanning out to both sides of the prey (`hunt.pack`)
@@ -109,8 +110,9 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 «Трансляция» in the start menu (or `Godot --path . -- --reserve`) starts the living reserve: a
 world for a stream whose viewers act on it from the Twitch, YouTube and Telegram chats - naming
 wards (`!имя`), voting on the weather (`!1 !2 !3`), the steward's powers for the herd
-on screen, backing a species' fund. The reserve is an island: no animal comes from outside, and
-a species lost does not come back. The camera directs itself; the reserve saves to its own slots and goes on from them (`--fresh` for a
+on screen, backing a species' fund. The reserve is an island, sea all round: no animal comes from
+outside, and a species lost does not come back. A reserve begun before the island keeps its old
+rectangle (a world's map lives in its save); `--fresh` starts an island. The camera directs itself; the reserve saves to its own slots and goes on from them (`--fresh` for a
 new world). The game reads the chats itself, set up in the «Трансляция» wizard (the bot's token and
 groups, the Twitch channel, the YouTube key and live link, OBS steps for macOS and Windows; kept in
 `user://stream.json`); `docs/STREAMING.md` is the admin's guide. `tools/stream_bridge/bridge.py`

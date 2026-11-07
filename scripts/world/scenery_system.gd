@@ -49,9 +49,9 @@ func initialize(world_config: Dictionary, visuals: Dictionary, ground: TerrainSy
 		var point := terrain.get_cell_center(index) + jitter
 		var physics: Dictionary = config.get("types", {}).get(kind, {})
 		var slot := 0 if slots.is_empty() else int(slots[random.randi_range(0, slots.size() - 1)])
-		# Nothing grows in a pond's bed, full or not; drawn all the same, so the rest come out
-		# where they did.
-		if terrain.is_pond_bank_index(index):
+		# Nothing grows in a pond's bed, full or not, nor on the island's beach; drawn all the
+		# same, so the rest come out where they did.
+		if terrain.is_pond_bank_index(index) or terrain.coast_cells_at_index(index) <= 1.5:
 			continue
 		add_object({"id": index + 1, "position": point, "kind": kind,
 			"radius": float(physics.get("radius_cells", 0.0)) * bucket_size,

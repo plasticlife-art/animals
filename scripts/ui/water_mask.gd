@@ -4,6 +4,9 @@ extends RefCounted
 ## What `ids` holds over a ford: no pond's, as for the rest of a river, but marked, so the shader
 ## draws the bar of sand and stones the river is crossed by.
 const FORD_ID := -2.0
+## And over the island's sea and the shore nearest it (`stamp_sea()`): the shader draws open sea
+## deeper and opaque, and the beach wider.
+const SEA_ID := -3.0
 
 ## The watering holes as a signed distance field: for each texel of a grid laid over the
 ## world, how far its centre is from the nearest pond's bank, negative inside it, and which
@@ -77,6 +80,95 @@ static func stamp_river(mask: Dictionary, river: Dictionary, ford_half: float, r
 					ids[index] = FORD_ID if ford else -1.0
 	mask["cells"] = cells
 	mask["ids"] = ids
+
+
+## Adds the island's sea (`sea`, a byte per terrain cell of `cell` units, 1 at sea, `cols` wide):
+## the distance to the coast, negative out at sea, owned by `SEA_ID`. The coast is where the
+## cells' land, blended between their centres, is half - the cells' own edges with the corners
+## rounded off, not a staircase - and the distance is measured from it over the texels (a 3-4
+## chamfer from the texels either side of it, each placed by the blend's slope).
+static func stamp_sea(mask: Dictionary, sea: PackedByteArray, cols_cells: int, rows_cells: int, cell: float,
+		reach: float) -> void:
+	var cells: PackedFloat32Array = mask["cells"]
+	var ids: PackedFloat32Array = mask["ids"]
+	var cols: int = mask["cols"]
+	var rows: int = mask["rows"]
+	var texel: float = mask["texel"]
+	var count := cols * rows
+	var land := PackedFloat32Array()
+	land.resize(count)
+	for y in range(rows):
+		for x in range(cols):
+			var p := Vector2((float(x) + 0.5) * texel, (float(y) + 0.5) * texel) / cell - Vector2(0.5, 0.5)
+			var i := floori(p.x)
+			var j := floori(p.y)
+			var f := p - Vector2(i, j)
+			var top := lerpf(_land_at(sea, cols_cells, rows_cells, i, j), _land_at(sea, cols_cells, rows_cells, i + 1, j), f.x)
+			var bottom := lerpf(_land_at(sea, cols_cells, rows_cells, i, j + 1), _land_at(sea, cols_cells, rows_cells, i + 1, j + 1), f.x)
+			land[y * cols + x] = lerpf(top, bottom, f.y)
+	var distance := PackedFloat32Array()
+	distance.resize(count)
+	distance.fill(INF)
+	for y in range(rows):
+		for x in range(cols):
+			var index := y * cols + x
+			var here := land[index] >= 0.5
+			var edge := false
+			for offset in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var nx: int = x + offset.x
+				var ny: int = y + offset.y
+				if nx >= 0 and ny >= 0 and nx < cols and ny < rows and (land[ny * cols + nx] >= 0.5) != here:
+					edge = true
+					break
+			if not edge:
+				continue
+			var gx := (land[y * cols + mini(cols - 1, x + 1)] - land[y * cols + maxi(0, x - 1)]) * 0.5
+			var gy := (land[mini(rows - 1, y + 1) * cols + x] - land[maxi(0, y - 1) * cols + x]) * 0.5
+			var slope := maxf(Vector2(gx, gy).length(), 0.05)
+			distance[index] = minf(absf(land[index] - 0.5) / slope, 1.0) * texel
+	var straight := texel
+	var diagonal := texel * 1.41421
+	for y in range(rows):
+		for x in range(cols):
+			var index := y * cols + x
+			var best := distance[index]
+			if x > 0:
+				best = minf(best, distance[index - 1] + straight)
+			if y > 0:
+				best = minf(best, distance[index - cols] + straight)
+				if x > 0:
+					best = minf(best, distance[index - cols - 1] + diagonal)
+				if x < cols - 1:
+					best = minf(best, distance[index - cols + 1] + diagonal)
+			distance[index] = best
+	for y in range(rows - 1, -1, -1):
+		for x in range(cols - 1, -1, -1):
+			var index := y * cols + x
+			var best := distance[index]
+			if x < cols - 1:
+				best = minf(best, distance[index + 1] + straight)
+			if y < rows - 1:
+				best = minf(best, distance[index + cols] + straight)
+				if x < cols - 1:
+					best = minf(best, distance[index + cols + 1] + diagonal)
+				if x > 0:
+					best = minf(best, distance[index + cols - 1] + diagonal)
+			distance[index] = best
+	# Out at sea the sea owns the texel, a river's mouth included; ashore, the nearest water does.
+	for index in range(count):
+		var signed := distance[index] if land[index] >= 0.5 else -distance[index]
+		if signed <= 0.0:
+			cells[index] = minf(signed, cells[index])
+			ids[index] = SEA_ID
+		elif signed < cells[index] and signed <= reach:
+			cells[index] = signed
+			ids[index] = SEA_ID
+	mask["cells"] = cells
+	mask["ids"] = ids
+
+
+static func _land_at(sea: PackedByteArray, cols: int, rows: int, x: int, y: int) -> float:
+	return 1.0 - float(sea[clampi(y, 0, rows - 1) * cols + clampi(x, 0, cols - 1)])
 
 
 ## Adds one pond to a baked field - a pond the player dug, after the map's own were baked: only
