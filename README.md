@@ -31,6 +31,7 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - Hares: small grass-eaters living alone, quick to breed and short-lived, quick on the dash; foxes' second prey (`species.hare`; a setup option, on by default, off in the scenarios)
 - Rivers with fords (`terrain.rivers`; a setup option, on by default, off in the scenarios): deep water blocks the way but for shallow fords, and the banks never run dry
 - Ponds are water, not ground (`terrain.ponds`): animals go round them and drink from the shore, nothing grows in a pond's bed but its shores are wet meadows, and as a pond falls its bed comes out and greens over
+- Water in natural shapes, each world its own (`world.water_bodies`; off in the scenarios): two or three long, winding lakes with bays that shoal in summer but never dry, small irregular ponds that dry in late summer, marshes walked through slowly and drunk from anywhere, and streams running from springs on high ground down to the lakes and rivers, crossed anywhere and never dry
 - Wolves, off unless the setup asks: packs on large territories that hunt together, fanning out to both sides of the prey (`hunt.pack`)
 - Lifecycle rules: hunger, thirst, energy depletion, predation, old age
 - Carcass lifecycle with feeder reservation and meat depletion
