@@ -160,7 +160,7 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 	# The pond as it is now: the decision may be a few ticks old, and the pond dried meanwhile.
 	var live: Dictionary = world.live_water(water)
 	if live.is_empty() and not water.is_empty():
-		forget_water(water.get("position", null))
+		forget_water(water_place(water))
 		water = _resolve_water_target(world)
 		live = world.live_water(water)
 	water = live
@@ -168,8 +168,7 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 		return false
 
 	target_position = water["position"]
-	var drink_distance: float = float(feeding.get("drink_distance", 28.0)) + float(water.get("radius", 0.0))
-	if position.distance_squared_to(water["position"]) <= drink_distance * drink_distance:
+	if world.within_drink_reach(water, position, float(feeding.get("drink_distance", 28.0))):
 		# Arriving is not a reason to drink. Without this an animal that merely
 		# grazed its way to the shore took a mouthful, and the herd standing by
 		# the water never had a reason to leave it.
@@ -178,7 +177,7 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 		# What the pond gives: all a drink is while ponds never change, else no more than it holds.
 		var restored: float = world.drink_water(water, float(feeding.get("drink_restore", 35.0)), thirst)
 		if restored <= 0.0:
-			forget_water(water.get("position", null))
+			forget_water(water_place(water))
 			return false
 		set_state("drink", world.current_tick)
 		clear_navigation()
@@ -194,8 +193,8 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 	var herd_vector: Vector2 = _herd_vector(world, neighbors, false)
 	var waypoint: Vector2 = world.get_next_waypoint(position, world.water_approach(water, position, get_body_radius()), id)
 	if not path_reachable:
-		forget_water(water.get("position", null))
-		leave_unreachable(world, place_key(water["position"]))
+		forget_water(water_place(water))
+		leave_unreachable(world, place_key(water_place(water)))
 		return false
 	var move_vector: Vector2 = Steering.combine_two(
 		Steering.seek(position, waypoint), 1.4, herd_vector, 0.5)
@@ -205,7 +204,7 @@ func _seek_or_drink(world, delta: float, neighbors: Array, water: Dictionary = {
 
 func _resolve_water_target(world) -> Dictionary:
 	var water: Dictionary = Perception.find_nearest_water(world, position, float(perception.get("water_search_radius", 260.0)))
-	if not water.is_empty() and is_unreachable(place_key(water["position"]), world.current_time):
+	if not water.is_empty() and is_unreachable(place_key(water_place(water)), world.current_time):
 		water = world.water_for(self, float(perception.get("water_search_radius", 260.0)))
 	if water.is_empty():
 		water = get_remembered_water(
@@ -214,8 +213,8 @@ func _resolve_water_target(world) -> Dictionary:
 		)
 		# A remembered pond may have dried since (`WaterSystem`), or have no route to it.
 		if not water.is_empty() and (world.live_water(water).is_empty()
-				or is_unreachable(place_key(water.get("position", Vector2.INF)), world.current_time)):
-			forget_water(water.get("position", null))
+				or is_unreachable(place_key(water_place(water)), world.current_time)):
+			forget_water(water_place(water))
 			water = {}
 	if not water.is_empty():
 		remember_water(water, world.current_time)

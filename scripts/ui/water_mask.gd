@@ -4,9 +4,14 @@ extends RefCounted
 ## What `ids` holds over a ford: no pond's, as for the rest of a river, but marked, so the shader
 ## draws the bar of sand and stones the river is crossed by.
 const FORD_ID := -2.0
+## What `ids` holds over a stream (`TerrainSystem.streams`): shallow, narrow running water, drawn
+## with a quieter edge and no foam.
+const STREAM_ID := -3.0
+## How far, as a share of a lobe's radius, the lobes of one body blend into each other.
+const SMOOTH_SHARE := 0.35
 ## And over the island's sea and the shore nearest it (`stamp_sea()`): the shader draws open sea
 ## deeper and opaque, and the beach wider.
-const SEA_ID := -3.0
+const SEA_ID := -4.0
 
 ## The watering holes as a signed distance field: for each texel of a grid laid over the
 ## world, how far its centre is from the nearest pond's bank, negative inside it, and which
@@ -17,6 +22,12 @@ const SEA_ID := -3.0
 ## the distance to an edge `s` inside the bank is the distance to the bank plus `s`. So the
 ## shader shrinks each pond by adding its own shrink (`bank_radius - radius`) to the texels it
 ## owns, and the field is never baked again.
+##
+## A lake or a marsh of several lobes (`WaterBodies`) is owned by its body, not by a lobe: every
+## lobe of a body loses the same to a falling level, so one shrink per body moves the whole of it
+## in, and a lobe the water has left drops out of the picture as it drops out of the world. Within
+## a body the lobes meet in a smooth minimum, which rounds the notches where two circles cross;
+## adding a shrink to both sides of it adds it to the result, so the shrunk picture is still exact.
 
 
 ## Bakes the field over `[0, world_size]`. Only each pond's box grown by `reach` is
@@ -24,7 +35,7 @@ const SEA_ID := -3.0
 ## reads as dry land. A river's banks (`permanent` sources) are no ponds and are not stamped;
 ## the rivers themselves (`TerrainSystem.rivers`) are, by `stamp_river()`.
 static func bake(sources: Array, world_size: Vector2, texel: float, reach: float, rivers: Array = [],
-		ford_half: float = 0.0) -> Dictionary:
+		ford_half: float = 0.0, bodies := PackedInt32Array(), streams: Array = []) -> Dictionary:
 	var cols := maxi(1, int(ceil(world_size.x / texel)))
 	var rows := maxi(1, int(ceil(world_size.y / texel)))
 	var cells := PackedFloat32Array()
@@ -36,9 +47,11 @@ static func bake(sources: Array, world_size: Vector2, texel: float, reach: float
 	var mask := {"cells": cells, "ids": ids, "cols": cols, "rows": rows, "texel": texel}
 	for pond in range(sources.size()):
 		if not bool(sources[pond].get("permanent", false)):
-			stamp(mask, sources[pond], pond, reach)
+			stamp(mask, sources[pond], bodies[pond] if pond < bodies.size() else pond, reach)
 	for river in rivers:
 		stamp_river(mask, river, ford_half, reach)
+	for stream in streams:
+		stamp_river(mask, stream, 0.0, reach, STREAM_ID)
 	return mask
 
 
@@ -46,7 +59,7 @@ static func bake(sources: Array, world_size: Vector2, texel: float, reach: float
 ## about each, owned by no pond (-1: a river never shrinks). Over a ford the field is held just
 ## below the water's edge, so the river shows there as shallows, light and narrow, and the texel is
 ## marked `FORD_ID`.
-static func stamp_river(mask: Dictionary, river: Dictionary, ford_half: float, reach: float) -> void:
+static func stamp_river(mask: Dictionary, river: Dictionary, ford_half: float, reach: float, id: float = -1.0) -> void:
 	var cells: PackedFloat32Array = mask["cells"]
 	var ids: PackedFloat32Array = mask["ids"]
 	var cols: int = mask["cols"]
@@ -77,7 +90,7 @@ static func stamp_river(mask: Dictionary, river: Dictionary, ford_half: float, r
 						break
 				if distance < cells[index]:
 					cells[index] = distance
-					ids[index] = FORD_ID if ford else -1.0
+					ids[index] = FORD_ID if ford else id
 	mask["cells"] = cells
 	mask["ids"] = ids
 
@@ -171,9 +184,10 @@ static func _land_at(sea: PackedByteArray, cols: int, rows: int, x: int, y: int)
 	return 1.0 - float(sea[clampi(y, 0, rows - 1) * cols + clampi(x, 0, cols - 1)])
 
 
-## Adds one pond to a baked field - a pond the player dug, after the map's own were baked: only
-## its box grown by `reach` is visited, and a texel takes it where it is nearer than what the
-## texel had.
+## Adds one pond to a baked field, owned by `pond` (its body, for a lobe) - a pond the player dug,
+## after the map's own were baked: only its box grown by `reach` is visited, and a texel takes it
+## where it is nearer than what the texel had. A lobe of a body (`body` on the source) meets the
+## body's other lobes in a smooth minimum over a third of its radius.
 static func stamp(mask: Dictionary, source: Dictionary, pond: int, reach: float) -> void:
 	var cells: PackedFloat32Array = mask["cells"]
 	var ids: PackedFloat32Array = mask["ids"]
@@ -183,6 +197,7 @@ static func stamp(mask: Dictionary, source: Dictionary, pond: int, reach: float)
 	var center: Vector2 = source.get("position", Vector2.ZERO)
 	var radius := float(source.get("bank_radius", source.get("radius", 0.0)))
 	var extent := radius + reach
+	var smooth := radius * SMOOTH_SHARE if source.has("body") else 0.0
 	var low_x := maxi(0, int(floor((center.x - extent) / texel)))
 	var high_x := mini(cols - 1, int(ceil((center.x + extent) / texel)))
 	var low_y := maxi(0, int(floor((center.y - extent) / texel)))
@@ -192,12 +207,21 @@ static func stamp(mask: Dictionary, source: Dictionary, pond: int, reach: float)
 		for x in range(low_x, high_x + 1):
 			var index := y * cols + x
 			var distance := Vector2((float(x) + 0.5) * texel, texel_y).distance_to(center) - radius
-			if distance < cells[index]:
+			if smooth > 0.0 and ids[index] == float(pond):
+				cells[index] = smooth_min(cells[index], distance, smooth)
+			elif distance < cells[index]:
 				cells[index] = distance
 				ids[index] = float(pond)
 	# Packed arrays are values: hand the changed ones back.
 	mask["cells"] = cells
 	mask["ids"] = ids
+
+
+## The smooth minimum of `a` and `b` over `k`: their minimum, less up to `k / 4` where they are within
+## `k` of each other. `smooth_min(a + s, b + s, k) == smooth_min(a, b, k) + s`.
+static func smooth_min(a: float, b: float, k: float) -> float:
+	var h := maxf(k - absf(a - b), 0.0) / k
+	return minf(a, b) - h * h * k * 0.25
 
 
 ## The field at `world_position`, read the way the shader reads it: blended between the

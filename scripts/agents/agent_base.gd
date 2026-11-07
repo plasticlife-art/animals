@@ -513,6 +513,12 @@ static func carcass_key(carcass_id: int) -> String:
 	return "c%d" % carcass_id
 
 
+## Where a pond is known by: a lake of many lobes (`WaterBodies`) by its anchor, whichever lobe
+## was seen, so the lake is one place to remember or give up on; a pond by its centre.
+static func water_place(source: Dictionary) -> Vector2:
+	return source.get("anchor", source.get("position", Vector2.INF))
+
+
 ## A place - a pond's centre, a patrol goal - as a key, to the unit.
 static func place_key(place: Vector2) -> String:
 	return "p%d,%d" % [roundi(place.x), roundi(place.y)]
@@ -538,13 +544,14 @@ func remember_water(source: Dictionary, time_seconds: float) -> void:
 	var position_value = source.get("position", null)
 	if position_value == null:
 		return
+	var place := water_place(source)
 
 	var previous_herbivore_seen_time := -1.0
 	var previous_investigated_time := -1.0
 	var existing_index := -1
 	for index in range(recent_water_sources.size()):
 		var existing: Dictionary = recent_water_sources[index]
-		if existing.get("position", null) == position_value:
+		if water_place(existing) == place:
 			existing_index = index
 			previous_herbivore_seen_time = float(existing.get("last_herbivore_seen_time", -1.0))
 			previous_investigated_time = float(existing.get("last_investigated_time", -1.0))
@@ -557,6 +564,8 @@ func remember_water(source: Dictionary, time_seconds: float) -> void:
 		"last_herbivore_seen_time": previous_herbivore_seen_time,
 		"last_investigated_time": previous_investigated_time,
 	}
+	if source.has("anchor"):
+		updated_entry["anchor"] = source["anchor"]
 	if source.has("last_herbivore_seen_time"):
 		updated_entry["last_herbivore_seen_time"] = float(source.get("last_herbivore_seen_time", previous_herbivore_seen_time))
 	elif bool(source.get("herbivore_seen", false)):
@@ -575,10 +584,10 @@ func clear_water_memory() -> void:
 	recent_water_sources.clear()
 
 
-## Forgets the pond at `position`: it has dried (`WaterSystem`).
-func forget_water(position_value) -> void:
+## Forgets the pond known by `place` (`water_place()`): it has dried (`WaterSystem`).
+func forget_water(place: Vector2) -> void:
 	for index in range(recent_water_sources.size() - 1, -1, -1):
-		if recent_water_sources[index].get("position", null) == position_value:
+		if water_place(recent_water_sources[index]) == place:
 			recent_water_sources.remove_at(index)
 
 
@@ -608,11 +617,14 @@ func get_recent_water_sources(time_seconds: float, max_age_seconds: float) -> Ar
 	return recent_water_sources.duplicate(true)
 
 
-func mark_water_source_investigated(source_position: Vector2, time_seconds: float) -> void:
-	remember_water({
-		"position": source_position,
+func mark_water_source_investigated(source: Dictionary, time_seconds: float) -> void:
+	var entry := {
+		"position": source["position"],
 		"last_investigated_time": time_seconds,
-	}, time_seconds)
+	}
+	if source.has("anchor"):
+		entry["anchor"] = source["anchor"]
+	remember_water(entry, time_seconds)
 
 
 func add_kin_id(agent_id: int) -> void:

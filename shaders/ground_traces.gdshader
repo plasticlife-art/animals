@@ -64,6 +64,22 @@ uniform float sea_depth = 480.0;
 uniform float sea_shore_width = 78.0;
 uniform vec4 ford_color : source_color = vec4(0.74, 0.72, 0.54, 0.90);
 uniform vec4 ford_stone_color : source_color = vec4(0.46, 0.44, 0.39, 0.95);
+// Bodies of water (`WaterBodies`): `water_id_tex` names the body owning each texel (-1 a river, -2 a
+// ford, -3 a stream) and `water_shrink_tex` holds per body its shrink (r), its kind (g, 1 a marsh),
+// how far in from its edge its water is at its deepest colour (b) and how far it has gone down (a,
+// 0 full to 1 dry). The shore is sand in places and wet mud in others, reeds standing along it in
+// clumps; standing water hardly foams; a marsh is wet ground with pools, which close as it dries;
+// a stream is a quiet, shallow thread.
+uniform float water_bodies = 0.0;
+uniform vec4 mud_color : source_color = vec4(0.36, 0.33, 0.22, 0.55);
+uniform vec4 marsh_color : source_color = vec4(0.27, 0.34, 0.19, 0.72);
+// A bed the water has left greens over: sedge in patches, wet mud only along the water's edge.
+uniform vec4 sedge_color : source_color = vec4(0.43, 0.50, 0.25, 0.5);
+uniform vec4 reed_color : source_color = vec4(0.24, 0.42, 0.16, 1.0);
+uniform vec4 reed_head_color : source_color = vec4(0.42, 0.27, 0.13, 1.0);
+uniform float marsh_pool_size = 66.0;
+uniform float reed_width = 18.0;
+uniform float standing_foam = 0.3;
 
 // Biome borders: the terrain grid is square cells, so its biomes meet in a staircase. Near a
 // cell's edge a fragment looks a noise-warped way into the neighbouring cell, the warp stepped to
@@ -168,7 +184,14 @@ float ford_share(vec2 uv) {
 
 // How much of the island's sea or its beach (`WaterMask.SEA_ID`) the fragment is in.
 float sea_share(vec2 uv) {
-	return id_share(uv, -3.5, -2.5);
+	return id_share(uv, -4.5, -3.5);
+}
+
+// The id of the texel the fragment lies in: a body's number, or -1, -2, -3 or -4.
+int water_id_at(vec2 uv) {
+	ivec2 size = textureSize(water_id_tex, 0);
+	ivec2 cell = clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - ivec2(1));
+	return int(round(texelFetch(water_id_tex, cell, 0).r));
 }
 
 float hash(vec2 p) {
@@ -364,6 +387,61 @@ vec4 field_surface(vec2 world, float pixel) {
 	return surface_of(chosen, world);
 }
 
+// Reeds over `under` where `strength` (0..1) says a bed of them grows: stems a pixel of the art
+// across, three to six tall, standing in rows a few pixels apart, the odd one topped by a brown
+// cattail head and lit on alternate columns. Drawn coarser than the art they would only shimmer:
+// then a darker green wash stands for them.
+vec4 with_reeds(vec4 under, vec2 world, float strength, float pixel) {
+	if (strength <= 0.0 || reed_width <= 0.0) {
+		return under;
+	}
+	if (pixel > art_px * 1.5) {
+		return over(vec4(reed_color.rgb * 0.8, 0.35 * strength * reed_color.a), under);
+	}
+	vec2 px = floor(world / art_px);
+	ivec2 cell = ivec2(int(px.x), int(floor(px.y / 7.0)));
+	float h = ihash(cell * ivec2(1, 3) + ivec2(11, 5));
+	if (h < 1.0 - 0.45 * strength) {
+		return under;
+	}
+	float row = px.y - floor(px.y / 7.0) * 7.0;
+	float foot = 6.0 - floor(ihash(cell + ivec2(3, 7)) * 3.0);
+	float tall = 3.0 + floor(ihash(cell + ivec2(17, 1)) * 4.0);
+	if (row > foot || row < foot - tall) {
+		return under;
+	}
+	vec3 colour = reed_color.rgb * (mod(px.x, 2.0) < 1.0 ? 1.12 : 0.92);
+	if (row <= foot - tall + 1.0 && h > 0.9) {
+		colour = reed_head_color.rgb;
+	}
+	return over(vec4(colour, reed_color.a), under);
+}
+
+// A marsh over `under`: wet ground over its bank, fading in at the edge, and pools where a noise
+// rises above a threshold that climbs as the marsh goes down (`gone`, 0..1), deeper in a little
+// more water; reeds all over it.
+vec4 with_marsh(vec4 under, vec2 world, float d, float gone, float pixel) {
+	if (d > 0.0) {
+		return under;
+	}
+	float inward = smoothstep(0.0, marsh_pool_size * 0.4, -d);
+	float mottle = value_noise(world / (marsh_pool_size * 0.6));
+	float tussock = smoothstep(0.4, 0.7, value_noise(world / (marsh_pool_size * 0.25) + vec2(4.0, 2.0)));
+	vec3 ground = mix(marsh_color.rgb * (0.85 + 0.3 * mottle), sedge_color.rgb, 0.45 * tussock);
+	vec4 result = over(vec4(ground, marsh_color.a * inward * (1.0 - 0.35 * gone)), under);
+	float pools = value_noise(world / marsh_pool_size) * 0.65 + value_noise(world / (marsh_pool_size * 0.37) + vec2(7.1, 3.3)) * 0.35;
+	float p = pools + smoothstep(0.0, marsh_pool_size * 1.5, -d) * 0.1 - mix(0.52, 0.98, clamp(gone, 0.0, 1.0));
+	float open = smoothstep(-0.015, 0.015, p) * inward;
+	if (open > 0.0) {
+		vec2 flow = TIME * ripple_speed * vec2(1.0, 0.73);
+		vec4 water = mix(shallow_color, deep_color, 0.2 + smoothstep(0.0, 0.2, p) * 0.3);
+		water.rgb += ripple_strength * 0.5 * (value_noise(world / ripple_size + flow) - 0.5);
+		result = over(vec4(water.rgb, water.a * open), result);
+	}
+	float beds = smoothstep(0.45, 0.6, value_noise(world / (reed_width * 2.5) + vec2(3.0, 9.0))) * inward * (1.0 - open);
+	return with_reeds(result, world, beds, pixel);
+}
+
 // A sand shore around each pond and the water over it, laid over `ground`, the grass and
 // trail colour already worked out. Away from water `ground` comes back unchanged.
 // `pixel` is how much world one screen pixel covers, so the water's edge stays a crisp
@@ -372,35 +450,59 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 	if (water_enabled < 0.5) {
 		return ground;
 	}
-	float edge = (noise - 0.5) * 2.0 * edge_noise;
+	vec2 uv = world / water_extent;
+	int id = water_bodies > 0.5 ? water_id_at(uv) : -1;
+	vec4 body = vec4(0.0, 0.0, water_depth, 0.0);
+	if (id >= 0) {
+		body = texelFetch(water_shrink_tex, ivec2(id, 0), 0);
+	}
+	bool marsh = body.g > 0.5;
+	bool stream = id == -3;
+	bool standing = id >= 0;
+	float edge = (noise - 0.5) * 2.0 * edge_noise * (stream ? 0.2 : 1.0);
 	// `d` to the bank, where the sand is; `w` to the water's edge, the bank itself while ponds
 	// have no levels.
-	float d = bilinear(water_tex, world / water_extent) + edge;
-	float sea = 0.0;
-	float shore = shore_width;
-	vec4 shore_tint = shore_color;
-	if (water_sea > 0.5) {
-		sea = sea_share(world / water_extent);
-		shore = mix(shore_width, sea_shore_width, sea);
-		shore_tint = mix(shore_color, sea_shore_color, sea);
-	}
-	if (d > shore + pixel) {
+	float d = bilinear(water_tex, uv) + edge;
+	// The island's sea and its beach (`WaterMask.SEA_ID`): a wider shore, all sand.
+	float sea = water_sea > 0.5 ? sea_share(uv) : 0.0;
+	float shore = mix(shore_width, sea_shore_width, sea);
+	if (d > max(shore, reed_width) + pixel) {
 		return ground;
 	}
-	float sand = (1.0 - smoothstep(0.0, shore, d)) * shore_tint.a;
-	vec4 result = over(vec4(shore_tint.rgb, sand), ground);
+	vec4 result = ground;
+	if (marsh) {
+		return with_marsh(result, world, d, body.a, pixel);
+	}
+	// Sand in places, wet mud in others; a stream's banks only damp; a beach sand.
+	float sandy = water_bodies > 0.5 ? smoothstep(0.35, 0.7, value_noise(world / (shore_width * 5.0) + vec2(5.0, 1.0))) : 1.0;
+	float band = 1.0 - smoothstep(0.0, shore, d);
+	vec4 bank = mix(mix(mud_color, shore_color, sandy), sea_shore_color, sea);
+	result = over(vec4(bank.rgb, band * bank.a * (stream ? 0.25 : 1.0)), result);
 	float w = d;
 	if (water_levels > 0.5) {
-		w = shrunk_distance(world / water_extent) + edge;
-		float bed = (1.0 - smoothstep(-pixel, pixel, d)) * smoothstep(0.0, bed_fade, -d) * bed_color.a;
-		result = over(vec4(bed_color.rgb, bed), result);
+		w = shrunk_distance(uv) + edge;
+		float in_bed = 1.0 - smoothstep(-pixel, pixel, d);
+		// Wet mud a band wide along the water; the rest of the bed greening over in patches, the
+		// more the nearer the old bank, so the bank leaves no line behind it.
+		float wet = 1.0 - smoothstep(0.0, bed_fade * 1.2, w);
+		float exposed = clamp(-d / max(w - d, 1.0), 0.0, 1.0);
+		float sedge = smoothstep(0.3, 0.7, value_noise(world / (bed_fade * 2.2) + vec2(2.0, 8.0)));
+		vec3 bed_rgb = mix(mix(bed_color.rgb, sedge_color.rgb, 0.45 + 0.5 * sedge), bed_color.rgb * 0.85, wet);
+		float bed = in_bed * mix(sedge_color.a * 0.6 * (1.0 - 0.6 * sedge) * smoothstep(0.0, 0.8, exposed), bed_color.a, wet);
+		result = over(vec4(bed_rgb, bed), result);
+	}
+	// Reeds along a lake's or a pond's bank, in clumps, at the water's edge of its full bank.
+	float reeds = 0.0;
+	if (standing && water_bodies > 0.5) {
+		float near_bank = 1.0 - smoothstep(reed_width * 0.4, reed_width, abs(d - reed_width * 0.2));
+		reeds = near_bank * smoothstep(0.5, 0.62, value_noise(world / (reed_width * 3.0) + vec2(9.0, 4.0)));
 	}
 	float inside = 1.0 - smoothstep(-pixel, pixel, w);
 	if (inside <= 0.0) {
-		return result;
+		return with_reeds(result, world, reeds, pixel);
 	}
 	d = w;
-	vec4 water = mix(shallow_color, deep_color, smoothstep(0.0, 1.0, -d / water_depth));
+	vec4 water = mix(shallow_color, deep_color, smoothstep(0.0, 1.0, -d / max(body.b, 1.0)));
 	// Out at sea the water deepens on to the open sea's own colour, opaque: no ground under it.
 	water = mix(water, sea_color, sea * smoothstep(water_depth * 0.5, sea_depth, -d));
 	vec2 flow = TIME * ripple_speed * vec2(1.0, 0.73);
@@ -409,6 +511,8 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 	// The surf on a beach runs wider than a pond's ring of foam.
 	float surf = mix(foam_width, foam_width * 2.5, sea);
 	float foam = (1.0 - smoothstep(0.0, surf, -d)) * (0.6 + 0.4 * sin(TIME * 1.3 + d * 0.15));
+	// Standing water barely breaks at its edge; a stream not at all.
+	foam *= stream ? 0.0 : (standing && water_bodies > 0.5 ? standing_foam : 1.0);
 	water = over(vec4(foam_color.rgb, foam * foam_color.a), water);
 	if (water_fords > 0.5) {
 		float ford = smoothstep(0.3, 0.7, ford_share(world / water_extent) + (noise - 0.5) * 0.4);
@@ -428,7 +532,7 @@ vec4 with_water(vec4 ground, vec2 world, float noise, float pixel) {
 			water = vec4(mix(water.rgb, bar, ford * ford_color.a), mix(water.a, 1.0, ford * 0.5));
 		}
 	}
-	return over(vec4(water.rgb, water.a * inside), result);
+	return with_reeds(over(vec4(water.rgb, water.a * inside), result), world, reeds * (1.0 - inside * 0.6), pixel);
 }
 
 void fragment() {

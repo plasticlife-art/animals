@@ -69,6 +69,13 @@ const WATER_DEFAULTS := {
 	"ripple_strength": 0.06,
 	"bed_color": [0.50, 0.40, 0.28, 0.70],
 	"bed_px": 10.0,
+	"mud_color": [0.36, 0.33, 0.22, 0.55],
+	"marsh_color": [0.22, 0.29, 0.16, 0.78],
+	"reed_color": [0.24, 0.42, 0.16, 1.0],
+	"reed_head_color": [0.42, 0.27, 0.13, 1.0],
+	"marsh_pool_px": 22.0,
+	"reed_px": 6.0,
+	"standing_foam": 0.3,
 	# The island's sea (`WaterMask.stamp_sea()`): past `sea_depth_px` from the coast all
 	# `sea_color`, opaque; a beach of `sea_shore_color` `sea_shore_px` wide.
 	"sea_color": [0.07, 0.21, 0.38, 1.0],
@@ -77,7 +84,8 @@ const WATER_DEFAULTS := {
 	"sea_shore_px": 26.0,
 }
 const WATER_COLORS := ["shallow_color", "deep_color", "foam_color", "shore_color", "bed_color",
-	"ford_color", "ford_stone_color", "sea_color", "sea_shore_color"]
+	"ford_color", "ford_stone_color", "mud_color", "marsh_color", "reed_color", "reed_head_color", "sea_color",
+	"sea_shore_color"]
 ## How often a pond's shrink is handed to the shader while ponds have levels: a level moves a
 ## few hundredths a second at most.
 const WATER_REFRESH_TICKS := 18
@@ -92,8 +100,8 @@ const BiomeFieldScript := preload("res://scripts/ui/biome_field.gd")
 const BORDER_BIOMES := ["meadow", "forest", "drought", "swamp"]
 ## Shader uniform each `_px` length becomes, in world units.
 const WATER_LENGTHS := {"depth_px": "water_depth", "shore_px": "shore_width", "foam_px": "foam_width",
-	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size", "bed_px": "bed_fade", "sea_depth_px": "sea_depth",
-	"sea_shore_px": "sea_shore_width"}
+	"edge_noise_px": "edge_noise", "ripple_px": "ripple_size", "bed_px": "bed_fade", "marsh_pool_px": "marsh_pool_size",
+	"reed_px": "reed_width", "sea_depth_px": "sea_depth", "sea_shore_px": "sea_shore_width"}
 
 ## Layer-local units a row mesh is sorted after the tiles of its own row. Rows are half
 ## a tile apart, so this lands between one row and the next.
@@ -115,6 +123,8 @@ var _water_mask: Dictionary = {}
 var water_shrinks := PackedFloat32Array()
 var _shrink_texture: ImageTexture
 var _dry_shrink: float = 0.0
+## The deep colour's reach, in world units, for a pond of old or a marsh (`depth_px`).
+var _water_depth: float = 0.0
 ## How many ponds the water field holds, and how far it reaches past a bank: a pond the player
 ## digs is stamped into it (`refresh_water_sources()`).
 var _baked_ponds: int = 0
@@ -210,21 +220,42 @@ func _on_tick_completed(tick: int, _snapshot) -> void:
 		refresh_water()
 
 
-## Hands each pond's shrink to the shader: how far its water stands in from its bank, and for a
-## dry pond far enough that none is left even where the edge noise pushes outwards.
+## Hands each pond's shrink to the shader, a body of lobes one (`WaterSystem.body_shrink()`): how
+## far its water stands in from its bank, and for a dry pond far enough that none is left even
+## where the edge noise pushes outwards.
+##
+## With it, per body, what the shader draws it by: its kind (1 a marsh) and how far in from its edge
+## the water is at its deepest colour - a lake soon, a pond never quite, so a small pond is no dark
+## pit - and how far it has gone down, 0 full to 1 dry, which closes a marsh's pools.
 func refresh_water() -> void:
 	if _shrink_texture == null or simulation_manager == null or simulation_manager.world_state == null:
 		return
 	var world = simulation_manager.world_state
-	var sources: Array = world.water_sources
-	if water_shrinks.size() != sources.size():
+	var count: int = world.water.body_count()
+	if water_shrinks.size() != count:
 		return
-	for index in range(sources.size()):
-		var source: Dictionary = sources[index]
-		var bank := float(source.get("bank_radius", source.get("radius", 0.0)))
-		water_shrinks[index] = bank + _dry_shrink if world.water.is_dry(index) \
-			else maxf(0.0, bank - float(source.get("radius", bank)))
-	_shrink_texture.update(_float_image(water_shrinks, sources.size(), 1))
+	var params := PackedFloat32Array()
+	params.resize(count * 4)
+	for body in range(count):
+		var shrink: float = world.water.body_shrink(body, _dry_shrink)
+		water_shrinks[body] = shrink
+		var anchor: Dictionary = world.water_sources[world.water.body_anchor(body)]
+		var bank := maxf(1.0, float(anchor.get("bank_radius", anchor.get("radius", 1.0))))
+		var kind := str(anchor.get("kind", ""))
+		params[body * 4] = shrink
+		params[body * 4 + 1] = 1.0 if kind == "marsh" else 0.0
+		params[body * 4 + 2] = maxf(_water_depth, bank * 0.7) if kind == "lake" \
+			else (maxf(_water_depth, bank * 1.6) if kind == "pond" else _water_depth)
+		params[body * 4 + 3] = clampf(shrink / bank, 0.0, 1.0)
+	_shrink_texture.update(_params_image(params, count))
+
+
+## Per body four floats: shrink, kind, depth, how far gone down.
+static func _params_image(params: PackedFloat32Array, count: int) -> Image:
+	if params.size() != count * 4:
+		params = PackedFloat32Array()
+		params.resize(maxi(1, count) * 4)
+	return Image.create_from_data(maxi(1, count), 1, false, Image.FORMAT_RGBAF, params.to_byte_array())
 
 
 func _upload(texture: ImageTexture, parameter: String, cells: PackedFloat32Array, cols: int, rows: int) -> ImageTexture:
@@ -269,8 +300,9 @@ func _apply_water(world, water: Dictionary) -> void:
 		_material.set_shader_parameter(key, water[key])
 	for key in WATER_LENGTHS.keys():
 		_material.set_shader_parameter(WATER_LENGTHS[key], float(water[key]) * scale)
-	for key in ["ripple_speed", "ripple_strength"]:
+	for key in ["ripple_speed", "ripple_strength", "standing_foam"]:
 		_material.set_shader_parameter(key, float(water[key]))
+	_water_depth = float(water["depth_px"]) * scale
 	# The field only has to reach as far as anything is drawn: the shore, how far the
 	# noise can push it, and two texels for the blend.
 	var texel := maxf(1.0, cell_size * float(water["texel_cells"]))
@@ -281,7 +313,8 @@ func _apply_water(world, water: Dictionary) -> void:
 	var reach := (shore + float(water["edge_noise_px"])) * scale + texel * 2.0
 	var rivers_config: Dictionary = world.config_bundle.get("world", {}).get("terrain", {}).get("rivers", {})
 	var ford_half := maxf(0.5, float(rivers_config.get("ford_width_cells", 2.5))) * cell_size * 0.5
-	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach, terrain.rivers, ford_half)
+	_water_mask = WaterMaskScript.bake(world.water_sources, world.bounds.end, texel, reach, world.terrain_system.rivers, ford_half,
+		world.water.body_of, world.terrain_system.streams)
 	_material.set_shader_parameter("water_sea", 1.0 if terrain.has_island() else 0.0)
 	if terrain.has_island():
 		var sea := PackedByteArray()
@@ -311,15 +344,16 @@ func _upload_water_field(world) -> void:
 		fords_on = fords_on or not river.get("fords", []).is_empty()
 	_material.set_shader_parameter("water_levels", 1.0 if levels_on else 0.0)
 	_material.set_shader_parameter("water_fords", 1.0 if fords_on else 0.0)
-	if levels_on or fords_on or world.terrain_system.has_island():
-		_material.set_shader_parameter("water_id_tex", ImageTexture.create_from_image(
-			_float_image(_water_mask["ids"], cols, rows)))
-	if levels_on:
-		water_shrinks = PackedFloat32Array()
-		water_shrinks.resize(world.water_sources.size())
-		_shrink_texture = ImageTexture.create_from_image(_float_image(water_shrinks, water_shrinks.size(), 1))
-		_material.set_shader_parameter("water_shrink_tex", _shrink_texture)
-		refresh_water()
+	# Which body owns each texel and each body's look (`refresh_water()`), whether or not levels move:
+	# a marsh is drawn as a marsh, a lake as deep as it is, either way.
+	_material.set_shader_parameter("water_id_tex", ImageTexture.create_from_image(
+		_float_image(_water_mask["ids"], cols, rows)))
+	water_shrinks = PackedFloat32Array()
+	water_shrinks.resize(world.water.body_count())
+	_shrink_texture = ImageTexture.create_from_image(_params_image(PackedFloat32Array(), water_shrinks.size()))
+	_material.set_shader_parameter("water_shrink_tex", _shrink_texture)
+	_material.set_shader_parameter("water_bodies", 1.0)
+	refresh_water()
 
 
 ## Ponds the player dug since the field was baked (`PlayerState`): stamped into the field, which
@@ -331,7 +365,7 @@ func refresh_water_sources() -> void:
 	if sources.size() <= _baked_ponds:
 		return
 	for index in range(_baked_ponds, sources.size()):
-		WaterMaskScript.stamp(_water_mask, sources[index], index, _water_reach)
+		WaterMaskScript.stamp(_water_mask, sources[index], simulation_manager.world_state.water.body_index(index), _water_reach)
 	_baked_ponds = sources.size()
 	_upload_water_field(simulation_manager.world_state)
 

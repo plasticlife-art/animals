@@ -146,6 +146,9 @@
                 "overview_mid_sector_margin": 512.0,
                 "headless_active_radius": 960.0
               },
+              "water_bodies": {
+                "scale": 0.3333
+              },
               "water_generation": {
                 "sources_per_million_units": 4.05,
                 "radius_min": 60.0,
@@ -297,6 +300,9 @@
                 "overview_near_sector_margin": 384.0,
                 "overview_mid_sector_margin": 1024.0,
                 "headless_active_radius": 1920.0
+              },
+              "water_bodies": {
+                "scale": 0.6667
               },
               "water_generation": {
                 "sources_per_million_units": 1.0125,
@@ -453,6 +459,9 @@
                 "overview_near_sector_margin": 576.0,
                 "overview_mid_sector_margin": 1536.0,
                 "headless_active_radius": 4320.0
+              },
+              "water_bodies": {
+                "scale": 1.5
               },
               "water_generation": {
                 "radius_min": 270.0,
@@ -658,6 +667,12 @@
               },
               "water_generation": {
                 "sources_per_million_units": 2.363
+              },
+              "water_bodies": {
+                "ponds": {
+                  "max_gap": 1000.0,
+                  "count_max": 26
+                }
               }
             }
           }
@@ -671,6 +686,16 @@
               },
               "water_generation": {
                 "sources_per_million_units": 0.695
+              },
+              "water_bodies": {
+                "lakes": {
+                  "count": 2
+                },
+                "ponds": {
+                  "max_gap": 1700.0,
+                  "count_min": 5,
+                  "count_max": 12
+                }
               }
             }
           }

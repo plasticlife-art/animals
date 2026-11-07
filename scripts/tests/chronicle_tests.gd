@@ -131,17 +131,36 @@ func _test_places_of_a_real_map(a) -> void:
 	var places = PlaceNamesScript.new()
 	places.build(world, 3)
 	a.equal(places.ponds.size(), world.water_sources.size(), "every pond named")
-	# A river's banks carry its name, once a river: the ponds are the rest.
+	# A river's banks carry its name, once a river; a lake's lobes its name, once a lake (`lobe`):
+	# the ponds are the rest.
 	var distinct := {}
 	var ponds := 0
 	var rivers := {}
-	for pond in places.ponds:
+	var streams := {}
+	var lobes_named := true
+	for index in range(places.ponds.size()):
+		var pond: Dictionary = places.ponds[index]
 		if pond.has("river"):
 			rivers[int(pond["river"])] = pond["name"]
+			continue
+		# A stream's springs carry its name, once a stream.
+		if pond.has("stream"):
+			streams[int(pond["stream"])] = pond["name"]
+			continue
+		if bool(pond.get("lobe", false)):
+			var anchor: int = world.water.lobes_of(index)[0]
+			lobes_named = lobes_named and places.ponds[anchor]["name"] == pond["name"]
 			continue
 		distinct[pond["name"]] = true
 		ponds += 1
 	a.equal(distinct.size(), ponds, "no two ponds share a name")
+	a.equal(ponds, world.pond_count(), "a name to every pond, a lake of many lobes one")
+	a.is_true(lobes_named, "and every lobe of a lake carries its lake's name")
+	var stream_names := {}
+	for stream in streams.keys():
+		stream_names[streams[stream]] = true
+	a.is_true(stream_names.size() == streams.size() and not stream_names.keys().any(func(name) -> bool: return distinct.has(name)),
+		"each stream a name of its own, no pond's (%d streams)" % streams.size())
 	var river_names := {}
 	for river in rivers.keys():
 		river_names[rivers[river]] = true

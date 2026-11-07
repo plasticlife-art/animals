@@ -110,7 +110,10 @@ func _draw() -> void:
 		for index in range(places.ponds.size()):
 			var pond: Dictionary = places.ponds[index]
 			# A river's name once, at its middle bank, with no level: a river never runs dry.
-			if pond.has("river") and not bool(pond.get("label", false)):
+			if (pond.has("river") or pond.has("stream")) and not bool(pond.get("label", false)):
+				continue
+			# A lake's name once, at its largest lobe.
+			if bool(pond.get("lobe", false)):
 				continue
 			if view.has_point(pond["position"]):
 				var dry: bool = water != null and water.is_dry(index)

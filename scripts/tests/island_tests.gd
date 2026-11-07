@@ -3,7 +3,7 @@ extends RefCounted
 ## The island (`terrain.island`, `IslandMask`): off, the world is the world without it; on, one
 ## piece of land with sea all round it to the map's edge, the same for a seed and another for
 ## another, the world's stream untouched; the ponds on the land, the rivers down to the sea and
-## no ford by it; the sea never drunk from; the animals placed on the land and not round its
+## no ford by it; the lakes, marshes and ponds of `WaterBodies` on the land, and their streams; the sea never drunk from; the animals placed on the land and not round its
 ## beaches, the dens half a radius from the sea, a flight from the beach kept ashore; and the
 ## districts named on the land only.
 
@@ -18,6 +18,7 @@ func run(a) -> void:
 	_test_the_mask(a)
 	_test_an_island(a)
 	_test_ponds_and_rivers(a)
+	_test_water_bodies_ashore(a)
 	_test_the_sea_is_not_drunk(a)
 	_test_placed_on_land(a)
 	_test_dens_off_the_sea(a)
@@ -158,6 +159,42 @@ func _test_ponds_and_rivers(a) -> void:
 			banks_ashore = banks_ashore and not terrain.is_sea_position(source["position"])
 	a.is_true(banks_ashore, "no drinking spot out at sea")
 	a.equal(terrain._collect_walkable_components().size(), 1, "the land still in one piece across its rivers")
+	Helpers.destroy_manager(manager)
+
+
+## The lakes, marshes and ponds in natural shapes on an island: every lobe's bank past the beach,
+## two cells clear of the sea; and their streams running to that water, not to the sea.
+func _test_water_bodies_ashore(a) -> void:
+	var bundle := _bundle(9989, _island())
+	var water_bodies: Dictionary = ConfigLoader.load_config_bundle()["world"]["water_bodies"].duplicate(true)
+	water_bodies["enabled"] = true
+	water_bodies["scale"] = 0.4
+	bundle["world"]["water_bodies"] = water_bodies
+	var manager = Helpers.create_manager_with(bundle, 9989)
+	var world = manager.world_state
+	var terrain = world.terrain_system
+	var bodies := {}
+	var lakes := 0
+	var clear := true
+	for source in world.water_sources:
+		if not source.has("kind"):
+			continue
+		if not bodies.has(source["body"]):
+			bodies[source["body"]] = true
+			lakes += int(str(source["kind"]) != "pond")
+		var centre: Vector2 = source["position"]
+		var radius := float(source.get("radius", 0.0))
+		for probe in range(9):
+			var point := centre if probe == 0 else centre + Vector2.from_angle(TAU * float(probe) / 8.0) * radius
+			clear = clear and terrain.coast_cells_at_index(terrain.get_index_from_position(point)) >= 2.0
+	a.is_true(bodies.size() >= 3 and lakes >= 1, "lakes or marshes and ponds are laid on the island (%d, %d not ponds)"
+		% [bodies.size(), lakes])
+	a.is_true(clear, "every lobe's bank lies two cells clear of the sea")
+	var inland := true
+	for stream in terrain.streams:
+		var points: PackedVector2Array = stream["points"]
+		inland = inland and not terrain.is_sea_position(points[0]) and not terrain.is_sea_position(points[points.size() - 1])
+	a.is_true(inland, "the streams run from the land to its water, not to the sea (%d)" % terrain.streams.size())
 	Helpers.destroy_manager(manager)
 
 

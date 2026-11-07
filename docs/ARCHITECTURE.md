@@ -147,7 +147,7 @@ without it (`IslandTests`).
 - **The map is 1.35× the land on each side** (19440×10935 on the large map, the presets alike),
   so the land is what the 14400×8100 rectangle was. At 1.2× (31 % sea) the island came out a
   rounded rectangle with no room to wind. Seeds 3/5/7/11 against the rectangle: walkable land
-  −1.6..+3.7 %, ponds 49-55 against 52, wolf dens 6-7 against 6-7, fox dens 16-21 against 15-18.
+  −1.6..+3.7 %, round ponds (before `water_bodies`) 49-55 against 52, wolf dens 6-7 against 6-7, fox dens 16-21 against 15-18.
   `scripts/dev/island_map.gd` builds a map without running it and reports these, with a picture.
 - **The sea** is laid after the obstacles (so the clearance along the map's edge cannot open a
   walk round it) and before the rivers: deep water like a river's (obstacle `water`, `_water`
@@ -156,7 +156,10 @@ without it (`IslandTests`).
   the shortest four-way way over the land, `_ways_to()`), and never drunk: drinking spots come from
   the rivers' banks only. Within `beach_cells` the ground is open (no cliff, no thicket, no prop),
   and where the map has relief it climbs from the shore a level every two cells.
-- **On the land.** Ponds keep a cell clear of the sea; rivers run from a source at least 12 cells
+- **On the land.** Round ponds (`water_generation`) keep a cell clear of the sea; the lakes,
+  marshes and ponds of `WaterBodies` keep every bank two cells clear (`is_land`,
+  `WorldState._on_island_land()`), lakes and marshes centred on land (furthest from the lakes
+  before was out at sea); streams run to the land's water, never to the sea; rivers run from a source at least 12 cells
   inland (drawn from the cells that may hold one) to the sea cell where the straight way in from
   the edge first meets the land, over the land, and one cell on; no ford within three cells of the
   sea. `random_point()` draws again at sea (snapped, every offshore draw put herds on the beach);
@@ -164,7 +167,7 @@ without it (`IslandTests`).
   named on the land only.
 - **Drawn.** `WaterMask.stamp_sea()` adds the distance to the coast - where the cells' land,
   blended between their centres, is half: their edges with the corners rounded - negative out at
-  sea, owned by `SEA_ID` (-3). The shader draws water there as anywhere, deepening on to the open
+  sea, owned by `SEA_ID` (-4, a stream's being -3). The shader draws water there as anywhere, deepening on to the open
   sea's `sea_color`, opaque, past `sea_depth_px`; the beach is `sea_shore_color`, `sea_shore_px`
   wide, and the surf wider than a pond's foam. No frame is drawn round an island's map.
 - **The scenarios** keep the medium map's old rectangle (9600×5400, no island): their goals were
@@ -283,6 +286,71 @@ for bit the one without the block; the test fixtures keep it off (`PondTests` sw
   | Meadows × 1.25 (shipped) | 340 | 249 | 566 | 23 |
 
   Foxes, grouse and hares were even in every variant, and no species was lost.
+
+### Water in natural shapes (`water_bodies`)
+
+Fifty-two round ponds of nearly one size, each with a dark middle and a ring of sand, read as
+craters. With `water_bodies.enabled` (`WaterBodies`) the map has few, varied waters instead: on the
+large map three lakes, three marshes and up to eighteen ponds - against the 52 - and seven streams,
+beside the two rivers. Off (the block missing or `enabled` false, as in the scenarios, the test
+fixtures and every save made before it) the world is bit for bit the one of `water_generation`.
+
+- **Lobes.** A body of water is several round lobes, each an ordinary source of `water_sources`
+  carrying its body's tag (`body`) and kind (`kind`: `lake`, `marsh`, `pond`). A lake is a chain of
+  overlapping circles along a winding spine, broad in its middle, narrowing to its ends, with bays
+  and arms; one in three short and broad, one in four bent like a crescent. A marsh is a loose
+  cluster, most of them off a lake's end; a pond one to three circles. Everything that measures a
+  round pond - drinking within `drink_distance` of the edge, a body kept out of the water, cells
+  flooded, a sleeping herd's sector - measures a lobe unchanged, and overlapping lobes are one water
+  there as overlapping ponds always were (`_flooded` counts them).
+- **Laid** by `WaterBodies.generate()`: lakes first, each the best of a few random centres, the one
+  furthest from the lakes before it; then marshes; then ponds, each where the map lies furthest from
+  any water, until nowhere lies further than `ponds.max_gap` (1300 on the large map, inside a deer's
+  `water_search_radius` of 1920) or `count_max` are laid. Every body keeps `border` from the map's
+  edge and `spacing` from another's bank; a lobe wholly inside its body's others is dropped, so every
+  lobe has a shore. Lengths are the large map's times `scale` (1/3, 2/3, 1.5 by map size: as many
+  waters, scaled). A generator of its own, seeded from `seed` and the world's seed: the world's
+  stream is not drawn from, and each world has its own water - the round ponds were the same on
+  every seed. `is_land` keeps every lobe on land, for the island's shore, and draws lakes' and marshes'
+  centres on it.
+- **One level a body** (`WaterSystem`). The arrays stay per source, so saves and the worker's frame
+  are unchanged; a body's lobes all hold its level, capacity and dry state, and a drink from any of
+  them is drawn from it. A body is measured as a round pond of its area; the mean radius is the
+  ponds' alone, so a pond lasts as a pond of its size always has, and a lake, measured against them,
+  barely moves. The water's edge stands in from every lobe's bank by the same `R - R * sqrt(level)`,
+  R its largest lobe's bank - for a body of one lobe exactly `bank * sqrt(level)`, as before - so the
+  narrow bays and arms go dry first and the basin last; a lobe left with no water counts as dry
+  while its body is not, so no finder sends an animal there. A body dries and fills once, told by
+  its anchor (its largest lobe). A lake never falls below `water_levels.lake_floor` (0.4) and there
+  gives what is asked: springs feed it.
+- **Known by one place.** A lake seen by any of its lobes is remembered, given up on and kept out of
+  a sleeping herd's goals by its anchor's centre (`AgentBase.water_place()`), so its lobes neither
+  crowd the four memories nor each cost a failed route. An animal heading for a lake walks to the
+  nearest standable shore spot of any lobe holding water (`water_approach()`), and drinks at any
+  such lobe's edge (`within_drink_reach()`): a lobe deep inside its lake has no shore of its own.
+- **Marshes** are walked through: never added to the terrain's ponds, their cells painted swamp
+  (slow going, thin grass), drunk from anywhere within them.
+- **Streams** (`TerrainSystem.streams`): from a spring on the highest of a few open cells down to the
+  nearest standing water or river bed `length_min`..`length_max` away, by the rivers' cheapest-way
+  search over a noise of their own, round cliffs, thickets and standing water. Shallow: the ground
+  stays as it was, walked across anywhere. Animals drink at a point on a stream every
+  `access_every_cells`, sources marked `permanent` and `stream`, which never run dry.
+- **Beds cleared.** No cliff or thicket stands in a lake's or a generated pond's bed: cleared after
+  the obstacles are laid, the world's stream untouched.
+- **Names** (`PlaceNames`): one to a body, by kind - «озеро / плёс / разлив», «болото / топь /
+  трясина / мшара», «пруд / бочаг / омут / водопой …», «… ручей» - its lobes carrying it (`lobe`),
+  one label at its anchor.
+- **Drawn.** The water field's texels are owned by a body, not a lobe (`WaterMask.bake(…, bodies)`),
+  and its lobes meet in a smooth minimum over a third of a lobe's radius, rounding the notches where
+  two circles cross; a shrink added to both sides of a smooth minimum adds to the result, so one
+  shrink a body draws the union of its shrunk lobes exactly. Per body the shader takes four floats
+  (`water_shrink_tex`, RGBA): the shrink, the kind, how far in from the edge the water is at its
+  deepest colour (a lake soon, a pond never quite: no dark pit in a small pond) and how far the
+  body has gone down. The shore is sand in places and wet mud in others, reeds in clumps along it
+  (pixel stems, a wash when drawn coarser than the art); standing water barely foams; a bed the
+  water has left is wet mud along the water and greens over with sedge towards the old bank, which
+  leaves no line; a marsh is wet ground with pools that close as it dries, and reeds; a stream
+  (`STREAM_ID`) is a quiet thread with damp banks.
 
 ### `ScenerySystem`
 

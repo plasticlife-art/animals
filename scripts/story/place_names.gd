@@ -39,6 +39,29 @@ const POND_NOUNS := [
 	["купель", "f", "купели", "купели", "в"], ["озерцо", "n", "озерца", "озерце", "в"],
 	["озеро", "n", "озера", "озере", "в"],
 ]
+## The nouns of the map's water in natural shapes (`WaterBodies`), by kind: a lake, a marsh, a pond.
+## The map's ponds of old keep `POND_NOUNS`.
+const LAKE_NOUNS := [
+	["озеро", "n", "озера", "озере", "на"], ["плёс", "m", "плёса", "плёсе", "на"],
+	["разлив", "m", "разлива", "разливе", "на"],
+]
+const MARSH_NOUNS := [
+	["болото", "n", "болота", "болоте", "на"], ["топь", "f", "топи", "топи", "в"],
+	["трясина", "f", "трясины", "трясине", "в"], ["мшара", "f", "мшары", "мшаре", "на"],
+]
+const SMALL_POND_NOUNS := [
+	["пруд", "m", "пруда", "пруду", "в"], ["бочаг", "m", "бочага", "бочаге", "в"],
+	["водопой", "m", "водопоя", "водопое", "на"], ["омут", "m", "омута", "омуте", "в"],
+	["озерцо", "n", "озерца", "озерце", "в"], ["купель", "f", "купели", "купели", "в"],
+	["ключ", "m", "ключа", "ключе", "в"], ["родник", "m", "родника", "роднике", "в"],
+	["заводь", "f", "заводи", "заводи", "в"],
+]
+const STREAM_NOUNS := [["ручей", "m", "ручья", "ручье", "в"]]
+const MARSH_ADJECTIVES := [
+	"Гиблый:h", "Топкий:v", "Мшистый:h", "Клюквенный:h", "Комариный:h", "Чёрный:h", "Морошковый:h",
+	"Камышовый:h", "Сырой:o", "Багульный:h", "Журавлиный:h", "Утиный:h", "Глухой:o", "Дальний:s",
+	"Туманный:h", "Ольховый:h", "Кулиный:h", "Совиный:h",
+]
 ## District nouns by biome: `[word, gender, locative, preposition]`.
 const DISTRICT_NOUNS := {
 	"meadow": [["луг", "m", "лугу", "на"], ["поляна", "f", "поляне", "на"], ["долина", "f", "долине", "в"],
@@ -250,14 +273,32 @@ func _name_ponds(sources: Array, terrain, seed_value: int) -> void:
 	var taken := {}
 	var uses := {}
 	var pond_total := 0
+	# A lake of many lobes (`body`) is one water with one name; its other lobes carry it too.
+	var bodies := {}
 	for source in sources:
 		if not bool(source.get("permanent", false)):
-			pond_total += 1
+			var body = source.get("body", null)
+			if body == null or not bodies.has(body):
+				pond_total += 1
+			if body != null:
+				bodies[body] = {}
 	var share := ceili(float(pond_total) / float(POND_ADJECTIVES.size()))
 	var river_names := {}
 	var river_banks := {}
+	var stream_names := {}
+	var stream_springs := {}
 	for index in range(sources.size()):
 		var source: Dictionary = sources[index]
+		# A stream's springs carry its name, «Звонкий ручей», one label at its middle.
+		if bool(source.get("permanent", false)) and source.has("stream"):
+			var stream := int(source["stream"])
+			if not stream_names.has(stream):
+				stream_names[stream] = _pick(POND_ADJECTIVES, STREAM_NOUNS, seed_value, 0x5354, stream, taken, false, uses, share)
+				stream_springs[stream] = []
+			_add_pond_name(source, terrain, stream_names[stream])
+			ponds[ponds.size() - 1]["stream"] = stream
+			stream_springs[stream].append(ponds.size() - 1)
+			continue
 		if bool(source.get("permanent", false)):
 			var river := int(source.get("river", 0))
 			if not river_names.has(river):
@@ -269,12 +310,26 @@ func _name_ponds(sources: Array, terrain, seed_value: int) -> void:
 				river_banks[river] = []
 			river_banks[river].append(ponds.size() - 1)
 			continue
-		var named := _pick(POND_ADJECTIVES, POND_NOUNS, seed_value, 0x504F, index, taken, false, uses, share)
+		var body = source.get("body", null)
+		if body != null and not bodies[body].is_empty():
+			_add_pond_name(source, terrain, bodies[body])
+			ponds[ponds.size() - 1]["lobe"] = true
+			continue
+		var kind := str(source.get("kind", ""))
+		var adjectives: Array = MARSH_ADJECTIVES if kind == "marsh" else POND_ADJECTIVES
+		var nouns: Array = {"lake": LAKE_NOUNS, "marsh": MARSH_NOUNS, "pond": SMALL_POND_NOUNS}.get(kind, POND_NOUNS)
+		var named := _pick(adjectives, nouns, seed_value, 0x504F, index, taken, false, uses, share)
 		_add_pond_name(source, terrain, named)
+		if body != null:
+			bodies[body] = named
+			ponds[ponds.size() - 1]["kind"] = kind
 	# One label to a river, at its middle bank; the rest name the river in the feed only.
 	for river in river_banks.keys():
 		var banks: Array = river_banks[river]
 		ponds[int(banks[int(banks.size() / 2.0)])]["label"] = true
+	for stream in stream_springs.keys():
+		var springs: Array = stream_springs[stream]
+		ponds[int(springs[int(springs.size() / 2.0)])]["label"] = true
 
 
 func _add_pond_name(source: Dictionary, terrain, named: Dictionary) -> void:

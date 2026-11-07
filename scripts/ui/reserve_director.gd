@@ -4,17 +4,21 @@ extends RefCounted
 ## The living reserve's camera with no one at the controls (`reserve.json` `director`), calm. It
 ## stays with one scene - a hunt, a ward, a herd - for `scene_seconds`; a hunt until it is over and
 ## `linger_seconds` after. It leaves a scene early only for a viewer's «!моё» (after
-## `asked_dwell_seconds`), for something weightier near (after `near_dwell_seconds`) or for
-## something weighty anywhere (after `min_dwell_seconds`). The next scene is the best of: what a
-## viewer asked for; a hunt going on among the animals awake; the recent moments (a kill, a ward
-## taken, a pair or a pack on the hunt, a birth, a territory taken), the near first;
-## the wards, those not seen for a while first; the focus herd - not the subject it just left.
-## A far scene is reached through the map: the view widens until both places are in it, holds,
-## and closes on the new one; a near one is reached by panning. Each scene opens with a caption,
-## what and where (`caption_changed`), shown while the view travels and a while after. The herd
-## of what it follows becomes the session's focus, so the viewers' powers go where the stream
-## looks. An animal asleep far off is reached by going where its group's record has it and
-## selecting it once its sector wakes.
+## `asked_dwell_seconds`), for a hunt - and a herd's scene for a hunter out for one - (after
+## `hunt_dwell_seconds`), for something weightier near (after `near_dwell_seconds`) or for something
+## weighty anywhere (after `min_dwell_seconds`). The next scene is the best of: what a viewer asked
+## for; a hunt going on among the animals awake, the freshest first and none that would be over
+## before the view got there; a hunter out to hunt with prey near (`prowl_radius`), so that the view
+## is there before the chase - its scene becomes the hunt's when the chase starts, and ends after
+## `prowl_seconds` if none does; the recent moments (a kill, a ward taken, a pair or a
+## pack on the hunt, a birth, a territory taken), the near first; the wards, those not seen for a
+## while first; the focus herd - not the subject it just left. A far scene is reached through the
+## map: the view widens until both places are in it, holds, and closes on the new one; a near one is
+## reached by panning; to a hunt, in `hurry_share` of the time. Each scene opens with a caption,
+## what and where (`caption_changed`), shown while the view travels and a while after, and a
+## hunter's again when its chase starts. The herd of what it follows becomes the session's focus, so
+## the viewers' powers go where the stream looks. An animal asleep far off is reached by going where
+## its group's record has it and selecting it once its sector wakes.
 
 signal caption_changed(text: String, seconds: float)
 
@@ -22,14 +26,32 @@ const WEIGHTS := {"adopt": 7, "PredationSuccess": 6, "PairHunt": 5, "AgentBorn":
 	"TerritoryClaimed": 2}
 const ASKED_WEIGHT := 10
 const HUNT_WEIGHT := 6
+const PROWL_WEIGHT := 5
 const WARD_WEIGHT := 4
 const HERD_WEIGHT := 2
 ## A hunt one can see: the chase itself, a pair's flank, the strike.
 const HUNT_STATES := ["chase", "flank", "attack"]
+## The scenes that cannot wait: a chase is over in seconds.
+const URGENT := ["hunt", "prowl"]
+## A prowling hunter that has seen its prey and goes for it, or has lost it for a moment: still
+## the prowl's scene, its chase about to start or start again.
+const SIGHTED_STATES := ["seek_prey", "search_last_seen"]
+## A hunter at its kill or making for a carcass: fed, or about to be.
+const AT_CARCASS := ["seek_carcass", "feed_carcass"]
+## What a moment's animal is doing while there is still something of it to see: a kill while the
+## hunter is at it, a pair's hunt while it is on. Gone to after, the view would come to nothing;
+## its scene ends, as a hunt's, when the animal is done.
+const MOMENT_STATES := {"PredationSuccess": ["seek_carcass", "feed_carcass"],
+	"PairHunt": ["seek_prey", "chase", "flank", "attack", "search_last_seen"]}
 const DEFAULTS := {"scene_seconds": 75.0, "asked_seconds": 20.0, "moment_seconds": 30.0, "hunt_max_seconds": 60.0,
 	"linger_seconds": 6.0, "min_dwell_seconds": 30.0, "near_dwell_seconds": 15.0, "asked_dwell_seconds": 8.0,
+	"hunt_dwell_seconds": 10.0, "prowl_seconds": 30.0, "prowl_radius": 700.0, "hurry_share": 0.6,
 	"ward_rest_seconds": 180.0, "caption_seconds": 7.0, "pan_seconds": 1.4, "out_seconds": 1.6, "hold_seconds": 1.2,
 	"in_seconds": 1.6}
+## How long a chase may last at most, in simulated seconds, when the world's balance does not say.
+const CHASE_SECONDS := 14.0
+## The next scene is looked for this often, in milliseconds: every frame would be wasted work.
+const LOOK_EVERY_MSEC := 250
 ## Farther than this many views across, a scene is reached through the map.
 const FAR_VIEWS := 1.2
 ## Within this many views, a moment counts as near.
@@ -55,6 +77,7 @@ var _recent: Array = []
 var _move: Dictionary = {}
 var _pending_id: int = -1
 var _pending_until: int = 0
+var _looked_at: int = -(1 << 30)
 
 
 func configure(new_manager, new_camera, new_session, config: Dictionary) -> void:
@@ -65,6 +88,9 @@ func configure(new_manager, new_camera, new_session, config: Dictionary) -> void
 	settings.merge(config.get("director", {}), true)
 	if not manager.world_event.is_connected(_hear):
 		manager.world_event.connect(_hear)
+	# A hunt begun, a kill, a pair's hunt, an alarm: apart from the feed's events.
+	if manager.has_signal("scene_event") and not manager.scene_event.is_connected(_hear):
+		manager.scene_event.connect(_hear)
 	if not session.focus_requested.is_connected(ask):
 		session.focus_requested.connect(ask)
 
@@ -84,8 +110,9 @@ func _hear(event: Dictionary) -> void:
 			kind = "adopt"
 			agent_id = int(data.get("agent_id", -1))
 	var weight := int(WEIGHTS.get(kind, 0))
-	# Nothing to see of what happened asleep, far off: it was settled in aggregate.
-	if weight <= 0 or bool(data.get("dormant", false)):
+	# Nothing to see of what happened asleep, far off: it was settled in aggregate. And only a
+	# young one born is a birth, not one the world began with.
+	if weight <= 0 or bool(data.get("dormant", false)) or (kind == "AgentBorn" and str(data.get("reason", "")) != "reproduction"):
 		return
 	var at: Dictionary = event.get("position", {})
 	var where := Vector2(float(at.get("x", 0.0)), float(at.get("y", 0.0)))
@@ -104,6 +131,7 @@ func update() -> void:
 	if manager == null or manager.world_state == null:
 		return
 	var now := _now()
+	_watch_prowl(now)
 	if not _move.is_empty():
 		_advance(now)
 		return
@@ -114,9 +142,29 @@ func update() -> void:
 		elif now > _pending_until:
 			_pending_id = -1
 			scene["until"] = now
+	if now - _looked_at < LOOK_EVERY_MSEC:
+		return
+	_looked_at = now
 	var next := next_scene(now)
 	if not next.is_empty():
 		_go(next, now)
+
+
+## A hunter followed out to hunt that has started its chase: the scene is the hunt's now, as long
+## as a hunt's, and its caption says so.
+func _watch_prowl(now: int) -> void:
+	if str(scene.get("kind", "")) != "prowl":
+		return
+	var agent = manager.world_state.get_agent(int(scene.get("id", -1)))
+	if agent == null or not agent.is_alive or not HUNT_STATES.has(str(agent.state)) or int(agent.target_agent_id) < 0:
+		return
+	scene["kind"] = "hunt"
+	scene["weight"] = HUNT_WEIGHT
+	scene.erase("ended_at")
+	scene["until"] = maxi(int(scene["until"]), maxi(now, int(scene["started"])) + _ms("hunt_max_seconds"))
+	if not _move.is_empty():
+		_move["kind"] = "hunt"
+	caption_changed.emit(caption_for("hunt", agent.id, agent, agent.position), float(settings["caption_seconds"]))
 
 
 # --- Choosing -----------------------------------------------------------------------------------
@@ -132,19 +180,30 @@ func next_scene(now: int) -> Dictionary:
 				return asked
 	var best := {}
 	var best_score := -INF
+	var urgent := {}
+	var urgent_score := -INF
 	for candidate in candidates(now):
 		if int(candidate["id"]) == current_id and not over:
 			continue
-		var score := float(candidate["weight"]) - _distance_cost(candidate["position"])
+		var score := float(candidate["weight"]) - _distance_cost(candidate["position"]) + float(candidate.get("bonus", 0.0))
 		if _recent.has(int(candidate["id"])):
 			score -= 3.0
 		if score > best_score:
 			best_score = score
 			best = candidate
+		if URGENT.has(str(candidate["kind"])) and score > urgent_score:
+			urgent_score = score
+			urgent = candidate
 	if best.is_empty():
 		return {}
 	if over:
 		return best
+	# A hunt is over in seconds: it cuts a calmer scene sooner than anything else would. One only
+	# likely cuts no more than a herd's: a birth's has the herd's young coming, one by one.
+	var lighter: bool = int(urgent.get("weight", 0)) > int(scene.get("weight", 0)) if str(urgent.get("kind", "")) == "hunt" \
+		else int(scene.get("weight", 0)) <= HERD_WEIGHT
+	if not urgent.is_empty() and lighter and dwell >= _ms("hunt_dwell_seconds"):
+		return urgent
 	var near := _views_away(best["position"]) <= NEAR_VIEWS
 	if int(best["weight"]) >= HUNT_WEIGHT and int(best["weight"]) > int(scene.get("weight", 0)) and dwell >= _ms("min_dwell_seconds"):
 		return best
@@ -163,8 +222,11 @@ func scene_over(now: int) -> bool:
 	if id < 0 or _pending_id >= 0:
 		return false
 	var agent = manager.world_state.get_agent(id)
+	var kind := str(scene.get("kind", ""))
 	var ended: bool = agent == null or not agent.is_alive \
-		or (str(scene.get("kind", "")) == "hunt" and not HUNT_STATES.has(str(agent.state)))
+		or (kind == "hunt" and not HUNT_STATES.has(str(agent.state))) \
+		or (kind == "prowl" and not prowling(agent) and not SIGHTED_STATES.has(str(agent.state))) \
+		or (MOMENT_STATES.has(kind) and not MOMENT_STATES[kind].has(str(agent.state)))
 	if not ended:
 		scene.erase("ended_at")
 		return false
@@ -173,18 +235,32 @@ func scene_over(now: int) -> bool:
 	return now - int(scene["ended_at"]) >= _ms("linger_seconds")
 
 
-## What could be shown next: hunts on among the animals awake, the recent moments whose animal is
-## still about, the living wards and the focus herd.
+## What could be shown next: hunts on among the animals awake, hunters about to hunt, the recent
+## moments whose animal is still about, the living wards and the focus herd.
 func candidates(now: int) -> Array:
 	var found: Array = []
 	var world = manager.world_state
 	var hunters := {}
+	var prowlers: Array = []
+	var chase_limit := _chase_seconds()
 	for agent in world.get_living_agents():
-		if agent != null and agent.is_alive and HUNT_STATES.has(str(agent.state)) and int(agent.target_agent_id) >= 0:
+		if agent == null or not agent.is_alive:
+			continue
+		if HUNT_STATES.has(str(agent.state)) and int(agent.target_agent_id) >= 0:
 			hunters[agent.id] = true
+			# What is left of the chase, at the most, against the way there: none that would be
+			# over before the view arrived, the freshest first.
+			var left := maxf(0.0, chase_limit - float(agent.chase_timer)) / maxf(0.1, float(manager.speed_multiplier))
+			if agent.id != current_id and left * 1000.0 < float(_travel_ms(agent.position, "hunt")) + 1000.0:
+				continue
 			var hunt := _subject("hunt", agent.id, HUNT_WEIGHT)
 			if not hunt.is_empty():
+				hunt["bonus"] = clampf(left / chase_limit, 0.0, 1.0)
 				found.append(hunt)
+		elif prowling(agent):
+			prowlers.append(agent)
+	if not prowlers.is_empty():
+		found.append_array(_prowls(world, prowlers))
 	var window := _ms("moment_seconds")
 	var kept: Array = []
 	for moment in _moments:
@@ -196,6 +272,10 @@ func candidates(now: int) -> Array:
 			# An alarm is a hunt starting: the hunter near it, if one is awake.
 			id = _hunter_near(moment["position"])
 			if id < 0 or hunters.has(id):
+				continue
+		elif MOMENT_STATES.has(str(moment["kind"])):
+			var still = world.get_agent(id)
+			if still == null or not still.is_alive or not MOMENT_STATES[str(moment["kind"])].has(str(still.state)):
 				continue
 		var chosen := _subject(str(moment["kind"]), id, int(moment["weight"]), moment)
 		if not chosen.is_empty():
@@ -236,6 +316,55 @@ func _subject(kind: String, id: int, weight: int, moment: Dictionary = {}) -> Di
 	return {"kind": kind, "id": id, "weight": weight, "position": position, "caption": caption_for(kind, id, agent, position, moment)}
 
 
+## Whether a hunter will soon hunt: hungry enough and with the strength for a chase, not hunting
+## yet and not at a carcass. A hunter's AI sets on hunting only once it sees its prey, and the
+## chase follows within the tick, too late to set out then. This comes before: with prey within
+## 700, a chase followed within half a minute a third to two thirds of the time, some 4 s after in
+## the middle (`scripts/dev/director_probe.gd`, 2026-11-07).
+static func prowling(agent) -> bool:
+	if agent == null or not agent.is_alive or HUNT_STATES.has(str(agent.state)) or SIGHTED_STATES.has(str(agent.state)) \
+			or AT_CARCASS.has(str(agent.state)):
+		return false
+	var hunt = agent.get("hunt")
+	if not (hunt is Dictionary) or hunt.is_empty():
+		return false
+	return agent.is_feeding_allowed() and float(agent.energy) > float(hunt.get("min_chase_energy", 0.0))
+
+
+## The prowling hunters with prey within `prowl_radius`, as scenes: the nearer the prey, the sooner
+## the chase, and the higher it ranks.
+func _prowls(world, prowlers: Array) -> Array:
+	var radius := float(settings["prowl_radius"])
+	var cells := {}
+	var prey_of := {}
+	for agent in prowlers:
+		prey_of[agent.species_type] = world.species_registry.prey_set(agent.species_type)
+	for agent in world.get_living_agents():
+		if agent == null or not agent.is_alive:
+			continue
+		var cell := Vector2i((agent.position / radius).floor())
+		if not cells.has(cell):
+			cells[cell] = []
+		cells[cell].append(agent)
+	var found: Array = []
+	for agent in prowlers:
+		var prey: Dictionary = prey_of[agent.species_type]
+		var home := Vector2i((agent.position / radius).floor())
+		var nearest := INF
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				for other in cells.get(home + Vector2i(dx, dy), []):
+					if prey.has(other.species_type):
+						nearest = minf(nearest, agent.position.distance_to(other.position))
+		if nearest > radius:
+			continue
+		var prowl := _subject("prowl", agent.id, PROWL_WEIGHT)
+		if not prowl.is_empty():
+			prowl["bonus"] = 1.0 - nearest / radius
+			found.append(prowl)
+	return found
+
+
 func _hunter_near(position: Vector2) -> int:
 	var best := -1
 	var best_distance := INF
@@ -252,7 +381,8 @@ func _hunter_near(position: Vector2) -> int:
 
 ## What a scene is and where: «Охота: лиса Рыжик гонит оленя · у Тихой заводи».
 func caption_for(kind: String, id: int, agent, position: Vector2, moment: Dictionary = {}) -> String:
-	var who := _who(id, agent)
+	# A newborn by the young's word: «оленёнок», not «олениха».
+	var who := _who(id, agent, kind == "AgentBorn")
 	var sex := str(agent.sex) if agent != null else ""
 	var what := ""
 	match kind:
@@ -261,6 +391,8 @@ func caption_for(kind: String, id: int, agent, position: Vector2, moment: Dictio
 			var prey_words: Dictionary = HudText.ANIMALS.get(str(prey.species_type) if prey != null else "", {})
 			# «гонит оленя»: an animal's accusative is its genitive.
 			what = "Охота: %s гонит %s" % [who, str(prey_words["count"][1])] if not prey_words.is_empty() else "Охота: %s" % who
+		"prowl":
+			what = "%s %s на охоту" % [HudText.capitalized(who), HudText.verb(sex, "вышел", "вышла")]
 		"PredationSuccess":
 			what = "Добыча: %s" % who
 		"PairHunt":
@@ -286,7 +418,7 @@ func caption_for(kind: String, id: int, agent, position: Vector2, moment: Dictio
 	return what if place == "" else "%s · %s" % [what, place]
 
 
-func _who(id: int, agent) -> String:
+func _who(id: int, agent, young := false) -> String:
 	var name := ""
 	var species := ""
 	var sex := ""
@@ -302,7 +434,7 @@ func _who(id: int, agent) -> String:
 			sex = str(entry.get("sex", ""))
 	if species == "":
 		return name
-	var noun := HudText.animal_noun(species, sex)
+	var noun := HudText.animal_noun(species, sex, young)
 	return noun if name == "" else "%s %s" % [noun, name]
 
 
@@ -313,9 +445,11 @@ func _go(next: Dictionary, now: int) -> void:
 	var kind := str(next["kind"])
 	var from: Vector2 = camera.view_center()
 	var to: Vector2 = next["position"]
-	var far := from.distance_to(to) > FAR_VIEWS * maxf(1.0, camera.view_span())
-	var travel := _ms("pan_seconds") if not far else _ms("out_seconds") + _ms("hold_seconds") + _ms("in_seconds")
-	var length := _ms("hunt_max_seconds") if kind == "hunt" else (_ms("asked_seconds") if kind == "asked" else _ms("scene_seconds"))
+	var far := _is_far(to)
+	var hurry := _hurry(kind)
+	var travel := _travel_ms(to, kind)
+	var length := _ms("hunt_max_seconds") if kind == "hunt" else (_ms("asked_seconds") if kind == "asked" \
+		else (_ms("prowl_seconds") if kind == "prowl" else _ms("scene_seconds")))
 	scene = {"kind": kind, "id": id, "weight": int(next["weight"]), "position": to, "started": now + travel,
 		"until": now + travel + length}
 	current_id = id
@@ -326,13 +460,14 @@ func _go(next: Dictionary, now: int) -> void:
 		_ward_seen[id] = now
 	manager.clear_focus()
 	var zoom: float = camera.zoom_factor()
-	_move = {"id": id, "kind": kind, "from": from, "to": to, "zoom": zoom, "far": far, "started": now,
+	_move = {"id": id, "kind": kind, "from": from, "to": to, "zoom": zoom, "far": far, "started": now, "hurry": hurry,
 		"wide": minf(zoom, camera.zoom_to_fit(Rect2(from, Vector2.ZERO).expand(to).grow(from.distance_to(to) * 0.25 + 200.0)))}
 	caption_changed.emit(str(next.get("caption", "")), float(travel) / 1000.0 + float(settings["caption_seconds"]))
 
 
 func _advance(now: int) -> void:
-	var t := float(now - int(_move["started"])) / 1000.0
+	# In a hurry, the same way in less time.
+	var t := float(now - int(_move["started"])) / 1000.0 / float(_move.get("hurry", 1.0))
 	var to := _move_target()
 	var from: Vector2 = _move["from"]
 	var zoom: float = _move["zoom"]
@@ -401,6 +536,30 @@ static func sleeping_position(world, agent_id: int):
 			if int(record.get("id", -1)) == agent_id:
 				return Vector2(record.get("position", Vector2.ZERO))
 	return null
+
+
+## Whether a place is reached through the map rather than by panning.
+func _is_far(position: Vector2) -> bool:
+	return camera.view_center().distance_to(position) > FAR_VIEWS * maxf(1.0, camera.view_span())
+
+
+## The share of the usual time the way to a scene of `kind` takes: a hunt's is short.
+func _hurry(kind: String) -> float:
+	return clampf(float(settings["hurry_share"]), 0.1, 1.0) if URGENT.has(kind) else 1.0
+
+
+## How long the way to a place takes, in milliseconds, for a scene of `kind`.
+func _travel_ms(position: Vector2, kind: String) -> int:
+	var usual := _ms("pan_seconds") if not _is_far(position) else _ms("out_seconds") + _ms("hold_seconds") + _ms("in_seconds")
+	return int(float(usual) * _hurry(kind))
+
+
+## A chase's longest, in simulated seconds (`balance.hunt_rules.max_chase_duration`).
+func _chase_seconds() -> float:
+	var bundle = manager.get("config_bundle")
+	if bundle is Dictionary:
+		return maxf(1.0, float(bundle.get("balance", {}).get("hunt_rules", {}).get("max_chase_duration", CHASE_SECONDS)))
+	return CHASE_SECONDS
 
 
 ## How many views away a place is from the camera's centre.

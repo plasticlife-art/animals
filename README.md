@@ -32,6 +32,7 @@ The current build simulates a continuous 2D world with biomes, obstacles, grass 
 - The world is an island (`terrain.island`; off in the scenarios): sea all round, nobody comes or leaves, a species lost is lost for good; the sea is salt, rivers run down to it, and the map is 1.35x the land so the land is what the old rectangle was
 - Rivers with fords (`terrain.rivers`; a setup option, on by default, off in the scenarios): deep water blocks the way but for shallow fords, and the banks never run dry
 - Ponds are water, not ground (`terrain.ponds`): animals go round them and drink from the shore, nothing grows in a pond's bed but its shores are wet meadows, and as a pond falls its bed comes out and greens over
+- Water in natural shapes, each world its own (`world.water_bodies`; off in the scenarios): two or three long, winding lakes with bays that shoal in summer but never dry, small irregular ponds that dry in late summer, marshes walked through slowly and drunk from anywhere, and streams running from springs on high ground down to the lakes and rivers, crossed anywhere and never dry
 - Wolves, off unless the setup asks: packs on large territories that hunt together, fanning out to both sides of the prey (`hunt.pack`)
 - Lifecycle rules: hunger, thirst, energy depletion, predation, old age
 - Carcass lifecycle with feeder reservation and meat depletion

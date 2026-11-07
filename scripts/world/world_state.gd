@@ -36,6 +36,9 @@ const PlayerCommandsScript = preload("res://scripts/core/player_commands.gd")
 const SpatialGridScript = preload("res://scripts/world/spatial_grid.gd")
 const SpeciesRegistryScript = preload("res://scripts/core/species_registry.gd")
 const TerrainSystemScript = preload("res://scripts/world/terrain_system.gd")
+const WaterBodiesScript = preload("res://scripts/world/water_bodies.gd")
+## How many cells a natural body's bank keeps from the island's sea (`_on_island_land()`).
+const ISLAND_WATER_CLEARANCE := 2.0
 
 const LOD_TIER_0 := 0
 const LOD_TIER_1 := 1
@@ -230,7 +233,13 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	island_mask = IslandMask.build(world_config, int(rng.seed))
 	water_sources.clear()
 	var water_generation: Dictionary = world_config.get("water_generation", {})
-	if water_generation.is_empty():
+	var water_bodies: Dictionary = world_config.get("water_bodies", {})
+	if bool(water_bodies.get("enabled", false)):
+		# Lakes, marshes and ponds in natural shapes (`WaterBodies`), each world its own - on an
+		# island, on its land, every lobe's bank past the beach (`_on_island_land()`).
+		var is_land: Callable = Callable() if island_mask.is_empty() else Callable(self, "_on_island_land")
+		water_sources.append_array(WaterBodiesScript.generate(water_bodies, bounds, int(rng.seed), is_land))
+	elif water_generation.is_empty():
 		for source in world_config.get("water_sources", []):
 			water_sources.append({
 				"position": Vector2(float(source.get("x", 0.0)), float(source.get("y", 0.0))),
@@ -242,6 +251,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	terrain_system = TerrainSystemScript.new()
 	terrain_system.initialize(world_config, rng, water_sources, island_mask)
 	_add_river_banks(world_config.get("terrain", {}).get("rivers", {}))
+	_add_stream_springs(world_config.get("water_bodies", {}).get("streams", {}))
 	scenery.initialize(world_config, config_bundle.get("visuals", {}), terrain_system, int(rng.seed))
 	# Mixed into every inherited trait's hash, so two worlds' founders are not the same animals.
 	trait_world = int(rng.seed) & 0xFFFFFFFF
@@ -1309,7 +1319,7 @@ func _resolve_predator_water_search_radius(agent) -> float:
 func _water_target_for(agent, radius: float) -> Dictionary:
 	var target := _resolve_water_source(agent.position, radius)
 	# A pond it found no route to (`AgentBase.unreachable_targets`): the next one it may reach.
-	if not target.is_empty() and agent.is_unreachable(AgentBaseScript.place_key(target["position"]), current_time):
+	if not target.is_empty() and agent.is_unreachable(AgentBaseScript.place_key(water_place(target)), current_time):
 		target = water_for(agent, radius)
 	if target.is_empty() and water.enabled and agent.is_drinking_allowed():
 		target = water_for(agent, INF)
@@ -1324,7 +1334,7 @@ func water_for(agent, radius: float) -> Dictionary:
 	for source in water_sources:
 		if water.enabled and water.is_dry(int(source.get("index", -1))):
 			continue
-		if agent.is_unreachable(AgentBaseScript.place_key(source["position"]), current_time):
+		if agent.is_unreachable(AgentBaseScript.place_key(water_place(source)), current_time):
 			continue
 		var distance_sq: float = agent.position.distance_squared_to(source["position"])
 		if distance_sq < best_distance_sq:
@@ -1399,13 +1409,79 @@ func _add_river_banks(config: Dictionary) -> void:
 			at += every
 
 
-## The ponds of `water_sources`, without the rivers' banks.
+## Where animals drink from the streams (`TerrainSystem.streams`): a point on the stream itself every
+## `access_every_cells` along it - a stream is walked into - each a small source in `water_sources`
+## marked `permanent` and `stream`: spring-fed, a stream never runs dry. None in standing water,
+## none on ground a body cannot stand on.
+func _add_stream_springs(config: Dictionary) -> void:
+	if terrain_system.streams.is_empty():
+		return
+	var cell := terrain_system.cell_size
+	var every := maxf(1.0, float(config.get("access_every_cells", 4.0))) * cell
+	var standing: Array = []
+	for source in water_sources:
+		if source.has("kind") and not bool(source.get("permanent", false)):
+			standing.append(source)
+	var taken := {}
+	for source in water_sources:
+		taken[source["position"]] = true
+	for stream_index in range(terrain_system.streams.size()):
+		var stream: Dictionary = terrain_system.streams[stream_index]
+		var points: PackedVector2Array = stream["points"]
+		var length := 0.0
+		for index in range(points.size() - 1):
+			length += points[index].distance_to(points[index + 1])
+		var at := every * 0.5
+		while at < length:
+			var spot: Vector2 = TerrainSystemScript._point_along(points, at)[0]
+			at += every
+			var index: int = terrain_system.get_index_from_position(spot)
+			if index < 0 or not terrain_system.is_walkable_index(index) or terrain_system.is_water_index(index) \
+					or TerrainSystemScript._in_standing_water(spot, standing) or taken.has(spot):
+				continue
+			taken[spot] = true
+			water_sources.append({"position": spot, "radius": float(stream["half_width"]), "permanent": true, "stream": stream_index})
+
+
+## The ponds of `water_sources`, without the rivers' banks: a lake of many lobes (`body`) is one.
 func pond_count() -> int:
 	var count := 0
+	var bodies := {}
 	for source in water_sources:
-		if not bool(source.get("permanent", false)):
+		if bool(source.get("permanent", false)):
+			continue
+		var body = source.get("body", null)
+		if body == null:
+			count += 1
+		elif not bodies.has(body):
+			bodies[body] = true
 			count += 1
 	return count
+
+
+## Where a pond is known by - remembered, given up on, kept out of a sleeping herd's goals: a lake
+## of many lobes by its anchor (`WaterSystem`), whichever lobe was seen; a pond by its centre.
+static func water_place(source: Dictionary) -> Vector2:
+	return AgentBaseScript.water_place(source)
+
+
+## Whether `position` lies within `drink_distance` of the water of `source`: of its own edge, or,
+## for a lobe of a lake, of any other lobe of it holding water - a lobe wholly inside the rest
+## of its lake has no shore of its own to drink from.
+func within_drink_reach(source: Dictionary, position: Vector2, drink_distance: float) -> bool:
+	var reach := drink_distance + float(source.get("radius", 0.0))
+	if position.distance_squared_to(source["position"]) <= reach * reach:
+		return true
+	if not source.has("anchor"):
+		return false
+	for index in water.lobes_of(_pond_index(source)):
+		if water.is_dry(index):
+			continue
+		var lobe: Dictionary = water_sources[index]
+		reach = drink_distance + float(lobe.get("radius", 0.0))
+		if position.distance_squared_to(lobe["position"]) <= reach * reach:
+			return true
+	return false
 
 
 func _water_demand_unit() -> float:
@@ -1603,6 +1679,12 @@ func _generate_water_sources(config: Dictionary) -> void:
 			if not island_mask.is_empty() and _island_coast_at(position) * float(island_mask["cell_size"]) < radius + float(island_mask["cell_size"]):
 				continue
 			water_sources.append({"position": position, "radius": radius})
+
+
+## Whether a natural body's bank may pass `position` (`WaterBodies.generate()`): two cells clear of
+## the island's sea, past its beach.
+func _on_island_land(position: Vector2) -> bool:
+	return _island_coast_at(position) >= ISLAND_WATER_CLEARANCE
 
 
 ## How many cells `position` lies from the island's sea (`island_mask`), before the terrain
@@ -2024,10 +2106,31 @@ func _largest_body_radius() -> float:
 ## ground, for a river's bank, which is a spot on the shore already, or where no spot is clear.
 func water_approach(source: Dictionary, from: Vector2, body_radius: float = 0.0) -> Vector2:
 	var center: Vector2 = source.get("position", from)
-	if terrain_system == null or not terrain_system.ponds_solid or bool(source.get("permanent", false)):
+	if terrain_system == null or not terrain_system.ponds_solid or bool(source.get("permanent", false)) \
+			or WaterBodiesScript.is_shallow(source):
 		return center
 	var pond := water.index_at(center)
-	var radius := float((water_sources[pond] if pond >= 0 else source).get("radius", 0.0))
+	# A lake's lobes all offer their shore: the nearest spot of any of them that still holds water.
+	var lobes := PackedInt32Array([pond]) if pond < 0 or not source.has("anchor") else water.lobes_of(pond)
+	var best := center
+	var best_distance := INF
+	for lobe in lobes:
+		if lobe != pond and water.is_dry(lobe):
+			continue
+		var lobe_source: Dictionary = source if lobe < 0 else water_sources[lobe]
+		for spot in _shore_spots_of(lobe, lobe_source, body_radius):
+			var distance := from.distance_squared_to(spot)
+			if distance < best_distance:
+				best_distance = distance
+				best = spot
+	return best
+
+
+## Where a body of `body_radius` can stand at pond `pond`'s water's edge: `SHORE_SPOTS` spokes
+## round it, those clear of the ground and of every pond's water, cached by the edge's quarter cell.
+func _shore_spots_of(pond: int, source: Dictionary, body_radius: float) -> PackedVector2Array:
+	var center: Vector2 = source.get("position", Vector2.ZERO)
+	var radius := float(source.get("radius", 0.0))
 	var step := terrain_system.cell_size * 0.25
 	var key := Vector3i(pond, ceili(radius / step), roundi(body_radius * 4.0))
 	if not _shore_spots.has(key):
@@ -2040,14 +2143,7 @@ func water_approach(source: Dictionary, from: Vector2, body_radius: float = 0.0)
 			if bounds.has_point(spot) and scenery.segment_clear(spot, spot, body_radius):
 				spots.append(spot)
 		_shore_spots[key] = spots
-	var best := center
-	var best_distance := INF
-	for spot in _shore_spots[key]:
-		var distance := from.distance_squared_to(spot)
-		if distance < best_distance:
-			best_distance = distance
-			best = spot
-	return best
+	return _shore_spots[key]
 
 
 ## How big a pond the player digs: the map's mean pond times `powers.dig_pond.radius_of_mean`,
@@ -5145,7 +5241,7 @@ func _find_nearest_water_goal(position: Vector2, unreachable: Array = []) -> Dic
 	var levels_on: bool = water.enabled
 	for source in water_sources:
 		var source_position: Vector2 = source.get("position", bounds.get_center())
-		if unreachable.has(source_position) or (levels_on and water.is_dry(int(source["index"]))):
+		if unreachable.has(water_place(source)) or (levels_on and water.is_dry(int(source["index"]))):
 			continue
 		var distance_sq: float = position.distance_squared_to(source_position)
 		if distance_sq < best_distance_sq:
@@ -6199,8 +6295,10 @@ func _dormant_herd_waypoint(aggregate: Dictionary, from: Vector2, goal: Vector2)
 		if not bool(search.get("pending", false)) and not bool(search.get("reachable", true)) \
 				and str(aggregate.get("goal_kind", "")) == "water":
 			var unreachable: Array = aggregate.get("unreachable_water", [])
-			if not unreachable.has(goal):
-				unreachable.append(goal)
+			var pond := water.index_at(goal)
+			var place: Vector2 = goal if pond < 0 else water_place(water_sources[pond])
+			if not unreachable.has(place):
+				unreachable.append(place)
 			aggregate["unreachable_water"] = unreachable
 			aggregate["last_goal_refresh_time"] = -INF
 		var found: Array = search.get("cells", [])
@@ -6722,17 +6820,27 @@ func _migrate_dormant_sector_records(sector_key: Vector2i, lod_context: Dictiona
 
 
 func _dormant_aggregate_reached_goal(sector_key: Vector2i, aggregate: Dictionary) -> bool:
-	var goal_sector: Vector2i = aggregate.get("goal_sector", sector_key)
-	if goal_sector != sector_key:
-		return false
 	var center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
 	var goal_position: Vector2 = aggregate.get("goal_position", center)
 	var proximity := maxf(_sector_size * 0.35, 24.0 if resource_system == null else resource_system.cell_size * 1.25)
 	# A pond's water is no ground to stand on: the herd drinks from its shore.
-	if terrain_system != null and terrain_system.ponds_solid and str(aggregate.get("goal_kind", "")) == "water":
-		var pond := water.index_at(goal_position)
-		if pond >= 0:
-			proximity += float(water_sources[pond].get("radius", 0.0))
+	var solid_water := terrain_system != null and terrain_system.ponds_solid and str(aggregate.get("goal_kind", "")) == "water"
+	var pond := water.index_at(goal_position) if solid_water else -1
+	# A natural body's shore (`WaterBodies`) runs where it will, across sector lines, and a group
+	# at the shore stands in whichever sector that is: by the sector of its goal lobe's centre a
+	# flock stood a few steps from a pond on a sector corner and died of thirst there. At the
+	# shore of any lobe holding water, the goal's own included, it is at the water.
+	if pond >= 0 and water_sources[pond].has("body"):
+		for lobe in water.lobes_of(pond):
+			if (lobe == pond or not water.is_dry(lobe)) and center.distance_to(water_sources[lobe]["position"]) \
+					<= proximity + float(water_sources[lobe].get("radius", 0.0)):
+				return true
+		return false
+	var goal_sector: Vector2i = aggregate.get("goal_sector", sector_key)
+	if goal_sector != sector_key:
+		return false
+	if pond >= 0:
+		proximity += float(water_sources[pond].get("radius", 0.0))
 	return center.distance_to(goal_position) <= proximity
 
 
