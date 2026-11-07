@@ -6717,23 +6717,27 @@ func _migrate_dormant_sector_records(sector_key: Vector2i, lod_context: Dictiona
 
 
 func _dormant_aggregate_reached_goal(sector_key: Vector2i, aggregate: Dictionary) -> bool:
-	var goal_sector: Vector2i = aggregate.get("goal_sector", sector_key)
-	if goal_sector != sector_key:
-		return false
 	var center: Vector2 = aggregate.get("center", _sector_key_to_rect(sector_key).get_center())
 	var goal_position: Vector2 = aggregate.get("goal_position", center)
 	var proximity := maxf(_sector_size * 0.35, 24.0 if resource_system == null else resource_system.cell_size * 1.25)
 	# A pond's water is no ground to stand on: the herd drinks from its shore.
-	if terrain_system != null and terrain_system.ponds_solid and str(aggregate.get("goal_kind", "")) == "water":
-		var pond := water.index_at(goal_position)
-		if pond >= 0:
-			# Any lobe of a lake holding water will do: its shore is the lake's shore.
-			if water_sources[pond].has("anchor"):
-				for lobe in water.lobes_of(pond):
-					if lobe != pond and not water.is_dry(lobe) and center.distance_to(water_sources[lobe]["position"]) \
-							<= proximity + float(water_sources[lobe].get("radius", 0.0)):
-						return true
-			proximity += float(water_sources[pond].get("radius", 0.0))
+	var solid_water := terrain_system != null and terrain_system.ponds_solid and str(aggregate.get("goal_kind", "")) == "water"
+	var pond := water.index_at(goal_position) if solid_water else -1
+	# A natural body's shore (`WaterBodies`) runs where it will, across sector lines, and a group
+	# at the shore stands in whichever sector that is: by the sector of its goal lobe's centre a
+	# flock stood a few steps from a pond on a sector corner and died of thirst there. At the
+	# shore of any lobe holding water, the goal's own included, it is at the water.
+	if pond >= 0 and water_sources[pond].has("body"):
+		for lobe in water.lobes_of(pond):
+			if (lobe == pond or not water.is_dry(lobe)) and center.distance_to(water_sources[lobe]["position"]) \
+					<= proximity + float(water_sources[lobe].get("radius", 0.0)):
+				return true
+		return false
+	var goal_sector: Vector2i = aggregate.get("goal_sector", sector_key)
+	if goal_sector != sector_key:
+		return false
+	if pond >= 0:
+		proximity += float(water_sources[pond].get("radius", 0.0))
 	return center.distance_to(goal_position) <= proximity
 
 

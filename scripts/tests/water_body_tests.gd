@@ -288,6 +288,15 @@ func _test_world(a) -> void:
 	var spot: Vector2 = world.water_approach(anchor, shore, 6.0)
 	a.is_true(spot.distance_to(shore) < shore.distance_to(anchor["position"]) - float(anchor["radius"]),
 		"heading for the lake, it walks to the nearest shore of any lobe")
+	# A sleeping group at a lobe's shore is at the water whichever sector the shore lies in: one
+	# on the far side of a sector line from its goal lobe's centre died of thirst at the shore.
+	a.is_true(terrain.ponds_solid, "the lake's water is solid here")
+	var goal_sector: Vector2i = world._get_sector_key(far["position"])
+	var group := {"goal_kind": "water", "goal_position": far["position"], "goal_sector": goal_sector, "center": shore}
+	a.is_true(world._dormant_aggregate_reached_goal(goal_sector + Vector2i(1, 0), group),
+		"a sleeping group at the shore drinks, across a sector line from its goal's centre")
+	group["center"] = far["position"] + out * 5000.0
+	a.is_true(not world._dormant_aggregate_reached_goal(goal_sector, group), "and far from every lobe it does not")
 	# One memory for the lake, however many of its lobes were seen.
 	var deer = Helpers.spawn_herbivore(world, shore, 0)
 	deer.remember_water(anchor, world.current_time)
