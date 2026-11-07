@@ -10,6 +10,9 @@ signal export_completed(paths: Dictionary)
 ## `event_bus`, which is replaced on every start and load, and whose first instance
 ## moves to the worker thread (see `_watch_event_bus()`).
 signal world_event(event: Dictionary)
+## A hunt and what comes of it, for the reserve's camera (`ReserveDirector`): the same way as
+## `world_event`, but apart from it, the feed and the cards having no lines for these.
+signal scene_event(event: Dictionary)
 ## The player's state the view draws (`PlayerState`) has changed: a power used, a charge spent.
 ## Raised on the main thread once the change has reached `world_state`, from a worker frame or
 ## an inline tick alike.
@@ -31,6 +34,10 @@ signal world_exported(world: Dictionary)
 ## led arrives (`HerdArrived`) or stops being led (`HerdLeadEnded`).
 const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true,
 	"PondDried": true, "PondRefilled": true, "PlayerCommand": true, "HerdArrived": true, "HerdLeadEnded": true}
+## The event types `scene_event` carries: a hunt begun, a kill, a pair's or a pack's hunt, a herd's
+## alarm, a territory taken.
+const SCENE_EVENT_TYPES := {"HuntStarted": true, "PredationSuccess": true, "PairHunt": true, "HerdAlarm": true,
+	"TerritoryClaimed": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")
@@ -388,6 +395,8 @@ func _forward_view_event(event: Dictionary) -> void:
 	if VIEW_EVENT_TYPES.has(event.get("type", "")):
 		scenario.hear(event)
 		world_event.emit(event)
+	elif SCENE_EVENT_TYPES.has(event.get("type", "")):
+		scene_event.emit(event)
 
 
 ## How far the clock has run past the last completed tick, as 0..1. Renderers

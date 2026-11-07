@@ -4,7 +4,8 @@ extends RefCounted
 ## `ViewerLink`): chat lines read as commands, names cleaned; a ward taken and told, a second
 ## asked too soon ignored; a vote won and carried out; a fund's perk; a steward's power on the
 ## focus herd; «!моё» asking the camera for the ward; the session back from a save; lines of
-## JSON read off the local port; the director's shots (`ReserveDirector`); the overlay's text; and
+## JSON read off the local port; the director's shots (`ReserveDirector`), a hunter followed out
+## before its chase and a hunt not gone to that would be over before the view got there; the overlay's text; and
 ## the reserve's saves, in slots of its own; a species about to be lost rescued; the viewers long
 ## unseen forgotten; no cull of the last foxes, no newcomers to a crowded species, the reserve's
 ## own power settings and a shorter story; a ward's death and young told, the banner's order, the
@@ -34,6 +35,7 @@ func run(a) -> void:
 	_test_a_steward_and_mine(a)
 	_test_the_local_port(a)
 	_test_the_director(a)
+	_test_the_director_ahead(a)
 	_test_the_overlay_text(a)
 	_test_its_own_slots(a)
 	_test_a_rescue(a)
@@ -239,10 +241,11 @@ func _test_the_director(a) -> void:
 	var deer: Array = world.get_living_agents().filter(func(agent): return agent.species_type == "herbivore")
 	var other = deer[deer.size() - 1] if deer[deer.size() - 1].id != first.id else deer[0]
 	manager.world_event.emit({"type": "AgentBorn", "agent_id": other.id, "species": "herbivore",
-		"position": {"x": other.position.x, "y": other.position.y}, "data": {}})
+		"position": {"x": other.position.x, "y": other.position.y}, "data": {"reason": "reproduction"}})
 	step.call(10000)
 	a.equal(director.current_id, first.id, "a birth near does not cut a calm scene")
 	var fox = Helpers.spawn_predator(world, AT + Vector2(2600.0, 0.0))
+	fox.state = "feed_carcass"
 	manager.world_event.emit({"type": "PredationSuccess", "agent_id": fox.id, "other_agent_id": other.id,
 		"species": "predator", "position": {"x": fox.position.x, "y": fox.position.y}, "data": {}})
 	step.call(1000)
@@ -278,6 +281,77 @@ func _test_the_director(a) -> void:
 		"a ward asleep far off is found where its group's record has it")
 	a.is_true(ReserveDirectorScript.sleeping_position(manager.world_state, 70003) == null, "and one nowhere is not")
 	manager.world_state._sector_states.erase(far)
+	Helpers.destroy_manager(manager)
+
+
+## Ahead of the chase: a hungry fox out to hunt near a herd cuts a calm scene after
+## `hunt_dwell_seconds`, its scene becomes the hunt's when it starts chasing and says so, the way
+## to it is a hurried one; a chase nearly at its end far off is not gone to; a kill reaches the
+## director from the world's own bus; a newborn is named as one.
+func _test_the_director_ahead(a) -> void:
+	var made := _reserve(9938, _config())
+	var manager = made[0]
+	var session = made[1]
+	var world = manager.world_state
+	var camera := FakeCamera.new()
+	camera.center = AT
+	var director = ReserveDirectorScript.new()
+	director.configure(manager, camera, session, _config())
+	var now := [100000]
+	director.clock = func() -> int: return now[0]
+	var captions: Array = []
+	director.caption_changed.connect(func(text: String, _seconds: float) -> void: captions.append(text))
+	var step := func(milliseconds: int) -> void:
+		now[0] += milliseconds
+		director.update()
+	director.update()
+	step.call(6000)
+	var herd_id: int = director.current_id
+	var deer = world.get_agent(herd_id)
+	var fox = Helpers.spawn_predator(world, AT + Vector2(520.0, 0.0))
+	# Hungry and on patrol, its prey not yet seen: what comes before a hunt.
+	fox.hunger = 90.0
+	fox.current_action = &"patrol"
+	fox.state = "patrol"
+	step.call(1000)
+	a.equal(director.current_id, herd_id, "a fox out to hunt waits until the calm scene has had its seconds")
+	step.call(5000)
+	a.equal([director.current_id, str(director.scene.get("kind", ""))], [fox.id, "prowl"],
+		"then the view goes to it before any chase")
+	a.is_true(str(captions.back()).begins_with("Лис") and str(captions.back()).contains("вышел на охоту"),
+		"saying it is out to hunt: %s" % str(captions.back()))
+	var moved_at: int = now[0]
+	while director.is_moving() and now[0] - moved_at < 5000:
+		step.call(100)
+	a.is_true(now[0] - moved_at <= int(1400 * 0.6) + 100, "in a hurry: %d ms" % (now[0] - moved_at))
+	fox.state = "chase"
+	fox.target_agent_id = deer.id
+	fox.chase_timer = 0.3
+	step.call(100)
+	a.is_true(str(director.scene.get("kind", "")) == "hunt" and int(director.scene["weight"]) == ReserveDirectorScript.HUNT_WEIGHT
+		and str(captions.back()).begins_with("Охота: лис"), "its chase makes the scene a hunt's: %s" % str(captions.back()))
+	fox.state = "feed_carcass"
+	fox.current_action = &"scavenge_carcass"
+	step.call(1000)
+	a.equal(director.current_id, fox.id, "the hunt over, the view lingers on it")
+	step.call(7000)
+	a.is_true(director.current_id != fox.id, "and then goes on")
+	# Far off and nearly done, a chase is not worth the way there; a fresh one is.
+	var far_fox = Helpers.spawn_predator(world, AT + Vector2(6000.0, 0.0))
+	far_fox.state = "chase"
+	far_fox.target_agent_id = deer.id
+	far_fox.chase_timer = 13.5
+	var ids := func() -> Array: return director.candidates(now[0]).filter(func(c): return str(c["kind"]) == "hunt").map(func(c): return int(c["id"]))
+	var late: Array = ids.call()
+	far_fox.chase_timer = 0.5
+	var fresh: Array = ids.call()
+	a.is_true(not late.has(far_fox.id) and fresh.has(far_fox.id), "a far chase nearly done is not gone to, a fresh one is")
+	var heard: int = director._moments.size()
+	world.emit_event("PredationSuccess", far_fox, deer.id, {})
+	a.is_true(director._moments.size() == heard + 1 and str(director._moments.back()["kind"]) == "PredationSuccess",
+		"a kill reaches the director from the world's bus")
+	a.is_true(director.caption_for("AgentBorn", deer.id, deer, deer.position).begins_with("Пополнение: оленёнок"),
+		"a newborn by the young's word: %s" % director.caption_for("AgentBorn", deer.id, deer, deer.position))
 	Helpers.destroy_manager(manager)
 
 
