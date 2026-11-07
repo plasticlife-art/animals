@@ -149,11 +149,17 @@ func _test_places_of_a_real_map(a) -> void:
 		"each river a name of its own, no pond's")
 	a.is_true(places.districts.size() >= 12 and places.districts.size() <= 40,
 		"a large map has a couple of dozen districts (%d)" % places.districts.size())
+	# The default map is an island: the sea is no district.
 	var unassigned := 0
-	for district in places._cell_district:
-		if district < 0:
+	var at_sea := 0
+	for index in range(places._cell_district.size()):
+		var district: int = places._cell_district[index]
+		if world.terrain_system.is_sea_index(index):
+			at_sea += 1 if district >= 0 else 0
+		elif district < 0:
 			unassigned += 1
-	a.equal(unassigned, 0, "every cell belongs to a district")
+	a.equal(unassigned, 0, "every cell of the land belongs to a district")
+	a.equal(at_sea, 0, "and none of the sea")
 	var outside := 0
 	for index in range(places.districts.size()):
 		if places.district_at(places.districts[index]["center"]) != index:
@@ -167,7 +173,7 @@ func _test_places_of_a_real_map(a) -> void:
 	var near: Dictionary = places.place_at(pond["position"] + Vector2(float(pond["radius"]) * 1.2, 0.0))
 	a.equal(near.get("name", ""), pond["name"], "by a pond, the pond")
 	a.is_true(str(near.get("at", "")).begins_with("у "), "«у …» a pond")
-	var far := _far_from_ponds(places, world.bounds)
+	var far := _far_from_ponds(places, world.bounds, world.terrain_system)
 	var there: Dictionary = places.place_at(far)
 	a.equal(there.get("kind", ""), "district", "away from water, the district")
 	a.is_true(str(there.get("at", "")).begins_with("на ") or str(there.get("at", "")).begins_with("в "),
@@ -933,12 +939,14 @@ static func _ids(rows: Array) -> Array:
 
 
 ## A point on the map as far as can be found from every pond's reach.
-static func _far_from_ponds(places, bounds: Rect2) -> Vector2:
+static func _far_from_ponds(places, bounds: Rect2, terrain = null) -> Vector2:
 	var best := bounds.get_center()
 	var best_gap := -INF
 	for gx in range(1, 12):
 		for gy in range(1, 8):
 			var point := bounds.position + bounds.size * Vector2(gx / 12.0, gy / 8.0)
+			if terrain != null and terrain.is_sea_position(point):
+				continue
 			var gap := INF
 			for pond in places.ponds:
 				gap = minf(gap, point.distance_to(pond["position"]) - float(pond["radius"]) * PlaceNamesScript.POND_REACH)

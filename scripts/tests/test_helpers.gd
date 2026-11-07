@@ -66,6 +66,8 @@ static func build_test_bundle(seed: int = 17) -> Dictionary:
 	# Nor ponds' water on the ground, for the same reason: a fixture's pond is a spot to drink
 	# at. `PondTests` switches it on.
 	bundle["world"]["terrain"]["ponds"] = {"enabled": false}
+	# Nor the island's sea: a 256-unit fixture would be all shore. `IslandTests` switches it on.
+	bundle["world"]["terrain"]["island"] = {"enabled": false}
 	# Off as well: the fixtures place their own foxes and herds, and assume a fox pairs with any fox
 	# and a herd weighs its pastures afresh. `TerritoryTests` and `SeasonalPastureTests` switch
 	# them on; wolves keep theirs, and come only where a test spawns them.

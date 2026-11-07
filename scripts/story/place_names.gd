@@ -132,7 +132,8 @@ func build(world, seed_value: int) -> void:
 	var player = world.get("player")
 	var dug: int = 0 if player == null else player.ponds.size()
 	_name_ponds(sources.slice(0, maxi(0, sources.size() - dug)), terrain, seed_value)
-	_split_districts(world.bounds, terrain, seed_value)
+	# On an island, only the land is split, as much of it as a map its size.
+	_split_districts(terrain.land_rect if terrain.has_island() else world.bounds, terrain, seed_value)
 	name_new_ponds(world, seed_value)
 
 
@@ -292,7 +293,14 @@ func _split_districts(bounds: Rect2, terrain, seed_value: int) -> void:
 	_cell_district.fill(-1)
 	if cell_count == 0 or bounds.size.x <= 0.0 or bounds.size.y <= 0.0:
 		return
-	var wanted := clampi(int(round(bounds.size.x * bounds.size.y / DISTRICT_AREA)), MIN_DISTRICTS, MAX_DISTRICTS)
+	var island: bool = terrain.has_island()
+	var area := bounds.size.x * bounds.size.y
+	if island:
+		area = 0.0
+		for index in range(cell_count):
+			if not terrain.is_sea_index(index):
+				area += _cell_size * _cell_size
+	var wanted := clampi(int(round(area / DISTRICT_AREA)), MIN_DISTRICTS, MAX_DISTRICTS)
 	var aspect := bounds.size.x / bounds.size.y
 	var grid_cols := maxi(1, int(round(sqrt(float(wanted) * aspect))))
 	var grid_rows := maxi(1, int(ceil(float(wanted) / float(grid_cols))))
@@ -300,14 +308,26 @@ func _split_districts(bounds: Rect2, terrain, seed_value: int) -> void:
 	var centres: Array = []
 	for gy in range(grid_rows):
 		for gx in range(grid_cols):
-			var slot := centres.size()
-			var jitter := Vector2(_unit(seed_value, 0x4A58, slot) - 0.5, _unit(seed_value, 0x4A59, slot) - 0.5) * 0.6
-			centres.append(bounds.position + Vector2((gx + 0.5 + jitter.x) * step.x, (gy + 0.5 + jitter.y) * step.y))
+			var jitter := Vector2(_unit(seed_value, 0x4A58, gy * grid_cols + gx) - 0.5,
+				_unit(seed_value, 0x4A59, gy * grid_cols + gx) - 0.5) * 0.6
+			var centre := bounds.position + Vector2((gx + 0.5 + jitter.x) * step.x, (gy + 0.5 + jitter.y) * step.y)
+			# The sea has no districts: a centre out at sea comes ashore, unless another is there.
+			if island:
+				var land: int = terrain.nearest_land_index(terrain.get_index_from_position(centre))
+				if land < 0:
+					continue
+				if terrain.is_sea_index(terrain.get_index_from_position(centre)):
+					centre = terrain.get_cell_center(land)
+				if centres.any(func(other: Vector2) -> bool: return other.distance_to(centre) < minf(step.x, step.y) * 0.5):
+					continue
+			centres.append(centre)
 	var counts: Array = []
 	for _centre in centres:
 		counts.append({})
 	var map_counts := {}
 	for index in range(cell_count):
+		if island and terrain.is_sea_index(index):
+			continue
 		var centre_point := _cell_point(index)
 		var best := 0
 		var best_distance := INF

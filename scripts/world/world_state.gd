@@ -53,6 +53,9 @@ const LOD_PRIORITY_STATES := {
 }
 
 var bounds: Rect2 = Rect2(0.0, 0.0, 1600.0, 900.0)
+## The island (`terrain.island`, `IslandMask.build()`): land and sea per terrain cell. Empty on a
+## map with no island. Laid before the ponds, which keep to the land.
+var island_mask: Dictionary = {}
 var agents: Dictionary = {}
 var carcasses: Dictionary = {}
 var pending_spawns: Array = []
@@ -224,6 +227,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	navigation_config = world_config.get("navigation", {}).duplicate(true)
 	simulation_lod_config = world_config.get("simulation_lod", {}).duplicate(true)
 
+	island_mask = IslandMask.build(world_config, int(rng.seed))
 	water_sources.clear()
 	var water_generation: Dictionary = world_config.get("water_generation", {})
 	if water_generation.is_empty():
@@ -236,7 +240,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 		_generate_water_sources(water_generation)
 
 	terrain_system = TerrainSystemScript.new()
-	terrain_system.initialize(world_config, rng, water_sources)
+	terrain_system.initialize(world_config, rng, water_sources, island_mask)
 	_add_river_banks(world_config.get("terrain", {}).get("rivers", {}))
 	scenery.initialize(world_config, config_bundle.get("visuals", {}), terrain_system, int(rng.seed))
 	# Mixed into every inherited trait's hash, so two worlds' founders are not the same animals.
@@ -1256,11 +1260,17 @@ func local_waypoint(agent, target: Vector2) -> Vector2:
 	return agent.position if agent.local_path.is_empty() else agent.local_path[0]
 
 
+## A point drawn over the map and moved to the nearest walkable ground. On an island, drawn again
+## while it falls in the sea: snapped from there every draw offshore would land on the beach, and
+## the herds placed by it stood in a ring round the island.
 func random_point() -> Vector2:
-	return get_nearest_walkable_position(Vector2(
-		rng.randf_range(bounds.position.x, bounds.end.x),
-		rng.randf_range(bounds.position.y, bounds.end.y)
-	))
+	var point := Vector2(rng.randf_range(bounds.position.x, bounds.end.x), rng.randf_range(bounds.position.y, bounds.end.y))
+	if terrain_system != null and terrain_system.has_island():
+		for _try in range(32):
+			if not terrain_system.is_sea_position(point):
+				break
+			point = Vector2(rng.randf_range(bounds.position.x, bounds.end.x), rng.randf_range(bounds.position.y, bounds.end.y))
+	return get_nearest_walkable_position(point)
 
 
 func random_unit_vector() -> Vector2:
@@ -1584,13 +1594,25 @@ func _generate_water_sources(config: Dictionary) -> void:
 			var radius := water_rng.randf_range(radius_min, radius_max)
 			# Kept a full radius inside the map: a source clipped by the border
 			# is a watering hole agents can path to but never reach.
-			water_sources.append({
-				"position": Vector2(
-					clampf(centre.x + offset.x, bounds.position.x + radius, bounds.end.x - radius),
-					clampf(centre.y + offset.y, bounds.position.y + radius, bounds.end.y - radius)),
-				"radius": radius,
-			})
+			var position := Vector2(
+				clampf(centre.x + offset.x, bounds.position.x + radius, bounds.end.x - radius),
+				clampf(centre.y + offset.y, bounds.position.y + radius, bounds.end.y - radius))
 			placed += 1
+			# On an island only the ponds on the land, a cell clear of the sea; the density is
+			# over the whole map, so the land holds as many as a map its size would.
+			if not island_mask.is_empty() and _island_coast_at(position) * float(island_mask["cell_size"]) < radius + float(island_mask["cell_size"]):
+				continue
+			water_sources.append({"position": position, "radius": radius})
+
+
+## How many cells `position` lies from the island's sea (`island_mask`), before the terrain
+## that answers it is laid: 0 at sea or off the map.
+func _island_coast_at(position: Vector2) -> float:
+	var size := float(island_mask["cell_size"])
+	var cell := Vector2i(int(floor(position.x / size)), int(floor(position.y / size)))
+	if cell.x < 0 or cell.y < 0 or cell.x >= int(island_mask["cols"]) or cell.y >= int(island_mask["rows"]):
+		return 0.0
+	return float(island_mask["coast"][cell.y * int(island_mask["cols"]) + cell.x])
 
 
 ## Pushes overlapping animals apart after everyone has moved.
@@ -2654,8 +2676,10 @@ func choose_escape_destination(position: Vector2, flee_vector: Vector2, base_dis
 			continue
 		var min_threat_distance := _minimum_threat_distance(candidate, threat_positions)
 		var cover_breaks := _escape_cover_breaks(candidate, threat_positions)
-		var edge_clearance := minf(minf(candidate.x - bounds.position.x, bounds.end.x - candidate.x),
-			minf(candidate.y - bounds.position.y, bounds.end.y - candidate.y)) - body_radius
+		# On an island the sea is the edge: a flight that ends on the beach has nowhere on to go.
+		var edge_clearance := minf(minf(minf(candidate.x - bounds.position.x, bounds.end.x - candidate.x),
+			minf(candidate.y - bounds.position.y, bounds.end.y - candidate.y)),
+			terrain_system.coast_distance_at(candidate)) - body_radius
 		var candidate_direction := (candidate - position).normalized()
 		candidates.append({
 			"position": candidate,
@@ -4166,11 +4190,17 @@ func _place_territories() -> void:
 		walkable.resize(resource_system.cols * resource_system.rows)
 		var cover := PackedFloat32Array()
 		cover.resize(walkable.size())
+		var coast := PackedFloat32Array()
+		if terrain_system.has_island():
+			coast.resize(walkable.size())
 		for index in range(walkable.size()):
 			walkable[index] = 1 if terrain_system.is_walkable_index(index) else 0
 			cover[index] = 1.0 if walkable[index] == 1 and terrain_system.get_biome_at_index(index) == "forest" else 0.0
+			if not coast.is_empty():
+				coast[index] = terrain_system.coast_cells_at_index(index)
 		var dens: Array = TerritoryRegistryScript.place_dens(resource_system.export_caps(), walkable,
-			resource_system.cols, resource_system.rows, resource_system.cell_size, water_sources, config, trait_world, cover)
+			resource_system.cols, resource_system.rows, resource_system.cell_size, water_sources, config, trait_world, cover,
+			coast)
 		var registry := TerritoryRegistryScript.new()
 		registry.configure(dens, resource_system.cell_size * float(config.get("radius_cells", 10.0)), current_time)
 		territories[species_id] = registry

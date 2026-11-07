@@ -105,9 +105,21 @@ var _bank_ponds: Dictionary = {}
 var _shore_cells: Dictionary = {}
 ## Raised each time water covers ground: a route found before may run through it now.
 var flood_epoch: int = 0
+## The island (`terrain.island`, `IslandMask`): `_sea` a byte per cell, 1 where the sea is - deep
+## water like a river's, an obstacle, but never drunk from and never crossed, ford or corridor -
+## and `_coast` how many cells each cell lies from it. Both empty on a map with no island. Within
+## `beach_cells` of the sea the ground is open (no cliff, no thicket), and where the map has
+## relief it climbs from the shore a level every two cells, so a beach is a beach.
+var _sea: PackedByteArray = PackedByteArray()
+var _coast: PackedFloat32Array = PackedFloat32Array()
+var _beach_cells: float = 0.0
+var _land_cells: int = 0
+## The land's bounding box, in world units (the whole map without an island).
+var land_rect: Rect2 = Rect2()
 
 
-func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sources: Array) -> void:
+func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sources: Array,
+		island_mask: Dictionary = {}) -> void:
 	var world_size_config: Dictionary = world_config.get("world_size", {})
 	world_size = Vector2(
 		float(world_size_config.get("x", 1600.0)),
@@ -163,10 +175,23 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_bank_ponds.clear()
 	_shore_cells.clear()
 	flood_epoch = 0
+	_sea = PackedByteArray()
+	_coast = PackedFloat32Array()
+	land_rect = Rect2(Vector2.ZERO, world_size)
+	if island_mask.is_empty() and IslandMask.enabled(world_config):
+		island_mask = IslandMask.build(world_config, int(rng.seed))
+	if not island_mask.is_empty() and int(island_mask.get("cols", 0)) == cols and int(island_mask.get("rows", 0)) == rows:
+		_sea.resize(cell_count)
+		var land: PackedByteArray = island_mask["land"]
+		for index in range(cell_count):
+			_sea[index] = 1 if land[index] == IslandMask.SEA else 0
+		_coast = island_mask["coast"]
+		_beach_cells = maxf(0.0, float(terrain_config.get("island", {}).get("beach_cells", 1.5)))
 
 	_generate_biomes(terrain_config.get("generation", {}), rng, water_sources)
 	_generate_heights(height_config, rng)
 	_apply_obstacles(terrain_config.get("obstacles", {}), rng)
+	_lay_island()
 	_generate_rivers(terrain_config.get("rivers", {}), rng, water_sources)
 	_connect_walkable_regions()
 	_refresh_cached_values()
@@ -304,7 +329,10 @@ func get_biome_counts() -> Dictionary:
 	var counts: Dictionary = {}
 	for biome_id in biome_order:
 		counts[biome_id] = 0
-	for biome_id in _biomes:
+	for index in range(_biomes.size()):
+		if is_sea_index(index):
+			continue
+		var biome_id: String = _biomes[index]
 		counts[biome_id] = int(counts.get(biome_id, 0)) + 1
 	return counts
 
@@ -623,6 +651,83 @@ func _apply_obstacles(obstacle_config: Dictionary, rng: RandomNumberGenerator) -
 					_clear_obstacle(y * cols + x)
 
 
+## The sea over the obstacles just laid - after them, so the clearance kept along the map's edge
+## does not open a walk round the island - and before the rivers, which run down to it.
+func _lay_island() -> void:
+	if _sea.is_empty():
+		return
+	var count := get_cell_count()
+	if _water.is_empty():
+		_water.resize(count)
+		_water.fill(WATER_NONE)
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	_land_cells = 0
+	for index in range(count):
+		if _sea[index] == 1:
+			_set_obstacle(index, "water")
+			_water[index] = WATER_DEEP
+			_heights[index] = 0
+			continue
+		_land_cells += 1
+		var rect := get_cell_rect(index)
+		low = low.min(rect.position)
+		high = high.max(rect.end)
+		if _coast[index] <= _beach_cells and str(_obstacles[index]) != "":
+			_clear_obstacle(index)
+		if height_levels > 1:
+			_heights[index] = mini(int(_heights[index]), int(floor(maxf(0.0, _coast[index] - 1.0) / 2.0)))
+	if low.x < high.x:
+		land_rect = Rect2(low, high - low)
+
+
+func has_island() -> bool:
+	return not _sea.is_empty()
+
+
+func is_sea_index(index: int) -> bool:
+	return not _sea.is_empty() and index >= 0 and index < _sea.size() and _sea[index] == 1
+
+
+func is_sea_position(position: Vector2) -> bool:
+	return is_sea_index(get_index_from_position(position))
+
+
+## How many cells the cell lies from the sea: 0 at sea, INF on a map with no island (or off it).
+func coast_cells_at_index(index: int) -> float:
+	if _coast.is_empty() or index < 0 or index >= _coast.size():
+		return INF
+	return _coast[index]
+
+
+## How far `position` lies from the sea, in world units: INF with no island. Off the map counts as
+## sea, the map's edge being where there is no island to stop at.
+func coast_distance_at(position: Vector2) -> float:
+	if _coast.is_empty():
+		return INF
+	var index := get_index_from_position(position)
+	if index < 0:
+		return 0.0
+	return _coast[index] * cell_size
+
+
+## The land cell nearest `start_index` (itself on land), by rings; -1 with no land at all.
+func nearest_land_index(start_index: int) -> int:
+	if not is_sea_index(start_index):
+		return start_index
+	var origin: Vector2i = get_cell_coords(start_index)
+	for radius in range(1, maxi(cols, rows) + 1):
+		for x in range(origin.x - radius, origin.x + radius + 1):
+			for y in range(origin.y - radius, origin.y + radius + 1):
+				if x < 0 or y < 0 or x >= cols or y >= rows:
+					continue
+				if x != origin.x - radius and x != origin.x + radius and y != origin.y - radius and y != origin.y + radius:
+					continue
+				if _sea[y * cols + x] == 0:
+					return y * cols + x
+	return -1
+
+
 func _connect_walkable_regions() -> void:
 	var components: Array = _collect_walkable_components()
 	if components.is_empty():
@@ -633,10 +738,18 @@ func _connect_walkable_regions() -> void:
 	components.sort_custom(func(a, b): return a["cells"].size() > b["cells"].size())
 	var main_component: Array = components[0]["cells"]
 	var main_anchor_index: int = int(main_component[int(main_component.size() / 2)])
+	# On an island an L-shaped cut may run out to sea round a bay: each passage goes over the land
+	# instead, the shortest way to the main region (four-way, as `_pieces` joins the land).
+	var toward := _ways_to(main_component) if has_island() else PackedInt32Array()
 	for component_index in range(1, components.size()):
 		var component: Array = components[component_index]["cells"]
 		var start_index: int = int(component[0])
-		_carve_corridor(start_index, main_anchor_index)
+		if has_island():
+			var cells := _way_from(start_index, toward)
+			if cells.size() >= 2:
+				_carve_cells(cells)
+		else:
+			_carve_corridor(start_index, main_anchor_index)
 		main_component.append_array(component)
 
 	components = _collect_walkable_components()
@@ -686,13 +799,56 @@ func _collect_walkable_components() -> Array:
 ## runs into a cliff face is still a wall, so the height field is graded along
 ## it as well.
 func _carve_corridor(start_index: int, end_index: int) -> void:
-	var cells: Array = _corridor_cells(start_index, end_index)
+	_carve_cells(_corridor_cells(start_index, end_index))
+
+
+func _carve_cells(cells: Array) -> void:
 	for index in cells:
 		_clear_obstacle(int(index))
 		# Through a river, the passage is a ford.
 		if not _water.is_empty() and _water[int(index)] == WATER_DEEP:
 			_water[int(index)] = WATER_FORD
 	_grade_corridor(cells)
+
+
+## For each cell off the sea, the next cell on the shortest four-way way over the land to one of
+## `region` (-2 in it, -1 where no such way is).
+func _ways_to(region: Array) -> PackedInt32Array:
+	var next := PackedInt32Array()
+	next.resize(get_cell_count())
+	next.fill(-1)
+	var queue := PackedInt32Array()
+	for index in region:
+		next[int(index)] = -2
+		queue.append(int(index))
+	var head := 0
+	while head < queue.size():
+		var index := queue[head]
+		head += 1
+		var coords := get_cell_coords(index)
+		for offset in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var to: Vector2i = coords + offset
+			if to.x < 0 or to.y < 0 or to.x >= cols or to.y >= rows:
+				continue
+			var neighbour := to.y * cols + to.x
+			if next[neighbour] != -1 or is_sea_index(neighbour):
+				continue
+			next[neighbour] = index
+			queue.append(neighbour)
+	return next
+
+
+## The way from `start_index` by `next` (`_ways_to()`), its last cell in the region; empty when
+## there is none.
+func _way_from(start_index: int, next: PackedInt32Array) -> Array:
+	if next[start_index] == -1:
+		return []
+	var cells: Array = [start_index]
+	var index := start_index
+	while next[index] >= 0:
+		index = next[index]
+		cells.append(index)
+	return cells
 
 
 func _corridor_cells(start_index: int, end_index: int) -> Array:
@@ -763,7 +919,7 @@ func _paint_segment_obstacle(start: Vector2, end: Vector2, thickness: float, gap
 func _find_random_biome_cell(biome_id: String, rng: RandomNumberGenerator) -> int:
 	var candidates: Array = []
 	for index in range(get_cell_count()):
-		if str(_biomes[index]) == biome_id:
+		if str(_biomes[index]) == biome_id and not is_sea_index(index):
 			candidates.append(index)
 	if candidates.is_empty():
 		return -1
@@ -775,7 +931,7 @@ func _ensure_biome_presence(rng: RandomNumberGenerator) -> void:
 	for biome_id in biome_order:
 		if int(counts.get(biome_id, 0)) > 0:
 			continue
-		var center_index: int = rng.randi_range(0, get_cell_count() - 1)
+		var center_index: int = nearest_land_index(rng.randi_range(0, get_cell_count() - 1))
 		_paint_biome_patch(center_index, biome_id, 2.5)
 	_refresh_cached_values()
 
@@ -1270,8 +1426,10 @@ func _generate_rivers(config: Dictionary, rng: RandomNumberGenerator, water_sour
 		return
 	var random := RandomNumberGenerator.new()
 	random.seed = (int(rng.seed) ^ RIVER_SALT) + int(config.get("seed", 0))
-	_water.resize(get_cell_count())
-	_water.fill(WATER_NONE)
+	# The island's sea is laid already (`_lay_island()`).
+	if _water.is_empty():
+		_water.resize(get_cell_count())
+		_water.fill(WATER_NONE)
 	_ford_cost = maxf(1.0, float(config.get("ford_cost", 2.5)))
 	var noise := FastNoiseLite.new()
 	noise.seed = random.randi()
@@ -1294,8 +1452,16 @@ func _generate_rivers(config: Dictionary, rng: RandomNumberGenerator, water_sour
 		if _near_pond(get_cell_center(index), water_sources, pond_margin):
 			weight += 60.0
 		grid.set_point_weight_scale(coords, weight)
+		# On an island a river runs over the land to its mouth, never out to sea and back.
+		if is_sea_index(index):
+			grid.set_point_solid(coords, true)
 	var half_width := maxf(0.75, float(config.get("half_width_cells", 0.9))) * cell_size
-	var min_length := float(config.get("min_length_fraction", 0.45)) * maxf(world_size.x, world_size.y)
+	# Of the map's long side; on an island, of the long side of a map of the land's area and shape.
+	var span := maxf(world_size.x, world_size.y)
+	if has_island() and land_rect.size.y > 0.0:
+		var aspect := land_rect.size.x / land_rect.size.y
+		span = sqrt(float(_land_cells) * cell_size * cell_size * maxf(aspect, 1.0 / aspect))
+	var min_length := float(config.get("min_length_fraction", 0.45)) * span
 	var ford_half := maxf(0.5, float(config.get("ford_width_cells", 2.5))) * cell_size * 0.5
 	for _river in range(int(config.get("count", 2))):
 		var route := _river_route(grid, random, water_sources, min_length, pond_margin)
@@ -1319,10 +1485,12 @@ static func _near_pond(point: Vector2, water_sources: Array, margin: float) -> b
 
 
 ## One river's way, cell centres from a source to a point just past the edge; empty when no try
-## gave one long enough.
+## gave one long enough. On an island, to a point just out to sea instead (`_island_river_route()`).
 func _river_route(grid: AStarGrid2D, random: RandomNumberGenerator, water_sources: Array, min_length: float,
 		pond_margin: float) -> PackedVector2Array:
 	var margin := mini(12, int(mini(cols, rows) / 4.0))
+	if has_island():
+		return _island_river_route(grid, random, water_sources, min_length, pond_margin, margin)
 	for _attempt in range(24):
 		var source := Vector2i(random.randi_range(margin, cols - 1 - margin), random.randi_range(margin, rows - 1 - margin))
 		var side := random.randi_range(0, 3)
@@ -1348,6 +1516,62 @@ func _river_route(grid: AStarGrid2D, random: RandomNumberGenerator, water_source
 	return PackedVector2Array()
 
 
+## An island's river: from a source at least `margin` cells from the sea to its mouth - the sea
+## cell where the straight way from a point on the map's edge in towards the source first meets
+## the land - over the land (the sea is solid in `grid`), and one cell on out to sea.
+func _island_river_route(grid: AStarGrid2D, random: RandomNumberGenerator, water_sources: Array, min_length: float,
+		pond_margin: float, margin: int) -> PackedVector2Array:
+	# Drawn from the cells a source may be in: drawn over the map, nine tries in ten fell in the sea,
+	# by it or by a pond, and two rivers in three were never laid.
+	var sources := PackedInt32Array()
+	for index in range(get_cell_count()):
+		if not is_sea_index(index) and coast_cells_at_index(index) >= float(margin) and not is_water_index(index) \
+				and not _near_pond(get_cell_center(index), water_sources, pond_margin * 2.0):
+			sources.append(index)
+	if sources.is_empty():
+		return PackedVector2Array()
+	for _attempt in range(24):
+		var start_index := sources[random.randi_range(0, sources.size() - 1)]
+		var source := get_cell_coords(start_index)
+		var side := random.randi_range(0, 3)
+		var along := random.randf()
+		var start_center := get_cell_center(start_index)
+		var edge := Vector2i(int(along * float(cols - 1)), 0 if side == 0 else rows - 1) if side < 2 \
+			else Vector2i(0 if side == 2 else cols - 1, int(along * float(rows - 1)))
+		var mouth := _mouth_between(edge, source)
+		if mouth.x < 0:
+			continue
+		var mouth_center := get_cell_center(mouth.y * cols + mouth.x)
+		if mouth_center.distance_to(start_center) < min_length:
+			continue
+		grid.set_point_solid(mouth, false)
+		var ids: Array[Vector2i] = grid.get_id_path(source, mouth)
+		grid.set_point_solid(mouth, true)
+		if ids.size() < 2:
+			continue
+		var route := PackedVector2Array()
+		for id in ids:
+			route.append(get_cell_center(id.y * cols + id.x))
+		var outward := (route[route.size() - 1] - route[route.size() - 2]).normalized()
+		route.append(route[route.size() - 1] + outward * cell_size)
+		return route
+	return PackedVector2Array()
+
+
+## The last sea cell on the straight way from `from` (at sea) to `to` (on land), cell by cell:
+## where a river from `to` meets the sea. (-1, -1) if the way starts on land.
+func _mouth_between(from: Vector2i, to: Vector2i) -> Vector2i:
+	var steps := maxi(absi(to.x - from.x), absi(to.y - from.y)) * 2
+	var last := Vector2i(-1, -1)
+	for step in range(steps + 1):
+		var t := float(step) / float(maxi(1, steps))
+		var at := Vector2i(roundi(lerpf(float(from.x), float(to.x), t)), roundi(lerpf(float(from.y), float(to.y), t)))
+		if not is_sea_index(at.y * cols + at.x):
+			return last
+		last = at
+	return last
+
+
 ## Corner cutting, `rounds` times: each segment's quarter and three-quarter points, the ends kept.
 static func _chaikin(points: PackedVector2Array, rounds: int) -> PackedVector2Array:
 	var current := points
@@ -1362,7 +1586,7 @@ static func _chaikin(points: PackedVector2Array, rounds: int) -> PackedVector2Ar
 
 
 ## Points along the bed every `every` units, the first half a step from the source, at least one
-## in the middle of a short river; none within three cells of the edge. Where the map has relief,
+## in the middle of a short river; none within three cells of the edge or the sea. Where the map has relief,
 ## each moves up to six cells along to banks a step apart at most, so the ford can be climbed.
 func _place_fords(points: PackedVector2Array, every: float, half_width: float) -> Array:
 	var length := 0.0
@@ -1379,7 +1603,7 @@ func _place_fords(points: PackedVector2Array, every: float, half_width: float) -
 		var best := Vector2.INF
 		for shift in [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]:
 			var spot := _point_along(points, float(mark) + float(shift) * cell_size)
-			if not inner.has_point(spot[0]):
+			if not inner.has_point(spot[0]) or coast_distance_at(spot[0]) < 3.0 * cell_size:
 				continue
 			if best == Vector2.INF:
 				best = spot[0]

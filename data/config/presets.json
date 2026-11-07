@@ -119,8 +119,8 @@
           "patch": {
             "world": {
               "world_size": {
-                "x": 4800.0,
-                "y": 2700.0
+                "x": 6480.0,
+                "y": 3645.0
               },
               "spatial_cell_size": 42.7,
               "grass": {
@@ -271,8 +271,8 @@
           "patch": {
             "world": {
               "world_size": {
-                "x": 9600.0,
-                "y": 5400.0
+                "x": 12960.0,
+                "y": 7290.0
               },
               "spatial_cell_size": 85.3,
               "grass": {
@@ -427,8 +427,8 @@
           "patch": {
             "world": {
               "world_size": {
-                "x": 21600.0,
-                "y": 12150.0
+                "x": 29160.0,
+                "y": 16403.0
               },
               "spatial_cell_size": 192.0,
               "grass": {

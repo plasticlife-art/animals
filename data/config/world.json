@@ -2,8 +2,8 @@
   "seed": 3,
   "tick_rate": 18.0,
   "world_size": {
-    "x": 14400.0,
-    "y": 8100.0
+    "x": 19440.0,
+    "y": 10935.0
   },
   "spatial_cell_size": 128.0,
   "grass": {
@@ -187,6 +187,19 @@
   },
   "terrain": {
     "cell_size": 96.0,
+    "island": {
+      "_comment": "The world is an island (IslandMask): sea all round, nobody comes or leaves. The map is 1.35x the land on each side, so the land is what the 14400x8100 rectangle was; land_share is the land's part of the map.",
+      "enabled": true,
+      "land_share": 0.565,
+      "shape_power": 2.2,
+      "noise_frequency": 0.022,
+      "noise_amplitude": 0.45,
+      "noise_octaves": 5,
+      "warp": 14.0,
+      "min_sea_cells": 4,
+      "edge_band_cells": 10.0,
+      "beach_cells": 1.5
+    },
     "biomes": {
       "meadow": {
         "move_cost": 1.0,
