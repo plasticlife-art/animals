@@ -9,7 +9,8 @@ extends RefCounted
 ## the reserve's saves, in slots of its own; a species lost told of, with no newcomers; the
 ## viewers long unseen forgotten; no cull of the last foxes, the reserve's
 ## own power settings and a shorter story; a ward's death and young told, the banner's order, the
-## tables and the year's summary, the wards' tags; an autosave written in the background.
+## tables and the year's summary, the wards' tags; an autosave written in the background; a den
+## taken by a pair, not by one fox alone, a moment for the camera.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
@@ -46,6 +47,7 @@ func run(a) -> void:
 	_test_the_banner_and_tables(a)
 	_test_upright_fits(a)
 	_test_saving_in_the_background(a)
+	_test_the_director_hears_a_pair_claim(a)
 
 
 ## Stands in for the game's camera: where it was sent.
@@ -672,4 +674,22 @@ func _test_saving_in_the_background(a) -> void:
 	for path in SaveSystem.slot_paths(SaveSystem.KIND_RESERVE):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	SaveSystem.save_dir = shipped_dir
+	Helpers.destroy_manager(manager)
+
+
+## A pair taking a den reaches the camera from the world, through the manager's `world_event`; one
+## fox taking a slot alone is no pair, and no moment of «Пара заняла участок».
+func _test_the_director_hears_a_pair_claim(a) -> void:
+	var made := _reserve(9943, _config())
+	var manager = made[0]
+	var world = manager.world_state
+	var fox = Helpers.spawn_predator(world, AT + Vector2(300.0, 0.0))
+	var director = ReserveDirectorScript.new()
+	director.configure(manager, FakeCamera.new(), made[1], _config())
+	var claims := func() -> Array:
+		return director._moments.filter(func(moment): return str(moment["kind"]) == "TerritoryClaimed")
+	world.emit_event("TerritoryClaimed", fox, -1, {"territory_id": 0, "partner_id": -1})
+	a.equal(claims.call().size(), 0, "one fox alone on a den is no moment")
+	world.emit_event("TerritoryClaimed", fox, -1, {"territory_id": 0, "partner_id": fox.id + 1000})
+	a.equal(claims.call().size(), 1, "a pair taking it is one")
 	Helpers.destroy_manager(manager)

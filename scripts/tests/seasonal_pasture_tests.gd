@@ -4,10 +4,12 @@ extends RefCounted
 ## walk remembers the place for the season; on its first look in that season a year on it goes
 ## back, if the place is still good - not to bare ground, nor out of reach of water; the memory
 ## goes with both halves of a split and through a save; nothing is drawn from the stream; and
-## without the block no herd remembers anything.
+## without the block no herd remembers anything. The feed tells the return of the herd the player
+## follows, heard through the manager as the game hears it.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
+const StoryBookScript := preload("res://scripts/story/story_book.gd")
 const SEASONAL := {"memory_bonus": 1.5, "switch_ratio": 1.3, "replace_share": 0.8, "forget_years": 2}
 const HOME := Vector2(900.0, 900.0)
 const SUMMER_SPOT := Vector2(2100.0, 2100.0)
@@ -17,6 +19,7 @@ const KEY := "herbivore:0"
 func run(a) -> void:
 	_test_a_settled_herd_remembers(a)
 	_test_it_goes_back_next_year(a)
+	_test_the_feed_tells_the_return(a)
 	_test_not_to_a_spoiled_pasture(a)
 	_test_the_memory_is_kept(a)
 
@@ -83,6 +86,34 @@ func _test_it_goes_back_next_year(a) -> void:
 	world.herd_migrations.erase(KEY)
 	world._update_herd_migrations()
 	a.is_true(not bool(world.herd_migrations.get(KEY, {}).get("remembered", false)), "only on its first look in the season")
+	Helpers.destroy_manager(manager)
+
+
+## «Стадо №1 идёт на летние угодья»: the return reaches the feed from the world, through the manager's
+## `world_event` as in the game, for the herd the player follows; a herd only moving on is not told.
+func _test_the_feed_tells_the_return(a) -> void:
+	var manager = _remembering(9964)
+	var world = manager.world_state
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	book.feed.context_provider = func() -> Dictionary: return {"view": Rect2(), "herd": ["herbivore", 0]}
+	world._update_herd_migrations()
+	var told: Array = []
+	for line in book.feed.lines:
+		if str(line["kind"]) == "migration":
+			told.append(str(line["text"]))
+	a.is_true(told.size() == 1 and told[0].contains("идёт на летние угодья"), "the herd's return is told (%s)" % str(told))
+	world.herd_migrations.erase(KEY)
+	world.herd_pastures.clear()
+	_graze(world, HOME, world._pasture_radius("herbivore"), 0.0)
+	world._update_herd_migrations()
+	var moved: bool = world.herd_migrations.get(KEY, {}).has("goal")
+	var lines := 0
+	for line in book.feed.lines:
+		if str(line["kind"]) == "migration":
+			lines += 1
+	a.is_true(moved and lines == 1, "moving on to fresh grass is not (moved %s, %d lines)" % [moved, lines])
 	Helpers.destroy_manager(manager)
 
 

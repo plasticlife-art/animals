@@ -109,6 +109,9 @@ func _hear(event: Dictionary) -> void:
 		if str(data.get("power", "")) == "adopt" and bool(data.get("ok", false)):
 			kind = "adopt"
 			agent_id = int(data.get("agent_id", -1))
+	# One fox taking a slot alone is no pair, and «Пара заняла участок» would say it was.
+	if kind == "TerritoryClaimed" and int(data.get("partner_id", -1)) < 0:
+		return
 	var weight := int(WEIGHTS.get(kind, 0))
 	# Nothing to see of what happened asleep, far off: it was settled in aggregate. And only a
 	# young one born is a birth, not one the world began with.

@@ -12,8 +12,8 @@ extends RefCounted
 ## rest is counted, and once a minute a line sums the whole map up («За минуту: хищники —
 ## 4 оленя · голод — 2 лисы · родились — 6 оленят»). A run of the same thing in one herd
 ## within a few seconds - three fawns, two deaths from thirst - becomes one line with a
-## number. Names come from the `StoryBook` that owns this log, which has heard the event
-## first. Nothing here reaches the simulation.
+## number; so does a litter of young foxes setting out together. Names come from the `StoryBook`
+## that owns this log, which has heard the event first. Nothing here reaches the simulation.
 
 signal changed
 
@@ -30,6 +30,8 @@ const NEW_GROUP := {"herbivore": "новое Стадо", "scavenger": "нову
 const SEASON_PASTURES := {"spring": "весенние", "summer": "летние", "autumn": "осенние", "winter": "зимние"}
 ## Who leaves a group that divides: «5 голов» of a herd, «12 птиц» of a flock.
 const MOVED_NOUNS := {"herbivore": ["голова", "головы", "голов"], "scavenger": ["птица", "птицы", "птиц"]}
+## How long a wolf told leaving its pack is remembered, so that its setting out is not told again.
+const LEFT_PACK_SECONDS := 600.0
 
 ## Newest first: `{time, text, position, focus_id, pinned, kind, key, count, species, ...}`.
 ## `position` is `Vector2.INF` for a summary; `focus_id` is the animal a click should select.
@@ -47,6 +49,8 @@ var _book_ref: WeakRef = null
 var context_provider: Callable = Callable()
 var _tally: Dictionary = {}
 var _window_start: float = -1.0
+## The wolves told leaving their pack, by id, and when (`_hear_leaving()`).
+var _left_pack: Dictionary = {}
 
 
 func hear(event: Dictionary) -> void:
@@ -106,6 +110,7 @@ func tick(now: float) -> void:
 func clear() -> void:
 	lines.clear()
 	_tally.clear()
+	_left_pack.clear()
 	_window_start = -1.0
 	changed.emit()
 
@@ -280,15 +285,17 @@ func _hear_led_herd(arrived: bool, species: String, data: Dictionary, time: floa
 
 
 ## «Лис Рыжик и лиса Ветка заняли участок у Тихой заводи»: a pair formed on a territory
-## (`territory`), for an animal pinned or in view. One that takes a slot alone is not told.
+## (`territory`), for an animal pinned, or awake and in view - asleep it is settled far off, as a
+## death out there is. One that takes a slot alone is not told.
 func _hear_claim(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
 	var holder := int(event.get("agent_id", -1))
-	if holder < 0:
+	var asleep := holder < 0
+	if asleep:
 		holder = int(data.get("record_id", -1))
 	var partner := int(data.get("partner_id", -1))
 	var position := _position_of(event)
 	var pinned: bool = book != null and (book.is_pinned(holder) or book.is_pinned(partner))
-	if holder < 0 or partner < 0 or not (pinned or _in_view(context, position)):
+	if holder < 0 or partner < 0 or not (pinned or (not asleep and _in_view(context, position))):
 		return
 	var species := str(event.get("species", ""))
 	var text := "%s %s и %s %s заняли участок%s" % [HudTextScript.animal_noun(species, _sex_of(holder)), _name(holder),
@@ -297,22 +304,36 @@ func _hear_claim(event: Dictionary, data: Dictionary, time: float, context: Dict
 		"kind": "territory", "key": "", "count": 1})
 
 
-## «Молодая лиса Ветка ушла искать свой участок», «… ушёл из стаи искать свой участок» for a wolf.
+## «Молодая лиса Ветка ушла искать свой участок», «… ушёл из стаи искать свой участок» for a wolf,
+## pinned, or awake and in view. A litter comes of age together and sets out within seconds, so a
+## run of them folds into «4 молодых лисы ушли искать свои участки». A wolf told leaving its pack
+## is not told again when it sets out (`DispersalStarted` follows `PackLeft`).
 func _hear_leaving(event: Dictionary, data: Dictionary, time: float, context: Dictionary) -> void:
 	var who := int(event.get("agent_id", -1))
-	if who < 0:
+	var asleep := who < 0
+	if asleep:
 		who = int(data.get("record_id", -1))
 	var position := _position_of(event)
 	var pinned: bool = book != null and book.is_pinned(who)
-	if who < 0 or not (pinned or _in_view(context, position)):
+	if who < 0 or not (pinned or (not asleep and _in_view(context, position))):
+		return
+	var pack := str(event.get("type", "")) == "PackLeft"
+	if pack:
+		for left in _left_pack.keys():
+			if time - float(_left_pack[left]) > LEFT_PACK_SECONDS:
+				_left_pack.erase(left)
+		_left_pack[who] = time
+	elif _left_pack.has(who):
+		_left_pack.erase(who)
 		return
 	var species := str(event.get("species", ""))
 	var sex := _sex_of(who)
 	var text := "%s %s %s %s%s искать свой участок" % [HudTextScript.verb(sex, "Молодой", "Молодая"),
 		HudTextScript.animal_noun(species, sex), _name(who), HudTextScript.verb(sex, "ушёл", "ушла"),
-		" из стаи" if str(event.get("type", "")) == "PackLeft" else ""]
+		" из стаи" if pack else ""]
 	_add({"time": time, "text": text, "position": position, "focus_id": who, "pinned": pinned,
-		"kind": "territory", "key": "", "count": 1})
+		"kind": "territory", "key": "leaving:%s:%s" % [species, "pack" if pack else "alone"], "count": 1,
+		"species": species, "pack": pack})
 
 
 ## «Стадо №3 идёт на летние угодья у Ольхового бора» (`herd.migration.seasonal`), for the selected
@@ -401,6 +422,10 @@ static func _folded_text(line: Dictionary) -> String:
 		var more := "%s и ещё %d %s" % [line.get("first", ""), count - 1,
 			HudTextScript.plural(count - 1, ["водоём", "водоёма", "водоёмов"])]
 		return ("Пересохли " if str(line["kind"]) == "pond_dried" else "Снова вода: ") + more
+	if str(line["key"]).begins_with("leaving:"):
+		var forms: Array = HudTextScript.ANIMALS.get(species, {}).get("count", [species, species, species])
+		return "%d молодых %s ушли%s искать свои участки" % [count, HudTextScript.plural(count, forms),
+			" из стаи" if bool(line.get("pack", false)) else ""]
 	var at := str(line.get("at", ""))
 	var place := " " + at if at != "" else ""
 	if str(line["kind"]) == "birth":
