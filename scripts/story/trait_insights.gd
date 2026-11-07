@@ -43,7 +43,7 @@ const NARROWED := 0.7
 ## The causes a death's lean is told for, and how («У съеденных хищниками скорость ниже…»).
 const GROUP_WHO := {"parents": "У родителей детёнышей", "predation": "У съеденных хищниками",
 	"need": "У умерших от голода и жажды", "old_age": "У умерших от старости", "culled": "У отстрелянных",
-	"emigrated": "У ушедших"}
+	"emigrated": "У сгинувших в скитаниях"}
 ## By `Traits` index; the marker's are never said.
 const TRAIT_UP := ["стали быстрее", "стали зорче", "стали прожорливее", "стали жить дольше", "", "стали осторожнее",
 	"стали легче переносить жажду", "стали крупнее"]
@@ -389,7 +389,7 @@ static func _dead_words(cause: String, count: int) -> String:
 		"culled":
 			return HudTextScript.plural(count, ["Отстрелян", "Отстреляны", "Отстреляны"])
 		"emigrated":
-			return HudTextScript.plural(count, ["Ушёл", "Ушли", "Ушли"])
+			return HudTextScript.plural(count, ["Сгинул в скитаниях", "Сгинули в скитаниях", "Сгинули в скитаниях"])
 	return "Погибли"
 
 

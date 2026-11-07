@@ -20,7 +20,7 @@ var counters := {
 	"deaths_old_age": 0,
 	# The player's «Отстрел» (`WorldState._command_cull()`).
 	"deaths_culled": 0,
-	# A vagrant that found no territory and left the map (`territory.emigrate_after_seconds`).
+	# A vagrant that found no territory and died of its wandering (`territory.emigrate_after_seconds`).
 	"deaths_emigrated": 0,
 	"water_events": 0,
 	"grass_events": 0,

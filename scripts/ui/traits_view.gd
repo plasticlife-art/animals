@@ -40,7 +40,7 @@ const KIND_COLORS := {"selection": Color(0.25, 0.49, 0.31), "cost": Color(0.66, 
 const GROUPS := ["parents", "predation", "starvation", "thirst", "old_age", "culled", "emigrated"]
 const GROUP_LABELS := {"parents": "Родили детёнышей", "predation": "Съедены хищниками",
 	"starvation": "Умерли от голода", "thirst": "Умерли от жажды", "old_age": "Умерли от старости",
-	"culled": "Отстреляны", "emigrated": "Ушли из заповедника"}
+	"culled": "Отстреляны", "emigrated": "Сгинули в скитаниях"}
 const GOOD := Color(0.25, 0.49, 0.31)
 const LIST_WIDTH := 148.0
 const GAP := 18.0
