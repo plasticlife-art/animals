@@ -676,7 +676,10 @@ Current snapshot categories:
 - «Первая зима» (`first_winter`, `tutorial`), the first game: the medium map, seed 19, flat ground,
   begun in autumn with seasons of two days, founders young; the own herd the one nearest
   [0.3, 0.72], on poor ground (forest and drought around it, the meadows the scan below found
-  1600-2000 away by water); grass growing at half the usual rate from 0.15-0.4 of its cap, and a
+  1600-2000 away by water); grass growing at half the usual rate from 0.15-0.32 of its cap (0.4 until
+  the island's fixes: deer no longer stuck in a pond's edge, dispersers reaching their dens - left
+  seed 19 at 0.85-1.0 of the herd with no powers, a win for doing nothing; at 0.32 none 0.8, lost,
+  and leading it to grass 1.1, won), and a
   hungry deer leaving no pasture by itself past hunger 30 (`herd.migration.exempt_hunger`, 50
   elsewhere) - the player's lead takes it to 85. Goals: no fewer head at spring than in autumn
   (fawns born late in winter count), a quarter the floor, the bonus not one starved

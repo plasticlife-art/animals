@@ -15,7 +15,7 @@
           "spawns": {"hare_count": 0},
           "world_size": {"x": 9600.0, "y": 5400.0},
           "terrain": {"height": {"levels": 1}, "rivers": {"enabled": false}, "island": {"enabled": false}},
-          "grass": {"growth_rate": 0.002, "initial_density_min": 0.15, "initial_density_max": 0.4}
+          "grass": {"growth_rate": 0.002, "initial_density_min": 0.15, "initial_density_max": 0.32}
         },
         "species": {"herbivore": {"herd": {"migration": {"exempt_hunger": 30.0}}}},
         "balance": {"lifecycle": {"founder_age_share": 0.4}},
