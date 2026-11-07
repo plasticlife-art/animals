@@ -3,6 +3,8 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GODOT_BIN="${GODOT_BIN:-/Applications/Godot.app/Contents/MacOS/Godot}"
+# Each run waits for a slot in the machine-wide queue (see heavy.sh).
+HEAVY="$PROJECT_DIR/scripts/dev/heavy.sh"
 OUTPUT_DIR="${1:-/private/tmp/animals-p0-matrix}"
 REPETITIONS="${2:-3}"
 MEASURED_FRAMES="${3:-720}"
@@ -25,7 +27,7 @@ for style in "${styles[@]}"; do
           echo "reuse $run_dir/performance.json"
           continue
         fi
-        "$GODOT_BIN" --path "$PROJECT_DIR" \
+        "$HEAVY" "$GODOT_BIN" --path "$PROJECT_DIR" \
           --script res://scripts/dev/visual_audit.gd -- \
           "$style" "$map_size" "$mix" 1.0 "$run_dir" "$MEASURED_FRAMES" "$seed"
         if [[ "$COOLDOWN_SECONDS" != "0" ]]; then
