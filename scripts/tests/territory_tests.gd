@@ -12,13 +12,17 @@ extends RefCounted
 ## `emigrate_after_seconds` leaves the map, awake or asleep, with no body. Holders hunting asleep
 ## count by `dormant_kill_scale`. The feed tells, in view: a
 ## pair taking a territory, a young one setting out, a kill by a pair, a herd going back to its
-## season's pasture - and not one fox taking a slot alone.
+## season's pasture - and not one fox taking a slot alone; and it hears them from the world through
+## the manager, as the game does, with the den left empty when its last holder dies. A litter setting
+## out at once is one line, a wolf leaving its pack is told once, and what is settled asleep - in
+## view only when the whole map is - is not told.
 
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
 const SimulationManagerScript := preload("res://scripts/core/simulation_manager.gd")
 const AgentBaseScript := preload("res://scripts/agents/agent_base.gd")
 const StoryLogScript := preload("res://scripts/story/story_log.gd")
+const StoryBookScript := preload("res://scripts/story/story_book.gd")
 const TERRITORY := {"radius_cells": 10.0, "spacing": 1.8, "step_cells": 2, "water_cells": 6.0, "capacity_multiplier": 4.0}
 
 
@@ -33,6 +37,8 @@ func run(a) -> void:
 	_test_only_holders_breed_asleep(a)
 	_test_a_sleeping_vagrant_settles(a)
 	_test_the_feed_tells_it(a)
+	_test_the_feed_hears_the_world(a)
+	_test_the_feed_keeps_it_short(a)
 	_test_a_vagrant_with_nowhere_leaves(a)
 	_test_sleeping_holders_kill_by_the_scale(a)
 	_test_dens_in_cover(a)
@@ -390,6 +396,76 @@ func _test_the_feed_tells_it(a) -> void:
 	log.hear(_event("HerdMigrates", -1, "herbivore", {"to_x": 900.0, "to_y": 900.0, "size": 9, "remembered": true,
 		"season": "summer", "group_id": 2}))
 	a.is_true(str(log.lines[0]["text"]).contains("идёт на летние угодья"), "a herd going back to its pasture (%s)" % str(log.lines[0]["text"]))
+
+
+## The feed's territory lines from the world's own events, heard as the game hears them: through
+## the manager's `world_event`, the way a `StoryBook` is fed, not `StoryLog.hear()` by hand.
+func _test_the_feed_hears_the_world(a) -> void:
+	var manager = _small(9990, true)
+	var world = manager.world_state
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin()
+	book.feed.context_provider = func() -> Dictionary: return {"view": world.bounds}
+	var registry: TerritoryRegistry = world.territory_registry("predator")
+	var den: Vector2 = registry.get_territory(0)["den"]
+	var vixen = _fox(world, den, AgentBaseScript.SEX_FEMALE)
+	var dog = _fox(world, den + Vector2(20.0, 0.0), AgentBaseScript.SEX_MALE)
+	var cub = _fox(world, den + Vector2(0.0, 20.0), AgentBaseScript.SEX_FEMALE, 250.0)
+	cub.natal_territory_id = 0
+	book.meet_living()
+	world.claim_territory(vixen, 0)
+	a.equal(_told(book.feed, "territory"), [], "one fox alone on a den is not told")
+	world.claim_territory(dog, 0)
+	var told := _told(book.feed, "territory")
+	a.is_true(told.size() == 1 and told[0].contains("%s и лиса %s заняли участок" % [book.name_of_id(dog.id),
+		book.name_of_id(vixen.id)]), "a pair taking it is (%s)" % str(told))
+	cub._seek_ground(world)
+	told = _told(book.feed, "territory")
+	a.is_true(told.size() == 2 and told[0].begins_with("Молодая лиса %s ушла искать свой участок" % book.name_of_id(cub.id)),
+		"a young one setting out (%s)" % str(told))
+	world.kill_agent(vixen, "old_age")
+	a.equal(_told(book.feed, "territory").size(), 2, "the den still held by one is not empty")
+	world.kill_agent(dog, "old_age")
+	told = _told(book.feed, "territory")
+	a.is_true(told.size() == 3 and told[0].begins_with("Участок") and told[0].ends_with("опустел"),
+		"the last holder gone, the den is (%s)" % str(told))
+	Helpers.destroy_manager(manager)
+
+
+## A litter setting out within seconds is one line, a wolf leaving its pack is not told again as it
+## sets out, and a pair or a leaving settled asleep is not told for being in view: zoomed out to
+## the whole map, most of it is asleep.
+func _test_the_feed_keeps_it_short(a) -> void:
+	var log = StoryLogScript.new()
+	log.context_provider = func() -> Dictionary: return {"view": Rect2(0.0, 0.0, 500.0, 500.0)}
+	log.hear(_event("DispersalStarted", 7, "predator", {"territory_id": 3}))
+	log.hear(_event("DispersalStarted", 9, "predator", {"territory_id": 4}))
+	var third := _event("DispersalStarted", 11, "predator", {"territory_id": 5})
+	third["time_seconds"] = 15.0
+	log.hear(third)
+	a.is_true(log.lines.size() == 1 and str(log.lines[0]["text"]) == "3 молодых лисы ушли искать свои участки",
+		"a litter setting out is one line (%s)" % str(log.lines.map(func(line): return line["text"])))
+	log.clear()
+	log.hear(_event("PackLeft", 21, "wolf", {"group_id": 2}))
+	var later := _event("DispersalStarted", 21, "wolf", {"territory_id": 6})
+	later["time_seconds"] = 60.0
+	log.hear(later)
+	a.is_true(log.lines.size() == 1 and str(log.lines[0]["text"]).contains("ушёл из стаи искать свой участок"),
+		"a wolf leaving its pack is told once (%s)" % str(log.lines.map(func(line): return line["text"])))
+	log.clear()
+	log.hear(_event("TerritoryClaimed", -1, "predator", {"record_id": 5, "partner_id": 6, "dormant": true}))
+	log.hear(_event("PackLeft", -1, "wolf", {"record_id": 22, "group_id": 2, "dormant": true}))
+	a.equal(log.lines.size(), 0, "asleep in view, neither a pair nor a leaving is told")
+
+
+## The texts of the feed's lines of `kind`, newest first.
+static func _told(feed, kind: String) -> Array:
+	var texts: Array = []
+	for line in feed.lines:
+		if str(line["kind"]) == kind:
+			texts.append(str(line["text"]))
+	return texts
 
 
 func _test_a_vagrant_with_nowhere_leaves(a) -> void:

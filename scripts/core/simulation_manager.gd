@@ -31,13 +31,17 @@ signal world_exported(world: Dictionary)
 ## `AgentReproduced` names both parents of an awake birth, for the family tree; a pond that
 ## dries or fills again (`WaterSystem`) is told in the feed and the season's summary.
 ## `PlayerCommand` says what came of an order the player gave (`PlayerCommands`); a herd the player
-## led arrives (`HerdArrived`) or stops being led (`HerdLeadEnded`).
+## led arrives (`HerdArrived`) or stops being led (`HerdLeadEnded`). A territory taken or left
+## empty, a young one setting out to find its own, a herd moving to new grass are the feed's
+## (`StoryLog`), which tells a pair's claim, the den emptied, the setting out and a herd going back
+## to a season's pasture: about nine a minute on the large map, most of them herds moving on.
 const VIEW_EVENT_TYPES := {"AgentDied": true, "AgentBorn": true, "AgentReproduced": true, "HerdSplit": true,
-	"PondDried": true, "PondRefilled": true, "PlayerCommand": true, "HerdArrived": true, "HerdLeadEnded": true}
+	"PondDried": true, "PondRefilled": true, "PlayerCommand": true, "HerdArrived": true, "HerdLeadEnded": true,
+	"TerritoryClaimed": true, "TerritoryVacated": true, "DispersalStarted": true, "PackLeft": true,
+	"HerdMigrates": true}
 ## The event types `scene_event` carries: a hunt begun, a kill, a pair's or a pack's hunt, a herd's
-## alarm, a territory taken.
-const SCENE_EVENT_TYPES := {"HuntStarted": true, "PredationSuccess": true, "PairHunt": true, "HerdAlarm": true,
-	"TerritoryClaimed": true}
+## alarm. A territory taken is the feed's as well and reaches the camera by `world_event`.
+const SCENE_EVENT_TYPES := {"HuntStarted": true, "PredationSuccess": true, "PairHunt": true, "HerdAlarm": true}
 
 const ConfigLoaderScript = preload("res://scripts/core/config_loader.gd")
 const EventBusScript = preload("res://scripts/core/event_bus.gd")

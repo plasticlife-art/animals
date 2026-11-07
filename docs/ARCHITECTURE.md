@@ -55,7 +55,10 @@ Key behavior:
   worker hand-off pass that dictionary by reference; `StatsSystem.get_snapshot()` still returns an
   editable copy.
 - `world_event` re-emits the events the view acts on (`VIEW_EVENT_TYPES`: `AgentDied`,
-  `AgentBorn`, `AgentReproduced`, `HerdSplit`), always on the main thread: from the frame `_apply_worker_frame()`
+  `AgentBorn`, `AgentReproduced`, `HerdSplit`; `PondDried`, `PondRefilled`; `PlayerCommand`,
+  `HerdArrived`, `HerdLeadEnded`; and for the feed `TerritoryClaimed`, `TerritoryVacated`,
+  `DispersalStarted`, `PackLeft`, `HerdMigrates` - about nine a minute on the large map, most of
+  them herds moving on, which the feed leaves out), always on the main thread: from the frame `_apply_worker_frame()`
   applies, or as they happen in `step_once()`. The view listens there, not on `event_bus`, which
   is replaced on every start and load. The bus `initialize()` creates moves to the worker thread
   in `enable_interactive_worker()`, so the manager stops watching it first; watching starts after
@@ -1287,7 +1290,14 @@ species in `WorldState.territories`, saved, the view's copy sent when its revisi
   (`_settle_dormant_vagrants()`), their group making for it.
 - The «Участки» layer draws each den's ring: bright held by a pair, faint by one, grey by
   none; the card says «Участок у …», «Ищет свой участок», «Своего участка нет»; the feed a
-  pair taking a territory, one emptied, a young one setting out, in view or pinned.
+  pair taking a territory, one emptied, a young one setting out, pinned or in view - in view
+  only awake, as for deaths, since zoomed out to the whole map most of it is asleep. A litter
+  comes of age together and its young set out within a second or two, so a run of them folds
+  into one line («3 молодых лисы ушли искать свои участки»); a wolf told leaving its pack is not
+  told again when it sets out. Without these three, zoomed out on the large map (seed 11, 25 min)
+  the feed's busiest minute held 30-33 lines, a litter's young told one by one within a second;
+  following a herd the territory lines add about one in five minutes (4.6 lines a minute in all,
+  4.4 before). The camera hears a pair's claim too, not one fox taking a slot alone.
 
 ### Hares (`species.hare`, `role.social` "solitary")
 
@@ -2350,7 +2360,9 @@ Current suites cover:
   label left in the main scene, developer mode and the player's bar
 - the story: names that stay and number while alive, the family tree from the world's own
   events awake and asleep, pins anywhere, the story's save round trip, the card's family line;
-  the feed's lines for what is looked at, folding, the minute's summary and the newest shown
+  the feed's lines for what is looked at, folding, the minute's summary and the newest shown;
+  its territory and pasture lines heard from the world through the manager, as the game hears
+  them, not only handed to `StoryLog.hear()`
 - heredity (`TraitsTests`): founders and inheritance, clamps, costs, sleeping births with both
   parents, selection asleep, means, saves
 - the watering holes (`WaterTests`): a normal year and a drought year for ponds of 180, 230 and
