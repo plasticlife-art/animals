@@ -16,6 +16,7 @@ const AnimalMenuScript := preload("res://scripts/ui/animal_menu.gd")
 
 func run(a) -> void:
 	_test_names_stay_and_number_while_alive(a)
+	_test_names_are_the_worlds(a)
 	_test_lists_name_the_largest_start(a)
 	_test_events_say_who_was_born_and_died(a)
 	_test_family_from_the_worlds_events(a)
@@ -65,6 +66,38 @@ func _test_names_stay_and_number_while_alive(a) -> void:
 	a.equal(copy.known(2005), names.known(2005), "names come back from a save")
 	a.equal([AnimalNamesScript.roman(4), AnimalNamesScript.roman(14), AnimalNamesScript.roman(39)], ["IV", "XIV", "XXXIX"],
 		"numbers in Roman")
+
+
+## A name is the world's: foxes and hares, whose lists share names (Огонёк, Кузя), never answer to
+## one at once, so the chat finds an animal by the name over it (`find()`), however it spells it.
+## A save from before kept names by species, namesakes and all: both are found, the later under
+## the next number, so no third is given the name while either lives.
+func _test_names_are_the_worlds(a) -> void:
+	var names = AnimalNamesScript.new()
+	var shown := {}
+	var clashes := 0
+	for index in range(300):
+		for species in ["predator", "hare"]:
+			var name: String = names.name_of(10000 + index * 2 + (1 if species == "hare" else 0), species, "male")
+			clashes += 1 if shown.has(name) else 0
+			shown[name] = true
+	a.equal(clashes, 0, "no fox and hare alive answer to one name")
+	var fox_name: String = names.known(10000)
+	a.equal(names.find("  " + fox_name.to_upper().replace("Ё", "Е") + " "), [10000], "found by its name, case, «ё» and spaces aside")
+	a.equal([AnimalNamesScript.spelled("Ветка 2"), AnimalNamesScript.spelled("Ветка  II"), AnimalNamesScript.spelled("Ветка I"),
+		AnimalNamesScript.spelled("Звёздочка")], ["ветка ii", "ветка ii", "ветка", "звездочка"], "«Ветка 2» is Ветка II")
+	names.release(10000)
+	a.equal(names.find(fox_name), [], "the dead are not found")
+	var old = AnimalNamesScript.new()
+	old.import_state({"names": {5: "Огонёк", 9: "Огонёк", 12: "Рыжик II"},
+		"held": {"predator:Огонёк": {1: 5}, "hare:Огонёк": {1: 9}, "predator:Рыжик": {2: 12}},
+		"holding": {5: ["predator:Огонёк", 1], 9: ["hare:Огонёк", 1], 12: ["predator:Рыжик", 2]}})
+	a.equal(old.find("огонек"), [5, 9], "a save's namesakes of two species both found")
+	a.equal([old.find("Рыжик 2"), old.find("Рыжик")], [[12], []], "and a numbered one by its number only")
+	a.equal(old._held.get("Огонёк", {}), {1: 5, 2: 9}, "held by name now, the later under the next number")
+	old.release(5)
+	a.is_true(old.find("Огонёк") == [9] and not old._held.get("Огонёк", {}).is_empty(),
+		"a death lets one go, the name held while the other lives")
 
 
 ## Each list holds more names than half the largest starting population any preset gives

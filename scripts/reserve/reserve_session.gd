@@ -5,7 +5,11 @@ extends RefCounted
 ## the world out (`SimulationManager.enqueue_command()`), what came of it told back. Kept apart
 ## from any window, so the same session runs beside a stream now and on a server later.
 ##
-## - «!имя Ветка»: a ward (`adopt`) near the reserve's focus, one living each.
+## - «!имя Огонёк»: the living animal of that name under the viewer's care (`adopt`), one living
+##   each; it keeps its name, the one over it on the screen (`StoryBook.find_living()`). «!имя»
+##   alone takes the one the camera follows; «!имя лис Огонёк» picks among namesakes a save from
+##   before names were the world's still keeps.
+## - «!отпустить»: the viewer's living ward let go (`release_ward`).
 ## - «!моё»: `focus_requested` with the viewer's living ward.
 ## - «!1», «!2»...: a vote (`VoteRound`); the winner is carried out at the close.
 ## - «!водопой», «!повести», «!отстрел»: the steward's powers, on the focus herd - a pond by it,
@@ -30,6 +34,9 @@ const POWER_LABELS := {"dig_pond": "водопой", "lead_herd": "поход", 
 
 var config: Dictionary = {}
 var manager = null
+## The names the view gives the animals (`StoryBook`), which a viewer calls a ward by; without it
+## «!имя» finds no one.
+var story = null
 var book = ViewerBookScript.new()
 var vote = VoteRoundScript.new()
 ## The herd the reserve looks at, the target of the viewers' powers: `{species, group_id}`; when
@@ -73,6 +80,8 @@ func hear(message: Dictionary) -> void:
 	match str(command["kind"]):
 		"adopt":
 			_adopt(key, user, str(command["arg"]))
+		"release_ward":
+			_release(key, user)
 		"mine":
 			_show_mine(key, user)
 		"vote":
@@ -95,30 +104,104 @@ func tick() -> void:
 	_count_species()
 
 
-func _adopt(key: String, user: String, raw_name: String) -> void:
+## «!имя Огонёк»: the animal of that name, if one lives and no one cares for it, under the viewer's
+## care, keeping its name. The cooldown runs from an order given, not from a name mistyped.
+func _adopt(key: String, user: String, asked: String) -> void:
 	var wait: float = book.wait_for(key, "adopt", float(config.get("cooldowns", {}).get("adopt", 30.0)), now())
 	if wait > 0.0:
 		return
-	var name := ChatCommandsScript.clean_name(raw_name, config)
-	if name == "":
-		_tell("%s, такое имя не подойдёт: только буквы, до %d" % [user, int(config.get("names", {}).get("max_length", 16))], "refused")
+	if _living_ward(key) >= 0:
+		_tell("%s, у вас уже есть подопечный — «!моё» покажет его, «!отпустить» отпустит" % user, "refused")
+		return
+	var picked := _named(user, asked.strip_edges())
+	if picked < 0:
+		return
+	var name: String = story.name_of_id(picked)
+	var ward: Dictionary = manager.world_state.adoptions.get(picked, {})
+	if not ward.is_empty() and float(ward.get("died_at", -1.0)) < 0.0:
+		_tell("%s, %s уже под опекой: %s" % [user, name, str(ward.get("viewer_name", ""))], "refused")
 		return
 	book.note(key, "adopt", now())
-	var herd := focus_herd()
-	var params := {"viewer": key, "viewer_name": user, "name": name}
-	if not herd.is_empty():
-		params["position"] = herd["center"]
-	_order("adopt", params, {"key": key, "user": user, "kind": "adopt"})
+	_order("adopt", {"viewer": key, "viewer_name": user, "agent_id": picked, "name": name},
+		{"key": key, "user": user, "kind": "adopt", "name": name})
 
 
-func _show_mine(key: String, user: String) -> void:
+## The living animal `asked` names, by id - the one the camera follows when `asked` is empty - or -1,
+## told why. Of namesakes the one followed wins; «лис Огонёк» picks by its first word.
+func _named(user: String, asked: String) -> int:
+	var followed := int(manager.selected_agent_id)
+	if asked == "":
+		var agent = manager.world_state.get_agent(followed) if followed >= 0 else null
+		if story == null or agent == null or not agent.is_alive:
+			_tell("%s, камера сейчас ни за кем не следит: напишите имя зверя — «!имя Огонёк»" % user, "refused")
+			return -1
+		return followed
+	var found: Array = [] if story == null else story.find_living(asked)
+	var space := asked.find(" ")
+	if found.is_empty() and space > 0 and story != null:
+		var species := species_of_word(asked.left(space))
+		if species != "":
+			found = story.find_living(asked.substr(space + 1)).filter(func(id) -> bool: return _species_of(id) == species)
+	if found.size() > 1 and found.has(followed):
+		return followed
+	if found.is_empty():
+		var shown := ChatCommandsScript.clean_name(asked, config)
+		_tell("%s, зверя по имени %s нет" % [user, shown] if shown != "" else "%s, зверя с таким именем нет" % user, "refused")
+		return -1
+	if found.size() > 1:
+		var name: String = story.name_of_id(int(found[0]))
+		var kinds: Array = found.map(func(id) -> String: return HudTextScript.animal_noun(_species_of(id), _sex_of(id)))
+		_tell("%s, %s — таких несколько: %s. Напишите «!имя %s %s»" % [user, name, ", ".join(kinds), kinds[0], name], "refused")
+		return -1
+	return int(found[0])
+
+
+## The species a word of the chat names - «лис», «тетёрка», «олени» - or "".
+static func species_of_word(word: String) -> String:
+	var wanted := word.to_lower().replace("ё", "е")
+	for species in HudTextScript.ANIMALS.keys():
+		var words: Dictionary = HudTextScript.ANIMALS[species]
+		var forms: Array = [words["male"], words["female"], words["young"], words["all"]] + words["count"] + words["young_count"]
+		for form in forms:
+			if str(form).to_lower().replace("ё", "е") == wanted:
+				return str(species)
+	return ""
+
+
+func _species_of(agent_id: int) -> String:
+	var agent = manager.world_state.get_agent(agent_id)
+	return str(agent.species_type) if agent != null else str(story.lineage.entry(agent_id).get("species", ""))
+
+
+func _sex_of(agent_id: int) -> String:
+	var agent = manager.world_state.get_agent(agent_id)
+	return str(agent.sex) if agent != null else str(story.lineage.entry(agent_id).get("sex", ""))
+
+
+## The viewer's living ward, by id, or -1.
+func _living_ward(key: String) -> int:
 	for id in manager.world_state.adoptions.keys():
 		var ward: Dictionary = manager.world_state.adoptions[id]
 		if str(ward.get("viewer", "")) == key and float(ward.get("died_at", -1.0)) < 0.0:
-			focus_requested.emit(int(id))
-			_tell("%s: ваш подопечный — %s" % [user, str(ward.get("name", ""))], "mine")
-			return
-	_tell("%s, подопечного нет: «!имя Имя» возьмёт под опеку зверя" % user, "refused")
+			return int(id)
+	return -1
+
+
+## «!отпустить»: the viewer's living ward let go, so another may be taken.
+func _release(key: String, user: String) -> void:
+	if _living_ward(key) < 0:
+		_tell("%s, подопечного нет" % user, "refused")
+		return
+	_order("release_ward", {"viewer": key}, {"key": key, "user": user, "kind": "release_ward"})
+
+
+func _show_mine(key: String, user: String) -> void:
+	var id := _living_ward(key)
+	if id >= 0:
+		focus_requested.emit(id)
+		_tell("%s: ваш подопечный — %s" % [user, str(manager.world_state.adoptions[id].get("name", ""))], "mine")
+		return
+	_tell("%s, подопечного нет: «!имя» и имя зверя возьмёт его под опеку" % user, "refused")
 
 
 func _join(key: String, user: String, team: String) -> void:
@@ -349,9 +432,13 @@ func _on_world_event(event: Dictionary) -> void:
 				var noun: String = HudTextScript.animal_noun(str(data.get("species", "")), "")
 				_tell("%s — опекун: %s %s" % [user, noun, str(data.get("name", ""))], "adopt")
 			elif str(data.get("reason", "")) == PlayerCommands.REFUSED_HAS_WARD:
-				_tell("%s, у вас уже есть подопечный — «!моё» покажет его" % user, "refused")
+				_tell("%s, у вас уже есть подопечный — «!моё» покажет его, «!отпустить» отпустит" % user, "refused")
 			else:
-				_tell("%s, рядом нет зверя без опекуна" % user, "refused")
+				_tell("%s, %s уже под опекой или не дожил" % [user, str(about.get("name", ""))], "refused")
+		"release_ward":
+			if ok:
+				var noun: String = HudTextScript.animal_noun(str(data.get("species", "")), "")
+				_tell("%s больше не опекун: %s %s" % [user, noun, str(data.get("name", ""))], "release")
 		"vote":
 			_tell("Голосование: %s%s" % [str(about.get("label", "")), "" if ok else " — не вышло"], "vote")
 		"team":

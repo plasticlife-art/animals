@@ -109,8 +109,8 @@ cp tools/git-hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 ### Living Reserve (stream)
 
 «Трансляция» in the start menu (or `Godot --path . -- --reserve`) starts the living reserve: a
-world for a stream whose viewers act on it from the Twitch, YouTube and Telegram chats - naming
-wards (`!имя`), voting on the weather (`!1 !2 !3`), the steward's powers for the herd
+world for a stream whose viewers act on it from the Twitch, YouTube and Telegram chats - taking
+animals under care by the names they have (`!имя`, `!отпустить`), voting on the weather (`!1 !2 !3`), the steward's powers for the herd
 on screen, backing a species' fund. The reserve is an island, sea all round: no animal comes from
 outside, and a species lost does not come back. A reserve begun before the island keeps its old
 rectangle (a world's map lives in its save); `--fresh` starts an island. The camera directs itself; the reserve saves to its own slots and goes on from them (`--fresh` for a

@@ -5,6 +5,8 @@ extends RefCounted
 ## «Ветка II» while another Ветка is alive. Names belong to the view - nothing in the
 ## simulation reads them - and are kept with the save, so an animal keeps its name.
 ##
+## A name is the world's, not a species': a fox Огонёк and a hare Огонёк are not alive at once,
+## so the name over an animal is enough for a viewer to call it by in the chat (`find()`).
 ## Which name an animal gets is a hash of its id - the first of a few hashed picks that no
 ## living animal answers to - so the same world names the same animals the same way. Only
 ## when every pick is taken does the name get a number, the lowest one no living animal of
@@ -121,7 +123,8 @@ const LISTS := {
 const PROBES := 8
 
 var _names: Dictionary = {}
-## The numbered names living animals hold: `"<species>:<name>"` -> {number: id}.
+## The numbered names living animals hold, of every species: `"<name>"` -> {number: id}. A save
+## from before names were the world's keyed them `"<species>:<name>"` (`import_state()`).
 var _held: Dictionary = {}
 ## The key and number each named animal holds, by id, so a death frees the right one.
 var _holding: Dictionary = {}
@@ -140,19 +143,44 @@ func name_of(agent_id: int, species: String, sex: String) -> String:
 	var base: String = listed[mix(agent_id) % listed.size()]
 	for probe in range(PROBES):
 		var candidate: String = listed[mix(agent_id + probe * 7919) % listed.size()]
-		if _held.get("%s:%s" % [species, candidate], {}).is_empty():
+		if _held.get(candidate, {}).is_empty():
 			base = candidate
 			break
-	var key := "%s:%s" % [species, base]
-	var held: Dictionary = _held.get(key, {})
-	var number := 1
+	var number := _hold(agent_id, base, 1)
+	_names[agent_id] = base if number == 1 else "%s %s" % [base, roman(number)]
+	return _names[agent_id]
+
+
+## The living animals whose name is `text`, by id, lowest first: case, «ё» and spaces aside, and
+## «Ветка 2» the same as «Ветка II». One unless a save from before names were the world's kept
+## two of a name alive.
+func find(text: String) -> Array:
+	var wanted := spelled(text)
+	var found: Array = []
+	if wanted == "":
+		return found
+	for agent_id in _holding.keys():
+		if spelled(str(_names.get(agent_id, ""))) == wanted:
+			found.append(int(agent_id))
+	found.sort()
+	return found
+
+
+## Whether the animal holds its name now: alive, as far as the names know.
+func holds(agent_id: int) -> bool:
+	return _holding.has(agent_id)
+
+
+## `base` held by `agent_id` under the lowest number from `number` up that no living animal holds;
+## the number it got.
+func _hold(agent_id: int, base: String, number: int) -> int:
+	var held: Dictionary = _held.get(base, {})
 	while held.has(number):
 		number += 1
 	held[number] = agent_id
-	_held[key] = held
-	_holding[agent_id] = [key, number]
-	_names[agent_id] = base if number == 1 else "%s %s" % [base, roman(number)]
-	return _names[agent_id]
+	_held[base] = held
+	_holding[agent_id] = [base, number]
+	return number
 
 
 ## The name already given, or empty.
@@ -185,10 +213,20 @@ func export_state() -> Dictionary:
 	return {"names": _names.duplicate(), "held": _held.duplicate(true), "holding": _holding.duplicate(true)}
 
 
+## A save from before names were the world's held them by species (`"<species>:<name>"`): they are
+## held by name now, and of two of a name alive the later id takes the next number, keeping the
+## name it shows, so no third is given it while either lives.
 func import_state(data: Dictionary) -> void:
 	_names = data.get("names", {}).duplicate()
-	_held = data.get("held", {}).duplicate(true)
-	_holding = data.get("holding", {}).duplicate(true)
+	_held.clear()
+	_holding.clear()
+	var holding: Dictionary = data.get("holding", {})
+	var ids: Array = holding.keys()
+	ids.sort()
+	for agent_id in ids:
+		var entry: Array = holding[agent_id]
+		var key := str(entry[0])
+		_hold(int(agent_id), key.substr(key.find(":") + 1), int(entry[1]))
 
 
 func clear() -> void:
@@ -203,6 +241,20 @@ static func mix(value: int) -> int:
 	h = (h ^ (h >> 15)) * 0x297a2d39
 	h = h ^ (h >> 13)
 	return h & 0x7fffffff
+
+
+## A name as the chat may spell it, for comparing: lower case, «ё» as «е», one space between
+## words, a closing number in Roman letters, the first of a name none: «ветка 2» is «ветка ii»,
+## «Ветка I» is «ветка».
+static func spelled(text: String) -> String:
+	var words := PackedStringArray()
+	for word in text.to_lower().replace("ё", "е").replace("\t", " ").split(" ", false):
+		words.append(word)
+	if words.size() > 1 and words[-1].is_valid_int():
+		words[-1] = roman(int(words[-1])).to_lower()
+	if words.size() > 1 and words[-1] == "i":
+		words.remove_at(words.size() - 1)
+	return " ".join(words)
 
 
 static func roman(number: int) -> String:
