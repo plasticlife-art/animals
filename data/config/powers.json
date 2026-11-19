@@ -1,5 +1,5 @@
 {
-  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost); a cull takes up to `max_kills` of `species` within `radius_of_mean` of the map's mean pond. `offered` lists the powers a world has; a scenario names its own. The reserve's (`adopt`, `rain`, `drought`, `cold_snap`, `bloom`, `good_litter`) are offered only where the reserve mode lists them (`reserve.json`): a viewer naming a ward, the weather, a year of bigger litters for one species (`extra` young more in each, paced by the reserve's funds rather than a cooldown). The world is an island: no power brings animals from outside it.",
+  "_comment": "What the player may do to the world (`PlayerState`, `PlayerCommands`). Each power has `charges` (-1 for no limit) and `cooldown_seconds` of simulated time between uses; a scenario overrides them. The powers' own settings sit beside them: a herd is led no further than `max_distance` in a straight line and `max_route` along the way it would walk (the route search's cost); a cull takes up to `max_kills` of `species` within `radius_of_mean` of the map's mean pond. `offered` lists the powers a world has; a scenario names its own. The reserve's (`adopt`, `release_ward`, `rain`, `drought`, `cold_snap`, `bloom`, `good_litter`) are offered only where the reserve mode lists them (`reserve.json`): a viewer taking an animal under care by its name and letting it go, the weather, a year of bigger litters for one species (`extra` young more in each, paced by the reserve's funds rather than a cooldown). The world is an island: no power brings animals from outside it.",
   "offered": ["dig_pond", "lead_herd", "cull"],
   "powers": {
     "dig_pond": {
@@ -29,6 +29,10 @@
       "radius": 2400.0,
       "max_name": 20,
       "keep_dead": 200
+    },
+    "release_ward": {
+      "charges": -1,
+      "cooldown_seconds": 0.0
     },
     "rain": {
       "charges": -1,

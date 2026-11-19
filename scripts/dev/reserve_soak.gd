@@ -15,8 +15,6 @@ extends SceneTree
 
 const SAMPLE_SECONDS := 600.0
 const LOOK_SECONDS := 25.0
-const NAMES := ["Ветка", "Луна", "Искра", "Буран", "Тучка", "Звёздочка", "Рыжик", "Снежок", "Гроза", "Ромашка", "Уголёк",
-	"Метель", "Ольха", "Шиповник", "Берёза", "Ласка"]
 const SOAK_SAVES := "user://soak_reserve_saves"
 
 var manager = null
@@ -43,6 +41,7 @@ func _initialize() -> void:
 	story.bind(manager)
 	story.begin({})
 	story.lineage.capacity = int(config.get("story_animals", story.lineage.capacity))
+	session.story = story
 	viewers.seed = run_seed * 7919 + 13
 	var told: Dictionary = {}
 	session.told.connect(func(line: Dictionary) -> void:
@@ -95,13 +94,17 @@ func _initialize() -> void:
 	quit()
 
 
-## One viewer's chat line: a ward, «!моё», a vote, a fund, now and then a steward's power.
+## One viewer's chat line: a ward by the name of an animal awake (as the view would show it), now and
+## then one let go, «!моё», a vote, a fund, now and then a steward's power.
 func _viewer_line() -> Dictionary:
 	var id := viewers.randi_range(1, 400)
 	var roll := viewers.randf()
 	var text := "!моё"
-	if roll < 0.25:
-		text = "!имя " + str(NAMES[viewers.randi_range(0, NAMES.size() - 1)])
+	var awake: Array = manager.world_state.get_living_agents()
+	if roll < 0.22 and not awake.is_empty():
+		text = "!имя " + story.name_of(awake[viewers.randi_range(0, awake.size() - 1)])
+	elif roll < 0.25:
+		text = "!отпустить"
 	elif roll < 0.55:
 		text = "!%d" % viewers.randi_range(1, 3)
 	elif roll < 0.75:

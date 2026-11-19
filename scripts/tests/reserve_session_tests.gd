@@ -1,8 +1,10 @@
 extends RefCounted
 
 ## The reserve's viewers (`ReserveSession`, `ChatCommands`, `ViewerBook`, `VoteRound`,
-## `ViewerLink`): chat lines read as commands, names cleaned; a ward taken and told, a second
-## asked too soon ignored; a vote won and carried out; a fund's perk; a steward's power on the
+## `ViewerLink`): chat lines read as commands, names cleaned; a ward taken by the name it has and
+## keeps, told, a second asked too soon ignored, a name no one has and one under care already
+## refused, «!имя» alone the one the camera follows, a ward let go; namesakes a save kept told
+## apart by species, or by the one followed; a vote won and carried out; a fund's perk; a steward's power on the
 ## focus herd; «!моё» asking the camera for the ward; the session back from a save; lines of
 ## JSON read off the local port; the director's shots (`ReserveDirector`), a hunter followed out
 ## before its chase and a hunt not gone to that would be over before the view got there; the overlay's text; and
@@ -32,6 +34,7 @@ const AT := Vector2(1500.0, 1500.0)
 func run(a) -> void:
 	_test_reading_the_chat(a)
 	_test_a_ward(a)
+	_test_namesakes(a)
 	_test_a_vote_and_a_fund(a)
 	_test_a_steward_and_mine(a)
 	_test_the_local_port(a)
@@ -87,22 +90,35 @@ static func _message(user_id: String, user: String, text: String) -> Dictionary:
 	return {"platform": "twitch", "user_id": user_id, "user": user, "text": text}
 
 
-## A reserve world with a herd at `AT`, its session and the lines it told.
+## A reserve world with a herd at `AT`, its session, the lines it told, the story the view keeps
+## (whose names the viewers call wards by) and the herd: `[manager, session, lines, book, herd]`.
 static func _reserve(seed: int, config: Dictionary) -> Array:
 	var manager = Helpers.create_manager_with(ReserveCommandTestsScript._bundle(seed), seed)
 	manager.set_lod_enabled(false)
-	Helpers.spawn_herd(manager.world_state, AT, 6, 0)
+	var herd: Array = Helpers.spawn_herd(manager.world_state, AT, 6, 0)
 	var session = ReserveSessionScript.new()
 	session.configure(manager, config)
+	var book = _story(manager, session)
 	var lines: Array = []
 	session.told.connect(func(line: Dictionary) -> void: lines.append(str(line["text"])))
-	return [manager, session, lines]
+	return [manager, session, lines, book, herd]
+
+
+## The story the view keeps of the manager's world, the session's to find names in.
+static func _story(manager, session):
+	var book = StoryBookScript.new()
+	book.bind(manager)
+	book.begin({})
+	session.story = book
+	return book
+
 
 
 func _test_reading_the_chat(a) -> void:
 	var config := _config()
 	var cases := {"!имя Ветка": ["adopt", "Ветка"], "!ИМЯ   Звёздочка ": ["adopt", "Звёздочка"], "!2": ["vote", "2"],
-		"!водопой": ["dig_pond", ""], "!олени": ["team", "herbivore"], "!мое": ["mine", ""], "!моё": ["mine", ""]}
+		"!водопой": ["dig_pond", ""], "!олени": ["team", "herbivore"], "!мое": ["mine", ""], "!моё": ["mine", ""],
+		"!имя": ["adopt", ""], "!отпустить": ["release_ward", ""]}
 	var right := true
 	for text in cases.keys():
 		var parsed: Dictionary = ChatCommands.parse(text, config)
@@ -122,24 +138,74 @@ func _test_a_ward(a) -> void:
 	var made := _reserve(9931, _config())
 	var manager = made[0]
 	var session = made[1]
-	var book = StoryBookScript.new()
-	book.bind(manager)
-	book.begin({})
-	session.hear(_message("1", "Вася", "!имя Ветка"))
+	var lines: Array = made[2]
+	var book = made[3]
+	var world = manager.world_state
+	var deer = made[4][0]
+	var name: String = book.name_of(deer)
+	session.hear(_message("1", "Вася", "!имя Нетакого"))
+	a.is_true(manager.pending_commands().is_empty() and lines == ["Вася, зверя по имени Нетакого нет"],
+		"a name no one has: no one taken (%s)" % str(lines))
+	session.hear(_message("1", "Вася", "!имя  " + name.to_lower().replace("ё", "е") + " "))
 	manager.step_once()
-	var ward := -1
-	for id in manager.world_state.adoptions.keys():
-		if str(manager.world_state.adoptions[id]["viewer"]) == "twitch:1":
-			ward = int(id)
-	a.is_true(ward != -1 and str(manager.world_state.adoptions[ward]["name"]) == "Ветка", "a viewer's ward, named")
-	a.is_true(made[2].size() == 1 and str(made[2][0]).contains("опекун"), "and told (%s)" % str(made[2]))
-	var agent = manager.world_state.get_agent(ward)
-	a.is_true(book.name_of(agent) == "Ветка" and SelectionCardScript.family_line(book, agent).begins_with("Опекун: Вася"),
-		"its card names it and its guardian")
+	a.is_true(world.adoptions.has(deer.id) and str(world.adoptions[deer.id]["viewer"]) == "twitch:1"
+		and str(world.adoptions[deer.id]["name"]) == name, "the animal of the name, however spelled, the mistake costing no wait")
+	a.equal(lines.back(), "Вася — опекун: олень %s" % name, "and told")
+	a.is_true(book.name_of(deer) == name and SelectionCardScript.family_line(book, deer).begins_with("Опекун: Вася"),
+		"it keeps its name, its card naming its guardian too")
 	var feed: Array = book.feed.lines.map(func(line) -> String: return str(line.text))
-	a.is_true(feed.has("Вася берёт под опеку: олень Ветка"), "the feed tells it by the viewer's name (%s)" % str(feed))
+	a.is_true(feed.has("Вася берёт под опеку: олень %s" % name), "the feed tells it by the viewer's name (%s)" % str(feed))
 	session.hear(_message("1", "Вася", "!имя Ещё"))
 	a.equal(manager.pending_commands().size(), 0, "a second asked too soon is ignored")
+	session.hear(_message("2", "Маша", "!имя " + name))
+	a.is_true(manager.pending_commands().is_empty() and lines.back() == "Маша, %s уже под опекой: Вася" % name,
+		"one under care already is no one else's (%s)" % str(lines.back()))
+	var other = made[4][1]
+	manager.select_agent_by_id(other.id, false)
+	session.hear(_message("2", "Маша", "!имя"))
+	manager.step_once()
+	a.is_true(world.adoptions.has(other.id) and str(world.adoptions[other.id]["viewer"]) == "twitch:2"
+		and str(world.adoptions[other.id]["name"]) == book.name_of(other), "«!имя» alone: the one the camera follows")
+	session.hear(_message("1", "Вася", "!отпустить"))
+	manager.step_once()
+	a.is_true(not world.adoptions.has(deer.id) and lines.back() == "Вася больше не опекун: олень %s" % name,
+		"a ward let go, and told (%s)" % str(lines.back()))
+	a.equal(book.name_of(deer), name, "keeping its name")
+	session.hear(_message("1", "Вася", "!отпустить"))
+	a.is_true(manager.pending_commands().is_empty() and lines.back() == "Вася, подопечного нет", "no ward, nothing to let go")
+	Helpers.destroy_manager(manager)
+
+
+## A save from before names were the world's may keep a deer and a fox both «Огонёк»: the one the
+## camera follows answers to it, else the chat is told to say which, and «!имя лис Огонёк» does.
+func _test_namesakes(a) -> void:
+	var made := _reserve(9944, _config())
+	var manager = made[0]
+	var session = made[1]
+	var lines: Array = made[2]
+	var book = made[3]
+	var world = manager.world_state
+	var deer = made[4][2]
+	var fox = Helpers.spawn_predator(world, AT + Vector2(200.0, 0.0))
+	var state: Dictionary = book.names.export_state()
+	for agent in [deer, fox]:
+		state["names"][agent.id] = "Огонёк"
+		state["holding"][agent.id] = ["%s:Огонёк" % agent.species_type, 1]
+	book.names.import_state(state)
+	a.equal(book.find_living("огонек"), [deer.id, fox.id], "both found by the name")
+	session.hear(_message("3", "Петя", "!имя Огонёк"))
+	a.is_true(manager.pending_commands().is_empty() and str(lines.back()).begins_with("Петя, Огонёк — таких несколько: ")
+		and str(lines.back()).contains("лис") and str(lines.back()).contains("Напишите «!имя "), "the chat told to say which (%s)" % str(lines.back()))
+	session.hear(_message("3", "Петя", "!имя лис Огонёк"))
+	manager.step_once()
+	a.is_true(world.adoptions.has(fox.id) and str(world.adoptions[fox.id]["name"]) == "Огонёк", "the species said, the fox it is")
+	manager.select_agent_by_id(deer.id, false)
+	session.hear(_message("4", "Оля", "!имя Огонёк"))
+	manager.step_once()
+	a.is_true(world.adoptions.has(deer.id) and str(world.adoptions[deer.id]["viewer"]) == "twitch:4",
+		"of namesakes, the one the camera follows")
+	a.equal([ReserveSessionScript.species_of_word("Тетёрка"), ReserveSessionScript.species_of_word("лисы"),
+		ReserveSessionScript.species_of_word("Огонёк")], ["scavenger", "predator", ""], "a species told by any of its words")
 	Helpers.destroy_manager(manager)
 
 
@@ -182,7 +248,7 @@ func _test_a_steward_and_mine(a) -> void:
 	var orders: Array = manager.pending_commands()
 	a.is_true(orders.size() == 1 and str(orders[0]["type"]) == "dig_pond"
 		and Vector2(orders[0]["params"]["position"]).distance_to(AT) < 1500.0, "a steward's power goes by the focus herd")
-	session.hear(_message("5", "Оля", "!имя Тучка"))
+	session.hear(_message("5", "Оля", "!имя " + made[3].name_of(made[4][0])))
 	manager.step_once()
 	session.hear(_message("5", "Оля", "!моё"))
 	a.is_true(asked.size() == 1 and manager.world_state.adoptions.has(asked[0]), "«!моё» asks the camera for the ward")
@@ -263,7 +329,7 @@ func _test_the_director(a) -> void:
 		widest = minf(widest, float(view[1]))
 	a.is_true(widest < scene_zoom * 0.8 and manager.selected_agent_id == fox.id and is_equal_approx(camera.zoom, scene_zoom),
 		"far off, through the map: out to %.2f and back to %.2f, then following" % [widest, camera.zoom])
-	session.hear(_message("7", "Лиза", "!имя Искра"))
+	session.hear(_message("7", "Лиза", "!имя " + made[3].name_of(made[4][0])))
 	manager.step_once()
 	session.hear(_message("7", "Лиза", "!моё"))
 	var ward := -1
@@ -405,11 +471,12 @@ func _test_its_own_slots(a) -> void:
 	bundle["reserve"] = {"selection": {}}
 	var manager = Helpers.create_manager_with(bundle, 9936)
 	manager.set_lod_enabled(false)
-	Helpers.spawn_herd(manager.world_state, AT, 6, 0)
+	var herd: Array = Helpers.spawn_herd(manager.world_state, AT, 6, 0)
 	var session = ReserveSessionScript.new()
 	session.configure(manager, _config())
+	var book = _story(manager, session)
 	session.hear(_message("1", "Вася", "!олени"))
-	session.hear(_message("2", "Маша", "!имя Ветка"))
+	session.hear(_message("2", "Маша", "!имя " + book.name_of(herd[0])))
 	manager.step_once()
 	a.equal(SaveSystem.kind_of(manager), SaveSystem.KIND_RESERVE, "a reserve's world knows its kind")
 	SaveSystem.save(manager, {}, "", {}, session.export_state())
@@ -543,13 +610,13 @@ func _test_floors_and_ceilings(a) -> void:
 		"a shorter story forgets the longest dead first")
 
 
-## Two wards named in the herd at `AT`, by Вася and Маша: `[manager, session, lines, first, second]`.
+## Two wards in the herd at `AT`, by Вася and Маша, each by its name: `[manager, session, lines, first, second]`.
 static func _two_wards(seed: int) -> Array:
 	var made := _reserve(seed, _config())
 	var manager = made[0]
 	var session = made[1]
-	session.hear(_message("1", "Вася", "!имя Ветка"))
-	session.hear(_message("2", "Маша", "!имя Буран"))
+	session.hear(_message("1", "Вася", "!имя " + made[3].name_of(made[4][0])))
+	session.hear(_message("2", "Маша", "!имя " + made[3].name_of(made[4][1])))
 	manager.step_once()
 	var ids: Array = manager.world_state.adoptions.keys()
 	ids.sort_custom(func(x, y) -> bool: return str(manager.world_state.adoptions[x]["viewer"]) < str(manager.world_state.adoptions[y]["viewer"]))
@@ -562,10 +629,12 @@ func _test_ward_news(a) -> void:
 	var lines: Array = made[2]
 	manager.world_event.emit({"type": "AgentReproduced", "agent_id": 999, "data": {"parent_a_id": made[3], "parent_b_id": -1}})
 	manager.world_event.emit({"type": "AgentReproduced", "agent_id": 1000, "data": {"parent_a_id": made[3], "parent_b_id": -1}})
-	a.is_true(lines.count("Потомство у подопечного: Ветка (Вася)") == 1, "a ward's young told once a litter (%s)" % str(lines))
+	var first := str(manager.world_state.adoptions[made[3]]["name"])
+	var second := str(manager.world_state.adoptions[made[4]]["name"])
+	a.is_true(lines.count("Потомство у подопечного: %s (Вася)" % first) == 1, "a ward's young told once a litter (%s)" % str(lines))
 	manager.world_state.kill_agent(manager.world_state.get_agent(made[4]), "old_age")
 	manager.step_once()
-	a.is_true(lines.has("Подопечный умер от старости: Буран (Маша)"), "a ward's death told with its cause (%s)" % str(lines))
+	a.is_true(lines.has("Подопечный умер от старости: %s (Маша)" % second), "a ward's death told with its cause (%s)" % str(lines))
 	Helpers.destroy_manager(manager)
 
 
@@ -585,19 +654,21 @@ func _test_the_banner_and_tables(a) -> void:
 	world.get_agent(made[3]).age = 500.0
 	world.get_agent(made[4]).age = 100.0
 	var eldest: Array = ReserveRecordsScript.longest_lived(world, 3)
-	a.is_true(eldest.size() == 2 and str(eldest[0]["name"]) == "Ветка", "the eldest ward first")
+	var first := str(world.adoptions[made[3]]["name"])
+	var second := str(world.adoptions[made[4]]["name"])
+	a.is_true(eldest.size() == 2 and str(eldest[0]["name"]) == first, "the eldest ward first")
 	var book = StoryBookScript.new()
 	book.bind(manager)
 	book.begin({})
 	book.lineage.note_animal(made[4], "herbivore", "male")
 	book.lineage.note_birth(5001, "herbivore", "female", 1.0, 0, [made[4]])
 	var page: String = ReserveRecordsScript.page_text(1, world, book, session, [120.0, 4])
-	a.equal(page, "Большие семьи\nБуран (Маша) — 1 потомок", "the biggest families")
+	a.equal(page, "Большие семьи\n%s (Маша) — 1 потомок" % second, "the biggest families")
 	session._count_perk("predator")
 	a.is_true(ReserveRecordsScript.page_text(2, world, book, session, [120.0, 4]).contains("Фонд лис — 1 подарок"), "the funds' perks this year")
 	a.equal(ReserveRecordsScript.year_summary(1, world, book, session),
-		"Итоги года 1: дольше всех живёт Ветка (Вася), больше всех потомков — Буран (Маша), фонд года — лис", "the year's summary")
-	a.equal(WardTagsScript._label(world.adoptions[made[3]]), "Ветка · Вася", "a ward's tag names it and its guardian")
+		"Итоги года 1: дольше всех живёт %s (Вася), больше всех потомков — %s (Маша), фонд года — лис" % [first, second], "the year's summary")
+	a.equal(WardTagsScript._label(world.adoptions[made[3]]), "%s · Вася" % first, "a ward's tag names it and its guardian")
 	Helpers.destroy_manager(manager)
 
 
@@ -665,10 +736,11 @@ func _test_saving_in_the_background(a) -> void:
 	bundle["reserve"] = {"selection": {}}
 	var manager = Helpers.create_manager_with(bundle, 9942)
 	manager.set_lod_enabled(false)
-	Helpers.spawn_herd(manager.world_state, AT, 6, 0)
+	var herd: Array = Helpers.spawn_herd(manager.world_state, AT, 6, 0)
 	var session = ReserveSessionScript.new()
 	session.configure(manager, _config())
-	session.hear(_message("1", "Вася", "!имя Ветка"))
+	var book = _story(manager, session)
+	session.hear(_message("1", "Вася", "!имя " + book.name_of(herd[0])))
 	manager.step_once()
 	var heard: Array = []
 	manager.world_exported.connect(func(world: Dictionary) -> void:

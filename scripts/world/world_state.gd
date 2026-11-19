@@ -292,6 +292,7 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	player_command_handlers["lead_herd"] = _command_lead_herd
 	player_command_handlers["cull"] = _command_cull
 	player_command_handlers["adopt"] = _command_adopt
+	player_command_handlers["release_ward"] = _command_release_ward
 	player_command_handlers["rain"] = _command_rain
 	player_command_handlers["drought"] = _command_drought
 	player_command_handlers["cold_snap"] = _command_cold_snap
@@ -1828,6 +1829,20 @@ func _command_adopt(command: Dictionary) -> Dictionary:
 	adoptions_revision += 1
 	return {"ok": true, "agent_id": agent_id, "species": str(target["species"]), "name": name, "viewer": viewer,
 		"viewer_name": str(adoptions[agent_id]["viewer_name"]), "position": target["position"]}
+
+
+## A viewer lets their living ward go (`release_ward`): no one's ward from now on, it answers to the
+## name it has of its own again. Refused without one (`bad_target`).
+func _command_release_ward(command: Dictionary) -> Dictionary:
+	var viewer := str(command.get("params", {}).get("viewer", ""))
+	for id in adoptions.keys():
+		var ward: Dictionary = adoptions[id]
+		if viewer != "" and str(ward.get("viewer", "")) == viewer and float(ward.get("died_at", -1.0)) < 0.0:
+			adoptions.erase(id)
+			adoptions_revision += 1
+			return {"ok": true, "agent_id": int(id), "species": str(ward.get("species", "")), "name": str(ward.get("name", "")),
+				"viewer": viewer, "viewer_name": str(ward.get("viewer_name", viewer))}
+	return {"ok": false, "reason": PlayerCommandsScript.REFUSED_BAD_TARGET}
 
 
 ## The animal an `adopt` order takes: `{id, species, position}`, or {}.

@@ -253,6 +253,27 @@ func name_of(agent) -> String:
 	return names.name_of(agent.id, agent.species_type, agent.sex)
 
 
+## The living animals the chat calls by `text` (`AnimalNames.find()`), by the name each shows: a
+## viewer's ward by the name it has as one, the rest by their own; lowest id first.
+func find_living(text: String) -> Array:
+	var wanted := AnimalNamesScript.spelled(text)
+	var found: Array = []
+	if wanted == "":
+		return found
+	for agent_id in names.find(text):
+		var ward := ward_of(agent_id)
+		if ward.is_empty() or AnimalNamesScript.spelled(str(ward.get("name", ""))) == wanted:
+			found.append(agent_id)
+	if manager != null and manager.world_state != null:
+		for agent_id in manager.world_state.adoptions.keys():
+			var ward: Dictionary = manager.world_state.adoptions[agent_id]
+			if float(ward.get("died_at", -1.0)) < 0.0 and not found.has(int(agent_id)) \
+					and AnimalNamesScript.spelled(str(ward.get("name", ""))) == wanted:
+				found.append(int(agent_id))
+	found.sort()
+	return found
+
+
 ## A viewer's ward (`WorldState.adoptions`): `{name, viewer, viewer_name, ...}`, or {}.
 func ward_of(agent_id: int) -> Dictionary:
 	if manager == null or manager.world_state == null:

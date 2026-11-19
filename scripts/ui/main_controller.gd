@@ -366,6 +366,7 @@ func _start_reserve(fresh: bool) -> void:
 		simulation_manager.initialize(bundle, seed_value if seed_value != 0 else 1 + int(Time.get_unix_time_from_system()) % 999983)
 	tutorial_hints.stop()
 	reserve_session = ReserveSession.new()
+	reserve_session.story = story_book
 	reserve_session.import_state(data.get("reserve", {}))
 	_adopt_running_simulation()
 	# After the bring-up: the session and the director hear the world the view now shows.

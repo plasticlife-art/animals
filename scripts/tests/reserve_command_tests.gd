@@ -1,8 +1,8 @@
 extends RefCounted
 
-## The reserve's orders to the world (`adopt`, `rain`, `drought`, `cold_snap`, `bloom`, `good_litter`):
-## a viewer takes the nearest animal no one cares for, awake or asleep, and only one living at a
-## time; the weather fills or empties the ponds and, for a while, quickens hunger or the grass;
+## The reserve's orders to the world (`adopt`, `release_ward`, `rain`, `drought`, `cold_snap`, `bloom`,
+## `good_litter`): a viewer takes the nearest animal no one cares for, awake or asleep, or the one
+## named by id, and only one living at a time, and may let it go; the weather fills or empties the ponds and, for a while, quickens hunger or the grass;
 ## a good litter gives a species one young more a litter for a year, and no one walks in from
 ## outside the island; the wards and the
 ## weather come back with a save; the worker carries the orders out as an inline tick does; and
@@ -11,7 +11,8 @@ extends RefCounted
 const Helpers := preload("res://scripts/tests/test_helpers.gd")
 const ConfigLoaderScript := preload("res://scripts/core/config_loader.gd")
 const ClimateScript := preload("res://scripts/world/climate.gd")
-const RESERVE_POWERS := ["dig_pond", "lead_herd", "cull", "adopt", "rain", "drought", "cold_snap", "bloom", "good_litter"]
+const RESERVE_POWERS := ["dig_pond", "lead_herd", "cull", "adopt", "release_ward", "rain", "drought", "cold_snap", "bloom",
+	"good_litter"]
 const AT := Vector2(1500.0, 1500.0)
 
 
@@ -74,6 +75,17 @@ func _test_adoption(a) -> void:
 	var again: int = manager.enqueue_command("adopt", {"viewer": "twitch:1", "name": "Снова", "position": AT})
 	manager.step_once()
 	a.is_true(bool(_result(world, again).get("ok", false)), "and its viewer may take another")
+	var taken := int(_result(world, again).get("agent_id", -1))
+	var let_go: int = manager.enqueue_command("release_ward", {"viewer": "twitch:1"})
+	var nothing: int = manager.enqueue_command("release_ward", {"viewer": "twitch:9"})
+	manager.step_once()
+	a.is_true(bool(_result(world, let_go).get("ok", false)) and int(_result(world, let_go).get("agent_id", -1)) == taken
+		and not world.adoptions.has(taken) and world.adoptions.has(ward), "a ward let go, the dead one remembered still")
+	a.equal(str(_result(world, nothing).get("reason", "")), PlayerCommands.REFUSED_BAD_TARGET, "no ward, nothing to let go")
+	var by_id: int = manager.enqueue_command("adopt", {"viewer": "twitch:1", "name": "Звёздочка", "agent_id": taken})
+	manager.step_once()
+	a.is_true(int(_result(world, by_id).get("agent_id", -1)) == taken and str(world.adoptions[taken]["name"]) == "Звёздочка",
+		"an animal named by id is the one taken")
 	Helpers.destroy_manager(manager)
 
 
