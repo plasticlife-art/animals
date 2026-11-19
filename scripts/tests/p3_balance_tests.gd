@@ -3,6 +3,10 @@ extends RefCounted
 const Helpers = preload("res://scripts/tests/test_helpers.gd")
 const AgentBase = preload("res://scripts/agents/agent_base.gd")
 const HuntEvaluator = preload("res://scripts/agents/ai/evaluators/hunt_prey_utility_evaluator.gd")
+const InvestigateEvaluator = preload("res://scripts/agents/ai/evaluators/investigate_water_utility_evaluator.gd")
+const PatrolEvaluator = preload("res://scripts/agents/ai/evaluators/patrol_utility_evaluator.gd")
+const PairCohesionEvaluator = preload("res://scripts/agents/ai/evaluators/pair_cohesion_utility_evaluator.gd")
+const RestEvaluator = preload("res://scripts/agents/ai/evaluators/rest_utility_evaluator.gd")
 
 
 func run(a) -> void:
@@ -18,6 +22,7 @@ func run(a) -> void:
 	_test_carrying_capacity_only_suppresses_births(a)
 	_test_critical_hunger_expands_carrion_search(a)
 	_test_exhausted_predator_does_not_start_hunt(a)
+	_test_tired_predator_rests_before_roaming(a)
 	_test_critical_thirst_expands_water_search(a)
 	_test_founders_start_at_spread_ages(a)
 	_test_map_sizes_scale_the_large_map(a)
@@ -240,6 +245,34 @@ func _test_exhausted_predator_does_not_start_hunt(a) -> void:
 	})
 	a.is_true(bool(HuntEvaluator.new().evaluate(predator, context).get("vetoed", false)),
 		"an exhausted predator rests instead of opening a chase it must abort")
+	Helpers.destroy_manager(manager)
+
+
+## `hunt.rest_when_tired`: at its rest floor a predator neither patrols, goes to its mate nor
+## sets out for (or walks on to) a pond where it saw prey, so it rests; off, it goes however tired.
+func _test_tired_predator_rests_before_roaming(a) -> void:
+	var manager = Helpers.create_manager(92)
+	var world = manager.world_state
+	var predator = Helpers.spawn_predator(world, Vector2(100, 100))
+	var context = Helpers.build_context({"hunger": 0.2, "thirst": 0.2, "investigation_signal": 1.0, "water_proximity": 1.0,
+		"no_targets_score": 1.0, "kin_separation": 1.0, "mate_available": 1.0})
+	var source := {"position": Vector2(400, 100), "last_herbivore_seen_time": world.current_time}
+	var idle := [InvestigateEvaluator.new(), PatrolEvaluator.new(), PairCohesionEvaluator.new()]
+	var vetoed := func() -> int:
+		var count := 0
+		for evaluator in idle:
+			count += int(bool(evaluator.evaluate(predator, context).get("vetoed", false)))
+		return count
+	predator.energy = float(predator.metabolism.get("rest_energy", 26.0)) - 1.0
+	predator.hunt = predator.hunt.duplicate()
+	predator.hunt["rest_when_tired"] = false
+	a.is_true(vetoed.call() == 0, "switched off, a tired predator still patrols, seeks its mate and goes to a pond where it saw prey")
+	predator.hunt["rest_when_tired"] = true
+	a.is_true(vetoed.call() == idle.size() and not predator._investigate_recent_water(world, 1.0 / 18.0, source)
+		and not bool(RestEvaluator.new().evaluate(predator, context).get("vetoed", false)),
+		"switched on, a tired predator rests instead, and walks on to no pond")
+	predator.energy = float(predator.metabolism.get("rest_energy_resume", 34.0)) + 1.0
+	a.is_true(vetoed.call() == 0, "and a rested one roams again")
 	Helpers.destroy_manager(manager)
 
 

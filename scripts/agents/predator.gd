@@ -1237,7 +1237,19 @@ func can_continue_feeding() -> bool:
 	return current_action in [AgentAction.HUNT_PREY, AgentAction.SCAVENGE_CARCASS] or state in ["seek_prey", "chase", "attack", "flank", "seek_carcass", "feed_carcass"]
 
 
+## Whether it is too tired to roam (`hunt.rest_when_tired`): at its rest floor
+## (`is_energy_below_rest_floor()`), its idle actions - patrol, going to its mate, going to a
+## pond where it saw prey - give way to rest (`UtilityEvaluator.too_tired_to_roam()`), and a
+## walk to such a pond, an engaged state no other need interrupts, is given up. On the reserve's
+## island a fox spent a fifth of its waking time walking pond to pond at an energy of 10-15,
+## below a chase's reserve, and resting a twentieth. Off, it roams however tired, as it always did.
+func is_too_tired_to_roam() -> bool:
+	return bool(hunt.get("rest_when_tired", false)) and is_energy_below_rest_floor()
+
+
 func _investigate_recent_water(world, delta: float, source: Dictionary = {}) -> bool:
+	if is_too_tired_to_roam():
+		return false
 	if source.is_empty():
 		source = _get_recent_investigation_water_source(world)
 	if source.is_empty():

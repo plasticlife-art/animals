@@ -8,11 +8,14 @@ func _init(new_config: Dictionary = {}) -> void:
 	super._init(AgentAction.INVESTIGATE_WATER, new_config)
 
 
-func evaluate(_agent, context) -> Dictionary:
+func evaluate(agent, context) -> Dictionary:
 	# Investigating a water source is a guess about where prey might turn up. It has no
 	# business outranking prey the predator can already see; thirst is `drink`'s job.
 	if has_feeding_opportunity(context):
 		return veto((["prey in reach"] if context.diagnostics else []))
+	# Nor, with `hunt.rest_when_tired`, the rest of a tired one.
+	if too_tired_to_roam(agent):
+		return veto((["tired"] if context.diagnostics else []))
 	var hunger := float(context.get_value("hunger", 0.0))
 	var thirst := float(context.get_value("thirst", 0.0))
 	var signal_score := float(context.get_value("investigation_signal", 0.0))

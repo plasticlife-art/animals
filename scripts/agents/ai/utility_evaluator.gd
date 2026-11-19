@@ -56,6 +56,15 @@ static func has_feeding_opportunity(context) -> bool:
 	return context.has_target(AgentActionRef.HUNT_PREY) or context.has_target(AgentActionRef.SCAVENGE_CARCASS)
 
 
+## True when a hunter with `hunt.rest_when_tired` is at its rest floor (`Predator.is_too_tired_to_roam()`).
+## The idle actions veto on it for the reason above: with nothing in sight `patrol` scores up to
+## 0.45 whatever the predator's strength and an exhausted one's `rest` about as much, the
+## incumbent's stickiness deciding; below `hunt.min_chase_energy` no hunt can win either, and it
+## walked on at no strength, unable to chase and growing hungrier, which only lowers rest's score.
+static func too_tired_to_roam(agent) -> bool:
+	return agent != null and agent.has_method("is_too_tired_to_roam") and bool(agent.call("is_too_tired_to_roam"))
+
+
 static func reason_if(label: String, value: float, threshold: float = 0.18) -> String:
 	if value < threshold:
 		return ""

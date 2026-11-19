@@ -8,11 +8,14 @@ func _init(new_config: Dictionary = {}) -> void:
 	super._init(AgentAction.PAIR_COHESION, new_config)
 
 
-func evaluate(_agent, context) -> Dictionary:
+func evaluate(agent, context) -> Dictionary:
 	# Regrouping with a mate peaks around 0.70 with a distant partner, which also
 	# outranks hunting. Feeding comes first; the pair can reunite once fed.
 	if has_feeding_opportunity(context):
 		return veto((["prey in reach"] if context.diagnostics else []))
+	# With `hunt.rest_when_tired`, a tired one rests first.
+	if too_tired_to_roam(agent):
+		return veto((["tired"] if context.diagnostics else []))
 	var separation := float(context.get_value("kin_separation", 0.0))
 	var mate_available := float(context.get_value("mate_available", 0.0))
 	var low_urgency := float(context.get_value("low_urgency", 0.0))

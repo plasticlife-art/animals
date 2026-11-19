@@ -41,7 +41,7 @@ const VETOES := {
 	"scavenge_carcass|below hunger floor": ["сыт", "сыта"], "below hunger floor": ["сыт", "сыта"],
 	"below thirst floor": ["напился", "напилась"], "below chase energy reserve": ["нет сил на погоню", "нет сил на погоню"],
 	"no water anywhere": ["воды нигде нет", "воды нигде нет"],
-	"not tired": ["отдохнул", "отдохнула"], "prey in reach": ["рядом добыча", "рядом добыча"],
+	"not tired": ["отдохнул", "отдохнула"], "tired": ["устал", "устала"], "prey in reach": ["рядом добыча", "рядом добыча"],
 	"vetoed": ["больше не нужно", "больше не нужно"],
 }
 ## A hunt in progress (`engaged flow: <state>`): `[he, she]`.
