@@ -4,9 +4,12 @@ extends SceneTree
 ## it goes - what the balance of a closed world is tuned by, where a species lost is lost for good.
 ## A line every `SAMPLE_SECONDS` simulated seconds: each species' count, births and deaths by cause
 ## since the last line; for each species with territories its dens (pairs, one holder, vacant),
-## the lone holders by sex, and the grown ones with no den by sex. The run stops when a species the
-## world began with is gone, and ends with one summary line: each species' lowest count and when,
-## and what was lost when.
+## the lone holders by sex, and the grown ones with no den by sex; `pairs` why the dens' pairs had
+## no young in the breeding season's plateau (`_check_pairs()`, every `PAIR_CHECK_SECONDS`); `need`
+## the grown ones' mean hunger and energy and the share strong enough to breed; and for prey `by`,
+## who ate them. The probe only reads the world, so a run with these columns is the run without.
+## The run stops when a species the world began with is gone, and ends with one summary line: each
+## species' lowest count and when, and what was lost when.
 ##
 ##   Godot --headless --path . --script res://scripts/dev/island_probe.gd -- seed hours [out.json]
 ##       [section.path.to.key=value ...]
@@ -15,9 +18,17 @@ extends SceneTree
 ## gives the same run each time (the world draws from its own stream only).
 
 const SAMPLE_SECONDS := 300.0
+## How often, in the breeding season's plateau, each den's pair is asked why it is not breeding.
+const PAIR_CHECK_SECONDS := 10.0
+const TraitsScript := preload("res://scripts/agents/traits.gd")
 
 var births := {}
 var deaths := {}
+## species -> {reason: pair checks}: what held a pair holding a den back (`_blocker()`).
+var pair_checks := {}
+## prey species -> {hunter species: kills}: who ate whom, awake and asleep.
+var eaten_by := {}
+var world_ref: WorldState
 
 
 func _initialize() -> void:
@@ -38,6 +49,7 @@ func _initialize() -> void:
 	manager.initialize(bundle, run_seed)
 	manager.set_lod_enabled(true)
 	var world: WorldState = manager.world_state
+	world_ref = world
 	manager.event_bus.event_emitted.connect(_on_event)
 	var species_ids: Array = []
 	for species_id in _counts(world).keys():
@@ -52,8 +64,11 @@ func _initialize() -> void:
 	print("island probe seed %d, %.1f h, %s" % [run_seed, hours, " ".join(overrides)])
 	var total_ticks: int = int(hours * 3600.0 * float(manager.tick_rate))
 	var sample_ticks: int = int(SAMPLE_SECONDS * float(manager.tick_rate))
+	var check_ticks: int = maxi(1, int(PAIR_CHECK_SECONDS * float(manager.tick_rate)))
 	for tick in range(1, total_ticks + 1):
 		manager.step_once()
+		if tick % check_ticks == 0:
+			_check_pairs(world)
 		if tick % sample_ticks != 0:
 			continue
 		var now: float = float(tick) / float(manager.tick_rate)
@@ -72,10 +87,21 @@ func _initialize() -> void:
 				sample["dens"][species_id] = dens
 				line += " dens %d/%d/%d lone M%d F%d homeless M%d F%d" % [dens["pairs"], dens["singles"], dens["vacant"],
 					dens["lone_male"], dens["lone_female"], dens["homeless_male"], dens["homeless_female"]]
+				if pair_checks.has(species_id):
+					line += " pairs %s" % _causes(pair_checks[species_id]).trim_prefix("-")
+				var needs := _needs(world, species_id)
+				sample["dens"][species_id]["needs"] = needs
+				line += " need h%.0f e%.0f fit%.0f%%" % [needs["hunger"], needs["energy"], 100.0 * needs["fit_share"]]
+			if eaten_by.has(species_id):
+				line += " by %s" % _causes(eaten_by[species_id]).trim_prefix("-")
 		print(line)
+		sample["pair_checks"] = pair_checks.duplicate(true)
+		sample["eaten_by"] = eaten_by.duplicate(true)
 		samples.append(sample)
 		births.clear()
 		deaths.clear()
+		pair_checks.clear()
+		eaten_by.clear()
 		if not lost.is_empty():
 			break
 	var summary := "SUMMARY seed %d:" % run_seed
@@ -99,10 +125,127 @@ func _on_event(event: Dictionary) -> void:
 		"AgentBorn":
 			births[species] = int(births.get(species, 0)) + 1
 		"AgentDied":
-			var cause := str(event.get("data", {}).get("cause", "?"))
+			var data: Dictionary = event.get("data", {})
+			var cause := str(data.get("cause", "?"))
 			if not deaths.has(species):
 				deaths[species] = {}
 			deaths[species][cause] = int(deaths[species].get(cause, 0)) + 1
+			if cause == "predation":
+				var hunter := str(data.get("killer_species", ""))
+				if hunter == "" and world_ref != null:
+					var killer = world_ref.get_agent(int(event.get("other_agent_id", -1)))
+					hunter = "?" if killer == null else str(killer.species_type)
+				if not eaten_by.has(species):
+					eaten_by[species] = {}
+				eaten_by[species][hunter] = int(eaten_by[species].get(hunter, 0)) + 1
+
+
+## In the plateau of a species' breeding season (`WorldState.breeding_value()` 1), why each den
+## held by a pair has no young coming, tallied in `pair_checks`: the first of the female's, then
+## the male's, of `young`, `cd` (resting since the last young), `energy`, `hunger`, `thirst`;
+## with both ready `cap` when the species is at its capacity, else where they are - `ready`
+## asleep in one sector (the sleeping step can breed them), `awake` both awake, `split` asleep in
+## two sectors or one awake and one asleep (neither step can).
+func _check_pairs(world: WorldState) -> void:
+	var sleepers := {}
+	for key in world._sector_states.keys():
+		for record in world._sector_states[key].get("dormant_records", []):
+			sleepers[int(record.get("id", -1))] = [key, record]
+	var counts := {}
+	for species_id in world.territories.keys():
+		if world.breeding_value(species_id) < 1.0:
+			continue
+		var reproduction: Dictionary = world.config_bundle["species"][species_id].get("reproduction", {})
+		var tally: Dictionary = pair_checks.get(species_id, {})
+		if counts.is_empty():
+			counts = _counts(world)
+		var capped := int(counts.get(species_id, 0)) >= world.get_reproductive_capacity(species_id)
+		for territory in world.territory_registry(species_id).territories:
+			var male := int(territory["male"])
+			var female := int(territory["female"])
+			if male == TerritoryRegistry.NOBODY or female == TerritoryRegistry.NOBODY:
+				continue
+			var reason := _blocker(world, female, sleepers, reproduction)
+			if reason == "":
+				reason = _blocker(world, male, sleepers, reproduction)
+			if reason == "" and capped:
+				reason = "cap"
+			if reason == "":
+				var asleep_female: Variant = sleepers.get(female)
+				var asleep_male: Variant = sleepers.get(male)
+				if asleep_female == null and asleep_male == null:
+					reason = "awake"
+				elif asleep_female != null and asleep_male != null and asleep_female[0] == asleep_male[0]:
+					reason = "ready"
+				else:
+					reason = "split"
+			tally[reason] = int(tally.get(reason, 0)) + 1
+		pair_checks[species_id] = tally
+
+
+## One animal's needs, awake or asleep: [age, cooldown, energy, hunger, thirst, sex, longevity],
+## or [] when it is neither.
+static func _state_of(world: WorldState, animal_id: int, sleepers: Dictionary) -> Array:
+	var agent = world.get_agent(animal_id)
+	if agent != null:
+		return [agent.age, agent.reproduction_cooldown, agent.energy, agent.hunger, agent.thirst, agent.sex,
+			agent.trait_longevity]
+	if sleepers.has(animal_id):
+		var record: Dictionary = sleepers[animal_id][1]
+		return [float(record.get("age", 0.0)), float(record.get("reproduction_cooldown", 0.0)),
+			float(record.get("energy", 0.0)), float(record.get("hunger", 0.0)), float(record.get("thirst", 0.0)),
+			str(record.get("sex", AgentBase.SEX_FEMALE)), float(TraitsScript.of_record(record)[TraitsScript.LONGEVITY])]
+	return []
+
+
+## What keeps one animal from breeding now, "" for nothing.
+static func _blocker(world: WorldState, animal_id: int, sleepers: Dictionary, reproduction: Dictionary) -> String:
+	var state := _state_of(world, animal_id, sleepers)
+	if state.is_empty():
+		return "gone"
+	if float(state[0]) < float(reproduction.get("maturity_age", 0.0)) * float(state[6]):
+		return "young"
+	if float(state[1]) > 0.0:
+		return "cd"
+	if float(state[2]) < AgentBase.breeding_energy_threshold(reproduction, str(state[5]), INF):
+		return "energy"
+	if float(state[3]) > float(reproduction.get("max_hunger", 100.0)):
+		return "hunger"
+	if float(state[4]) > float(reproduction.get("max_thirst", 100.0)):
+		return "thirst"
+	return ""
+
+
+## The grown animals of a species: mean hunger and energy, and the share strong enough to breed
+## (energy at the threshold, hunger and thirst under the limits) whatever the season.
+static func _needs(world: WorldState, species_id: String) -> Dictionary:
+	var reproduction: Dictionary = world.config_bundle["species"][species_id].get("reproduction", {})
+	var grown := float(reproduction.get("maturity_age", 0.0))
+	var hunger := 0.0
+	var energy := 0.0
+	var fit := 0
+	var count := 0
+	var states: Array = []
+	for agent in world.living_agents:
+		if agent != null and agent.is_alive and agent.species_type == species_id:
+			states.append([agent.age, agent.energy, agent.hunger, agent.thirst, agent.sex])
+	for key in world._sector_states.keys():
+		for record in world._sector_states[key].get("dormant_records", []):
+			if str(record.get("species_type", "")) == species_id:
+				states.append([float(record.get("age", 0.0)), float(record.get("energy", 0.0)),
+					float(record.get("hunger", 0.0)), float(record.get("thirst", 0.0)), str(record.get("sex", ""))])
+	for state in states:
+		if float(state[0]) < grown:
+			continue
+		count += 1
+		hunger += float(state[2])
+		energy += float(state[1])
+		if float(state[1]) >= AgentBase.breeding_energy_threshold(reproduction, str(state[4]), INF) \
+				and float(state[2]) <= float(reproduction.get("max_hunger", 100.0)) \
+				and float(state[3]) <= float(reproduction.get("max_thirst", 100.0)):
+			fit += 1
+	var n := maxf(1.0, float(count))
+	return {"hunger": hunger / n, "energy": energy / n, "fit_share": float(fit) / n, "grown": count}
 
 
 ## Every animal by species, awake or asleep.
