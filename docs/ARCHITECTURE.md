@@ -856,8 +856,32 @@ A world on a stream that its viewers act on through the chat. Launched with
     (`hunt.reach_leash_share`) 153 / 44 / 10 and 124 / 11 / 10, no species lost; without it
     122 / 21 / wolves lost and 179 / 41 / 8; with neither, wolves lost on both. On the island
     balance branch's routes (den and water fields), seeds 3, 5, 7 and 11, 2.5 h: deer 66-125,
-    foxes 10-25, wolves 10-11, none lost. Foxes are the weak spot left: dens stand vacant while
-    pairs wait on their strength.
+    foxes 10-25, wolves 10-11, none lost.
+  - Its foxes (`reserve.json` `species.predator`): a vixen breeds at an energy of 45, not 70
+    (`reproduction.energy_threshold`), waits 150 s between litters, not 60 (`cooldown`), and
+    has 2 young on average, at most 3, not 3 and 4 (`breeding`). On the island fox pairs in the
+    breeding season's plateau were held back by energy in about three checks of four, year
+    after year (`island_probe.gd` `pairs`): a fox rests up to 60 at most - awake from its rest
+    floor of 40, asleep to the idle ceiling (`dormant_ecology.idle_recovery_energy_ratio`) - and
+    was over 70 only for seconds after a meal; grown foxes' mean energy sat at 16-42. While the
+    founders' dens were full the surplus young covered it; as they aged out the pairs left bred
+    a litter one spring in four to seven, and on seed 11 foxes fell from 53 to 11, with 11 of
+    17 dens vacant and no fox left to take them. At 45 a rested pair breeds; the long cooldown
+    keeps it to one litter a spring (the founders, starting part-way through it, have about 10
+    young their first spring, not 30); the smaller litter keeps the grown foxes looking for a
+    den from eating the deer down. Every pair breeding three young (the threshold and cooldown
+    alone) saved the foxes but cost the rest: deer down to 55-80 on seeds 3, 7 and 11 (still
+    falling at 1.25 h on 3 and 11), and on seed 5 wolves lost at 3600 s with deer at 230-300 - the foxes
+    took the sleeping wolves' meals (a sleeping kill goes to the first hunter species in its
+    sector, its carcass to whoever eats first). With `hunt.rest_when_tired` on as well foxes
+    rose to 70-95 and deer fell to 26-33 (seeds 3, 7). Island probe, 1.25 h, lowest counts
+    deer / foxes / wolves, against main cf7abf1: seed 11 179 / 36 / 7 (124 / 11 / 10), seed 5
+    198 / 31 / 10 (153 / 44 / 10), seed 3 132 / 31 / 10 (105 / 36 / 10), seed 7
+    124 / 36 / 10 (115 / 37 / 7), none lost; the foxes' low is their first spring's, 39-42
+    after it (11-44 on main). Wolves stay
+    the knife edge on seed 11 under every setting: a cohort of founders' young dies of age
+    about 2400 s and the wolves left are mostly of one sex, while grown wolves without a den
+    sit beside vacant dens.
 - **`ReserveSession`** turns chat lines into those orders and tells back what came of them
   (`told`). It is kept apart from any window, so a server can run it later.
   - `ChatCommands` parses «!word arg» through `reserve.json` `commands` and cleans ward names:
@@ -2335,6 +2359,15 @@ millisecond setting squeezed to zero.
 - `hunt.reach_leash_share` (1.5) is how far round on foot a hunter goes for a prey it sees
   over water or round a cliff, as a share of `perception.chase_break_radius`; 0 is the old
   sight-only hunt (see A hunter's reach on foot).
+- `hunt.rest_when_tired` (off unless a species sets it): at its rest floor
+  (`AgentBase.is_energy_below_rest_floor()`) a hunter's idle actions - `patrol`,
+  `pair_cohesion`, `investigate_water` - veto, so `rest` wins, and a walk to a pond where it saw
+  prey (an engaged state no need interrupts) is given up. Off, with nothing in sight `patrol`
+  scores about as much as an exhausted animal's `rest`, and below `hunt.min_chase_energy` no
+  hunt can win: on the reserve's island awake foxes spent a fifth of their time walking pond to
+  pond at an energy of 8-15 and rested a twentieth. On, foxes' mean energy rose from ~37 to
+  ~56, but a fox at rest still sits under a vixen's 70, and the stronger foxes ate more deer
+  and more of the wolves' meals; the reserve leaves it off (see the reserve's foxes).
 - `feeding.gorge_below_energy_threshold` lets a feeding predator keep eating past the point
   its hunger is satisfied, until it has covered `reproduction.energy_threshold`. Without it
   meat intake is capped by the hunger the predator arrived with, which capped energy income

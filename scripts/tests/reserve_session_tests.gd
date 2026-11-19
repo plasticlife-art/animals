@@ -530,6 +530,8 @@ func _test_an_island(a) -> void:
 	old["species"]["wolf"]["territory"].erase("stay_while_no_room")
 	old["species"]["wolf"]["territory"]["emigrate_after_seconds"] = 123.0
 	old["species"]["herbivore"]["aging"]["max_age"] = 1200.0
+	old["species"]["predator"]["reproduction"]["energy_threshold"] = 70.0
+	old["species"]["predator"]["breeding"]["litter_mean"] = 3.0
 	old["world"]["grass"]["stubble_fraction"] = 0.05
 	old["world"]["grass"]["growth_rate"] = 0.0123
 	var resumed := ConfigLoaderScript.with_reserve_powers(old, _config())
@@ -550,6 +552,13 @@ func _test_an_island(a) -> void:
 		"and its does breed hungrier than elsewhere")
 	a.is_true(is_equal_approx(float(resumed["species"]["herbivore"]["aging"]["max_age"]),
 		float(_config()["species"]["herbivore"]["aging"]["max_age"])), "but the reserve's own ways of its animals today's")
+	var shipped_fox: Dictionary = ConfigLoaderScript.load_config_bundle()["species"]["predator"]
+	for reserve_bundle in [fresh, resumed]:
+		var fox: Dictionary = reserve_bundle["species"]["predator"]
+		a.is_true(float(fox["reproduction"]["energy_threshold"]) < float(shipped_fox["reproduction"]["energy_threshold"])
+			and float(fox["reproduction"]["cooldown"]) > float(shipped_fox["reproduction"]["cooldown"])
+			and float(fox["breeding"]["litter_mean"]) < float(shipped_fox["breeding"]["litter_mean"]),
+			"and its foxes breed on a rested strength, once a spring and fewer at a time, new or resumed (%s)" % str(fox["reproduction"]))
 
 
 ## In the game the view's world holds the animals about the camera only: the count is the
