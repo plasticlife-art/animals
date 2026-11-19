@@ -2322,6 +2322,20 @@ millisecond setting squeezed to zero.
   walked it away along the searched part, and in the map's centre most awake foxes stood at
   zero energy for whole seasons - starving, thirsting, breeding no more - until their cohort
   died out
+- `navigation.goal_field_expansions_per_tick` (512) and `goal_field_route_cells` (48): a young
+  animal making for a den of its own walks the den's goal field, not a route search
+  (`TerrainSystem.request_goal_field()`, `WorldState.get_next_waypoint(..., far)` from
+  `Predator._patrol()`, and `_dormant_field_waypoint()` for a sleeping group with a `disperse`
+  goal). A field is one Dijkstra search out from the den over the whole map, by the steps a
+  route search takes, on its own budget so no route waits on it (about 23 ticks for the
+  island), dated by `flood_epoch`; the walker goes down it 48 cells at a time, only ever to a
+  nearer cell, and the route search takes it on till the field is done. On a reserve save the
+  capped search gave up on 16 of 30 wolf and 154 of 306 fox den routes, all of them there to
+  walk round ridges and water (2-4 times the straight line): a disperser marked its den out of
+  reach, wandered, chose by straight line again and piled up at a cliff's foot; down the fields
+  30 of 30 and 306 of 306 arrive. A far route search (16000 cells on the shared budget) did the
+  same and took the budget from everyone else - deer died of thirst - and was dropped. A
+  reserve saved before gets the two keys (`ConfigLoader.with_reserve_powers()`).
 - `navigation.prey_pressure_refresh_ticks` throttles the sector-level herbivore census that
   is the simulation's only long-range prey signal. Both the dormant goal selector and the
   live predator patrol read it.

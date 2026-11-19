@@ -33,6 +33,7 @@ func run(a) -> void:
 	_test_a_holder_keeps_to_its_ground(a)
 	_test_mates_hold_together(a)
 	_test_a_young_one_finds_its_own(a)
+	_test_a_young_one_looks_far_for_its_den(a)
 	_test_a_sleeping_pair_keeps_to_its_ground(a)
 	_test_only_holders_breed_asleep(a)
 	_test_a_sleeping_vagrant_settles(a)
@@ -277,6 +278,130 @@ func _test_a_young_one_finds_its_own(a) -> void:
 	cub.position = registry.get_territory(bound)["den"]
 	cub._seek_ground(world)
 	a.equal([registry.territory_of(cub.id), cub._making_for], [bound, -1], "there, it takes it")
+	Helpers.destroy_manager(manager)
+
+
+## A den round a wall, further than an ordinary route search looks before it gives up
+## (`navigation.max_search_cells`, here its least): making for it, a young one goes down the
+## den's goal field, which finds the way round at the route search's own cost, where the same
+## search for anyone else is given up on. Water that cuts the way dates the field, and the one
+## searched after it calls the den out of reach.
+func _test_a_young_one_looks_far_for_its_den(a) -> void:
+	var manager = _small(9993)
+	var world = manager.world_state
+	var terrain = world.terrain_system
+	var registry: TerritoryRegistry = world.territory_registry("predator")
+	terrain.navigation_config["max_search_cells"] = 64
+	# A wall down the middle of the 48 x 48 cells, open only in the bottom three rows.
+	var column: int = int(terrain.cols) / 2
+	var wall := PackedInt32Array()
+	for row in range(terrain.rows - 3):
+		terrain._walkable[row * terrain.cols + column] = 0
+		wall.append(row * terrain.cols + column)
+	terrain._refresh_navigation_around(wall)
+	terrain._path_cache.clear()
+	terrain._path_cache_order.clear()
+	terrain._goal_fields.clear()
+	var start: Vector2 = terrain.get_cell_center(4 * terrain.cols + 6)
+	var den: Vector2 = terrain.get_cell_center(4 * terrain.cols + terrain.cols - 7)
+	var start_index: int = terrain.get_index_from_position(start)
+	var den_index: int = terrain.get_index_from_position(den)
+	var walker = _fox(world, start, AgentBaseScript.SEX_MALE, 100.0)
+	for far in [false, true]:
+		walker.clear_navigation()
+		for tick in range(40):
+			world.current_tick += 1
+			world._prepare_navigation_budget()
+			world.get_next_waypoint(walker.position, den, walker.id, false, far)
+			if not walker.path_cells.is_empty() and not world._has_pending_global_requester(walker.id) \
+					and (not far or terrain.has_goal_field(den_index)):
+				break
+		if far:
+			a.is_true(walker.path_reachable and terrain.has_goal_field(den_index) and walker.path_cells.size() > 2,
+				"making for a den, it goes down the den's field (%d cells of it)" % walker.path_cells.size())
+		else:
+			a.is_true(not walker.path_reachable, "the same search for anyone else is given up on")
+	var route: Dictionary = terrain.goal_field_route(start_index, den_index, 10000)
+	var lowest_row := 0
+	for cell in route["cells"]:
+		lowest_row = maxi(lowest_row, int(cell) / int(terrain.cols))
+	a.is_true(bool(route["reachable"]) and int(route["cells"][route["cells"].size() - 1]) == den_index
+		and lowest_row >= terrain.rows - 3, "the field's way ends at the den, round the wall's foot")
+	terrain.navigation_config["max_search_cells"] = 4000
+	terrain._path_cache.clear()
+	terrain._path_cache_order.clear()
+	terrain._path_searches.clear()
+	var searched: Dictionary = terrain.find_path_between_indices(start_index, den_index)
+	var field_cost: float = float(terrain._goal_fields[den_index]["ready"][start_index])
+	a.is_true(bool(searched["reachable"]) and field_cost <= float(searched["cost"]) * 1.0001
+		and field_cost >= float(searched["cost"]) * 0.9,
+		"at the cost a route search finds, or a little less (%.0f, %.0f)" % [field_cost, float(searched["cost"])])
+	terrain.navigation_config["max_search_cells"] = 64
+	# Water closes the wall's foot: the field there stands till the new one, which finds no way.
+	var foot := PackedInt32Array()
+	for row in range(terrain.rows - 3, terrain.rows):
+		terrain._walkable[row * terrain.cols + column] = 0
+		foot.append(row * terrain.cols + column)
+	terrain._refresh_navigation_around(foot)
+	terrain.flood_epoch += 1
+	terrain.request_goal_field(den_index)
+	a.is_true(bool(terrain.goal_field_route(start_index, den_index, 8)["reachable"]),
+		"water that has risen leaves the field there to walk while the new one is searched")
+	for tick in range(40):
+		terrain.step_goal_fields(512)
+	a.is_true(not bool(terrain.goal_field_route(start_index, den_index, 8)["reachable"]),
+		"and the new one calls the den out of reach")
+	for cell in foot:
+		terrain._walkable[cell] = 1
+	terrain._refresh_navigation_around(foot)
+	terrain.flood_epoch += 1
+	terrain._path_cache.clear()
+	terrain._path_cache_order.clear()
+	terrain.request_goal_field(den_index)
+	for tick in range(40):
+		terrain.step_goal_fields(512)
+	# Of age with its den beyond the wall, it walks there as one making for it.
+	var cub = _fox(world, start, AgentBaseScript.SEX_FEMALE, 250.0)
+	cub.natal_territory_id = -1
+	cub._seek_ground(world)
+	var bound: int = cub._making_for
+	registry.get_territory(bound)["den"] = den
+	cub._patrol_goal_tick = -9999
+	var before: float = cub.position.distance_to(den)
+	for tick in range(240):
+		world.current_tick += 1
+		world.current_time += manager.tick_duration
+		world._prepare_navigation_budget()
+		cub._patrol(world, manager.tick_duration)
+	a.is_true(cub._making_for == bound and not cub.is_unreachable(cub.place_key(den), world.current_time),
+		"it keeps making for that den, never calling it out of reach")
+	a.is_true(cub.position.distance_to(den) < before or cub.position.y > start.y + 600.0,
+		"and is on its way round (%.0f -> %.0f from the den, %.0f down)" % [before, cub.position.distance_to(den), cub.position.y - start.y])
+	# Asleep, a group making for the den walks its field round the wall's foot to the den; the
+	# same group off anywhere else gets the capped search's broken-off way.
+	for kind in ["wander", "disperse"]:
+		var group := {"goal_kind": kind, "center": start}
+		var at: Vector2 = start
+		var deepest := 0
+		for step in range(800):
+			world.current_tick += 1
+			world._prepare_navigation_budget()
+			var waypoint: Vector2 = world._dormant_herd_waypoint(group, at, den)
+			var next: Vector2 = at.move_toward(waypoint, terrain.cell_size * 0.5)
+			# A route cuts a wall's corner from cell to cell, as a herd squeezes past it.
+			if not terrain.is_walkable_position(next) and at.distance_to(waypoint) <= terrain.cell_size * 1.5:
+				next = waypoint
+			if terrain.is_walkable_position(next):
+				at = next
+			deepest = maxi(deepest, terrain.get_index_from_position(at) / int(terrain.cols))
+			if at.distance_to(den) <= terrain.cell_size:
+				break
+		if kind == "disperse":
+			a.is_true(at.distance_to(den) <= terrain.cell_size and deepest >= terrain.rows - 3,
+				"asleep, making for the den, it walks the field round the wall's foot (%.0f from the den)" % at.distance_to(den))
+		else:
+			a.is_true(at.distance_to(den) > terrain.cell_size * 4.0,
+				"asleep and off elsewhere, the capped search leaves it short (%.0f from the den)" % at.distance_to(den))
 	Helpers.destroy_manager(manager)
 
 

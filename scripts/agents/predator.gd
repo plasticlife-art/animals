@@ -799,7 +799,8 @@ func _patrol(world, delta: float) -> void:
 	_update_water_memory(world)
 	var patrol_goal: Variant = _resolve_patrol_goal(world)
 	if patrol_goal != null:
-		var patrol_waypoint: Vector2 = world.get_next_waypoint(position, patrol_goal, id)
+		# Making for a den, it goes down the den's goal field, which reaches as far as a den may lie.
+		var patrol_waypoint: Vector2 = world.get_next_waypoint(position, patrol_goal, id, false, _making_for != -1)
 		if path_reachable:
 			move_with_vector(world, Steering.seek(position, patrol_waypoint), float(movement.get("max_speed", 84.0)), delta)
 			return

@@ -534,6 +534,8 @@ func _test_an_island(a) -> void:
 	old["species"]["predator"]["breeding"]["litter_mean"] = 3.0
 	old["world"]["grass"]["stubble_fraction"] = 0.05
 	old["world"]["grass"]["growth_rate"] = 0.0123
+	old["world"]["navigation"].erase("goal_field_expansions_per_tick")
+	old["world"]["navigation"]["max_search_cells"] = 1234
 	var resumed := ConfigLoaderScript.with_reserve_powers(old, _config())
 	var causes: Dictionary = resumed["balance"]["carcass"]["meat_by_cause"]
 	a.is_true(resumed["powers"]["offered"].has("good_litter") and not resumed["powers"]["offered"].has("release")
@@ -550,6 +552,9 @@ func _test_an_island(a) -> void:
 		"the reserve's own settings of its land are today's, new or resumed, the rest of the land's kept (%s)" % str(resumed["world"]["grass"]))
 	a.is_true(float(fresh["species"]["herbivore"]["reproduction"]["max_hunger"]) > float(ConfigLoaderScript.load_config_bundle()["species"]["herbivore"]["reproduction"]["max_hunger"]),
 		"and its does breed hungrier than elsewhere")
+	var navigation: Dictionary = resumed["world"]["navigation"]
+	a.is_true(int(navigation.get("goal_field_expansions_per_tick", 0)) == int(_config_world_navigation().get("goal_field_expansions_per_tick", -1))
+		and int(navigation["max_search_cells"]) == 1234, "and the route search's settings added since, its own kept")
 	a.is_true(is_equal_approx(float(resumed["species"]["herbivore"]["aging"]["max_age"]),
 		float(_config()["species"]["herbivore"]["aging"]["max_age"])), "but the reserve's own ways of its animals today's")
 	var shipped_fox: Dictionary = ConfigLoaderScript.load_config_bundle()["species"]["predator"]
@@ -559,6 +564,10 @@ func _test_an_island(a) -> void:
 			and float(fox["reproduction"]["cooldown"]) > float(shipped_fox["reproduction"]["cooldown"])
 			and float(fox["breeding"]["litter_mean"]) < float(shipped_fox["breeding"]["litter_mean"]),
 			"and its foxes breed on a rested strength, once a spring and fewer at a time, new or resumed (%s)" % str(fox["reproduction"]))
+
+
+static func _config_world_navigation() -> Dictionary:
+	return ConfigLoaderScript.load_config_bundle()["world"]["navigation"]
 
 
 ## In the game the view's world holds the animals about the camera only: the count is the

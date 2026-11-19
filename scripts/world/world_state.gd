@@ -2767,7 +2767,13 @@ func _find_local_grass_target(position: Vector2, start_index: int, radius: float
 	return best
 
 
-func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false) -> Vector2:
+## The next point on the way from `from_position` to `to_position` for `agent_id`. A `far` walk -
+## one making for a den of its own (`Predator._patrol()`) - goes down the den's goal field
+## (`_walk_goal_field()`) rather than searching a route: the route search gives up at
+## `navigation.max_search_cells`, and between the island's dens, round its coast and waters,
+## it gave up on 16 of 28 wolf routes, every one of them there to walk.
+func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false,
+		far: bool = false) -> Vector2:
 	var agent = get_agent(agent_id)
 	if agent == null:
 		return from_position
@@ -2791,10 +2797,11 @@ func get_next_waypoint(from_position: Vector2, to_position: Vector2, agent_id: i
 		agent.local_path = PackedVector2Array()
 		agent.path_reachable = true
 		return target
-	return local_waypoint(agent, _coarse_waypoint(from_position, target, agent_id, force_repath))
+	return local_waypoint(agent, _coarse_waypoint(from_position, target, agent_id, force_repath, far))
 
 
-func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false) -> Vector2:
+func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: int, force_repath: bool = false,
+		far: bool = false) -> Vector2:
 	var agent: AgentBase = get_agent(agent_id)
 	if agent == null:
 		return clamp_position(to_position)
@@ -2830,16 +2837,20 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 			needs_repath = true
 		elif not terrain_system.is_walkable_index(current_path_index):
 			needs_repath = true
+	# A far walk goes down its goal's field once there is one. Till then, or where water has cut
+	# the field's way, the route search takes it on, and what that search gives up on is no
+	# answer yet: the field will have one.
+	var on_field: bool = far and _walk_goal_field(agent, start_index, goal_index, needs_repath)
 	# A route still being walked is refreshed on the interval only from the cache. A new
 	# search from every cell it passed spent the shared budget on answers the walker did
 	# not need, while others waited in the queue for a first route.
-	if refresh_due and not needs_repath:
+	if not on_field and refresh_due and not needs_repath:
 		if terrain_system.has_cached_path_between_indices(start_index, goal_index):
 			needs_repath = true
 		else:
 			agent.last_repath_tick = current_tick
 
-	if needs_repath:
+	if not on_field and needs_repath:
 		var path_result: Dictionary = _find_path_with_budget(start_index, goal_index, agent.id)
 		var pending := bool(path_result.get("pending", false))
 		# While the new search runs, a walker keeps to its old route to the same goal. Dropping
@@ -2856,7 +2867,7 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 			agent.path_goal_cell = goal_index
 			agent.last_repath_tick = current_tick
 			# A search still running is no answer yet; one that finished without the goal is.
-			agent.path_reachable = pending or bool(path_result.get("reachable", false))
+			agent.path_reachable = pending or far or bool(path_result.get("reachable", false))
 			agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
 			if agent.path_cells.is_empty():
 				return from_position
@@ -2870,6 +2881,29 @@ func _coarse_waypoint(from_position: Vector2, to_position: Vector2, agent_id: in
 		agent.path_index += 1
 
 	return target
+
+
+## A far walk down the goal field of `goal_index` (`TerrainSystem.request_goal_field()`, asked
+## for here): `navigation.goal_field_route_cells` cells of the way at a time, walked as a route
+## is, and found again down the field when the walker leaves it or comes to its end. False while
+## there is no field yet, or where the one there is was searched before water cut the way - the
+## new one is on its way.
+func _walk_goal_field(agent: AgentBase, start_index: int, goal_index: int, needs_repath: bool) -> bool:
+	terrain_system.request_goal_field(goal_index)
+	if not terrain_system.has_goal_field(goal_index):
+		return false
+	if not needs_repath:
+		return true
+	var route: Dictionary = terrain_system.goal_field_route(start_index, goal_index,
+		maxi(2, int(navigation_config.get("goal_field_route_cells", 48))))
+	if bool(route.get("blocked", false)):
+		return false
+	agent.path_cells = route["cells"]
+	agent.path_goal_cell = goal_index
+	agent.last_repath_tick = current_tick
+	agent.path_reachable = bool(route["reachable"])
+	agent.path_index = 1 if agent.path_cells.size() > 1 else agent.path_cells.size()
+	return true
 
 
 func choose_escape_destination(position: Vector2, flee_vector: Vector2, base_distance: float,
@@ -3589,6 +3623,7 @@ func _reset_performance_counters() -> void:
 		"grass_cells_scanned": 0,
 		"pathfind_ms": 0.0,
 		"path_expansions": 0,
+		"goal_field_expansions": 0,
 		"path_time_warning_ticks": 0,
 		"snapshot_agent_query_ms": 0.0,
 		"snapshot_water_ms": 0.0,
@@ -3614,6 +3649,9 @@ func _prepare_navigation_budget() -> void:
 	_local_path_served_agents.clear()
 	_service_pending_global_paths()
 	_service_pending_local_paths()
+	if terrain_system != null:
+		performance_counters["goal_field_expansions"] = terrain_system.step_goal_fields(
+			maxi(1, int(navigation_config.get("goal_field_expansions_per_tick", 512))))
 	performance_counters["pending_global_paths"] = _pending_global_paths.size()
 	performance_counters["pending_local_paths"] = _pending_local_agent_ids.size()
 
@@ -6409,6 +6447,12 @@ func _dormant_herd_waypoint(aggregate: Dictionary, from: Vector2, goal: Vector2)
 	var goal_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(goal))
 	if goal_index == -1:
 		return goal
+	# A sleeping vagrant making for a den goes down the den's field, as a waking one does
+	# (`_walk_goal_field()`): the capped search gave up on half the island's den routes.
+	if str(aggregate.get("goal_kind", "")) == "disperse":
+		var walked: Variant = _dormant_field_waypoint(aggregate, from, goal_index)
+		if walked != null:
+			return walked
 	var path: Array = aggregate.get("path_cells", [])
 	var at := -1 if int(aggregate.get("path_goal_cell", -1)) != goal_index else _nearest_route_cell(path, from)
 	if at == -1:
@@ -6431,6 +6475,31 @@ func _dormant_herd_waypoint(aggregate: Dictionary, from: Vector2, goal: Vector2)
 		if found.size() < 2:
 			return goal
 		path = found.duplicate()
+		aggregate["path_cells"] = path
+		aggregate["path_goal_cell"] = goal_index
+		at = 0
+	return terrain_system.get_cell_center(int(path[mini(at + 1, path.size() - 1)]))
+
+
+## The next cell down `goal_index`'s goal field from `from`, the way kept on the aggregate
+## `goal_field_route_cells` at a time and walked on from its end; null while the field is
+## not searched yet, or calls the goal out of reach from here, so the caller searches instead.
+func _dormant_field_waypoint(aggregate: Dictionary, from: Vector2, goal_index: int) -> Variant:
+	terrain_system.request_goal_field(goal_index)
+	if not terrain_system.has_goal_field(goal_index):
+		return null
+	var path: Array = aggregate.get("path_cells", [])
+	var at := -1 if int(aggregate.get("path_goal_cell", -1)) != goal_index else _nearest_route_cell(path, from)
+	if at != -1 and at >= path.size() - 1 and int(path[path.size() - 1]) == goal_index:
+		return terrain_system.get_cell_center(goal_index)
+	if at == -1 or at >= path.size() - 1:
+		var start_index: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(from))
+		var route: Dictionary = terrain_system.goal_field_route(start_index, goal_index,
+			maxi(2, int(navigation_config.get("goal_field_route_cells", 48))))
+		var cells: Array = route.get("cells", [])
+		if bool(route.get("blocked", true)) or cells.size() < 2:
+			return null
+		path = cells
 		aggregate["path_cells"] = path
 		aggregate["path_goal_cell"] = goal_index
 		at = 0

@@ -70,6 +70,15 @@ var _path_cache: Dictionary = {}
 var _path_cache_order: Array = []
 var _path_cache_limit: int = 768
 var _path_searches: Dictionary = {}
+## Goal fields (`request_goal_field()`), by goal cell: the cost of the cheapest way from every
+## cell to that goal, found by one search out from it over the whole map. A young one making for
+## a den far off walks down its den's (`WorldState.get_next_waypoint()`'s `far`): one search
+## serves every walker to that den, however far and however often pushed off its way, and the
+## searches have a budget of their own (`navigation.goal_field_expansions_per_tick`), so they
+## keep no one else's route waiting. `{ready, ready_epoch, build}`: the field to walk, the
+## `flood_epoch` it was searched at, and the search under way, if any.
+var _goal_fields: Dictionary = {}
+var _goal_field_limit: int = 64
 var _path_query_count: int = 0
 var _path_cache_hit_count: int = 0
 ## The rivers (`terrain.rivers`): `{points, half_width, fords}` each, in world units, the smoothed
@@ -159,6 +168,8 @@ func initialize(world_config: Dictionary, rng: RandomNumberGenerator, water_sour
 	_path_cache.clear()
 	_path_cache_order.clear()
 	_path_searches.clear()
+	_goal_fields.clear()
+	_goal_field_limit = maxi(1, int(world_config.get("navigation", {}).get("goal_field_limit", 64)))
 	_path_cache_limit = maxi(32, int(world_config.get("navigation", {}).get("path_cache_limit", 768)))
 	_path_query_count = 0
 	_path_cache_hit_count = 0
@@ -576,6 +587,118 @@ func walk_field_within(start_index: int, max_cost: float) -> Dictionary:
 
 func has_cached_path_between_indices(start_index: int, goal_index: int) -> bool:
 	return _path_cache.has(Vector2i(start_index, goal_index))
+
+
+## Asks for the goal field of `goal_index` (`_goal_fields`): searched from the next
+## `step_goal_fields()` on if there is none, searched again if water has risen since the one
+## there was searched - which stands, walked down, until the new one is done.
+func request_goal_field(goal_index: int) -> void:
+	if goal_index < 0 or goal_index >= get_cell_count() or not is_walkable_index(goal_index):
+		return
+	var entry: Dictionary = _goal_fields.get(goal_index, {})
+	if entry.is_empty():
+		entry = {"ready": PackedFloat32Array(), "ready_epoch": -1, "build": {}}
+		_goal_fields[goal_index] = entry
+		while _goal_fields.size() > _goal_field_limit:
+			_goal_fields.erase(_goal_fields.keys()[0])
+	var stale: bool = entry["ready"].is_empty() or int(entry["ready_epoch"]) != flood_epoch
+	if stale and (entry["build"] as Dictionary).is_empty():
+		var dist := PackedFloat32Array()
+		dist.resize(get_cell_count())
+		dist.fill(INF)
+		dist[goal_index] = 0.0
+		var heap: Array[Vector2] = []
+		_heap_push(heap, Vector2(goal_index, 0.0))
+		entry["build"] = {"dist": dist, "heap": heap, "epoch": flood_epoch}
+
+
+## Searches the goal fields asked for, oldest asked first, for up to `expansion_budget` cells
+## between them; returns how many it looked at. A search done replaces its goal's field.
+func step_goal_fields(expansion_budget: int) -> int:
+	var expanded := 0
+	for goal_index in _goal_fields.keys():
+		if expanded >= expansion_budget:
+			break
+		var entry: Dictionary = _goal_fields[goal_index]
+		var build: Dictionary = entry["build"]
+		if build.is_empty():
+			continue
+		expanded += _step_goal_field(build, expansion_budget - expanded)
+		if (build["heap"] as Array).is_empty():
+			entry["ready"] = build["dist"]
+			entry["ready_epoch"] = int(build["epoch"])
+			entry["build"] = {}
+	return expanded
+
+
+## Whether `goal_index` has a field to walk down, however old.
+func has_goal_field(goal_index: int) -> bool:
+	return not (_goal_fields.get(goal_index, {}).get("ready", PackedFloat32Array()) as PackedFloat32Array).is_empty()
+
+
+## The way from `start_index` towards `goal_index` down its goal field, up to `max_steps` cells
+## on: `{cells, reachable}`, or `{}` with no field yet. Each step goes to the neighbour the way
+## on from which costs least, and only nearer the goal, so a field searched before water rose
+## cannot turn a walker round: one with no nearer neighbour left (the water has cut its way, or
+## it stands where the field never reached) is `blocked`, and unreachable only when the field is
+## as new as the water.
+func goal_field_route(start_index: int, goal_index: int, max_steps: int) -> Dictionary:
+	var entry: Dictionary = _goal_fields.get(goal_index, {})
+	if entry.is_empty() or (entry["ready"] as PackedFloat32Array).is_empty():
+		return {}
+	var dist: PackedFloat32Array = entry["ready"]
+	var fresh: bool = int(entry["ready_epoch"]) == flood_epoch
+	var cells: Array = [start_index]
+	var current := start_index
+	while current != goal_index and cells.size() <= max_steps:
+		var neighbors: Array = get_walkable_neighbors(current)
+		var costs: Array = _get_walkable_neighbor_costs(current)
+		var best := -1
+		var best_cost := INF
+		for offset in range(neighbors.size()):
+			var neighbor: int = int(neighbors[offset])
+			if dist[neighbor] >= dist[current]:
+				continue
+			var cost: float = float(costs[offset]) + dist[neighbor]
+			if cost < best_cost:
+				best_cost = cost
+				best = neighbor
+		if best == -1:
+			var lost := cells.size() == 1
+			return {"cells": cells, "reachable": not (lost and fresh), "blocked": lost}
+		cells.append(best)
+		current = best
+	return {"cells": cells, "reachable": true, "blocked": false}
+
+
+## One slice of a goal field's search: Dijkstra out from the goal, each cell given the cost of
+## the cheapest way from it to the goal - by the steps a route search takes, uphill dearer, in
+## the direction they are walked.
+func _step_goal_field(build: Dictionary, expansion_budget: int) -> int:
+	var dist: PackedFloat32Array = build["dist"]
+	var heap: Array[Vector2] = build["heap"]
+	var expanded := 0
+	while not heap.is_empty() and expanded < expansion_budget:
+		var node: Vector2 = _heap_pop(heap)
+		var index := int(node.x)
+		if node.y > dist[index]:
+			continue
+		expanded += 1
+		var coords := get_cell_coords(index)
+		for y in range(maxi(0, coords.y - 1), mini(rows - 1, coords.y + 1) + 1):
+			for x in range(maxi(0, coords.x - 1), mini(cols - 1, coords.x + 1) + 1):
+				var from := y * cols + x
+				if from == index:
+					continue
+				var at: int = get_walkable_neighbors(from).find(index)
+				if at == -1:
+					continue
+				var cost: float = float(_get_walkable_neighbor_costs(from)[at]) + dist[index]
+				if cost < dist[from]:
+					dist[from] = cost
+					_heap_push(heap, Vector2(from, dist[from]))
+	build["dist"] = dist
+	return expanded
 
 
 func consume_path_query_stats() -> Dictionary:

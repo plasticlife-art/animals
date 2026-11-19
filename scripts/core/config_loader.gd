@@ -60,14 +60,17 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 ## world: one saved before its powers changed - before it became an island, with newcomers from
 ## the edge - plays on with the powers it has now, and with the ways of its animals added since
 ## (a disperser keeping to its way, a pack keeping its young, a hungry herd looking further) and
-## the reserve's own settings of its land (`world`: the stubble its grass grows back from), its
-## land and animals and every other setting it had as they were.
+## the reserve's own settings of its land (`world`: the stubble its grass grows back from) and
+## the route search's settings it lacks (a disperser walking its den's field), its land and
+## animals and every other setting it had as they were.
 static func with_reserve_powers(saved: Dictionary, reserve: Dictionary) -> Dictionary:
 	var bundle: Dictionary = saved.duplicate(true)
 	var today := load_reserve_bundle(reserve)
 	bundle["powers"] = today["powers"].duplicate(true)
 	var causes: Dictionary = bundle.get("balance", {}).get("carcass", {}).get("meat_by_cause", {})
 	causes.merge(today["balance"]["carcass"]["meat_by_cause"], false)
+	if bundle.get("world", {}).get("navigation") is Dictionary:
+		_add_missing(bundle["world"]["navigation"], today["world"].get("navigation", {}))
 	if bundle.has("species"):
 		_add_missing(bundle["species"], today["species"])
 		# The reserve's own ways of its animals are its rules, as its powers are: today's.

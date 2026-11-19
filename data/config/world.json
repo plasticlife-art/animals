@@ -300,6 +300,8 @@
     "repath_interval_ticks": 12,
     "goal_reached_radius_cells": 1,
     "max_search_cells": 2400,
+    "goal_field_expansions_per_tick": 512,
+    "goal_field_route_cells": 48,
     "unreachable_memory_seconds": 30.0,
     "grass_candidate_limit": 24,
     "path_budget_per_tick": 96,
