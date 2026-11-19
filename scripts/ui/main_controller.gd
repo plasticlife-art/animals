@@ -65,6 +65,8 @@ const RESERVE_FPS := 60
 ## panels are laid out on, 9:16 - small, so that on a phone's width the type and the animals are
 ## large.
 const PORTRAIT_CANVAS := Vector2i(540, 960)
+## When, after standing upright, the window's shape is asked for again (`set_reserve_portrait`).
+const PORTRAIT_SETTLE_SECONDS := [0.4, 1.0, 2.0, 3.0, 4.5, 6.0]
 ## How long the pointer may rest before it is hidden from the stream.
 const POINTER_IDLE_MSEC := 2000
 
@@ -551,7 +553,9 @@ func set_reserve_portrait(on: bool) -> void:
 	reserve_portrait = on
 	var window := get_window()
 	window.content_scale_size = PORTRAIT_CANVAS if on else _landscape_canvas
-	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND if on else Window.CONTENT_SCALE_ASPECT_KEEP
+	# KEEP both ways: should the window come out another shape than asked, the picture keeps its
+	# own and gains bars, rather than stretching the phone's layout over a wide window.
+	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	selection_card.compact = on
 	ecology_strip.compact = on
 	_fit_top_bars(on)
@@ -564,16 +568,54 @@ func set_reserve_portrait(on: bool) -> void:
 	selection_tag.visible = not on
 	if DisplayServer.get_name() == "headless":
 		return
-	window.borderless = on
 	if on:
-		if window.mode != Window.MODE_WINDOWED:
-			window.mode = Window.MODE_WINDOWED
-		var usable := DisplayServer.screen_get_usable_rect(window.current_screen)
-		var height := int(usable.size.y * 0.94)
-		window.size = Vector2i(roundi(height * 9.0 / 16.0), height)
-		window.position = usable.position + (usable.size - window.size) / 2
+		_place_portrait_window()
+		# Out of macOS full screen the window first plays its way out and then takes back the
+		# frame it had, and AeroSpace tiles a window leaving full screen again: the shape is
+		# asked for once more as those settle.
+		for delay in PORTRAIT_SETTLE_SECONDS:
+			get_tree().create_timer(delay).timeout.connect(_place_portrait_window)
 	else:
-		window.mode = Window.MODE_MAXIMIZED
+		if window.borderless and not _in_macos_fullscreen():
+			window.borderless = false
+		if window.size != DisplayServer.screen_get_size(window.current_screen):
+			window.mode = Window.MODE_MAXIMIZED
+		TilingWM.restore()
+
+
+## Whether the window fills the whole screen, menu bar and all - macOS full screen, in or on its
+## way out. Godot's `mode` is no guide: the window manager takes the window in and out of it too.
+func _in_macos_fullscreen() -> bool:
+	var window := get_window()
+	return OS.get_name() == "macOS" and window.size == DisplayServer.screen_get_size(window.current_screen)
+
+
+## The upright window: 9:16 at nearly the screen's height, in its middle, frameless, and out of
+## a tiling window manager's hands (`TilingWM`), which would stretch it over the screen.
+func _place_portrait_window() -> void:
+	if not reserve_portrait:
+		return
+	var window := get_window()
+	# macOS full screen is told by the frame, not by `mode`: the window manager takes the window
+	# in and out of it too, and Godot's `mode` lags or misses it. While it is in, or on its way
+	# out, AppKit aborts the whole game if the frame is taken off - so wait for the next try.
+	if _in_macos_fullscreen():
+		if window.mode in [Window.MODE_FULLSCREEN, Window.MODE_EXCLUSIVE_FULLSCREEN]:
+			window.mode = Window.MODE_WINDOWED
+		else:
+			TilingWM.leave_native_fullscreen()
+		return
+	# Godot may still think it full screen when it is not; told windowed then, it would toggle
+	# full screen back on. Only a maximized window is let down here.
+	if window.mode == Window.MODE_MAXIMIZED:
+		window.mode = Window.MODE_WINDOWED
+	if not window.borderless:
+		window.borderless = true
+	TilingWM.release()
+	var usable := DisplayServer.screen_get_usable_rect(window.current_screen)
+	var height := int(usable.size.y * 0.94)
+	window.size = Vector2i(roundi(height * 9.0 / 16.0), height)
+	window.position = usable.position + (usable.size - window.size) / 2
 
 
 ## Upright the season bar is one line, wider and higher up, the species line right under it.
