@@ -187,6 +187,7 @@
       "lost_sight_search_seconds": 3.0,
       "search_radius_cells": 0.75,
       "retry_cooldown_seconds": 2.0,
+      "reach_leash_share": 1.5,
       "contact_slack": 5.0,
       "pair": {
         "join_vision_share": 1.5,
@@ -420,6 +421,7 @@
       "lost_sight_search_seconds": 3.5,
       "search_radius_cells": 0.75,
       "retry_cooldown_seconds": 2.0,
+      "reach_leash_share": 1.5,
       "contact_slack": 6.0,
       "pack": {
         "join_vision_share": 1.6,

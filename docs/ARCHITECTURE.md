@@ -1283,6 +1283,42 @@ Utility actions inside `alive`:
 
 `engaged` keeps existing locked flows such as chase, attack, carcass feeding, water investigation, and reproduction instead of re-scoring every tick.
 
+### A hunter's reach on foot (`hunt.reach_leash_share`)
+
+An animal sees across a river, a bay, a pond (`ScenerySystem.visible()`); it cannot walk
+across. A fox used to pick a deer over the water by its distance as the crow flies, run at the
+bank and stand there for the whole chase clock (`max_chase_duration`, 14 s), its sprint's
+strength (`chase_energy_cost`) spent standing, then pass that one deer by for 2 s and take the
+next of the same herd. Its route went through the shared queue (`_coarse_waypoint()`), keyed by
+the prey's cell: each time the deer stepped into another cell the answer came for a cell it had
+left, and the fox stood (`from_position`) or, one cell short, pushed into the water.
+
+Now a hunter weighs a prey by its way on foot:
+
+- `WorldState.hunt_reach()` is one bounded search from the hunter's cell
+  (`TerrainSystem.walk_field_within()`, the route search's own step costs, so a ford or a climb
+  costs what it costs a route) out to `chase_break_radius` x `hunt.reach_leash_share` (1.5:
+  780 for a fox, 960 for a wolf on the large map), with the cell each was reached from. Kept by
+  start cell and reach for any hunter there (`_HUNT_REACH_CACHE_LIMIT` 512) and forgotten about
+  the cells the ponds' water covers or leaves (`_settle_pond_cells()`); counted per tick as
+  `hunt_reach_builds`.
+- `Predator.can_hunt_reach()`: a prey the ground lies clear to (`terrain_clear()`, bushes
+  aside) is in reach at once; else its cell must be in the hunter's reach. `_choose_prey()`
+  scores as before and checks only the best, then the next best in score order while one is out
+  of reach, so the decision (`build_predator_snapshot()`) shows no prey when all in sight are
+  over the water; a companion's prey (`_mates_prey()`) is joined only within reach.
+- The chase runs with no route search (`WorldState.hunt_waypoint()`): straight on while the way
+  is clear (`segment_clear()`), else down its reach to the next cell, cutting each of the next
+  few corners it sees past, the last stretch past bushes as any walker's (`local_waypoint()`).
+  A flanker whose cut-off point lies over water drives the prey itself. A prey, or the place it
+  was last seen, out of reach ends the chase at once as `PredationFailed` reason `no_way`
+  (`hunt_fail_no_way`); `_hunt()` begins none.
+- 0 switches it off: prey by sight alone and every chase through `get_next_waypoint()`, as
+  before (the A/B baseline).
+
+`HuntReachTests` lays a river down a fixture with a ford near, far or none: off, the fox chased
+a deer it saw across it for all ten seconds of the test without leaving its bank.
+
 ### Hunting together (`hunt.pair`, `hunt.pack`)
 
 A hunter's companions (`Predator._companions()`) are its mate, bonded back, with `hunt.pair`,
@@ -2282,6 +2318,9 @@ millisecond setting squeezed to zero.
   debited through `consume_carcass()`), `feeding.carcass_consume_rate`,
   `feeding.carcass_nutrition_gain`, `feeding.carcass_energy_gain`, and
   `balance.carcass.meat_total`.
+- `hunt.reach_leash_share` (1.5) is how far round on foot a hunter goes for a prey it sees
+  over water or round a cliff, as a share of `perception.chase_break_radius`; 0 is the old
+  sight-only hunt (see A hunter's reach on foot).
 - `feeding.gorge_below_energy_threshold` lets a feeding predator keep eating past the point
   its hunger is satisfied, until it has covered `reproduction.energy_threshold`. Without it
   meat intake is capped by the hunger the predator arrived with, which capped energy income
@@ -2662,3 +2701,9 @@ python3 scripts/dev/audit_matrix.py --out /tmp/matrix --seeds 1-8 --mode lod --s
   dies is selected, not how many
 - Terrain and shadow art are placeholders. The opened and picked carcass stages are drawn
   by a script over each species' last death frame, not by an artist
+- Water between hunter and prey is weighed only awake and only by the hunter (A hunter's reach
+  on foot). A grazer still takes fright at a predator it sees over a river within its
+  `danger_radius`, and its herd's alarm with it, though the predator has no way to it; a sleeping
+  sector counts every hungry hunter against every herd in it, whatever water lies between; and
+  the other walks after a moving goal (regrouping on a herd's centre, seeking a mate) still
+  wait on the shared route queue as the chase used to

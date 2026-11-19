@@ -48,6 +48,8 @@ var counters := {
 	"hunt_fail_miss": 0,
 	# A holder not hungry enough to cross its territory's edge (`territory.border_slack`).
 	"hunt_fail_border": 0,
+	# A prey in sight with no way to it on foot within the hunter's reach (`hunt.reach_leash_share`).
+	"hunt_fail_no_way": 0,
 	"search_started": 0,
 	"prey_reacquired": 0,
 	"search_expired": 0,

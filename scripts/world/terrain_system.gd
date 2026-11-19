@@ -542,6 +542,38 @@ func cancel_path_search(start_index: int, goal_index: int) -> void:
 	_path_searches.erase(Vector2i(start_index, goal_index))
 
 
+## Where a walker from `start_index` gets for at most `max_cost`, by the steps a route search
+## takes (`_step_cost()`, so a ford or a climb costs what it costs a route): `{cost, from}`,
+## index -> cost of the cheapest way there, and index -> the cell that way came from (none for
+## the start). A cell over deep water, round a cliff or simply further is absent. Searched at
+## once, so for a short reach only - a hunter's (`WorldState.hunt_reach()`).
+func walk_field_within(start_index: int, max_cost: float) -> Dictionary:
+	var costs := {}
+	var from := {}
+	if start_index < 0 or start_index >= get_cell_count() or not is_walkable_index(start_index):
+		return {"cost": costs, "from": from}
+	costs[start_index] = 0.0
+	var heap: Array[Vector2] = [Vector2(start_index, 0.0)]
+	while not heap.is_empty():
+		var node: Vector2 = _heap_pop(heap)
+		var index := int(node.x)
+		if node.y > float(costs[index]):
+			continue
+		var neighbors: Array = get_walkable_neighbors(index)
+		var step_costs: Array = _get_walkable_neighbor_costs(index)
+		for offset in range(neighbors.size()):
+			var next := int(neighbors[offset])
+			# Kept as the heap keeps it, a 32-bit float: a 64-bit cost beside its rounded-up heap
+			# entry would make that entry look stale and drop the cell (the A* heap's old flaw).
+			var entry := Vector2(next, node.y + float(step_costs[offset]))
+			if entry.y > max_cost or entry.y >= float(costs.get(next, INF)):
+				continue
+			costs[next] = entry.y
+			from[next] = index
+			_heap_push(heap, entry)
+	return {"cost": costs, "from": from}
+
+
 func has_cached_path_between_indices(start_index: int, goal_index: int) -> bool:
 	return _path_cache.has(Vector2i(start_index, goal_index))
 

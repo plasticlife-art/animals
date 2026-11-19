@@ -27,6 +27,7 @@ const SUITES := [
 	{"name": "WaterTests", "script": preload("res://scripts/tests/water_tests.gd")},
 	{"name": "SeasonTests", "script": preload("res://scripts/tests/season_tests.gd")},
 	{"name": "ReachTests", "script": preload("res://scripts/tests/reach_tests.gd")},
+	{"name": "HuntReachTests", "script": preload("res://scripts/tests/hunt_reach_tests.gd")},
 	{"name": "HerdMigrationTests", "script": preload("res://scripts/tests/herd_migration_tests.gd")},
 	{"name": "PreySwitchingTests", "script": preload("res://scripts/tests/prey_switching_tests.gd")},
 	{"name": "PlayerCommandTests", "script": preload("res://scripts/tests/player_command_tests.gd")},

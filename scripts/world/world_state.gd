@@ -175,6 +175,12 @@ var _sector_grass_refresh_ticks: int = 18
 var _grass_local_reach_cells: int = 3
 var _walk_reachable_cache: Dictionary = {}
 var _walk_reachable_order: Array = []
+## A hunter's reach on foot (`hunt_reach()`), by start cell and the cost it reaches out to
+## (`Vector2i`), oldest first in `_hunt_reach_order`; forgotten about cells the ponds' water
+## covers or leaves (`_settle_pond_cells()`).
+var _hunt_reach_cache: Dictionary = {}
+var _hunt_reach_order: Array = []
+const _HUNT_REACH_CACHE_LIMIT := 512
 ## The spots round each pond's shore a body can drink from (`water_approach()`), by pond, edge
 ## and body; forgotten all at once when there get to be too many.
 var _shore_spots: Dictionary = {}
@@ -301,6 +307,8 @@ func initialize(new_config_bundle: Dictionary, new_event_bus, new_rng: RandomNum
 	_walk_reachable_cache_limit = maxi(64, int(navigation_config.get("grass_local_reach_cache_limit", 4096)))
 	_walk_reachable_cache.clear()
 	_walk_reachable_order.clear()
+	_hunt_reach_cache.clear()
+	_hunt_reach_order.clear()
 	_shore_spots.clear()
 	_pending_global_paths.clear()
 	_pending_global_path_keys.clear()
@@ -829,6 +837,8 @@ func shutdown() -> void:
 	_sector_grass_cache.clear()
 	_walk_reachable_cache.clear()
 	_walk_reachable_order.clear()
+	_hunt_reach_cache.clear()
+	_hunt_reach_order.clear()
 	_shore_spots.clear()
 	_pending_global_paths.clear()
 	_pending_global_path_keys.clear()
@@ -2068,6 +2078,7 @@ func _settle_pond_cells(cells: PackedInt32Array, move_animals: bool) -> void:
 		for y in range(maxi(0, coords.y - reach), mini(terrain_system.rows - 1, coords.y + reach) + 1):
 			for x in range(maxi(0, coords.x - reach), mini(terrain_system.cols - 1, coords.x + reach) + 1):
 				_walk_reachable_cache.erase(y * terrain_system.cols + x)
+	_forget_hunt_reach_about(cells)
 	if move_animals:
 		_step_out_of_water(cells)
 
@@ -2605,6 +2616,104 @@ func _get_walk_reachable_cells(start_index: int) -> Dictionary:
 	_walk_reachable_cache[start_index] = reachable_cells
 	_walk_reachable_order.append(start_index)
 	return reachable_cells
+
+
+## A hunter's reach on foot (`TerrainSystem.walk_field_within()`): from cell `start_index`, each
+## cell it walks to for at most `max_cost` and the step it came from. Sight crosses water and a
+## route search does not stop at a hunter's leash, so this is what tells a deer across a river,
+## a bay or a lake from one it can run down - and the way to it, round by the ford, which no
+## route queue keeps waiting while the deer moves on (`hunt_waypoint()`). One bounded search a
+## start cell and reach, kept for any hunter there.
+func hunt_reach(start_index: int, max_cost: float) -> Dictionary:
+	var key := Vector2i(start_index, roundi(max_cost))
+	var cached: Dictionary = _hunt_reach_cache.get(key, {})
+	if not cached.is_empty():
+		return cached
+	var field: Dictionary = terrain_system.walk_field_within(start_index, max_cost)
+	performance_counters["hunt_reach_builds"] = int(performance_counters.get("hunt_reach_builds", 0)) + 1
+	if _hunt_reach_order.size() >= _HUNT_REACH_CACHE_LIMIT:
+		_hunt_reach_cache.erase(_hunt_reach_order.pop_front())
+	_hunt_reach_cache[key] = field
+	_hunt_reach_order.append(key)
+	return field
+
+
+## The hunter's reach about the cells under `cells` is measured again: any kept from a start
+## near enough to have walked through one of them (the reach is under `max_cost`, its key's
+## second part, in cells at least one step each).
+func _forget_hunt_reach_about(cells: PackedInt32Array) -> void:
+	if _hunt_reach_cache.is_empty() or cells.is_empty():
+		return
+	var kept: Array = []
+	for key in _hunt_reach_order:
+		var start := terrain_system.get_cell_coords(int(key.x))
+		var span := int(ceil(float(key.y) / terrain_system.cell_size)) + 1
+		var near := false
+		for index in cells:
+			var coords := terrain_system.get_cell_coords(index)
+			if absi(coords.x - start.x) <= span and absi(coords.y - start.y) <= span:
+				near = true
+				break
+		if near:
+			_hunt_reach_cache.erase(key)
+		else:
+			kept.append(key)
+	_hunt_reach_order = kept
+
+
+## Whether `agent` gets to `point` on foot within `max_cost` (`hunt_reach()`): at once where
+## the ground between is clear, else by the cells round; a point on no ground it can stand on
+## is taken at the walkable cell nearest it.
+func hunt_reaches(agent, point: Vector2, max_cost: float) -> bool:
+	if scenery.terrain_clear(agent.position, point, agent.get_body_radius()):
+		return true
+	var start: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(agent.position))
+	var goal: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(clamp_position(point)))
+	if start == -1 or goal == -1:
+		return false
+	return (hunt_reach(start, max_cost)["cost"] as Dictionary).has(goal)
+
+
+## Where a hunter runs next on its way to `to_position` (`Predator`'s chase), as
+## `get_next_waypoint()` would but with no route search: straight on where the way is clear,
+## else along its reach on foot (`hunt_reach()`), cutting each corner it can see past, the last
+## stretch past bushes as any walker's (`local_waypoint()`). `path_reachable` says whether
+## there is such a way within `max_cost`; with none it stays where it is.
+func hunt_waypoint(agent, to_position: Vector2, max_cost: float) -> Vector2:
+	var radius: float = agent.get_body_radius()
+	if agent.navigation_input_goal != to_position:
+		agent.navigation_input_goal = to_position
+		agent.navigation_free_goal = scenery.nearest_free(to_position, radius)
+		# As `get_next_waypoint()` does on a new goal, so a walk after the hunt looks afresh.
+		agent.navigation_direct_clear = false
+		agent.navigation_direct_check_tick = -9999
+	var target: Vector2 = agent.navigation_free_goal
+	agent.path_cells.clear()
+	agent.path_index = 0
+	if scenery.segment_clear(agent.position, target, radius):
+		agent.local_path = PackedVector2Array()
+		agent.path_reachable = true
+		return target
+	var start: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(agent.position))
+	var goal: int = terrain_system.find_nearest_walkable_index(terrain_system.get_index_from_position(clamp_position(target)))
+	var from: Dictionary = {} if start == -1 else hunt_reach(start, max_cost)["from"]
+	if start == -1 or goal == -1 or (goal != start and not from.has(goal)):
+		agent.path_reachable = false
+		return agent.position
+	agent.path_reachable = true
+	# The cells from the goal back to the hunter's, then the farthest of the next few it sees.
+	var way: Array = [goal]
+	while int(way[0]) != start:
+		way.push_front(int(from[int(way[0])]))
+	if way.size() <= 2:
+		return local_waypoint(agent, target)
+	var waypoint: Vector2 = terrain_system.get_cell_center(int(way[1]))
+	for at in range(2, mini(way.size() - 1, 5)):
+		var ahead: Vector2 = terrain_system.get_cell_center(int(way[at]))
+		if not scenery.segment_clear(agent.position, ahead, radius):
+			break
+		waypoint = ahead
+	return local_waypoint(agent, waypoint)
 
 
 ## The cells an agent can walk to without a route: everything within `depth` steps of

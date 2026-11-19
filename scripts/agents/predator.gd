@@ -294,7 +294,26 @@ func _continue_or_finish_chase(world, delta: float) -> bool:
 		set_state("flank", world.current_tick)
 	else:
 		set_state("chase" if visible else "search_last_seen", world.current_tick)
-	var chase_waypoint: Vector2 = world.get_next_waypoint(position, target_position, id)
+	var chase_waypoint: Vector2 = _hunt_waypoint(world, target_position)
+	var reach_on := _hunt_reach_cost() > 0.0
+	# A flanker whose cut-off point lies over water drives the prey itself instead.
+	if reach_on and not path_reachable and state == "flank":
+		target_position = last_seen_prey_position
+		set_state("chase", world.current_tick)
+		chase_waypoint = _hunt_waypoint(world, target_position)
+	# Across water, a bay or round a cliff further than it would run (`hunt.reach_leash_share`):
+	# given up now, not after the chase's clock has run out at the shore.
+	if reach_on and not path_reachable:
+		abandoned_prey_id = prey.id
+		retry_after = world.current_time + float(hunt.get("retry_cooldown_seconds", 2.0))
+		world.emit_event("PredationFailed", self, prey.id, {
+			"reason": "no_way",
+			"distance": distance,
+			"chase_time": chase_timer,
+			"energy": energy,
+		})
+		clear_targets(world)
+		return false
 	move_with_vector(world, Steering.seek(position, chase_waypoint), float(movement.get("sprint_speed", 128.0)), delta)
 	return true
 
@@ -306,6 +325,10 @@ func _hunt(world, delta: float, prey = null) -> bool:
 	if prey == null:
 		prey = _choose_prey(world)
 	if prey == null or not (world.can_see(self, prey, world.perception_radius(self, "vision_radius", 480.0)) or _mate_sees(world, prey)):
+		return false
+	# Its way there first: a prey it has no way to on foot is no hunt begun.
+	var prey_waypoint: Vector2 = _hunt_waypoint(world, prey.position)
+	if not path_reachable and _hunt_reach_cost() > 0.0:
 		return false
 	release_carcass_target(world)
 	# A new target gets a fresh clock. Carrying the previous chase's elapsed time over
@@ -320,10 +343,32 @@ func _hunt(world, delta: float, prey = null) -> bool:
 	target_agent_id = prey.id
 	target_position = prey.position
 	set_state("seek_prey", world.current_tick)
-	var prey_waypoint: Vector2 = world.get_next_waypoint(position, prey.position, id)
 	move_with_vector(world, Steering.seek(position, prey_waypoint), float(movement.get("max_speed", 84.0)), delta)
 	chase_timer = delta if switched_target else maxf(chase_timer, delta)
 	return true
+
+
+## How far round it would go on foot for a prey (`hunt.reach_leash_share` of its chase's leash,
+## `chase_break_radius`): one in sight across water or round a cliff and further by land than
+## this it lets be. 0 switches the check off, every chase routed as any walk.
+func _hunt_reach_cost() -> float:
+	return float(perception.get("chase_break_radius", 260.0)) * float(hunt.get("reach_leash_share", 1.5))
+
+
+## Whether it has a way on foot to `point` within its reach (`_hunt_reach_cost()`); always,
+## with the check off.
+func can_hunt_reach(world, point: Vector2) -> bool:
+	var reach := _hunt_reach_cost()
+	return reach <= 0.0 or world.hunt_reaches(self, point, reach)
+
+
+## Where it runs next for `target` in a hunt (`WorldState.hunt_waypoint()`), `path_reachable`
+## telling whether it has a way there within its reach; with the check off, as any walk.
+func _hunt_waypoint(world, target: Vector2) -> Vector2:
+	var reach := _hunt_reach_cost()
+	if reach <= 0.0:
+		return world.get_next_waypoint(position, target, id)
+	return world.hunt_waypoint(self, target, reach)
 
 
 ## The mate, alive and bonded back, when hunting as a pair is on (`hunt.pair`); null otherwise.
@@ -376,7 +421,8 @@ func _mates_prey(world, vision_radius: float):
 		var prey = world.get_agent(companion.target_agent_id)
 		if prey == null or not prey.is_alive:
 			continue
-		if position.distance_squared_to(prey.position) <= reach * reach:
+		# Not one across the water from this one, however near.
+		if position.distance_squared_to(prey.position) <= reach * reach and can_hunt_reach(world, prey.position):
 			return prey
 	return null
 
@@ -888,6 +934,7 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 		prey_candidates = by_distance.slice(0, evaluation_limit)
 	var best_score: float = -INF
 	var best_prey: AgentBase = null
+	var scored: Array = []
 	for prey in prey_candidates:
 		if (prey.id == abandoned_prey_id and world.current_time < retry_after) or not world.can_see(self, prey, vision_radius):
 			continue
@@ -915,12 +962,26 @@ func _choose_prey(world, prey_candidates: Array = []) -> AgentBase:
 		score += isolation * float(weights.get("isolation", 1.35))
 		score += prey_energy * float(weights.get("energy", 0.45))
 		score += age_score * float(weights.get("age_stage", 0.65))
+		scored.append({"score": score, "order": scored.size(), "prey": prey, "isolation": isolation})
 		if score > best_score:
 			best_score = score
 			best_prey = prey
 			_cached_isolation_prey_id = prey.id
 			_cached_prey_isolation = isolation
-	return best_prey
+	if best_prey == null or can_hunt_reach(world, best_prey.position):
+		return best_prey
+	# The best is in sight but out of reach on foot - over a river, a bay, a lake: the next best
+	# it can get to, in the order they scored, or none.
+	scored.sort_custom(func(x, y) -> bool:
+		return float(x["score"]) > float(y["score"]) \
+			or (float(x["score"]) == float(y["score"]) and int(x["order"]) < int(y["order"])))
+	for entry in scored:
+		if entry["prey"] == best_prey or not can_hunt_reach(world, entry["prey"].position):
+			continue
+		_cached_isolation_prey_id = entry["prey"].id
+		_cached_prey_isolation = float(entry["isolation"])
+		return entry["prey"]
+	return null
 
 
 ## Scored once per prey candidate per predator per tick, and a predator sees far
