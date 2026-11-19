@@ -844,6 +844,20 @@ A world on a stream that its viewers act on through the chat. Launched with
     52 with the search alone; wolves 17-21. Bigger litters (2.2, at most 3) gave 93 and fed a
     fox boom to 70 in one draw; a wolf ceiling of 16 and foxes of 32 gave 113 but left 9-11
     wolves: neither kept.
+  - Its own ways of its land (`reserve.json` `world`, over `world.json`, put on a saved world
+    by `with_reserve_powers()` too): `grass.stubble_fraction` 0.35, not 0.05. A deer eats about
+    5 biomass a second and a cell grows back at most 0.45, so a herd of 40 eats its pasture in a
+    minute and lives on the move; from a stubble of 5 % a grazed-out cell took a year and more
+    to hold a bite again, from 35 % a season, and the island fed 200-250 deer in waves. With
+    it, a doe breeds up to a hunger of 45 (`species.herbivore.reproduction.max_hunger`, 30
+    elsewhere): the herds of the island are seldom full, and by 30 a third of the possible
+    births came. Island probe (`scripts/dev/island_probe.gd`, the lever as overrides), seeds 5
+    and 11, 1.25 h, lowest counts deer / foxes / wolves: with the hunter's reach on foot
+    (`hunt.reach_leash_share`) 153 / 44 / 10 and 124 / 11 / 10, no species lost; without it
+    122 / 21 / wolves lost and 179 / 41 / 8; with neither, wolves lost on both. On the island
+    balance branch's routes (den and water fields), seeds 3, 5, 7 and 11, 2.5 h: deer 66-125,
+    foxes 10-25, wolves 10-11, none lost. Foxes are the weak spot left: dens stand vacant while
+    pairs wait on their strength.
 - **`ReserveSession`** turns chat lines into those orders and tells back what came of them
   (`told`). It is kept apart from any window, so a server can run it later.
   - `ChatCommands` parses «!word arg» through `reserve.json` `commands` and cleans ward names:

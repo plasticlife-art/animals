@@ -463,6 +463,8 @@ func _test_an_island(a) -> void:
 	old["species"]["wolf"]["territory"].erase("stay_while_no_room")
 	old["species"]["wolf"]["territory"]["emigrate_after_seconds"] = 123.0
 	old["species"]["herbivore"]["aging"]["max_age"] = 1200.0
+	old["world"]["grass"]["stubble_fraction"] = 0.05
+	old["world"]["grass"]["growth_rate"] = 0.0123
 	var resumed := ConfigLoaderScript.with_reserve_powers(old, _config())
 	var causes: Dictionary = resumed["balance"]["carcass"]["meat_by_cause"]
 	a.is_true(resumed["powers"]["offered"].has("good_litter") and not resumed["powers"]["offered"].has("release")
@@ -471,6 +473,14 @@ func _test_an_island(a) -> void:
 	var wolf_territory: Dictionary = resumed["species"]["wolf"]["territory"]
 	a.is_true(bool(wolf_territory.get("stay_while_no_room", false)) and is_equal_approx(float(wolf_territory["emigrate_after_seconds"]), 123.0),
 		"with the species settings added since, and those it had kept")
+	var fresh: Dictionary = ConfigLoaderScript.load_reserve_bundle(_config())
+	var stubble := float(_config().get("world", {}).get("grass", {}).get("stubble_fraction", -1.0))
+	a.is_true(stubble > 0.05 and is_equal_approx(float(fresh["world"]["grass"]["stubble_fraction"]), stubble)
+		and is_equal_approx(float(resumed["world"]["grass"]["stubble_fraction"]), stubble)
+		and is_equal_approx(float(resumed["world"]["grass"]["growth_rate"]), 0.0123),
+		"the reserve's own settings of its land are today's, new or resumed, the rest of the land's kept (%s)" % str(resumed["world"]["grass"]))
+	a.is_true(float(fresh["species"]["herbivore"]["reproduction"]["max_hunger"]) > float(ConfigLoaderScript.load_config_bundle()["species"]["herbivore"]["reproduction"]["max_hunger"]),
+		"and its does breed hungrier than elsewhere")
 	a.is_true(is_equal_approx(float(resumed["species"]["herbivore"]["aging"]["max_age"]),
 		float(_config()["species"]["herbivore"]["aging"]["max_age"])), "but the reserve's own ways of its animals today's")
 

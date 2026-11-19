@@ -24,8 +24,9 @@ static func load_reserve_config() -> Dictionary:
 
 
 ## The reserve's world: the setup options `reserve.json` `selection` names over the defaults, its
-## powers `offered` with the settings `powers` changes, and a `reserve` key, which is what puts its
-## saves in the reserve's slots.
+## powers `offered` with the settings `powers` changes, its own settings of its animals (`species`)
+## and of its land (`world`), and a `reserve` key, which is what puts its saves in the reserve's
+## slots.
 static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	var selection := default_selection()
 	selection.merge(reserve.get("selection", {}), true)
@@ -35,8 +36,10 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 	for power in changed.keys():
 		if bundle["powers"]["powers"].has(power):
 			bundle["powers"]["powers"][power].merge(changed[power], true)
-	# The reserve's own ways of its animals over the shipped ones (`species`).
+	# The reserve's own ways of its animals over the shipped ones (`species`), and of its land
+	# (`world`).
 	_merge_into(bundle["species"], reserve.get("species", {}).duplicate(true))
+	_merge_into(bundle["world"], reserve.get("world", {}).duplicate(true))
 	# A species held to a number by births too (`birth_ceilings`): its capacity, the land's (a
 	# territory's) or the regulation's, set to that number over its start.
 	var ceilings: Dictionary = reserve.get("birth_ceilings", {})
@@ -56,8 +59,9 @@ static func load_reserve_bundle(reserve: Dictionary) -> Dictionary:
 ## the carcass causes it lacks and the species settings it lacks. A reserve runs for weeks on one
 ## world: one saved before its powers changed - before it became an island, with newcomers from
 ## the edge - plays on with the powers it has now, and with the ways of its animals added since
-## (a disperser keeping to its way, a pack keeping its young, a hungry herd looking further), its
-## land and animals and every setting it had as they were.
+## (a disperser keeping to its way, a pack keeping its young, a hungry herd looking further) and
+## the reserve's own settings of its land (`world`: the stubble its grass grows back from), its
+## land and animals and every other setting it had as they were.
 static func with_reserve_powers(saved: Dictionary, reserve: Dictionary) -> Dictionary:
 	var bundle: Dictionary = saved.duplicate(true)
 	var today := load_reserve_bundle(reserve)
@@ -68,6 +72,10 @@ static func with_reserve_powers(saved: Dictionary, reserve: Dictionary) -> Dicti
 		_add_missing(bundle["species"], today["species"])
 		# The reserve's own ways of its animals are its rules, as its powers are: today's.
 		_merge_into(bundle["species"], reserve.get("species", {}).duplicate(true))
+	# And of its land (`world`): only what the reserve itself sets, the rest of the world's settings
+	# as saved.
+	if bundle.has("world"):
+		_merge_into(bundle["world"], reserve.get("world", {}).duplicate(true))
 	return bundle
 
 
