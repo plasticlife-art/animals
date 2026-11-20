@@ -25,6 +25,8 @@ const INSTANCE_GROW_CHUNK := 256
 ## crawling at 1 px/s covers in a tick at the default rate - the same floor the
 ## old velocity test used, restated in the units that are now measured.
 const _DRAWN_STEP_EPSILON_SQ := 0.0025
+## The way each direction row faces on screen, in the rows' order: south, north, west, east.
+const _ROW_VECTORS: Array[Vector2] = [Vector2(0.0, 1.0), Vector2(0.0, -1.0), Vector2(-1.0, 0.0), Vector2(1.0, 0.0)]
 
 ## Where the ground-distance accumulator behind the walk cycle wraps. The wrap
 ## is not stride-aligned, so it does skip a frame - once per agent per million
@@ -499,6 +501,12 @@ func _fill_carcasses(world, visible_rect: Rect2) -> void:
 ## still instead of sprinting on the spot. That outranks the action override:
 ## a predator shoving against a body it cannot pass is in `hunt_prey` the whole
 ## time it is stuck.
+##
+## The same holds for eating. An animal keeps `graze`, `drink` or `scavenge_carcass`
+## all the way to its food - a fox runs to a body under `scavenge_carcass`, a deer
+## walks to the bank under `drink` - and the eat row is a standing pose (the pack's
+## Idle), so drawing it by the action alone slid standing foxes across the map.
+## It eats where it stands; on the way it walks or runs like anything else.
 func _resolve_animation(agent) -> String:
 	if not agent.is_alive or agent.ai_state == &"dead":
 		return "dead"
@@ -507,9 +515,9 @@ func _resolve_animation(agent) -> String:
 	var action: StringName = agent.current_action
 	if moving and (agent.ai_state == &"panic" or action == &"flee_to_safe_area" or action == &"hunt_prey"):
 		return "run"
-	if action == &"graze" or action == &"scavenge_carcass" or action == &"drink":
-		return "eat"
 	if not moving:
+		if action == &"graze" or action == &"scavenge_carcass" or action == &"drink":
+			return "eat"
 		return "idle"
 	if speed >= _run_speed_threshold:
 		return "run"
@@ -968,6 +976,14 @@ func _resolve_direction(agent) -> int:
 		current = 3 if screen_dir.x > 0.0 else 2
 	elif vertical:
 		current = 0 if screen_dir.y > 0.0 else 1
+	elif _ROW_VECTORS[current].dot(screen_dir) <= 0.0:
+		# On the diagonal the row it had is kept only while it is one of the two
+		# the diagonal lies between. An animal that turned round onto one kept
+		# facing back the way it came, for as long as it ran that line.
+		if absf(screen_dir.x) >= absf(screen_dir.y):
+			current = 3 if screen_dir.x > 0.0 else 2
+		else:
+			current = 0 if screen_dir.y > 0.0 else 1
 	_direction[id] = current
 	return current
 

@@ -28,6 +28,9 @@ func run(a) -> void:
 	_test_sprites_take_the_night_tint(a)
 	_test_carcass_sheets_start_where_the_fall_ends(a)
 	_test_body_lies_as_the_animal_fell(a)
+	_test_side_rows_face_their_own_way(a)
+	_test_feeding_on_the_way_walks_or_runs(a)
+	_test_turning_onto_a_diagonal_faces_ahead(a)
 
 
 ## Deaths, births and herd splits reach `world_event`; grazing and the extra death notices
@@ -681,3 +684,125 @@ static func _body_of(world, agent_id: int) -> Dictionary:
 		if int(carcass.get("source_agent_id", -1)) == agent_id:
 			return carcass
 	return {}
+
+
+## Every species' west row faces west in every animation, as the renderer picks it for an
+## animal moving left on screen. The pack is not consistent about it, and the mass check in
+## `tools/build_pack_atlases.py` misreads a leap or a wingbeat: it once had the grouse's
+## flight remapped the wrong way round, so every grouse flew off tail first. Judged here
+## against the species' own walk: a frame that faces west overlaps the walk's west frames
+## more than its east ones, for most of the row. Only the first two frames of `dead`, while
+## the animal still stands - a body on the ground looks like neither.
+func _test_side_rows_face_their_own_way(a) -> void:
+	var visuals: Dictionary = Helpers.ConfigLoaderScript.load_config_bundle().get("visuals", {})
+	var checked := 0
+	for species in visuals.get("species", {}).keys():
+		var config: Dictionary = visuals.species[species]
+		if int(config.get("directions", 1)) < 4:
+			continue
+		var texture: Texture2D = load(str(config.get("atlas", "")))
+		var image: Image = texture.get_image()
+		image.convert(Image.FORMAT_RGBA8)
+		var pixels := int(config.get("frame_px", 32))
+		var animations: Dictionary = config.get("animations", {})
+		var walk: Dictionary = animations.get("walk", {})
+		var west_walk: Array = []
+		var east_walk: Array = []
+		for frame in range(int(walk.get("frames", 1))):
+			west_walk.append(_opaque_mask(image, frame, int(walk.row) + 2, pixels))
+			east_walk.append(_opaque_mask(image, frame, int(walk.row) + 3, pixels))
+		for animation_id in animations.keys():
+			var spec: Dictionary = animations[animation_id]
+			var frames := int(spec.get("frames", 1))
+			if animation_id == "dead":
+				frames = mini(frames, 2)
+			var westward := 0
+			for frame in range(frames):
+				var west := _opaque_mask(image, frame, int(spec.row) + 2, pixels)
+				if _best_overlap(west, west_walk) > _best_overlap(west, east_walk):
+					westward += 1
+			a.is_true(westward * 2 > frames, "%s %s: the west row faces west (%d of %d frames)"
+				% [species, animation_id, westward, frames])
+			checked += 1
+	a.is_true(checked >= 20, "every species' rows were checked (%d)" % checked)
+
+
+static func _opaque_mask(image: Image, column: int, row: int, pixels: int) -> PackedByteArray:
+	var mask := PackedByteArray()
+	mask.resize(pixels * pixels)
+	for y in range(pixels):
+		for x in range(pixels):
+			mask[y * pixels + x] = 1 if image.get_pixel(column * pixels + x, row * pixels + y).a >= 0.5 else 0
+	return mask
+
+
+## How much of `mask` the closest of `frames` covers: intersection over union.
+static func _best_overlap(mask: PackedByteArray, frames: Array) -> float:
+	var best := 0.0
+	for other in frames:
+		var both := 0
+		var either := 0
+		for index in range(mask.size()):
+			var here: int = mask[index]
+			var there: int = other[index]
+			both += here & there
+			either += here | there
+		if either > 0:
+			best = maxf(best, float(both) / float(either))
+	return best
+
+
+## An animal keeps `graze`, `drink` or `scavenge_carcass` all the way to its food, and the
+## eat row is a standing pose: drawn by the action alone, a fox ran to a body standing still
+## and sliding. It eats where it stands; on the way it walks or runs as its speed says.
+func _test_feeding_on_the_way_walks_or_runs(a) -> void:
+	var manager = Helpers.create_manager(625)
+	var renderer = _make_renderer(manager)
+	var world = manager.world_state
+	var walk: float = renderer._walk_speed_threshold
+	var run: float = renderer._run_speed_threshold
+	var fox = Helpers.spawn_predator(world, Vector2(100.0, 100.0))
+	var deer = Helpers.spawn_herbivore(world, Vector2(160.0, 100.0), 0)
+	var cases := [
+		[fox, &"scavenge_carcass", run + 10.0, "run", "a fox running to a body runs"],
+		[fox, &"scavenge_carcass", 0.0, "eat", "and eats once it stands at it"],
+		[deer, &"drink", (walk + run) * 0.5, "walk", "a deer walking to the bank walks"],
+		[deer, &"drink", walk * 0.5, "eat", "and drinks where it stands"],
+		[deer, &"graze", (walk + run) * 0.5, "walk", "a grazing deer that moves on walks"],
+		[deer, &"graze", 0.0, "eat", "and grazes standing"],
+		[deer, &"explore", 0.0, "idle", "standing about is idle"],
+		[fox, &"hunt_prey", walk + 1.0, "run", "a hunter on the move runs, at any speed"],
+	]
+	for entry in cases:
+		var animal = entry[0]
+		animal.current_action = entry[1]
+		renderer._drawn_speed[animal.id] = float(entry[2])
+		a.equal(renderer._resolve_animation(animal), str(entry[3]), str(entry[4]))
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)
+
+
+## On a screen diagonal neither axis wins, and the row an animal had is kept so a diagonal
+## run does not flicker between two rows. Only while that row is one of the two the
+## diagonal lies between: one that turned round onto it kept facing back where it came from.
+func _test_turning_onto_a_diagonal_faces_ahead(a) -> void:
+	WorldProjection.configure({"projection": "orthogonal"})
+	var manager = Helpers.create_manager(626)
+	var renderer = _make_renderer(manager)
+	var deer = Helpers.spawn_herbivore(manager.world_state, Vector2(100.0, 100.0), 0)
+	var at: Vector2 = deer.position
+	var cases := [
+		[1, Vector2(1.0, 1.0), 3, "facing north, it runs down-right: it turns to the east"],
+		[2, Vector2(1.0, 1.05), 0, "facing west, down-right and a little more down: south"],
+		[3, Vector2(1.0, 1.0), 3, "already facing east on that diagonal: it keeps east"],
+		[0, Vector2(1.0, 1.0), 0, "and one facing south keeps south"],
+		[0, Vector2(-1.0, -1.0), 2, "facing south, it runs up-left: west"],
+		[2, Vector2(1.0, 0.2), 3, "a plain turn round still faces ahead"],
+	]
+	for entry in cases:
+		renderer._direction[deer.id] = int(entry[0])
+		var step: Vector2 = entry[1]
+		renderer._history[deer.id] = PackedVector2Array([at - step * 2.0, at - step, at, at + step])
+		a.equal(renderer._resolve_direction(deer), int(entry[2]), str(entry[3]))
+	_free_renderer(renderer)
+	Helpers.destroy_manager(manager)

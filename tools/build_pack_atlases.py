@@ -15,7 +15,9 @@ That order is the pack's convention, not a guarantee: `Fox_Run` ships its two
 side views the other way round, which drew every running fox facing backwards.
 `SHEET_DIRECTION_ORDER` carries the per-sheet exceptions, and `check_direction_order()`
 below re-derives the convention from the pixels after the remap so the next odd
-sheet is caught here instead of in the game.
+sheet is caught here instead of in the game. The pixels can be wrong too: a sheet
+whose mass sits oddly is checked by eye and listed in `DIRECTION_CHECK_SKIP`, and
+`ViewEffectsTests` checks the built atlases in the game's own suite.
 
 Note on `eat`: the pack has no eating animation, so grazing borrows Idle. That
 is one substituted state out of five - worth knowing when watching a herd,
@@ -55,15 +57,16 @@ def animations_for(species):
     return [(key, overrides.get(key, name)) for key, name in ANIMATIONS]
 
 # (animal, sheet) -> source row for each output direction. Absent means identity.
-# Fox_Run has west and east swapped relative to every other Fox sheet, and
-# Black_grouse_Flight disagrees with the rest of the grouse's the same way.
+# Fox_Run has west and east swapped relative to every other Fox sheet.
 SHEET_DIRECTION_ORDER = {
-    ("Black_grouse", "Flight"): [0, 1, 3, 2],
     ("Fox", "Run"): [0, 1, 3, 2],
 }
 # Sheets whose side rows the mass check below misreads: a hare's leap carries its weight
 # forward of where it sits, so Hare_Run looks swapped by the pixels and is not (checked by eye).
-DIRECTION_CHECK_SKIP = {("Hare", "Run")}
+# Black_grouse_Flight is the same: the beating wings hold its mass behind the head. It was
+# once remapped on the check's word, and every grouse took off tail first, its head away
+# from where it flew; in the pack's own order its head leads (checked by eye in the atlas).
+DIRECTION_CHECK_SKIP = {("Hare", "Run"), ("Black_grouse", "Flight")}
 
 
 def find_sheet(animal, name):
